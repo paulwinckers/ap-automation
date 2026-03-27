@@ -232,24 +232,35 @@ class QBOClient:
 
     async def find_account(self, account_code: str) -> Optional[dict]:
         """
-        Look up a QBO account by AcctNum first, then by Name.
-        This handles companies that don't use account numbers.
-        e.g. find_account("6840") or find_account("Repair and Maintenance")
+        Look up a QBO account by Name first, then by AcctNum.
+        e.g. find_account("6710") or find_account("Shop purchases and supplies")
         """
-        # Try by account number first
+        # Try by account name first
+        escaped = account_code.replace("'", "\\'")
         result = await self._get(
             "query",
-            {"query": f"SELECT * FROM Account WHERE AcctNum = '{account_code}' MAXRESULTS 1"},
+            {"query": f"SELECT * FROM Account WHERE Name = '{escaped}' MAXRESULTS 1"},
         )
         accounts = result.get("QueryResponse", {}).get("Account", [])
         if accounts:
             return accounts[0]
 
-        # Fall back to account name search
-        escaped = account_code.replace("'", "\\'")
+        # Fall back to account number search
+        try:
+            result = await self._get(
+                "query",
+                {"query": f"SELECT * FROM Account WHERE AcctNum = '{account_code}' MAXRESULTS 1"},
+            )
+            accounts = result.get("QueryResponse", {}).get("Account", [])
+            if accounts:
+                return accounts[0]
+        except Exception:
+            pass  # AcctNum lookup not supported or failed — that's ok
+
+        # Last resort: search by display name containing the code
         result = await self._get(
             "query",
-            {"query": f"SELECT * FROM Account WHERE Name = '{escaped}' MAXRESULTS 1"},
+            {"query": f"SELECT * FROM Account WHERE Name LIKE '%{escaped}%' MAXRESULTS 1"},
         )
         accounts = result.get("QueryResponse", {}).get("Account", [])
         return accounts[0] if accounts else None
