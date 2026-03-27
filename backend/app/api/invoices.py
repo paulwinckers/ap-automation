@@ -15,7 +15,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from app.core.config import settings
@@ -97,10 +97,10 @@ async def quick_extract(
 @router.post("/upload")
 async def upload_invoice(
     file:          UploadFile      = File(...),
-    doc_type:      Optional[str]   = None,
-    employee_name: Optional[str]   = None,
-    po_number_hint: Optional[str]  = None,
-    notes:         Optional[str]   = None,
+    doc_type:      Optional[str]   = Form(None),
+    employee_name: Optional[str]   = Form(None),
+    po_number_hint: Optional[str]  = Form(None),
+    notes:         Optional[str]   = Form(None),
     db:            Database        = Depends(get_db),
 ):
     """Upload a PDF or image, extract with Claude, store and route."""
