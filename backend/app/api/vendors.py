@@ -111,36 +111,6 @@ async def create_vendor(body: VendorCreateRequest, db: Database = Depends(get_db
     return {"id": vendor_id, "message": f"Vendor '{body.vendor_name}' created"}
 
 
-@router.get("/{vendor_id}")
-async def get_vendor(vendor_id: int, db: Database = Depends(get_db)):
-    vendors = await db.get_all_vendor_rules()
-    vendor = next((v for v in vendors if v.id == vendor_id), None)
-    if not vendor:
-        raise HTTPException(status_code=404, detail="Vendor rule not found")
-    return vendor.model_dump()
-
-
-@router.put("/{vendor_id}")
-async def update_vendor(
-    vendor_id: int,
-    body:      VendorUpdateRequest,
-    db:        Database = Depends(get_db),
-):
-    # Exclude truly unset fields (None means "don't touch"), but allow
-    # explicit empty string for forward_to/notes to clear the field.
-    raw = body.model_dump()
-    updates = {k: v for k, v in raw.items() if v is not None}
-    # Allow clearing forward_to by passing empty string → store as None
-    if "forward_to" in raw:
-        updates["forward_to"] = raw["forward_to"] or None
-    if not updates:
-        raise HTTPException(status_code=400, detail="No fields to update")
-    if "type" in updates and updates["type"] is not None:
-        updates["type"] = updates["type"].value
-    await db.update_vendor_rule(vendor_id, updates)
-    return {"id": vendor_id, "message": "Vendor rule updated"}
-
-
 @router.get("/gl-name")
 async def gl_name_lookup(account: str = Query(...)):
     """
@@ -158,6 +128,33 @@ async def gl_name_lookup(account: str = Query(...)):
     except Exception as e:
         logger.warning(f"GL name lookup failed for '{account}': {e}")
         return {"found": False, "gl_name": None}
+
+
+@router.get("/{vendor_id}")
+async def get_vendor(vendor_id: int, db: Database = Depends(get_db)):
+    vendors = await db.get_all_vendor_rules()
+    vendor = next((v for v in vendors if v.id == vendor_id), None)
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor rule not found")
+    return vendor.model_dump()
+
+
+@router.put("/{vendor_id}")
+async def update_vendor(
+    vendor_id: int,
+    body:      VendorUpdateRequest,
+    db:        Database = Depends(get_db),
+):
+    raw = body.model_dump()
+    updates = {k: v for k, v in raw.items() if v is not None}
+    if "forward_to" in raw:
+        updates["forward_to"] = raw["forward_to"] or None
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    if "type" in updates and updates["type"] is not None:
+        updates["type"] = updates["type"].value
+    await db.update_vendor_rule(vendor_id, updates)
+    return {"id": vendor_id, "message": "Vendor rule updated"}
 
 
 @router.delete("/{vendor_id}")
