@@ -455,7 +455,7 @@ async def qbo_connect():
         "client_id":     settings.QBO_CLIENT_ID,
         "response_type": "code",
         "scope":         SCOPE,
-        "redirect_uri":  "http://localhost:8000/auth/qbo/callback",
+        "redirect_uri":  "https://ap-automation-production.up.railway.app/auth/qbo/callback",
         "state":         "ap-automation-setup",
     }
     return RedirectResponse(f"{INTUIT_AUTH_URL}?{urlencode(params)}")
@@ -475,7 +475,7 @@ async def qbo_callback(code: str, realmId: str, state: str):
             data={
                 "grant_type":   "authorization_code",
                 "code":          code,
-                "redirect_uri": "http://localhost:8000/auth/qbo/callback",
+                "redirect_uri": "https://ap-automation-production.up.railway.app/auth/qbo/callback",
             },
             auth=(settings.QBO_CLIENT_ID, settings.QBO_CLIENT_SECRET),
             headers={"Accept": "application/json"},
