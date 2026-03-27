@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 COPY schema.sql ./infrastructure/schema.sql
+COPY vendor_rules.csv ./vendor_rules.csv
 
 EXPOSE 8000
 

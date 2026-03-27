@@ -1,5 +1,8 @@
 """FastAPI application entrypoint."""
+import csv
+import io
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,10 +11,46 @@ from fastapi.responses import JSONResponse
 from app.api import invoices, vendors, health
 from app.api.vendor_import import router as vendor_import_router
 from app.core.config import settings
+from app.core.database import Database
 from app.services.qbo import qbo_auth_router
 from app.services.email_intake import email_intake
 
 logger = logging.getLogger(__name__)
+
+VENDOR_SEED_FILE = os.path.join(os.path.dirname(__file__), "../vendor_rules.csv")
+
+
+async def seed_vendors_if_empty(db: Database):
+    """Auto-import vendor rules from bundled CSV if the table is empty."""
+    result = await db.get_all_vendor_rules()
+    if result and len(result) > 0:
+        logger.info(f"Vendor rules already loaded ({len(result)} vendors) — skipping seed")
+        return
+
+    if not os.path.exists(VENDOR_SEED_FILE):
+        logger.warning(f"Vendor seed file not found at {VENDOR_SEED_FILE} — skipping")
+        return
+
+    with open(VENDOR_SEED_FILE, encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        count = 0
+        for row in reader:
+            row = {k.strip().lower(): (v.strip() if v else "") for k, v in row.items()}
+            vendor_name = row.get("vendor_name", "").strip()
+            vendor_type = row.get("type", "").strip().lower()
+            if not vendor_name or vendor_type not in {"job_cost", "overhead", "mixed"}:
+                continue
+            await db.create_vendor_rule(
+                vendor_name=vendor_name,
+                vendor_type=vendor_type,
+                default_gl_account=row.get("default_gl_account") or None,
+                default_gl_name=None,
+                vendor_id_aspire=None,
+                vendor_id_qbo=None,
+                notes=row.get("notes") or None,
+            )
+            count += 1
+    logger.info(f"Seeded {count} vendor rules from {VENDOR_SEED_FILE}")
 
 
 @asynccontextmanager
@@ -21,6 +60,11 @@ async def lifespan(app: FastAPI):
             "ANTHROPIC_API_KEY is not set — invoice extraction will fail with 401. "
             "Set this environment variable in your Railway dashboard."
         )
+    # Auto-seed vendor rules if DB is empty
+    _db = Database()
+    await _db.connect()
+    await seed_vendors_if_empty(_db)
+    await _db.close()
     # Start email polling on startup
     await email_intake.start()
     yield
