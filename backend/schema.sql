@@ -121,6 +121,14 @@ VALUES
     ('Telus',                'overhead', '6400',  'Telephone',        'Phone/internet — OH'),
     ('Example Fuel Co',      'mixed',    '6500',  'Fuel & Oil',       'Job cost if PO present');
 
+-- ── Settings (key-value store) ───────────────────────────────────────────────
+-- Used to persist rotating secrets like QBO refresh tokens across redeployments.
+CREATE TABLE IF NOT EXISTS settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ── Schema update: add forward_to field to vendor_rules ──────────────────────
 -- forward_to is now included in the CREATE TABLE above.
 -- This section kept for reference only.

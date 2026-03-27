@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     D1_DATABASE_ID:      str = ""
     R2_BUCKET_NAME:      str = "ap-invoices"
     CF_ACCESS_TEAM_DOMAIN: str = ""
+    CF_ACCOUNT_ID:       str = "cb7841b6dae457461972a8c2cca12896"
+    CF_D1_DATABASE_ID:   str = "6e3fa1a4-aa7b-4233-bda8-4a35459b7712"
+    CF_API_TOKEN:        str = ""  # set via Railway env var
 
     # Microsoft Graph (email intake)
     MS_CLIENT_ID:        str = ""

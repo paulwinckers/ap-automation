@@ -28,6 +28,7 @@ from fastapi.responses import RedirectResponse
 
 from app.core.config import settings
 from app.models.invoice import Invoice
+from app.services.d1_settings import get_setting, set_setting
 
 logger = logging.getLogger(__name__)
 
@@ -58,16 +59,28 @@ class QBOClient:
         self.realm_id = settings.QBO_REALM_ID
         self._access_token: Optional[str] = None
         self._token_expiry: float = 0
-        self._refresh_token: str = settings.QBO_REFRESH_TOKEN
+        self._refresh_token: str = settings.QBO_REFRESH_TOKEN  # overridden by D1 on first use
         self._http = httpx.AsyncClient(timeout=30.0)
+        self._token_loaded_from_d1: bool = False
 
         # Cached tax code IDs looked up from QBO on first use
         self._tax_codes: Optional[dict] = None
+
+    async def _load_refresh_token_from_d1(self) -> None:
+        """On first API call, check D1 for a newer refresh token than the env var."""
+        if self._token_loaded_from_d1:
+            return
+        self._token_loaded_from_d1 = True
+        stored = await get_setting("QBO_REFRESH_TOKEN")
+        if stored and stored != self._refresh_token:
+            logger.info("QBO refresh token loaded from D1 (newer than env var)")
+            self._refresh_token = stored
 
     # ── OAuth2 token management ───────────────────────────────────────────────
 
     async def _ensure_token(self) -> str:
         """Return a valid access token, refreshing if expired."""
+        await self._load_refresh_token_from_d1()
         if self._access_token and time.time() < self._token_expiry - 60:
             return self._access_token
         return await self._refresh_access_token()
@@ -94,9 +107,8 @@ class QBOClient:
         new_refresh = data.get("refresh_token")
         if new_refresh and new_refresh != self._refresh_token:
             self._refresh_token = new_refresh
-            logger.info("QBO refresh token rotated — update QBO_REFRESH_TOKEN in secrets")
-            # In production: persist new_refresh to Cloudflare secrets or D1
-            # so the next startup uses the latest token.
+            logger.info("QBO refresh token rotated — saving to D1")
+            await set_setting("QBO_REFRESH_TOKEN", new_refresh)
 
         return self._access_token
 
