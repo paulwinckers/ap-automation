@@ -359,6 +359,23 @@ class EmailIntakeService:
             await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
             return  # Leave in inbox — failed items stay visible
 
+        # Duplicate check — skip if we've already processed this invoice number
+        if extraction.invoice_number:
+            duplicate = await db.find_duplicate_invoice(extraction.vendor_name, extraction.invoice_number)
+            if duplicate:
+                logger.info(
+                    f"Duplicate invoice skipped: {extraction.vendor_name} #{extraction.invoice_number} "
+                    f"(already in system as id={duplicate['id']}, status={duplicate['status']})"
+                )
+                await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+                await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
+                self._skipped.append({
+                    "subject": subject,
+                    "from": sender,
+                    "reason": f"duplicate — already in system (id={duplicate['id']}, status={duplicate['status']})",
+                })
+                return
+
         # Save to database
         invoice_id = await db.create_invoice(
             vendor_name    = extraction.vendor_name,

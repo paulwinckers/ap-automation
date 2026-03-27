@@ -188,6 +188,17 @@ async def upload_invoice(
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Extraction failed: {e}")
 
+    # Duplicate check — reject if this invoice number was already processed
+    if extraction.invoice_number and extraction.vendor_name:
+        duplicate = await db.find_duplicate_invoice(extraction.vendor_name, extraction.invoice_number)
+        if duplicate:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Invoice #{extraction.invoice_number} from '{extraction.vendor_name}' "
+                       f"was already received (id={duplicate['id']}, status={duplicate['status']}). "
+                       f"If this is a corrected invoice, contact AP."
+            )
+
     # Employee expense: route under the employee's vendor rule (GL account)
     # MasterCard: route under the merchant name — employee is just the purchaser
     is_expense = doc_type == "expense" and employee_name

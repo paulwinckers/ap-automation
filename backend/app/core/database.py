@@ -216,6 +216,27 @@ class Database:
         await self.audit(invoice_id, "received", "system", {"source": intake_source})
         return invoice_id
 
+    async def find_duplicate_invoice(
+        self, vendor_name: str, invoice_number: str
+    ) -> Optional[dict]:
+        """
+        Return an existing invoice row if we've already seen this vendor+invoice_number.
+        Only matches invoices that are posted or queued (not errors — errors can be retried).
+        Returns None if no duplicate found.
+        """
+        async with self._db.execute(
+            """SELECT id, status, qbo_bill_id, aspire_receipt_id, received_at
+               FROM invoices
+               WHERE LOWER(vendor_name) = LOWER(?)
+               AND invoice_number = ?
+               AND status IN ('posted', 'queued', 'pending')
+               ORDER BY received_at DESC
+               LIMIT 1""",
+            (vendor_name, invoice_number),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row else None
+
     async def get_invoice(self, invoice_id: int) -> Optional[dict]:
         async with self._db.execute(
             "SELECT * FROM invoices WHERE id = ?", (invoice_id,)
