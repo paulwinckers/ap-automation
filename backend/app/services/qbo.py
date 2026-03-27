@@ -204,17 +204,33 @@ class QBOClient:
     # ── Vendor lookup ─────────────────────────────────────────────────────────
 
     async def find_vendor(self, vendor_name: str) -> Optional[dict]:
-        """Look up a vendor by name in QBO. Returns the vendor object or None."""
+        """
+        Look up a vendor by name in QBO.
+        Tries exact match first, then partial match to handle minor name differences
+        (e.g. "Aspire Software" vs "Aspire Software Inc.").
+        Returns the vendor object or None.
+        """
         escaped = vendor_name.replace("'", "\\'")
+
+        # Exact match
         result = await self._get(
             "query",
             {"query": f"SELECT * FROM Vendor WHERE DisplayName = '{escaped}' MAXRESULTS 1"},
         )
         vendors = result.get("QueryResponse", {}).get("Vendor", [])
+        if vendors:
+            return vendors[0]
+
+        # Partial match — handles "Aspire Software" matching "Aspire Software Inc."
+        result = await self._get(
+            "query",
+            {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{escaped}%' MAXRESULTS 1"},
+        )
+        vendors = result.get("QueryResponse", {}).get("Vendor", [])
         return vendors[0] if vendors else None
 
     async def find_or_create_vendor(self, vendor_name: str) -> dict:
-        """Find vendor in QBO, creating a stub record if not found."""
+        """Find vendor in QBO, creating a stub record only if truly not found."""
         vendor = await self.find_vendor(vendor_name)
         if vendor:
             return vendor
