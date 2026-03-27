@@ -32,7 +32,7 @@ export default function FieldSubmit() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [referenceId, setReferenceId] = useState<string | null>(null);
   const [docType, setDocType]     = useState<DocType>(null);
-  const [employee, setEmployee]   = useState('');
+  const [employee, setEmployee]   = useState(() => localStorage.getItem('field_employee') || '');
   const [employees, setEmployees] = useState<string[]>(FALLBACK_EMPLOYEES);
   const [file, setFile]           = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -215,10 +215,20 @@ export default function FieldSubmit() {
           {(docType === 'expense' || docType === 'mastercard') && (
             <div style={S.card}>
               <div style={S.ctitle}>{docType === 'mastercard' ? 'Who made this purchase?' : 'Your name'}</div>
-              <select style={S.sel} value={employee} onChange={e=>setEmployee(e.target.value)}>
-                <option value="">Select your name...</option>
-                {employees.map(e=><option key={e}>{e}</option>)}
-              </select>
+              {employee ? (
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 0'}}>
+                  <span style={{fontSize:15,fontWeight:600,color:'#1a1d23'}}>{employee}</span>
+                  <button style={{fontSize:12,color:'#6b7280',background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}}
+                    onClick={()=>{ setEmployee(''); localStorage.removeItem('field_employee'); }}>
+                    Not you?
+                  </button>
+                </div>
+              ) : (
+                <select style={S.sel} value={employee} onChange={e=>{ setEmployee(e.target.value); if (e.target.value) localStorage.setItem('field_employee', e.target.value); }}>
+                  <option value="">Select your name...</option>
+                  {employees.map(e=><option key={e}>{e}</option>)}
+                </select>
+              )}
             </div>
           )}
         </>}
