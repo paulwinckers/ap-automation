@@ -112,6 +112,12 @@ class QBOClient:
 
         return self._access_token
 
+    def _log_intuit_tid(self, resp: httpx.Response) -> None:
+        """Log the intuit_tid transaction ID from QBO response headers for support tracing."""
+        tid = resp.headers.get("intuit_tid")
+        if tid:
+            logger.debug(f"QBO intuit_tid: {tid}")
+
     async def _get(self, path: str, params: dict = None) -> dict:
         token = await self._ensure_token()
         url = f"{self.base_url}/v3/company/{self.realm_id}/{path.lstrip('/')}"
@@ -123,6 +129,7 @@ class QBOClient:
                 "Accept": "application/json",
             },
         )
+        self._log_intuit_tid(resp)
         resp.raise_for_status()
         return resp.json()
 
@@ -139,6 +146,7 @@ class QBOClient:
                 "Accept": "application/json",
             },
         )
+        self._log_intuit_tid(resp)
         resp.raise_for_status()
         return resp.json()
 
