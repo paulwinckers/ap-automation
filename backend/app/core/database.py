@@ -360,6 +360,13 @@ class Database:
             return None
         return json.loads(row["aspire_data"])
 
+    async def delete_invoice(self, invoice_id: int) -> bool:
+        await self._db.execute("DELETE FROM audit_log WHERE invoice_id=?", (invoice_id,))
+        await self._db.execute("DELETE FROM invoice_line_items WHERE invoice_id=?", (invoice_id,))
+        cursor = await self._db.execute("DELETE FROM invoices WHERE id=?", (invoice_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0
+
     async def cache_po(self, po_number: str, aspire_data: dict) -> None:
         await self._db.execute(
             """INSERT OR REPLACE INTO po_cache (po_number, aspire_data, fetched_at)

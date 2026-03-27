@@ -341,6 +341,15 @@ async def mark_as_overhead(
         raise HTTPException(status_code=500, detail=f"QBO posting failed: {e}")
 
 
+@router.delete("/{invoice_id}")
+async def delete_invoice(invoice_id: int, db: Database = Depends(get_db)):
+    """Delete an invoice and its audit log entries."""
+    deleted = await db.delete_invoice(invoice_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    return {"invoice_id": invoice_id, "deleted": True}
+
+
 @router.post("/{invoice_id}/retry")
 async def retry_invoice(invoice_id: int, db: Database = Depends(get_db)):
     """Retry a failed invoice."""
