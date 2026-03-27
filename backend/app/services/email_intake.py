@@ -197,12 +197,11 @@ class EmailIntakeService:
         if not settings.MS_CLIENT_ID or not settings.MS_TENANT_ID or not settings.MS_AP_INBOX:
             logger.info("Microsoft Graph not configured — email intake disabled")
             return
-        self._start_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._start_time = None
         self._running = True
         logger.info(f"Email intake started — polling {settings.MS_AP_INBOX} every 5 minutes")
-        logger.info(f"Only processing emails received after {self._start_time}")
+        logger.info("Processing all unread emails regardless of received time")
         print(f"[AP Automation] Email intake started — polling {settings.MS_AP_INBOX}", flush=True)
-        print(f"[AP Automation] Only processing emails received after {self._start_time}", flush=True)
         asyncio.create_task(self._poll_loop())
         asyncio.create_task(self._summary_loop())
 
@@ -219,16 +218,7 @@ class EmailIntakeService:
             await asyncio.sleep(300)
 
     async def _process_inbox(self):
-        emails = await self.graph.get_unread_emails(
-            settings.MS_AP_INBOX, received_after=self._start_time
-        )
-        if not emails:
-            return
-        if self._start_time:
-            before = len(emails)
-            emails = [e for e in emails if e.get("receivedDateTime", "0") > self._start_time]
-            if before - len(emails) > 0:
-                logger.info(f"Skipped {before - len(emails)} email(s) received before startup")
+        emails = await self.graph.get_unread_emails(settings.MS_AP_INBOX)
         if not emails:
             return
         logger.info(f"Found {len(emails)} unread email(s) in AP inbox")
