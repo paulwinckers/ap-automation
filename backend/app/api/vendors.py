@@ -11,7 +11,7 @@ DELETE /vendors/{id}      — Deactivate a vendor rule (soft delete)
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.core.database import Database
@@ -34,6 +34,7 @@ class VendorCreateRequest(BaseModel):
     type:               VendorType
     default_gl_account: Optional[str] = None
     default_gl_name:    Optional[str] = None
+    forward_to:         Optional[str] = None
     vendor_id_aspire:   Optional[str] = None
     vendor_id_qbo:      Optional[str] = None
     notes:              Optional[str] = None
@@ -44,6 +45,7 @@ class VendorUpdateRequest(BaseModel):
     type:               Optional[VendorType] = None
     default_gl_account: Optional[str] = None
     default_gl_name:    Optional[str] = None
+    forward_to:         Optional[str] = None
     vendor_id_aspire:   Optional[str] = None
     vendor_id_qbo:      Optional[str] = None
     notes:              Optional[str] = None
@@ -96,6 +98,7 @@ async def create_vendor(body: VendorCreateRequest, db: Database = Depends(get_db
         vendor_type        = body.type.value,
         default_gl_account = body.default_gl_account,
         default_gl_name    = body.default_gl_name,
+        forward_to         = body.forward_to,
         vendor_id_aspire   = body.vendor_id_aspire,
         vendor_id_qbo      = body.vendor_id_qbo,
         notes              = body.notes,
@@ -123,13 +126,38 @@ async def update_vendor(
     body:      VendorUpdateRequest,
     db:        Database = Depends(get_db),
 ):
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    # Exclude truly unset fields (None means "don't touch"), but allow
+    # explicit empty string for forward_to/notes to clear the field.
+    raw = body.model_dump()
+    updates = {k: v for k, v in raw.items() if v is not None}
+    # Allow clearing forward_to by passing empty string → store as None
+    if "forward_to" in raw:
+        updates["forward_to"] = raw["forward_to"] or None
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
-    if "type" in updates:
+    if "type" in updates and updates["type"] is not None:
         updates["type"] = updates["type"].value
     await db.update_vendor_rule(vendor_id, updates)
     return {"id": vendor_id, "message": "Vendor rule updated"}
+
+
+@router.get("/gl-name")
+async def gl_name_lookup(account: str = Query(...)):
+    """
+    Look up a GL account name from QBO by account code or name.
+    Used by the vendor admin form to auto-fill the GL name field.
+    Returns { found, gl_name } — found=false if account doesn't exist in QBO.
+    """
+    from app.services.qbo import QBOClient
+    qbo = QBOClient()
+    try:
+        acct = await qbo.find_account(account)
+        if acct:
+            return {"found": True, "gl_name": acct.get("Name", account)}
+        return {"found": False, "gl_name": None}
+    except Exception as e:
+        logger.warning(f"GL name lookup failed for '{account}': {e}")
+        return {"found": False, "gl_name": None}
 
 
 @router.delete("/{vendor_id}")

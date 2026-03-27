@@ -63,6 +63,7 @@ import {
   createVendor,
   updateVendor,
   deactivateVendor,
+  lookupGLName,
   type VendorRule,
 } from '../lib/api';
 
@@ -73,6 +74,7 @@ const EMPTY_FORM = {
   type: 'overhead' as VendorType,
   default_gl_account: '',
   default_gl_name: '',
+  forward_to: '',
   vendor_id_aspire: '',
   vendor_id_qbo: '',
   notes: '',
@@ -97,6 +99,8 @@ function VendorAdminInner() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showInactive, setShowInactive] = useState(false);
+  const [search, setSearch] = useState('');
+  const [glLooking, setGlLooking] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -117,14 +121,15 @@ function VendorAdminInner() {
   const openEdit = (v: VendorRule) => {
     setEditingId(v.id);
     setForm({
-      vendor_name:       v.vendor_name,
-      type:              v.type,
+      vendor_name:        v.vendor_name,
+      type:               v.type,
       default_gl_account: v.default_gl_account || '',
-      default_gl_name:   v.default_gl_name || '',
-      vendor_id_aspire:  v.vendor_id_aspire || '',
-      vendor_id_qbo:     v.vendor_id_qbo || '',
-      notes:             v.notes || '',
-      is_employee:       v.is_employee ?? false,
+      default_gl_name:    v.default_gl_name || '',
+      forward_to:         v.forward_to || '',
+      vendor_id_aspire:   v.vendor_id_aspire || '',
+      vendor_id_qbo:      v.vendor_id_qbo || '',
+      notes:              v.notes || '',
+      is_employee:        v.is_employee ?? false,
     });
     setSaveError(null);
     setShowForm(true);
@@ -139,6 +144,7 @@ function VendorAdminInner() {
         type:               form.type,
         default_gl_account: form.default_gl_account.trim() || undefined,
         default_gl_name:    form.default_gl_name.trim() || undefined,
+        forward_to:         form.forward_to.trim() || undefined,
         vendor_id_aspire:   form.vendor_id_aspire.trim() || undefined,
         vendor_id_qbo:      form.vendor_id_qbo.trim() || undefined,
         notes:              form.notes.trim() || undefined,
@@ -168,7 +174,24 @@ function VendorAdminInner() {
     }
   };
 
-  const displayed = vendors.filter(v => showInactive ? true : v.active);
+  const handleGLBlur = async () => {
+    const code = form.default_gl_account.trim();
+    if (!code || form.default_gl_name.trim()) return;  // don't overwrite if already filled
+    setGlLooking(true);
+    const res = await lookupGLName(code);
+    if (res.found && res.gl_name) {
+      setForm(f => ({ ...f, default_gl_name: res.gl_name! }));
+    }
+    setGlLooking(false);
+  };
+
+  const q = search.toLowerCase();
+  const displayed = vendors.filter(v =>
+    (showInactive ? true : v.active) &&
+    (!q || v.vendor_name.toLowerCase().includes(q) ||
+      (v.default_gl_account || '').toLowerCase().includes(q) ||
+      (v.default_gl_name || '').toLowerCase().includes(q))
+  );
 
   const typeLabel: Record<VendorType, string> = {
     job_cost: 'Job cost',
@@ -195,7 +218,15 @@ function VendorAdminInner() {
       </div>
 
       <div style={S.content}>
-        {/* Toolbar */}
+        {/* Search + toolbar */}
+        <div style={{ marginBottom: 12 }}>
+          <input
+            style={{ ...S.input, width: '100%', boxSizing: 'border-box', fontSize: 14, padding: '10px 14px' }}
+            placeholder="Search vendors, GL code or GL name…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
         <div style={S.toolbar}>
           <label style={S.toggle}>
             <input
@@ -237,12 +268,13 @@ function VendorAdminInner() {
                     )}
                   </div>
                 </div>
-                {(v.default_gl_account || v.notes) && (
+                {(v.default_gl_account || v.notes || v.forward_to) && (
                   <div style={S.cardDetail}>
                     {v.default_gl_account && (
                       <span>GL: {v.default_gl_account}{v.default_gl_name ? ` — ${v.default_gl_name}` : ''}</span>
                     )}
-                    {v.notes && <span style={{ color: '#6b7280' }}>{v.notes}</span>}
+                    {v.forward_to && <span>✉ {v.forward_to}</span>}
+                    {v.notes && <span style={{ color: '#9ca3af' }}>{v.notes}</span>}
                   </div>
                 )}
               </div>
@@ -324,20 +356,38 @@ function VendorAdminInner() {
                       style={S.input}
                       value={form.default_gl_account}
                       onChange={e => setForm(f => ({ ...f, default_gl_account: e.target.value }))}
+                      onBlur={handleGLBlur}
                       placeholder="e.g. 6400"
                     />
                   </div>
                   <div style={{ ...S.field, flex: 2 }}>
-                    <label style={S.label}>GL name</label>
+                    <label style={S.label}>GL name {glLooking && <span style={{ fontWeight: 400, color: '#9ca3af' }}>looking up…</span>}</label>
                     <input
                       style={S.input}
                       value={form.default_gl_name}
                       onChange={e => setForm(f => ({ ...f, default_gl_name: e.target.value }))}
-                      placeholder="e.g. Telephone &amp; Internet"
+                      placeholder="auto-fills from QBO"
                     />
                   </div>
                 </div>
               )}
+
+              {/* Confirmation email */}
+              <div style={S.field}>
+                <label style={S.label}>Confirmation email</label>
+                <input
+                  style={S.input}
+                  type="email"
+                  value={form.forward_to}
+                  onChange={e => setForm(f => ({ ...f, forward_to: e.target.value }))}
+                  placeholder="e.g. jake@darios.ca"
+                />
+                <div style={S.hint}>
+                  {form.is_employee
+                    ? 'Employee gets a confirmation email after each receipt is posted to QBO.'
+                    : 'For job cost vendors, forwarding destination for AP review.'}
+                </div>
+              </div>
 
               {/* Aspire / QBO IDs */}
               <div style={S.fieldRow}>

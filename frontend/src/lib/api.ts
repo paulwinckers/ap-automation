@@ -169,6 +169,14 @@ export interface VendorRule {
   active: boolean;
 }
 
+export async function lookupGLName(account: string): Promise<{ found: boolean; gl_name: string | null }> {
+  try {
+    return await request('GET', `/vendors/gl-name?account=${encodeURIComponent(account)}`);
+  } catch {
+    return { found: false, gl_name: null };
+  }
+}
+
 export async function listEmployees(): Promise<string[]> {
   const res = await request<{ employees: string[] }>('GET', '/vendors/employees');
   return res.employees;
