@@ -574,19 +574,20 @@ class QBOClient:
         Return all active expense/overhead accounts from the QBO chart of accounts.
         Used for GL suggestion when a vendor is unknown or the user wants to correct the GL.
         """
-        result = await self._get(
+        # QBO query language doesn't support OR with parentheses — run two queries
+        expense_result = await self._get(
             "query",
-            {
-                "query": (
-                    "SELECT Id, Name, AcctNum, AccountType, AccountSubType "
-                    "FROM Account "
-                    "WHERE Active = true "
-                    "AND (AccountType = 'Expense' OR AccountType = 'Other Expense') "
-                    "MAXRESULTS 200"
-                )
-            },
+            {"query": "SELECT Id, Name, AcctNum, AccountType, AccountSubType FROM Account WHERE Active = true AND AccountType = 'Expense' MAXRESULTS 200"},
         )
-        return result.get("QueryResponse", {}).get("Account", [])
+        other_result = await self._get(
+            "query",
+            {"query": "SELECT Id, Name, AcctNum, AccountType, AccountSubType FROM Account WHERE Active = true AND AccountType = 'Other Expense' MAXRESULTS 200"},
+        )
+        accounts = (
+            expense_result.get("QueryResponse", {}).get("Account", []) +
+            other_result.get("QueryResponse", {}).get("Account", [])
+        )
+        return accounts
 
     # ── Vendor statement reconciliation (future) ──────────────────────────────
 
