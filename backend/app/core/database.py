@@ -24,7 +24,8 @@ from app.models.vendor import VendorRule, VendorType
 
 logger = logging.getLogger(__name__)
 
-LOCAL_DB_PATH = "local.db"
+# Use DB_PATH env var if set (for Railway persistent volume), otherwise local.db
+LOCAL_DB_PATH = os.environ.get("DB_PATH", "local.db")
 SCHEMA_PATH   = os.path.join(os.path.dirname(__file__), "../../infrastructure/schema.sql")
 
 
@@ -34,6 +35,7 @@ class Database:
 
     async def connect(self):
         """Open the local SQLite database, creating and seeding it if needed."""
+        os.makedirs(os.path.dirname(os.path.abspath(LOCAL_DB_PATH)), exist_ok=True)
         db_exists = os.path.exists(LOCAL_DB_PATH)
         self._db = await aiosqlite.connect(LOCAL_DB_PATH)
         self._db.row_factory = aiosqlite.Row
