@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+backend/.env
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.env
+
+# Cloudflare
+.wrangler/
+
+# OS
+.DS_Store
+*.db

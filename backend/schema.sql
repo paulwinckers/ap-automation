@@ -1,0 +1,125 @@
+-- AP Automation — Cloudflare D1 Schema
+-- Run: npx wrangler d1 execute ap-automation-db --file=schema.sql
+
+-- ── Vendor rules ────────────────────────────────────────────────────────────
+-- The core routing config. One row per vendor.
+-- type: 'job_cost' | 'overhead' | 'mixed'
+CREATE TABLE IF NOT EXISTS vendor_rules (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    vendor_name     TEXT NOT NULL,
+    vendor_id_aspire TEXT,           -- Aspire ContactID if known
+    vendor_id_qbo   TEXT,           -- QBO vendor ID if known
+    type            TEXT NOT NULL CHECK(type IN ('job_cost','overhead','mixed')),
+    default_gl_account TEXT,         -- QBO GL account code for OH vendors
+    default_gl_name    TEXT,         -- Human-readable GL name
+    forward_to      TEXT,            -- Email destination for job cost vendors
+    notes           TEXT,
+    active          INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_vendor_rules_name ON vendor_rules(vendor_name);
+CREATE INDEX IF NOT EXISTS idx_vendor_rules_type ON vendor_rules(type);
+
+-- ── Invoices ─────────────────────────────────────────────────────────────────
+-- Every invoice that enters the system, regardless of status.
+-- status: 'pending' | 'queued' | 'posted' | 'error'
+-- destination: 'aspire' | 'qbo' | null (not yet determined)
+CREATE TABLE IF NOT EXISTS invoices (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    status              TEXT NOT NULL DEFAULT 'pending'
+                            CHECK(status IN ('pending','queued','posted','error')),
+    destination         TEXT CHECK(destination IN ('aspire','qbo')),
+
+    -- Raw extracted fields (from Claude)
+    vendor_name         TEXT,
+    vendor_id_resolved  INTEGER REFERENCES vendor_rules(id),
+    invoice_number      TEXT,
+    invoice_date        TEXT,
+    due_date            TEXT,
+    subtotal            REAL,
+    tax_amount          REAL,
+    total_amount        REAL,
+    currency            TEXT DEFAULT 'CAD',
+    po_number           TEXT,           -- as found on invoice
+    po_number_override  TEXT,           -- manually entered by AP staff
+    po_aspire_id        TEXT,           -- validated Aspire PO/Opportunity ID
+    gl_account          TEXT,           -- resolved GL account for QBO
+
+    -- File reference
+    pdf_r2_key          TEXT,           -- R2 object key for the PDF
+    pdf_filename        TEXT,
+
+    -- Intake metadata
+    intake_source       TEXT,           -- 'email' | 'upload' | 'api'
+    intake_raw          TEXT,           -- JSON blob of original extraction
+
+    -- Posting results
+    aspire_receipt_id   TEXT,           -- returned by Aspire after posting
+    qbo_bill_id         TEXT,           -- returned by QBO after posting
+    error_message       TEXT,
+
+    -- Timestamps
+    received_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    queued_at           TEXT,
+    reviewed_at         TEXT,
+    posted_at           TEXT,
+    reviewed_by         TEXT            -- Cloudflare Access user email
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+CREATE INDEX IF NOT EXISTS idx_invoices_vendor ON invoices(vendor_name);
+CREATE INDEX IF NOT EXISTS idx_invoices_po ON invoices(po_number);
+
+-- ── Invoice line items ───────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS invoice_line_items (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id      INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    description     TEXT,
+    quantity        REAL,
+    unit_price      REAL,
+    amount          REAL,
+    tax_code        TEXT,           -- GST / HST / PST
+    tax_amount      REAL,
+    sort_order      INTEGER DEFAULT 0
+);
+
+-- ── Audit log ────────────────────────────────────────────────────────────────
+-- Immutable record of every action taken on every invoice.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id      INTEGER REFERENCES invoices(id),
+    action          TEXT NOT NULL,  -- 'received' | 'extracted' | 'routed' |
+                                    -- 'queued' | 'po_override' | 'posted' |
+                                    -- 'error' | 'vendor_rule_added'
+    actor           TEXT,           -- user email or 'system'
+    detail          TEXT,           -- JSON with action-specific context
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_invoice ON audit_log(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_audit_action  ON audit_log(action);
+
+-- ── PO cache ─────────────────────────────────────────────────────────────────
+-- Short-lived cache of PO lookups from Aspire to reduce API calls.
+-- TTL: 1 hour. Cleared by the backend on a schedule.
+CREATE TABLE IF NOT EXISTS po_cache (
+    po_number       TEXT PRIMARY KEY,
+    aspire_data     TEXT NOT NULL,  -- JSON blob from Aspire
+    fetched_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Seed: initial vendor rules ───────────────────────────────────────────────
+-- Replace these with your real vendors before deploying.
+-- type options: 'job_cost' | 'overhead' | 'mixed'
+INSERT OR IGNORE INTO vendor_rules (vendor_name, type, default_gl_account, default_gl_name, notes)
+VALUES
+    ('Example Supply Co',    'job_cost', NULL,    NULL,               'Materials — always job cost'),
+    ('Office Depot',         'overhead', '6200',  'Office Supplies',  'OH only'),
+    ('Telus',                'overhead', '6400',  'Telephone',        'Phone/internet — OH'),
+    ('Example Fuel Co',      'mixed',    '6500',  'Fuel & Oil',       'Job cost if PO present');
+
+-- ── Schema update: add forward_to field to vendor_rules ──────────────────────
+-- forward_to is now included in the CREATE TABLE above.
+-- This section kept for reference only.

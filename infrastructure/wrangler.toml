@@ -1,0 +1,31 @@
+name = "ap-automation"
+compatibility_date = "2025-01-01"
+
+# ── Cloudflare Pages (frontend) ───────────────────────────────────────────────
+[site]
+bucket = "../frontend/dist"
+
+# ── D1 Database ───────────────────────────────────────────────────────────────
+[[d1_databases]]
+binding  = "DB"
+database_name = "ap-automation-db"
+database_id   = ""   # fill in after: npx wrangler d1 create ap-automation-db
+
+# ── R2 Bucket (PDF storage) ───────────────────────────────────────────────────
+[[r2_buckets]]
+binding     = "INVOICES"
+bucket_name = "ap-invoices"
+
+# ── Environment variables (non-secret) ────────────────────────────────────────
+[vars]
+ASPIRE_SANDBOX = "false"
+QBO_SANDBOX    = "false"
+
+# Secrets are set via:
+# npx wrangler secret put ANTHROPIC_API_KEY
+# npx wrangler secret put ASPIRE_CLIENT_ID
+# npx wrangler secret put ASPIRE_CLIENT_SECRET
+# npx wrangler secret put QBO_CLIENT_ID
+# npx wrangler secret put QBO_CLIENT_SECRET
+# npx wrangler secret put QBO_REALM_ID
+# npx wrangler secret put QBO_REFRESH_TOKEN
