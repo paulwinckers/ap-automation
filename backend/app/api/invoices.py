@@ -115,11 +115,11 @@ async def suggest_gl(body: GLSuggestRequest):
         logger.warning(f"COA fetch failed — {e}. Using empty list.")
         accounts = []
 
+    FALLBACK = {"gl_account": "6999", "gl_name": "General Overhead", "confidence": "low"}
+
     if not accounts:
-        raise HTTPException(
-            status_code=503,
-            detail="Could not load chart of accounts from QBO. Please try again."
-        )
+        logger.warning("COA empty — returning fallback GL 6999")
+        return FALLBACK
 
     coa_text = "\n".join(
         f"- {a.get('AcctNum', '')} | {a['Name']} ({a.get('AccountSubType', a.get('AccountType', ''))})"
@@ -135,8 +135,8 @@ A field crew member made a purchase{vendor_hint} and described it as:
 Here are the available expense accounts in QuickBooks (format: AcctNum | Name | SubType):
 {coa_text}
 
-Pick the single best GL account for this purchase.
-Return ONLY a JSON object: {{ "gl_account": "<AcctNum or Name>", "gl_name": "<Name>", "confidence": "high|medium|low" }}
+Pick the single best GL account for this purchase. If nothing fits well, use account 6999.
+Return ONLY a JSON object: {{ "gl_account": "<AcctNum>", "gl_name": "<Name>", "confidence": "high|medium|low" }}
 No explanation. No markdown."""
 
     try:
@@ -147,18 +147,17 @@ No explanation. No markdown."""
             messages=[{"role": "user", "content": prompt}],
         )
         raw = message.content[0].text.strip()
-        # Strip markdown fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         result = json.loads(raw)
         return {
-            "gl_account": result.get("gl_account"),
-            "gl_name":    result.get("gl_name"),
+            "gl_account": result.get("gl_account") or "6999",
+            "gl_name":    result.get("gl_name") or "General Overhead",
             "confidence": result.get("confidence", "medium"),
         }
     except Exception as e:
-        logger.error(f"GL suggestion failed: {e}")
-        raise HTTPException(status_code=500, detail=f"GL suggestion failed: {e}")
+        logger.warning(f"GL suggestion failed — returning fallback 6999: {e}")
+        return FALLBACK
 
 
 @router.post("/upload")

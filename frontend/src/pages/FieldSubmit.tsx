@@ -139,12 +139,17 @@ export default function FieldSubmit() {
 
   const handleSuggestGL = async () => {
     if (!glDescription.trim()) return;
-    setGlSuggesting(true); setGlSuggestion(null);
+    setGlSuggesting(true); setGlSuggestion(null); setGlOverride(null);
     try {
       const result = await suggestGL(glDescription.trim(), extractResult?.vendor_name);
-      setGlSuggestion({ account: result.gl_account, name: result.gl_name });
+      const suggestion = { account: result.gl_account, name: result.gl_name };
+      setGlSuggestion(suggestion);
+      setGlOverride(suggestion);  // auto-accept — no confirm button needed
     } catch {
-      // leave suggestion null — user can retry
+      // fallback: use 6999 so user can still proceed
+      const fallback = { account: '6999', name: 'General Overhead' };
+      setGlSuggestion(fallback);
+      setGlOverride(fallback);
     } finally {
       setGlSuggesting(false);
     }
@@ -369,28 +374,20 @@ export default function FieldSubmit() {
                 placeholder="e.g. office supplies, safety gear, fuel"
                 value={glDescription}
                 onChange={e=>{ setGlDescription(e.target.value); setGlSuggestion(null); }}
+                onBlur={()=>{ if (glDescription.trim().length >= 3) handleSuggestGL(); }}
                 autoFocus
               />
-              <button
-                style={{...S.lookup, width:'100%', opacity: glDescription.trim().length<3||glSuggesting?0.5:1}}
-                onClick={handleSuggestGL}
-                disabled={glDescription.trim().length<3||glSuggesting}
-              >
-                {glSuggesting ? 'Finding account...' : 'Find account'}
-              </button>
-              {glSuggestion && (
-                <div style={{...S.jobres,background:'#ecfdf5',borderColor:'#6ee7b7',marginTop:12}}>
-                  <div style={{fontSize:13,fontWeight:600,color:'#059669',marginBottom:2}}>Suggested account</div>
-                  <div style={{fontSize:16,fontWeight:700,color:'#1a1d23',marginBottom:4}}>{glSuggestion.name}</div>
-                  <div style={{fontSize:12,color:'#6b7280'}}>Account {glSuggestion.account}</div>
-                  <div style={{marginTop:10,display:'flex',gap:8}}>
-                    <button style={{...S.lookup,flex:1,background:'#059669',fontSize:12}} onClick={()=>{ setGlOverride(glSuggestion!); }}>
-                      {glOverride ? '✓ Confirmed' : 'Use this account'}
-                    </button>
-                    <button style={{...S.lookup,flex:1,background:'#6b7280',fontSize:12}} onClick={()=>{ setGlSuggestion(null); setGlDescription(''); }}>
-                      Try again
-                    </button>
+              {glSuggesting && (
+                <div style={{fontSize:13,color:'#6b7280',padding:'8px 0'}}>Finding account...</div>
+              )}
+              {glSuggestion && !glSuggesting && (
+                <div style={{...S.jobres, background:'#ecfdf5', borderColor:'#6ee7b7', marginTop:4}}>
+                  <div style={{fontSize:13,fontWeight:600,color:'#059669',marginBottom:2}}>
+                    {glSuggestion.account === '6999' ? 'Will be reviewed by AP' : 'Account found'}
                   </div>
+                  <div style={{fontSize:16,fontWeight:700,color:'#1a1d23'}}>{glSuggestion.name}</div>
+                  {glSuggestion.account !== '6999' &&
+                    <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>Account {glSuggestion.account}</div>}
                 </div>
               )}
               {glLookup?.found && (
