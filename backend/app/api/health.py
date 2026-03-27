@@ -25,6 +25,15 @@ async def email_status():
     }
 
 
+@router.get("/coa")
+async def list_coa():
+    """Dump the QBO chart of accounts — for debugging GL name lookups."""
+    from app.services.qbo import QBOClient
+    qbo = QBOClient()
+    accounts = await qbo.list_expense_accounts()
+    return [{"AcctNum": a.get("AcctNum"), "Name": a.get("Name")} for a in accounts]
+
+
 @router.post("/email/trigger")
 async def email_trigger():
     """Manually trigger one email poll cycle. Returns what was found and processed."""
