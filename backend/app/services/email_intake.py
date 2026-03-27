@@ -273,10 +273,8 @@ class EmailIntakeService:
 
         # Screen — is this an invoice?
         if not await self._is_invoice(email, body_content):
-            logger.info(f"Not an invoice — skipping: '{subject}' from {sender}")
+            logger.info(f"Not an invoice — leaving untouched in inbox: '{subject}' from {sender}")
             self._skipped.append({"subject": subject, "from": sender})
-            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
-            await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
             return
 
         logger.info(f"Processing invoice: '{subject}' from {sender}")
