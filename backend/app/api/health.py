@@ -29,9 +29,12 @@ async def email_status():
 async def list_coa():
     """Dump the QBO chart of accounts — for debugging GL name lookups."""
     from app.services.qbo import QBOClient
-    qbo = QBOClient()
-    accounts = await qbo.list_expense_accounts()
-    return [{"AcctNum": a.get("AcctNum"), "Name": a.get("Name")} for a in accounts]
+    from app.api.invoices import _qbo
+    try:
+        accounts = await _qbo.list_expense_accounts()
+        return [{"AcctNum": a.get("AcctNum"), "Name": a.get("Name")} for a in accounts]
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @router.post("/email/trigger")
