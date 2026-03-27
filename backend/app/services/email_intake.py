@@ -110,7 +110,7 @@ class GraphClient:
             f"users/{mailbox}/mailFolders/inbox/messages",
             params={
                 "$filter": " and ".join(filter_parts),
-                "$orderby": "receivedDateTime asc",
+                "$orderby": "receivedDateTime desc",
                 "$top": "25",
                 "$select": "id,subject,from,receivedDateTime,hasAttachments,body,isRead",
             },
