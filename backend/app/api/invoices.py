@@ -96,8 +96,12 @@ async def quick_extract(
 
 @router.post("/upload")
 async def upload_invoice(
-    file: UploadFile = File(...),
-    db:   Database   = Depends(get_db),
+    file:          UploadFile      = File(...),
+    doc_type:      Optional[str]   = None,
+    employee_name: Optional[str]   = None,
+    po_number_hint: Optional[str]  = None,
+    notes:         Optional[str]   = None,
+    db:            Database        = Depends(get_db),
 ):
     """Upload a PDF or image, extract with Claude, store and route."""
     allowed_ext = (".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic")
@@ -115,8 +119,15 @@ async def upload_invoice(
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Extraction failed: {e}")
 
+    # For employee expense submissions, route under the employee's name
+    # so it hits their vendor rule (GL account) instead of the store's rule
+    is_expense = doc_type == "expense" and employee_name
+    routing_vendor = employee_name if is_expense else extraction.vendor_name
+    if is_expense:
+        logger.info(f"Employee expense — routing under '{employee_name}' instead of '{extraction.vendor_name}'")
+
     invoice_id = await db.create_invoice(
-        vendor_name    = extraction.vendor_name,
+        vendor_name    = routing_vendor,
         invoice_number = extraction.invoice_number,
         invoice_date   = extraction.invoice_date,
         due_date       = extraction.due_date,
@@ -139,7 +150,7 @@ async def upload_invoice(
     invoice = Invoice(
         id             = invoice_id,
         status         = InvoiceStatus.PENDING,
-        vendor_name    = extraction.vendor_name,
+        vendor_name    = routing_vendor,
         invoice_number = extraction.invoice_number,
         invoice_date   = extraction.invoice_date,
         due_date       = extraction.due_date,
