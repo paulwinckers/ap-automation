@@ -110,7 +110,10 @@ export interface VendorRule {
   type: 'job_cost' | 'overhead' | 'mixed';
   default_gl_account?: string;
   default_gl_name?: string;
+  vendor_id_aspire?: string;
+  vendor_id_qbo?: string;
   notes?: string;
+  is_employee?: boolean;
   active: boolean;
 }
 
