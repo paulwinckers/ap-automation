@@ -160,9 +160,15 @@ class Database:
         return cursor.lastrowid
 
     async def get_employees(self) -> list[str]:
-        """Return names of all active vendors marked as employees, sorted alphabetically."""
+        """Return names of all active employee expense vendors, sorted alphabetically.
+        Detects employees by is_employee flag OR by name containing 'expense/expenses'."""
         async with self._db.execute(
-            "SELECT vendor_name FROM vendor_rules WHERE is_employee = 1 AND active = 1 ORDER BY vendor_name"
+            """SELECT vendor_name FROM vendor_rules
+               WHERE active = 1
+               AND (is_employee = 1
+                    OR LOWER(vendor_name) LIKE '%expense%'
+                    OR LOWER(vendor_name) LIKE '%expenses%')
+               ORDER BY vendor_name"""
         ) as cursor:
             rows = await cursor.fetchall()
         return [r["vendor_name"] for r in rows]
