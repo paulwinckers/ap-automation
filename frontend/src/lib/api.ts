@@ -55,6 +55,7 @@ export async function uploadInvoice(
   poNumber?: string,
   employee?: string,
   notes?: string,
+  glAccount?: string,
 ): Promise<UploadResponse> {
   const form = new FormData();
   form.append('file', file);
@@ -63,7 +64,57 @@ export async function uploadInvoice(
   if (poNumber) form.append('po_number_hint', poNumber);
   if (employee) form.append('employee_name', employee);
   if (notes) form.append('notes', notes);
+  if (glAccount) form.append('gl_account', glAccount);
   return request<UploadResponse>('POST', '/invoices/upload', form, true);
+}
+
+export interface QuickExtractResult {
+  success: boolean;
+  vendor_name?: string;
+  invoice_number?: string;
+  total_amount?: number;
+  po_number?: string;
+  error?: string;
+}
+
+export async function quickExtract(file: File): Promise<QuickExtractResult> {
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    return await request<QuickExtractResult>('POST', '/invoices/quick-extract', form, true);
+  } catch {
+    return { success: false };
+  }
+}
+
+export interface GLLookupResult {
+  found: boolean;
+  gl_account: string | null;
+  gl_name: string | null;
+}
+
+export async function lookupVendorGL(vendorName: string): Promise<GLLookupResult> {
+  try {
+    return await request<GLLookupResult>(
+      'GET',
+      `/vendors/gl-lookup?vendor_name=${encodeURIComponent(vendorName)}`,
+    );
+  } catch {
+    return { found: false, gl_account: null, gl_name: null };
+  }
+}
+
+export interface GLSuggestResult {
+  gl_account: string;
+  gl_name: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export async function suggestGL(description: string, vendorName?: string): Promise<GLSuggestResult> {
+  return request<GLSuggestResult>('POST', '/invoices/suggest-gl', {
+    description,
+    vendor_name: vendorName,
+  });
 }
 
 export async function validatePO(poNumber: string): Promise<POValidationResult> {
@@ -110,6 +161,7 @@ export interface VendorRule {
   type: 'job_cost' | 'overhead' | 'mixed';
   default_gl_account?: string;
   default_gl_name?: string;
+  forward_to?: string;
   vendor_id_aspire?: string;
   vendor_id_qbo?: string;
   notes?: string;

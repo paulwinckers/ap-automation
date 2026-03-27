@@ -15,6 +15,7 @@ import json
 import logging
 from typing import Optional
 
+import anthropic
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
@@ -43,6 +44,10 @@ async def get_db() -> Database:
 
 
 # ── Request models ────────────────────────────────────────────────────────────
+
+class GLSuggestRequest(BaseModel):
+    description: str   # "what was purchased" — free text from field crew
+    vendor_name: Optional[str] = None
 
 class POOverrideRequest(BaseModel):
     po_number:   str
@@ -94,14 +99,78 @@ async def quick_extract(
         }
 
 
+@router.post("/suggest-gl")
+async def suggest_gl(body: GLSuggestRequest):
+    """
+    Given a description of what was purchased, ask Claude to pick the best
+    GL account from the QBO chart of accounts.
+    Called by the field crew when they reject the default GL.
+
+    Returns { gl_account, gl_name, confidence } — or raises 422 on failure.
+    """
+    # Fetch live COA from QBO
+    try:
+        accounts = await _qbo.list_expense_accounts()
+    except Exception as e:
+        logger.warning(f"COA fetch failed — {e}. Using empty list.")
+        accounts = []
+
+    if not accounts:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not load chart of accounts from QBO. Please try again."
+        )
+
+    coa_text = "\n".join(
+        f"- {a.get('AcctNum', '')} | {a['Name']} ({a.get('AccountSubType', a.get('AccountType', ''))})"
+        for a in accounts
+    )
+
+    vendor_hint = f" at {body.vendor_name}" if body.vendor_name else ""
+    prompt = f"""You are an accounts payable assistant for a Canadian landscaping company.
+
+A field crew member made a purchase{vendor_hint} and described it as:
+"{body.description}"
+
+Here are the available expense accounts in QuickBooks (format: AcctNum | Name | SubType):
+{coa_text}
+
+Pick the single best GL account for this purchase.
+Return ONLY a JSON object: {{ "gl_account": "<AcctNum or Name>", "gl_name": "<Name>", "confidence": "high|medium|low" }}
+No explanation. No markdown."""
+
+    try:
+        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        message = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = message.content[0].text.strip()
+        # Strip markdown fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1].lstrip("json").strip()
+        result = json.loads(raw)
+        return {
+            "gl_account": result.get("gl_account"),
+            "gl_name":    result.get("gl_name"),
+            "confidence": result.get("confidence", "medium"),
+        }
+    except Exception as e:
+        logger.error(f"GL suggestion failed: {e}")
+        raise HTTPException(status_code=500, detail=f"GL suggestion failed: {e}")
+
+
 @router.post("/upload")
 async def upload_invoice(
-    file:          UploadFile      = File(...),
-    doc_type:      Optional[str]   = Form(None),
-    employee_name: Optional[str]   = Form(None),
-    po_number_hint: Optional[str]  = Form(None),
-    notes:         Optional[str]   = Form(None),
-    db:            Database        = Depends(get_db),
+    file:           UploadFile      = File(...),
+    doc_type:       Optional[str]   = Form(None),
+    cost_type:      Optional[str]   = Form(None),
+    employee_name:  Optional[str]   = Form(None),
+    po_number_hint: Optional[str]   = Form(None),
+    gl_account:     Optional[str]   = Form(None),   # user-confirmed GL from frontend
+    notes:          Optional[str]   = Form(None),
+    db:             Database        = Depends(get_db),
 ):
     """Upload a PDF or image, extract with Claude, store and route."""
     allowed_ext = (".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic")
@@ -119,12 +188,14 @@ async def upload_invoice(
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Extraction failed: {e}")
 
-    # For employee expense submissions, route under the employee's name
-    # so it hits their vendor rule (GL account) instead of the store's rule
+    # Employee expense: route under the employee's vendor rule (GL account)
+    # MasterCard: route under the merchant name — employee is just the purchaser
     is_expense = doc_type == "expense" and employee_name
     routing_vendor = employee_name if is_expense else extraction.vendor_name
     if is_expense:
         logger.info(f"Employee expense — routing under '{employee_name}' instead of '{extraction.vendor_name}'")
+    if doc_type == "mastercard" and employee_name:
+        logger.info(f"MasterCard purchase by '{employee_name}' at '{extraction.vendor_name}'")
 
     invoice_id = await db.create_invoice(
         vendor_name    = routing_vendor,
@@ -164,9 +235,12 @@ async def upload_invoice(
         line_items     = [LineItem(**li.model_dump()) for li in extraction.line_items],
         tax_lines      = [TaxLine(**tl.model_dump()) for tl in extraction.tax_lines],
         file_bytes     = pdf_bytes,
+        doc_type       = doc_type,
+        # User-confirmed GL from GL confirmation step (overrides vendor rule lookup)
+        gl_account     = gl_account or None,
     )
 
-    outcome = await route_invoice(invoice, db, _aspire, _qbo)
+    outcome = await route_invoice(invoice, db, _aspire, _qbo, employee_name=employee_name)
 
     return {
         "invoice_id": invoice_id,

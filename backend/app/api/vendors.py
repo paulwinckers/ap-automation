@@ -58,6 +58,23 @@ async def list_employees(db: Database = Depends(get_db)):
     return {"employees": names}
 
 
+@router.get("/gl-lookup")
+async def gl_lookup(vendor_name: str, db: Database = Depends(get_db)):
+    """
+    Return the GL account for a vendor name.
+    Called by the field crew app after quick-extract to show the GL confirmation step.
+    Returns { found, gl_account, gl_name } — found=false if vendor is unknown.
+    """
+    rule = await db.get_vendor_rule_by_name(vendor_name)
+    if not rule or not rule.default_gl_account:
+        return {"found": False, "gl_account": None, "gl_name": None}
+    return {
+        "found":      True,
+        "gl_account": rule.default_gl_account,
+        "gl_name":    rule.default_gl_name or rule.default_gl_account,
+    }
+
+
 @router.get("/")
 async def list_vendors(db: Database = Depends(get_db)):
     vendors = await db.get_all_vendor_rules()

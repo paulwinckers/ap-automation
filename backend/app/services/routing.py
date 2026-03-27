@@ -10,7 +10,10 @@ Decision logic:
        - PO# on invoice or override → Aspire
        - No PO#                     → QBO
   5. Vendor not found               → Exception queue
+       Exception: doc_type == 'mastercard' → use MASTERCARD_FALLBACK_GL
   6. PO# not validated in Aspire    → Exception queue
+
+MasterCard receipts use post_purchase() instead of post_bill() in QBO.
 """
 
 import logging
@@ -22,6 +25,11 @@ from app.models.vendor import VendorRule, VendorType
 from app.services.aspire import AspireClient
 from app.services.qbo import QBOClient
 from app.core.database import Database
+from app.services.email_intake import send_qbo_confirmation
+
+# Fallback GL account when a MasterCard vendor is not in vendor_rules.
+# This is the "General overhead" catch-all account — AP can recode later.
+MASTERCARD_FALLBACK_GL = "6999"
 
 logger = logging.getLogger(__name__)
 
@@ -38,17 +46,38 @@ async def route_invoice(
     db: Database,
     aspire: AspireClient,
     qbo: QBOClient,
+    employee_name: Optional[str] = None,
 ) -> RoutingOutcome:
     """
     Main entry point. Called after an invoice has been extracted.
     Returns a RoutingOutcome and mutates invoice.status in the DB.
+    employee_name: passed through to QBO private note for MC/expense receipts.
     """
     logger.info(f"Routing invoice {invoice.id} — vendor: {invoice.vendor_name}")
+
+    # ── GL override from frontend confirmation step ───────────────────────────
+    # If the user confirmed (or corrected) a GL account before submitting, use it
+    # directly and skip vendor rule lookup for the GL.
+    if invoice.gl_account:
+        logger.info(f"Using user-confirmed GL '{invoice.gl_account}' for invoice {invoice.id}")
+        if invoice.doc_type == "mastercard":
+            return await _route_to_qbo_purchase(invoice, invoice.gl_account, db, qbo, employee_name)
+        return await _route_to_qbo(invoice, invoice.gl_account, db, qbo, employee_name)
 
     # ── Step 1: Vendor lookup ─────────────────────────────────────────────────
     vendor_rule = await db.get_vendor_rule_by_name(invoice.vendor_name)
 
     if vendor_rule is None:
+        # MasterCard receipts with unknown vendors get posted to a fallback GL
+        # rather than going to the exception queue — AP can recode later.
+        if invoice.doc_type == "mastercard":
+            logger.info(
+                f"Unknown MC vendor '{invoice.vendor_name}' — "
+                f"posting to fallback GL {MASTERCARD_FALLBACK_GL}"
+            )
+            return await _route_to_qbo_purchase(
+                invoice, MASTERCARD_FALLBACK_GL, db, qbo, employee_name
+            )
         logger.warning(f"Unknown vendor '{invoice.vendor_name}' — queuing for review")
         await _queue(invoice, db, reason="vendor_unknown")
         return RoutingOutcome.QUEUED
@@ -67,10 +96,16 @@ async def route_invoice(
     elif decision == RoutingDecision.QBO:
         gl_account = vendor_rule.default_gl_account
         if not gl_account:
-            logger.warning(f"No GL account for vendor '{invoice.vendor_name}' — queuing")
-            await _queue(invoice, db, reason="no_gl_account")
-            return RoutingOutcome.QUEUED
-        return await _route_to_qbo(invoice, gl_account, db, qbo)
+            if invoice.doc_type == "mastercard":
+                gl_account = MASTERCARD_FALLBACK_GL
+                logger.info(f"No GL for MC vendor '{invoice.vendor_name}' — using fallback {gl_account}")
+            else:
+                logger.warning(f"No GL account for vendor '{invoice.vendor_name}' — queuing")
+                await _queue(invoice, db, reason="no_gl_account")
+                return RoutingOutcome.QUEUED
+        if invoice.doc_type == "mastercard":
+            return await _route_to_qbo_purchase(invoice, gl_account, db, qbo, employee_name)
+        return await _route_to_qbo(invoice, gl_account, db, qbo, employee_name)
 
     else:  # QUEUE
         await _queue(invoice, db, reason="mixed_vendor_no_po")
@@ -148,6 +183,7 @@ async def _route_to_qbo(
     gl_account: str,
     db: Database,
     qbo: QBOClient,
+    employee_name: Optional[str] = None,
 ) -> RoutingOutcome:
     """Post the bill to QBO against the resolved GL account."""
 
@@ -165,10 +201,74 @@ async def _route_to_qbo(
             "gl_account": gl_account,
         })
         logger.info(f"Invoice {invoice.id} posted to QBO — bill {bill_id}")
+
+        # Send confirmation email if this was an employee/field submission
+        if employee_name:
+            emp_rule = await db.get_vendor_rule_by_name(employee_name)
+            if emp_rule and emp_rule.forward_to:
+                await send_qbo_confirmation(
+                    to_address=emp_rule.forward_to,
+                    vendor_name=invoice.vendor_name or "Unknown vendor",
+                    total_amount=invoice.total_amount or 0,
+                    gl_name=gl_account,
+                    qbo_id=bill_id,
+                    txn_date=invoice.invoice_date,
+                    file_bytes=invoice.file_bytes,
+                    filename=invoice.pdf_filename,
+                )
+
         return RoutingOutcome.POSTED_QBO
 
     except Exception as e:
         logger.error(f"QBO post failed for invoice {invoice.id}: {e}")
+        await db.mark_error(invoice.id, str(e))
+        return RoutingOutcome.ERROR
+
+
+async def _route_to_qbo_purchase(
+    invoice: Invoice,
+    gl_account: str,
+    db: Database,
+    qbo: QBOClient,
+    employee_name: Optional[str] = None,
+) -> RoutingOutcome:
+    """Post a MasterCard receipt to QBO as a Purchase (CreditCardCharge)."""
+    try:
+        purchase_id = await qbo.post_purchase(
+            invoice,
+            gl_account,
+            employee_name=employee_name,
+            file_bytes=invoice.file_bytes,
+            filename=invoice.pdf_filename,
+        )
+        await db.mark_posted_qbo(invoice.id, purchase_id, gl_account)
+        await db.audit(invoice.id, "posted", "system", {
+            "destination": "qbo",
+            "bill_id": purchase_id,
+            "gl_account": gl_account,
+            "type": "purchase",
+        })
+        logger.info(f"Invoice {invoice.id} posted to QBO as purchase — id: {purchase_id}")
+
+        # Send confirmation email to the employee who made the purchase
+        if employee_name:
+            emp_rule = await db.get_vendor_rule_by_name(employee_name)
+            if emp_rule and emp_rule.forward_to:
+                await send_qbo_confirmation(
+                    to_address=emp_rule.forward_to,
+                    vendor_name=invoice.vendor_name or "Unknown vendor",
+                    total_amount=invoice.total_amount or 0,
+                    gl_name=gl_account,
+                    qbo_id=purchase_id,
+                    txn_date=invoice.invoice_date,
+                    file_bytes=invoice.file_bytes,
+                    filename=invoice.pdf_filename,
+                )
+
+        return RoutingOutcome.POSTED_QBO
+
+    except Exception as e:
+        logger.error(f"QBO purchase post failed for invoice {invoice.id}: {e}")
         await db.mark_error(invoice.id, str(e))
         return RoutingOutcome.ERROR
 

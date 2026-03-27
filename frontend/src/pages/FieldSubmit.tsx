@@ -5,11 +5,16 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { uploadInvoice, validatePO, listEmployees, type POValidationResult } from '../lib/api';
+import {
+  uploadInvoice, validatePO, listEmployees,
+  quickExtract, lookupVendorGL, suggestGL,
+  type POValidationResult, type QuickExtractResult, type GLLookupResult,
+} from '../lib/api';
 
 type DocType = 'vendor' | 'mastercard' | 'expense' | null;
 type CostType = 'job' | 'overhead';
-type Step = 1 | 2 | 3 | 4 | 5;
+// Step 4 = GL confirmation (overhead/MC only), step 5 = review, step 6 = success
+type Step = 1 | 2 | 3 | 4 | 5 | 6;
 
 const FALLBACK_EMPLOYEES = ['Marcus Torres','Jake Willms','Devon Hicks','Priya Sandhu','Cole Beaumont'];
 
@@ -23,6 +28,18 @@ export default function FieldSubmit() {
   const [employees, setEmployees] = useState<string[]>(FALLBACK_EMPLOYEES);
   const [file, setFile] = useState<File | null>(null);
 
+  // Quick-extract state (fires after photo capture)
+  const [extractResult, setExtractResult] = useState<QuickExtractResult | null>(null);
+
+  // GL confirmation state
+  const [glLookup, setGlLookup] = useState<GLLookupResult | null>(null);
+  const [glConfirmed, setGlConfirmed] = useState(false);
+  const [glOverride, setGlOverride] = useState<{account: string; name: string} | null>(null);
+  const [glDescription, setGlDescription] = useState('');
+  const [glSuggesting, setGlSuggesting] = useState(false);
+  const [glSuggestion, setGlSuggestion] = useState<{account: string; name: string} | null>(null);
+  const [showGlInput, setShowGlInput] = useState(false);
+
   useEffect(() => {
     listEmployees().then(names => { if (names.length > 0) setEmployees(names); }).catch(() => {});
   }, []);
@@ -34,11 +51,14 @@ export default function FieldSubmit() {
   const [notes, setNotes] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const needsGLConfirm = costType === 'overhead' || docType === 'mastercard';
+
   const canProceed = () => {
-    if (step === 1) return !!docType && (docType !== 'expense' || !!employee);
+    if (step === 1) return !!docType && ((docType !== 'expense' && docType !== 'mastercard') || !!employee);
     if (step === 2) return !!file;
     if (step === 3) return costType === 'overhead' || !!poResult?.valid;
-    if (step === 4) return true;
+    if (step === 4) return glConfirmed || !!glOverride || !!glSuggestion;  // GL confirm step
+    if (step === 5) return true;  // review
     return false;
   };
 
@@ -77,11 +97,14 @@ export default function FieldSubmit() {
     const compressed = await compressImage(f);
     setFile(compressed);
     setPreviewUrl(compressed.type.startsWith('image/') ? URL.createObjectURL(compressed) : null);
+    // Fire quick-extract in background — result used for GL lookup in step 4
+    setExtractResult(null);
+    quickExtract(compressed).then(r => setExtractResult(r)).catch(() => {});
   };
 
   const retake = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setFile(null); setPreviewUrl(null);
+    setFile(null); setPreviewUrl(null); setExtractResult(null);
     if (fileRef.current) fileRef.current.value = '';
   };
 
@@ -96,14 +119,17 @@ export default function FieldSubmit() {
     if (!file) return;
     setSubmitting(true); setSubmitError(null);
     try {
+      // Use user-confirmed/suggested GL if one was chosen in step 4
+      const confirmedGL = glOverride?.account || glSuggestion?.account || undefined;
       const res = await uploadInvoice(
         file, docType!, costType,
         costType === 'job' ? po : undefined,
-        docType === 'expense' ? employee : undefined,
+        (docType === 'expense' || docType === 'mastercard') ? employee : undefined,
         notes || undefined,
+        confirmedGL,
       );
       setReferenceId(`AP-${res.invoice_id}-${Date.now().toString(36).toUpperCase()}`);
-      setStep(5);
+      setStep(6);
     } catch (e: unknown) {
       setSubmitError((e as Error).message);
     } finally {
@@ -111,17 +137,53 @@ export default function FieldSubmit() {
     }
   };
 
-  const next = () => { if (step === 4) { handleSubmit(); return; } setStep(s => (s + 1) as Step); };
-  const back = () => setStep(s => (s - 1) as Step);
+  const handleSuggestGL = async () => {
+    if (!glDescription.trim()) return;
+    setGlSuggesting(true); setGlSuggestion(null);
+    try {
+      const result = await suggestGL(glDescription.trim(), extractResult?.vendor_name);
+      setGlSuggestion({ account: result.gl_account, name: result.gl_name });
+    } catch {
+      // leave suggestion null — user can retry
+    } finally {
+      setGlSuggesting(false);
+    }
+  };
+
+  const enterGLStep = async () => {
+    // When advancing from step 3 to GL confirm step, fetch the vendor's GL
+    if (needsGLConfirm && extractResult?.vendor_name) {
+      const lookup = await lookupVendorGL(extractResult.vendor_name);
+      setGlLookup(lookup);
+    }
+    setStep(4);
+  };
+
+  const next = () => {
+    if (step === 5) { handleSubmit(); return; }
+    if (step === 3 && needsGLConfirm) { enterGLStep(); return; }
+    // Skip GL step (step 4) for job cost / vendor invoices
+    if (step === 3 && !needsGLConfirm) { setStep(5); return; }
+    setStep(s => (s + 1) as Step);
+  };
+  const back = () => {
+    if (step === 5 && needsGLConfirm) { setStep(4); return; }
+    if (step === 5 && !needsGLConfirm) { setStep(3); return; }
+    if (step === 4) { setStep(3); return; }
+    setStep(s => (s - 1) as Step);
+  };
 
   const reset = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setStep(1); setDocType(null); setEmployee(''); setFile(null); setPreviewUrl(null);
     setCostType('job'); setPo(''); setPoResult(null); setPoValidating(false);
     setNotes(''); setReferenceId(null); setSubmitError(null);
+    setExtractResult(null); setGlLookup(null); setGlConfirmed(false);
+    setGlOverride(null); setGlDescription(''); setGlSuggesting(false);
+    setGlSuggestion(null); setShowGlInput(false);
   };
 
-  const stepLabels = ['Document type','Photo / upload','Job or overhead','Review & submit'];
+  const stepLabels = ['Document type','Photo / upload','Job or overhead','GL confirmation','Review & submit'];
 
   return (
     <div style={S.phone}>
@@ -135,14 +197,16 @@ export default function FieldSubmit() {
       </div>
 
       {/* Progress */}
-      {step < 5 && (
+      {step < 6 && (
         <div style={S.progress}>
           <div style={S.psteps}>
-            {[1,2,3,4].map(i => (
-              <div key={i} style={{...S.pstep, background: i < step ? '#2563eb' : i === step ? 'rgba(37,99,235,.45)' : '#e2e6ed'}}/>
-            ))}
+            {(needsGLConfirm ? [1,2,3,4,5] : [1,2,3,5]).map((i,idx) => {
+              const active = step === i;
+              const done   = step > i;
+              return <div key={idx} style={{...S.pstep, background: done ? '#2563eb' : active ? 'rgba(37,99,235,.45)' : '#e2e6ed'}}/>;
+            })}
           </div>
-          <div style={S.plabel}>Step {Math.min(step,3)} of 3 — {stepLabels[step-1]}</div>
+          <div style={S.plabel}>{stepLabels[step-1] || ''}</div>
         </div>
       )}
 
@@ -166,9 +230,9 @@ export default function FieldSubmit() {
               ))}
             </div>
           </div>
-          {docType === 'expense' && (
+          {(docType === 'expense' || docType === 'mastercard') && (
             <div style={S.card}>
-              <div style={S.ctitle}>Your name</div>
+              <div style={S.ctitle}>{docType === 'mastercard' ? 'Who made this purchase?' : 'Your name'}</div>
               <select style={S.sel} value={employee} onChange={e=>setEmployee(e.target.value)}>
                 <option value="">Select your name...</option>
                 {employees.map(e=><option key={e}>{e}</option>)}
@@ -259,31 +323,105 @@ export default function FieldSubmit() {
           </div>
         </>}
 
-        {/* Step 4 */}
+        {/* Step 4 — GL confirmation (overhead / MasterCard only) */}
         {step === 4 && <>
+          {!showGlInput ? (
+            <div style={S.card}>
+              <div style={S.ctitle}>Where is this posting?</div>
+              {glLookup?.found ? (<>
+                <div style={{...S.ohinfo, background:'#eff6ff', borderColor:'#bfdbfe', marginBottom:12}}>
+                  <div style={{fontSize:13,fontWeight:600,color:'#1e40af',marginBottom:4}}>📋 Posting to</div>
+                  <div style={{fontSize:16,fontWeight:700,color:'#1a1d23'}}>{glLookup.gl_name}</div>
+                  {glLookup.gl_account !== glLookup.gl_name &&
+                    <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>Account {glLookup.gl_account}</div>}
+                </div>
+                <div style={{fontSize:13,color:'#374151',marginBottom:16}}>Is this the right account for this purchase?</div>
+                <div style={{display:'flex',gap:10}}>
+                  <button style={{...S.lookup,flex:1,background:'#059669'}} onClick={()=>{ setGlConfirmed(true); setGlOverride(null); setGlSuggestion(null); }}>
+                    {glConfirmed ? '✓ Confirmed' : 'Yes, looks right'}
+                  </button>
+                  <button style={{...S.lookup,flex:1,background:'#6b7280'}} onClick={()=>{ setGlConfirmed(false); setShowGlInput(true); }}>
+                    No, change it
+                  </button>
+                </div>
+              </>) : (<>
+                <div style={{...S.ohinfo,marginBottom:12}}>
+                  <div style={{fontSize:13,color:'#92400e'}}>Vendor not found in rules — you can describe the purchase so we can pick the right account.</div>
+                </div>
+                <button style={{...S.lookup,width:'100%',background:'#6b7280',marginTop:4}} onClick={()=>setShowGlInput(true)}>
+                  Describe the purchase
+                </button>
+              </>)}
+            </div>
+          ) : (
+            <div style={S.card}>
+              <div style={S.ctitle}>What was purchased?</div>
+              <input
+                style={{...S.tinput,marginBottom:10}}
+                placeholder="e.g. office supplies, safety gear, fuel"
+                value={glDescription}
+                onChange={e=>{ setGlDescription(e.target.value); setGlSuggestion(null); }}
+              />
+              <button
+                style={{...S.lookup, width:'100%', opacity: glDescription.trim().length<3||glSuggesting?0.5:1}}
+                onClick={handleSuggestGL}
+                disabled={glDescription.trim().length<3||glSuggesting}
+              >
+                {glSuggesting ? 'Finding account...' : 'Find GL account'}
+              </button>
+              {glSuggestion && (
+                <div style={{...S.jobres,background:'#ecfdf5',borderColor:'#6ee7b7',marginTop:12}}>
+                  <div style={{fontSize:13,fontWeight:600,color:'#059669',marginBottom:2}}>Suggested account</div>
+                  <div style={{fontSize:16,fontWeight:700,color:'#1a1d23',marginBottom:4}}>{glSuggestion.name}</div>
+                  <div style={{fontSize:12,color:'#6b7280'}}>Account {glSuggestion.account}</div>
+                  <div style={{marginTop:10,display:'flex',gap:8}}>
+                    <button style={{...S.lookup,flex:1,background:'#059669',fontSize:12}} onClick={()=>{ setGlOverride(glSuggestion!); }}>
+                      {glOverride ? '✓ Confirmed' : 'Use this account'}
+                    </button>
+                    <button style={{...S.lookup,flex:1,background:'#6b7280',fontSize:12}} onClick={()=>{ setGlSuggestion(null); setGlDescription(''); }}>
+                      Try again
+                    </button>
+                  </div>
+                </div>
+              )}
+              <button style={{marginTop:12,fontSize:12,color:'#6b7280',background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}} onClick={()=>setShowGlInput(false)}>
+                ← Back
+              </button>
+            </div>
+          )}
+        </>}
+
+        {/* Step 5 — Review */}
+        {step === 5 && <>
           <div style={S.card}>
             <div style={S.ctitle}>Review before submitting</div>
             {previewUrl && <img src={previewUrl} alt="Receipt" style={{...S.preview,marginBottom:12}}/>}
             <RR label="Type" value={{vendor:'Vendor Invoice',mastercard:'MasterCard Receipt',expense:'Employee Expense'}[docType!]||'—'}/>
-            {docType==='expense'&&employee && <RR label="Employee" value={employee}/>}
+            {(docType==='expense'||docType==='mastercard')&&employee && <RR label={docType==='mastercard'?'Purchased by':'Employee'} value={employee}/>}
             <RR label="Document" value={file?.name||'—'} color="#059669"/>
-            <RR label="Coding" value={costType==='overhead'?'Overhead — AP team will code':'Job cost'} color={costType==='overhead'?'#d97706':'#059669'}/>
+            <RR label="Coding" value={costType==='overhead'?'Overhead':'Job cost'} color={costType==='overhead'?'#d97706':'#059669'}/>
             {costType==='job' && <RR label="PO / Job" value={poResult?.job_name?`${poResult.job_name} (${po})`:po} color="#059669"/>}
+            {needsGLConfirm && (glOverride || glSuggestion || glLookup?.found) && (
+              <RR
+                label="GL Account"
+                value={(glOverride || glSuggestion)?.name || glLookup?.gl_name || '—'}
+                color="#059669"
+              />
+            )}
             <RR label="Notes" value={notes||'—'}/>
           </div>
-          {costType==='overhead' && <div style={S.tip}>The AP team will assign the correct GL account and post this to QBO.</div>}
-          <div style={{...S.tip,background:'#eff6ff',borderColor:'#bfdbfe',color:'#1e40af'}}>Claude will extract the vendor, amount, and tax automatically.</div>
+          <div style={{...S.tip,background:'#eff6ff',borderColor:'#bfdbfe',color:'#1e40af'}}>Claude will confirm the vendor, amount, and tax from your photo.</div>
           {submitError && <div style={{...S.tip,background:'#fef2f2',borderColor:'#fca5a5',color:'#dc2626'}}>{submitError}</div>}
         </>}
 
-        {/* Step 5 */}
-        {step === 5 && (
+        {/* Step 6 — Success */}
+        {step === 6 && (
           <div style={S.success}>
             <span style={{fontSize:64,display:'block',marginBottom:16}}>✅</span>
             <div style={S.stitle}>Receipt submitted!</div>
             <div style={S.ssub}>
               {costType==='overhead'
-                ?'Sent to the AP queue as overhead. The team will assign the GL account and post to QBO.'
+                ?'Posted to QBO overhead. You\'ll get a confirmation email shortly.'
                 :'Sent to the AP queue. Your PO has been confirmed and the team will post to Aspire.'}
             </div>
             {referenceId && <div style={S.ref}>{referenceId}</div>}
@@ -293,11 +431,11 @@ export default function FieldSubmit() {
 
       {/* Bottom bar */}
       <div style={S.bar}>
-        {step===5 ? (
+        {step===6 ? (
           <button style={S.bsuccess} onClick={reset}>Submit another receipt</button>
         ) : <>
           <button style={{...S.bprimary,opacity:canProceed()&&!submitting?1:.4}} onClick={next} disabled={!canProceed()||submitting}>
-            {submitting?'Submitting...':step===4?'Submit receipt':'Continue'}
+            {submitting?'Submitting...':step===5?'Submit receipt':'Continue'}
           </button>
           {step>1 && <button style={S.bback} onClick={back}>← Back</button>}
         </>}

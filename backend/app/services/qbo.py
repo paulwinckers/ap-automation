@@ -432,6 +432,162 @@ class QBOClient:
         if resp.status_code not in (200, 201):
             raise ValueError(f"Attachment upload failed: {resp.status_code} {resp.text[:200]}")
 
+    # ── Purchase (credit card charge) creation ────────────────────────────────
+
+    async def post_purchase(
+        self,
+        invoice: Invoice,
+        gl_account: str,
+        payment_account: str = "2240",
+        employee_name: str = None,
+        file_bytes: bytes = None,
+        filename: str = None,
+    ) -> str:
+        """
+        Create a Purchase (CreditCardCharge) in QBO for a MasterCard receipt.
+
+        payment_account: the QBO account code for the company MasterCard (default 2240)
+        gl_account:      the expense GL account to charge (from vendor rule or fallback)
+
+        Returns the QBO Purchase Id.
+        """
+        # ── Resolve payment account (MasterCard liability) ────────────────────
+        pay_account = await self.find_account(payment_account)
+        if not pay_account:
+            raise ValueError(
+                f"Payment account '{payment_account}' not found in QBO chart of accounts."
+            )
+        pay_account_ref = {"value": pay_account["Id"], "name": pay_account["Name"]}
+
+        # ── Resolve expense GL account ────────────────────────────────────────
+        account = await self.find_account(gl_account)
+        if not account:
+            raise ValueError(
+                f"GL account '{gl_account}' not found in QBO chart of accounts."
+            )
+        account_ref = {"value": account["Id"], "name": account["Name"]}
+
+        # ── Resolve tax code ──────────────────────────────────────────────────
+        has_gst = any(
+            "gst" in (tl.tax_name or "").lower() or "cra" in (tl.tax_name or "").lower()
+            for tl in (invoice.tax_lines or [])
+        )
+        has_pst = any(
+            "pst" in (tl.tax_name or "").lower() or "bc" in (tl.tax_name or "").lower()
+            for tl in (invoice.tax_lines or [])
+        )
+        if not has_gst and not has_pst and invoice.tax_amount and invoice.tax_amount > 0:
+            has_gst = True
+            has_pst = True
+
+        tax_code_id = await self._resolve_tax_code(has_gst, has_pst)
+
+        # ── Build line items ──────────────────────────────────────────────────
+        if invoice.line_items:
+            lines = [
+                {
+                    "Amount": li.amount,
+                    "DetailType": "AccountBasedExpenseLineDetail",
+                    "Description": li.description or "",
+                    "AccountBasedExpenseLineDetail": {
+                        "AccountRef": account_ref,
+                        "BillableStatus": "NotBillable",
+                        **({"TaxCodeRef": {"value": tax_code_id}} if tax_code_id else {}),
+                    },
+                }
+                for li in invoice.line_items
+            ]
+        else:
+            lines = [
+                {
+                    "Amount": invoice.subtotal or invoice.total_amount,
+                    "DetailType": "AccountBasedExpenseLineDetail",
+                    "Description": f"Receipt {invoice.invoice_number or ''} — {invoice.vendor_name}",
+                    "AccountBasedExpenseLineDetail": {
+                        "AccountRef": account_ref,
+                        "BillableStatus": "NotBillable",
+                        **({"TaxCodeRef": {"value": tax_code_id}} if tax_code_id else {}),
+                    },
+                }
+            ]
+
+        # ── Build purchase payload ────────────────────────────────────────────
+        employee_note = f" | Purchased by: {employee_name}" if employee_name else ""
+        purchase_body = {
+            "PaymentType": "CreditCard",
+            "AccountRef": pay_account_ref,
+            "CurrencyRef": {"value": invoice.currency or "CAD"},
+            "TxnDate": invoice.invoice_date,
+            "DocNumber": invoice.invoice_number,
+            "PrivateNote": (
+                f"Auto-posted by AP Automation | MasterCard receipt{employee_note} | "
+                f"Source: {invoice.intake_source or 'upload'} | "
+                f"PDF: {invoice.pdf_filename or 'n/a'}"
+            ),
+            "Line": lines,
+            "GlobalTaxCalculation": "TaxExcluded",
+        }
+
+        # Optional: link to employee/vendor as EntityRef on the purchase
+        if invoice.vendor_name:
+            vendor = await self.find_vendor(invoice.vendor_name)
+            if vendor:
+                purchase_body["EntityRef"] = {
+                    "value": vendor["Id"],
+                    "name": vendor["DisplayName"],
+                    "type": "Vendor",
+                }
+
+        logger.info(
+            f"Posting QBO purchase (MC) — vendor: {invoice.vendor_name}, "
+            f"amount: {invoice.total_amount} CAD, GL: {gl_account}"
+        )
+
+        try:
+            result = await self._post("purchase", purchase_body)
+        except Exception as e:
+            logger.error(f"QBO purchase POST failed: {e}")
+            raise
+
+        purchase = result.get("Purchase", {})
+        purchase_id = purchase.get("Id")
+
+        if not purchase_id:
+            raise ValueError(f"QBO purchase creation returned no Id. Response: {result}")
+
+        logger.info(f"QBO purchase created — Id: {purchase_id}")
+
+        # ── Attach original receipt file ──────────────────────────────────────
+        if file_bytes and filename:
+            try:
+                await self._attach_file_to_bill(purchase_id, file_bytes, filename)
+                logger.info(f"Attached '{filename}' to QBO purchase {purchase_id}")
+            except Exception as e:
+                logger.warning(f"Could not attach file to QBO purchase {purchase_id}: {e}")
+
+        return purchase_id
+
+    # ── Chart of accounts ─────────────────────────────────────────────────────
+
+    async def list_expense_accounts(self) -> list[dict]:
+        """
+        Return all active expense/overhead accounts from the QBO chart of accounts.
+        Used for GL suggestion when a vendor is unknown or the user wants to correct the GL.
+        """
+        result = await self._get(
+            "query",
+            {
+                "query": (
+                    "SELECT Id, Name, AcctNum, AccountType, AccountSubType "
+                    "FROM Account "
+                    "WHERE Active = true "
+                    "AND (AccountType = 'Expense' OR AccountType = 'Other Expense') "
+                    "MAXRESULTS 200"
+                )
+            },
+        )
+        return result.get("QueryResponse", {}).get("Account", [])
+
     # ── Vendor statement reconciliation (future) ──────────────────────────────
 
     async def get_vendor_bills(

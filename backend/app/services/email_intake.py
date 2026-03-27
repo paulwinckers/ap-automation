@@ -143,6 +143,70 @@ class GraphClient:
             },
         )
 
+    async def send_receipt_confirmation(
+        self,
+        mailbox: str,
+        to_address: str,
+        vendor_name: str,
+        total_amount: float,
+        gl_name: str,
+        qbo_id: str,
+        txn_date: Optional[str],
+        attachment_bytes: Optional[bytes] = None,
+        attachment_filename: Optional[str] = None,
+    ) -> None:
+        """
+        Send a QBO post confirmation email to the employee who submitted the receipt.
+        Optionally attaches the original receipt photo.
+        """
+        currency = "CAD"
+        amount_fmt = f"${total_amount:,.2f} {currency}" if total_amount else "N/A"
+        date_fmt = txn_date or "N/A"
+
+        body_html = f"""
+<html><body style="font-family:Arial,sans-serif;color:#1a1d23;max-width:600px">
+<div style="background:#2563eb;padding:20px 24px;border-radius:8px 8px 0 0">
+  <h2 style="color:#fff;margin:0;font-size:18px">✅ Your expense is posted</h2>
+</div>
+<div style="background:#fff;border:1px solid #e2e6ed;border-top:none;padding:24px;border-radius:0 0 8px 8px">
+  <p style="margin:0 0 16px">Your receipt has been reviewed and posted to QuickBooks Online.</p>
+  <table style="width:100%;border-collapse:collapse;font-size:14px">
+    <tr><td style="padding:8px 0;color:#6b7280;width:140px">Vendor</td><td style="padding:8px 0;font-weight:600">{vendor_name}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0"><td style="padding:8px 0;color:#6b7280">Amount</td><td style="padding:8px 0;font-weight:600">{amount_fmt}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0"><td style="padding:8px 0;color:#6b7280">GL Account</td><td style="padding:8px 0">{gl_name}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0"><td style="padding:8px 0;color:#6b7280">QBO Reference</td><td style="padding:8px 0;font-size:12px;color:#6b7280">{qbo_id}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0"><td style="padding:8px 0;color:#6b7280">Date</td><td style="padding:8px 0">{date_fmt}</td></tr>
+  </table>
+  <p style="margin:24px 0 0;font-size:12px;color:#9ca3af">
+    Posted automatically by AP Automation · Dario's Landscape Services
+  </p>
+</div>
+</body></html>"""
+
+        message: dict = {
+            "subject": f"✅ Your expense is posted — {vendor_name} {amount_fmt}",
+            "body": {"contentType": "HTML", "content": body_html},
+            "toRecipients": [{"emailAddress": {"address": to_address}}],
+        }
+
+        if attachment_bytes and attachment_filename:
+            import mimetypes
+            mime_type, _ = mimetypes.guess_type(attachment_filename)
+            mime_type = mime_type or "image/jpeg"
+            message["attachments"] = [
+                {
+                    "@odata.type": "#microsoft.graph.fileAttachment",
+                    "name": attachment_filename,
+                    "contentType": mime_type,
+                    "contentBytes": base64.b64encode(attachment_bytes).decode("utf-8"),
+                }
+            ]
+
+        await self._post(
+            f"users/{mailbox}/sendMail",
+            {"message": message, "saveToSentItems": True},
+        )
+
     async def get_or_create_folder(self, mailbox: str, folder_name: str) -> str:
         if folder_name in self._folder_cache:
             return self._folder_cache[folder_name]
@@ -543,3 +607,43 @@ Automatically extracted and routed by AP Automation."""
 
 
 email_intake = EmailIntakeService()
+
+
+# ── Standalone helper — callable from routing.py ──────────────────────────────
+
+async def send_qbo_confirmation(
+    to_address: str,
+    vendor_name: str,
+    total_amount: float,
+    gl_name: str,
+    qbo_id: str,
+    txn_date: Optional[str],
+    file_bytes: Optional[bytes] = None,
+    filename: Optional[str] = None,
+) -> None:
+    """
+    Send a posted-to-QBO confirmation email to an employee.
+    Creates a temporary GraphClient — safe to call from any context.
+    Silently logs failures so a failed email never blocks the QBO post.
+    """
+    if not settings.MS_AP_INBOX:
+        logger.debug("MS_AP_INBOX not set — skipping confirmation email")
+        return
+    graph = GraphClient()
+    try:
+        await graph.send_receipt_confirmation(
+            mailbox=settings.MS_AP_INBOX,
+            to_address=to_address,
+            vendor_name=vendor_name,
+            total_amount=total_amount,
+            gl_name=gl_name,
+            qbo_id=qbo_id,
+            txn_date=txn_date,
+            attachment_bytes=file_bytes,
+            attachment_filename=filename,
+        )
+        logger.info(f"Confirmation email sent to {to_address}")
+    except Exception as e:
+        logger.warning(f"Confirmation email failed (non-fatal): {e}")
+    finally:
+        await graph.close()

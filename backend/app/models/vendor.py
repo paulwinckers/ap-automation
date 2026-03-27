@@ -18,6 +18,7 @@ class VendorRule(BaseModel):
     type:                VendorType
     default_gl_account:  Optional[str] = None
     default_gl_name:     Optional[str] = None
+    forward_to:          Optional[str] = None   # email for confirmation / forwarding
     notes:               Optional[str] = None
     is_employee:         bool = False
     active:              bool = True

@@ -54,8 +54,9 @@ class Invoice(BaseModel):
     id:                  int
     status:              InvoiceStatus
     tax_lines:           list[TaxLine] = []
-    # Transient field — not stored in DB, used to pass file to QBO attachment
+    # Transient fields — not stored in DB
     file_bytes:          Optional[bytes] = None
+    doc_type:            Optional[str] = None   # 'vendor' | 'mastercard' | 'expense'
     vendor_name:         Optional[str] = None
     vendor_id_resolved:  Optional[int] = None
     invoice_number:      Optional[str] = None
