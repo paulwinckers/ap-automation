@@ -25,7 +25,7 @@ from app.models.vendor import VendorRule, VendorType
 logger = logging.getLogger(__name__)
 
 LOCAL_DB_PATH = "local.db"
-SCHEMA_PATH   = os.path.join(os.path.dirname(__file__), "../../../infrastructure/schema.sql")
+SCHEMA_PATH   = os.path.join(os.path.dirname(__file__), "../../infrastructure/schema.sql")
 
 
 class Database:
