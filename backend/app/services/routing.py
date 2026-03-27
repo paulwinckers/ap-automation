@@ -25,7 +25,6 @@ from app.models.vendor import VendorRule, VendorType
 from app.services.aspire import AspireClient
 from app.services.qbo import QBOClient
 from app.core.database import Database
-from app.services.email_intake import send_qbo_confirmation
 
 # Fallback GL account when a MasterCard vendor is not in vendor_rules.
 # This is the "General overhead" catch-all account — AP can recode later.
@@ -206,6 +205,7 @@ async def _route_to_qbo(
         if employee_name:
             emp_rule = await db.get_vendor_rule_by_name(employee_name)
             if emp_rule and emp_rule.forward_to:
+                from app.services.email_intake import send_qbo_confirmation
                 await send_qbo_confirmation(
                     to_address=emp_rule.forward_to,
                     vendor_name=invoice.vendor_name or "Unknown vendor",
@@ -254,6 +254,7 @@ async def _route_to_qbo_purchase(
         if employee_name:
             emp_rule = await db.get_vendor_rule_by_name(employee_name)
             if emp_rule and emp_rule.forward_to:
+                from app.services.email_intake import send_qbo_confirmation
                 await send_qbo_confirmation(
                     to_address=emp_rule.forward_to,
                     vendor_name=invoice.vendor_name or "Unknown vendor",
