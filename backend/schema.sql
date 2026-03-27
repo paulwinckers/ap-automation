@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS vendor_rules (
     default_gl_name    TEXT,         -- Human-readable GL name
     forward_to      TEXT,            -- Email destination for job cost vendors
     notes           TEXT,
+    is_employee     INTEGER NOT NULL DEFAULT 0,  -- 1 = appears in employee expense dropdown
     active          INTEGER NOT NULL DEFAULT 1,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
