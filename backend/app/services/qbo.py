@@ -232,10 +232,12 @@ class QBOClient:
 
     async def find_account(self, account_code: str) -> Optional[dict]:
         """
-        Look up a QBO account by Name first, then by AcctNum.
+        Look up a QBO account by name or AcctNum.
+        QBO's query API doesn't support filtering by AcctNum, so we fetch the
+        full COA and search in memory.
         e.g. find_account("6710") or find_account("Shop purchases and supplies")
         """
-        # Try by account name first
+        # Try exact name match first (fast path for when we already have the name)
         escaped = account_code.replace("'", "\\'")
         result = await self._get(
             "query",
@@ -245,25 +247,20 @@ class QBOClient:
         if accounts:
             return accounts[0]
 
-        # Fall back to account number search
-        try:
-            result = await self._get(
-                "query",
-                {"query": f"SELECT * FROM Account WHERE AcctNum = '{account_code}' MAXRESULTS 1"},
-            )
-            accounts = result.get("QueryResponse", {}).get("Account", [])
-            if accounts:
-                return accounts[0]
-        except Exception:
-            pass  # AcctNum lookup not supported or failed — that's ok
+        # Fall back: fetch full COA and search by AcctNum in memory
+        # (QBO doesn't support WHERE AcctNum = '...' in queries)
+        all_accounts = await self.list_expense_accounts()
+        for acct in all_accounts:
+            if acct.get("AcctNum") == account_code:
+                return acct
 
-        # Last resort: search by display name containing the code
-        result = await self._get(
-            "query",
-            {"query": f"SELECT * FROM Account WHERE Name LIKE '%{escaped}%' MAXRESULTS 1"},
-        )
-        accounts = result.get("QueryResponse", {}).get("Account", [])
-        return accounts[0] if accounts else None
+        # Last resort: name contains the code
+        code_lower = account_code.lower()
+        for acct in all_accounts:
+            if code_lower in (acct.get("Name") or "").lower():
+                return acct
+
+        return None
 
     # ── Bill creation ─────────────────────────────────────────────────────────
 
