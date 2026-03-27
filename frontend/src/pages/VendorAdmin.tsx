@@ -5,6 +5,59 @@
  */
 
 import { useState, useEffect } from 'react';
+
+const ADMIN_PIN = import.meta.env.VITE_ADMIN_PIN || '1946';
+const SESSION_KEY = 'ap_admin_auth';
+
+function PinGate({ onUnlock }: { onUnlock: () => void }) {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState(false);
+
+  const attempt = () => {
+    if (pin === ADMIN_PIN) {
+      sessionStorage.setItem(SESSION_KEY, '1');
+      onUnlock();
+    } else {
+      setError(true);
+      setPin('');
+      setTimeout(() => setError(false), 2000);
+    }
+  };
+
+  return (
+    <div style={P.wrap}>
+      <div style={P.box}>
+        <div style={P.logo}>🔒</div>
+        <div style={P.title}>Vendor Admin</div>
+        <div style={P.sub}>Enter your PIN to continue</div>
+        <input
+          style={{ ...P.input, borderColor: error ? '#dc2626' : '#e2e6ed' }}
+          type="password"
+          inputMode="numeric"
+          maxLength={8}
+          placeholder="PIN"
+          value={pin}
+          onChange={e => setPin(e.target.value.replace(/\D/g, ''))}
+          onKeyDown={e => e.key === 'Enter' && attempt()}
+          autoFocus
+        />
+        {error && <div style={P.err}>Incorrect PIN</div>}
+        <button style={P.btn} onClick={attempt}>Unlock</button>
+      </div>
+    </div>
+  );
+}
+
+const P: Record<string, React.CSSProperties> = {
+  wrap:  { minHeight: '100vh', background: '#f4f6f9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'DM Sans',sans-serif" },
+  box:   { background: '#fff', border: '1px solid #e2e6ed', borderRadius: 16, padding: '40px 32px', width: '100%', maxWidth: 320, textAlign: 'center' },
+  logo:  { fontSize: 40, marginBottom: 12 },
+  title: { fontSize: 20, fontWeight: 600, color: '#1a1d23', marginBottom: 4 },
+  sub:   { fontSize: 13, color: '#6b7280', marginBottom: 24 },
+  input: { width: '100%', padding: '12px 14px', border: '1.5px solid', borderRadius: 8, fontSize: 18, textAlign: 'center' as const, outline: 'none', fontFamily: 'inherit', letterSpacing: '0.2em', boxSizing: 'border-box' as const, marginBottom: 8 },
+  err:   { fontSize: 13, color: '#dc2626', marginBottom: 8 },
+  btn:   { width: '100%', padding: 14, background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+};
 import {
   listVendors,
   createVendor,
@@ -27,6 +80,14 @@ const EMPTY_FORM = {
 };
 
 export default function VendorAdmin() {
+  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(SESSION_KEY) === '1');
+
+  if (!unlocked) return <PinGate onUnlock={() => setUnlocked(true)} />;
+
+  return <VendorAdminInner />;
+}
+
+function VendorAdminInner() {
   const [vendors, setVendors] = useState<VendorRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -325,7 +386,7 @@ export default function VendorAdmin() {
       )}
     </div>
   );
-}
+} // end VendorAdminInner
 
 const S: Record<string, React.CSSProperties> = {
   page:        { minHeight: '100vh', background: '#f4f6f9', fontFamily: "'DM Sans',sans-serif" },
