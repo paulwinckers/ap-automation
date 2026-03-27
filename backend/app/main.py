@@ -23,7 +23,7 @@ VENDOR_SEED_FILE = os.path.join(os.path.dirname(__file__), "../vendor_rules.csv"
 async def seed_vendors_if_empty(db: Database):
     """Auto-import vendor rules from bundled CSV if the table is empty."""
     result = await db.get_all_vendor_rules()
-    if result and len(result) > 0:
+    if result and len(result) > 4:
         logger.info(f"Vendor rules already loaded ({len(result)} vendors) — skipping seed")
         return
 
