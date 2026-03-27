@@ -7,7 +7,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   uploadInvoice, validatePO, listEmployees,
-  quickExtract, lookupVendorGL, suggestGL,
+  quickExtract, lookupVendorGL, lookupGLName, suggestGL,
   type POValidationResult, type QuickExtractResult, type GLLookupResult,
 } from '../lib/api';
 
@@ -151,10 +151,24 @@ export default function FieldSubmit() {
   };
 
   const enterGLStep = async () => {
-    // When advancing from step 3 to GL confirm step, fetch the vendor's GL
     if (needsGLConfirm && extractResult?.vendor_name) {
       const lookup = await lookupVendorGL(extractResult.vendor_name);
-      setGlLookup(lookup);
+      // If vendor rule has no descriptive name (gl_name == gl_account), fetch it from QBO
+      if (lookup.found && lookup.gl_account && lookup.gl_name === lookup.gl_account) {
+        const nameResult = await lookupGLName(lookup.gl_account);
+        if (nameResult.found && nameResult.gl_name) {
+          setGlLookup({ ...lookup, gl_name: nameResult.gl_name });
+        } else {
+          setGlLookup(lookup);
+        }
+      } else {
+        setGlLookup(lookup);
+      }
+      // If vendor unknown, skip the confirm card and go straight to "what did you buy?"
+      if (!lookup.found) setShowGlInput(true);
+    } else {
+      // No vendor name extracted — go straight to description input
+      setShowGlInput(true);
     }
     setStep(4);
   };
@@ -328,7 +342,7 @@ export default function FieldSubmit() {
           {!showGlInput ? (
             <div style={S.card}>
               <div style={S.ctitle}>Where is this posting?</div>
-              {glLookup?.found ? (<>
+              {glLookup?.found && (<>
                 <div style={{...S.ohinfo, background:'#eff6ff', borderColor:'#bfdbfe', marginBottom:12}}>
                   <div style={{fontSize:13,fontWeight:600,color:'#1e40af',marginBottom:4}}>📋 Posting to</div>
                   <div style={{fontSize:16,fontWeight:700,color:'#1a1d23'}}>{glLookup.gl_name}</div>
@@ -344,30 +358,25 @@ export default function FieldSubmit() {
                     No, change it
                   </button>
                 </div>
-              </>) : (<>
-                <div style={{...S.ohinfo,marginBottom:12}}>
-                  <div style={{fontSize:13,color:'#92400e'}}>Vendor not found in rules — you can describe the purchase so we can pick the right account.</div>
-                </div>
-                <button style={{...S.lookup,width:'100%',background:'#6b7280',marginTop:4}} onClick={()=>setShowGlInput(true)}>
-                  Describe the purchase
-                </button>
               </>)}
             </div>
           ) : (
             <div style={S.card}>
-              <div style={S.ctitle}>What was purchased?</div>
+              <div style={S.ctitle}>What did you buy?</div>
+              <div style={{fontSize:13,color:'#6b7280',marginBottom:12,lineHeight:1.5}}>Describe what you purchased and we'll find the right account.</div>
               <input
                 style={{...S.tinput,marginBottom:10}}
                 placeholder="e.g. office supplies, safety gear, fuel"
                 value={glDescription}
                 onChange={e=>{ setGlDescription(e.target.value); setGlSuggestion(null); }}
+                autoFocus
               />
               <button
                 style={{...S.lookup, width:'100%', opacity: glDescription.trim().length<3||glSuggesting?0.5:1}}
                 onClick={handleSuggestGL}
                 disabled={glDescription.trim().length<3||glSuggesting}
               >
-                {glSuggesting ? 'Finding account...' : 'Find GL account'}
+                {glSuggesting ? 'Finding account...' : 'Find account'}
               </button>
               {glSuggestion && (
                 <div style={{...S.jobres,background:'#ecfdf5',borderColor:'#6ee7b7',marginTop:12}}>
@@ -384,9 +393,11 @@ export default function FieldSubmit() {
                   </div>
                 </div>
               )}
-              <button style={{marginTop:12,fontSize:12,color:'#6b7280',background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}} onClick={()=>setShowGlInput(false)}>
-                ← Back
-              </button>
+              {glLookup?.found && (
+                <button style={{marginTop:12,fontSize:12,color:'#6b7280',background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}} onClick={()=>{ setShowGlInput(false); setGlSuggestion(null); setGlDescription(''); }}>
+                  ← Use suggested account
+                </button>
+              )}
             </div>
           )}
         </>}
