@@ -145,7 +145,18 @@ class _SQLiteBackend:
             return
         with open(schema_path, "r") as f:
             schema = f.read()
-        await self._db.executescript(schema)
+        statements = [s.strip() for s in schema.split(";") if s.strip()]
+        for stmt in statements:
+            upper = stmt.upper().lstrip()
+            if upper.startswith(("CREATE TABLE", "CREATE INDEX")):
+                await self._db.execute(stmt)
+            elif upper.startswith("ALTER TABLE"):
+                # Migration — ignore if column already exists
+                try:
+                    await self._db.execute(stmt)
+                except Exception as e:
+                    logger.debug(f"SQLite migration skipped (already applied): {e}")
+            # Skip INSERT seed data — seeded from CSV on startup
         await self._db.commit()
 
     async def query(self, sql: str, params: list = None) -> list[dict]:
