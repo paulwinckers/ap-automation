@@ -200,11 +200,11 @@ export default function FieldSubmit() {
             <div style={S.ctitle}>What are you submitting?</div>
             <div style={S.docgrid}>
               {([
-                {t:'vendor',    icon:'🧾', label:'Vendor Invoice', sub:'Bill from supplier'},
-                {t:'mastercard',icon:'💳', label:'MC Receipt',     sub:'Company card purchase'},
-                {t:'expense',   icon:'🧑', label:'My Expense',     sub:'Personal card / cash'},
+                {t:'vendor',    icon:'🧾', label:'On Account',  sub:'Bill from supplier'},
+                {t:'mastercard',icon:'💳', label:'MC Receipt',  sub:'Company card purchase'},
+                {t:'expense',   icon:'🧑', label:'My Expense',  sub:'Personal card / cash'},
               ] as {t:DocType,icon:string,label:string,sub:string}[]).map(o => (
-                <button key={o.t} style={{...S.dt,...(docType===o.t?S.dtsel:{})}} onClick={()=>{setDocType(o.t);setEmployee('');}}>
+                <button key={o.t} style={{...S.dt,...(docType===o.t?S.dtsel:{})}} onClick={()=>setDocType(o.t)}>
                   <span style={{fontSize:28,display:'block',marginBottom:6}}>{o.icon}</span>
                   <div style={S.dlabel}>{o.label}</div>
                   <div style={S.dsub}>{o.sub}</div>
