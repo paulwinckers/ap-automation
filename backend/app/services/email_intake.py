@@ -529,7 +529,7 @@ Invoice ID in system: {invoice_id}"""
     async def _summary_loop(self):
         while self._running:
             now = datetime.now()
-            if now.hour == 17 and now.minute == 0 and not self._summary_sent_today:
+            if now.hour == 14 and now.minute == 0 and not self._summary_sent_today:  # 7am PDT (UTC-7)
                 try:
                     await self._send_daily_summary()
                     self._summary_sent_today = True
@@ -541,40 +541,74 @@ Invoice ID in system: {invoice_id}"""
 
     async def _send_daily_summary(self):
         today = datetime.now().strftime("%B %d, %Y")
-        n_posted    = len(self._posted)
-        n_forwarded = len(self._forwarded)
-        n_failed    = len(self._failed)
-        n_skipped   = len(self._skipped)
 
-        def table_rows(items: list[dict], keys: list[str]) -> str:
+        # Pull last 24 hours from D1 — accurate across redeploys
+        from app.core.database import Database
+        db = Database()
+        await db.connect()
+        try:
+            all_invoices = await db._q(
+                """SELECT vendor_name, invoice_number, total_amount, currency,
+                          status, destination, qbo_bill_id, error_message,
+                          intake_source, received_at
+                   FROM invoices
+                   WHERE received_at >= datetime('now', '-24 hours')
+                   ORDER BY received_at DESC"""
+            )
+        finally:
+            await db.close()
+
+        posted    = [i for i in all_invoices if i["status"] == "posted"]
+        errors    = [i for i in all_invoices if i["status"] == "error"]
+        queued    = [i for i in all_invoices if i["status"] == "queued"]
+        n_posted  = len(posted)
+        n_queued  = len(queued)
+        n_failed  = len(errors) + len(self._failed)   # DB errors + email failures
+        n_skipped = len(self._skipped)
+
+        def fmt_amt(row):
+            try:
+                return f"${float(row.get('total_amount') or 0):,.2f} {row.get('currency','CAD')}"
+            except Exception:
+                return "—"
+
+        def invoice_rows(items, include_error=False):
             if not items:
-                return f"<tr><td colspan='{len(keys)}' style='padding:12px;color:#6b7280;text-align:center'>None today</td></tr>"
+                return "<tr><td colspan='4' style='padding:12px;color:#6b7280;text-align:center'>None in last 24 hours</td></tr>"
             rows = ""
-            for item in items:
-                rows += "<tr>" + "".join(
-                    f"<td style='padding:6px 12px;border-bottom:1px solid #e2e6ed'>{item.get(k, '—')}</td>"
-                    for k in keys
-                ) + "</tr>"
+            for i in items:
+                dest = i.get("destination") or i.get("intake_source") or "—"
+                extra = f"<td style='padding:6px 12px;border-bottom:1px solid #e2e6ed;color:#dc2626;font-size:11px'>{(i.get('error_message') or '')[:80]}</td>" if include_error else f"<td style='padding:6px 12px;border-bottom:1px solid #e2e6ed'>{dest.upper()}</td>"
+                rows += f"<tr><td style='padding:6px 12px;border-bottom:1px solid #e2e6ed'>{i.get('vendor_name','—')}</td><td style='padding:6px 12px;border-bottom:1px solid #e2e6ed'>{i.get('invoice_number') or '—'}</td><td style='padding:6px 12px;border-bottom:1px solid #e2e6ed'>{fmt_amt(i)}</td>{extra}</tr>"
             return rows
 
-        posted_html    = table_rows(self._posted,    ["vendor","invoice_no","amount","destination"])
-        forwarded_html = table_rows(self._forwarded, ["vendor","amount","forwarded_to","note"])
-        failed_html    = table_rows(self._failed,    ["vendor","error"]) if self._failed else ""
+        def skipped_rows():
+            if not self._skipped:
+                return "<tr><td colspan='2' style='padding:12px;color:#6b7280;text-align:center'>None</td></tr>"
+            rows = ""
+            for s in self._skipped[-20:]:  # cap at 20
+                rows += f"<tr><td style='padding:6px 12px;border-bottom:1px solid #e2e6ed'>{s.get('subject','—')}</td><td style='padding:6px 12px;border-bottom:1px solid #e2e6ed;color:#6b7280'>{s.get('from','—')}</td></tr>"
+            return rows
+
+        posted_html  = invoice_rows(posted)
+        queued_html  = invoice_rows(queued, include_error=False)
+        failed_html  = invoice_rows(errors, include_error=True)
+        skipped_html = skipped_rows()
 
         html = f"""
 <div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;color:#1a1d23">
   <div style="background:#2563eb;padding:24px 32px;border-radius:8px 8px 0 0">
     <h1 style="color:#fff;margin:0;font-size:20px;font-weight:500">AP Automation — Daily Summary</h1>
-    <p style="color:rgba(255,255,255,.8);margin:4px 0 0;font-size:14px">{today}</p>
+    <p style="color:rgba(255,255,255,.8);margin:4px 0 0;font-size:14px">{today} · Previous 24 hours</p>
   </div>
   <div style="background:#f8f9fc;padding:20px 32px;border-bottom:1px solid #e2e6ed;display:flex;gap:24px">
     <div style="flex:1;text-align:center"><div style="font-size:28px;color:#059669">{n_posted}</div><div style="font-size:12px;color:#6b7280">posted to QBO</div></div>
-    <div style="flex:1;text-align:center"><div style="font-size:28px;color:#2563eb">{n_forwarded}</div><div style="font-size:12px;color:#6b7280">forwarded</div></div>
-    <div style="flex:1;text-align:center"><div style="font-size:28px;color:#d97706">{n_skipped}</div><div style="font-size:12px;color:#6b7280">non-invoices skipped</div></div>
+    <div style="flex:1;text-align:center"><div style="font-size:28px;color:#d97706">{n_queued}</div><div style="font-size:12px;color:#6b7280">needs review</div></div>
     <div style="flex:1;text-align:center"><div style="font-size:28px;color:#dc2626">{n_failed}</div><div style="font-size:12px;color:#6b7280">failed</div></div>
+    <div style="flex:1;text-align:center"><div style="font-size:28px;color:#6b7280">{n_skipped}</div><div style="font-size:12px;color:#6b7280">non-invoices skipped</div></div>
   </div>
   <div style="padding:24px 32px;background:#fff">
-    <h2 style="font-size:13px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;margin:0 0 10px">Posted to QBO</h2>
+    <h2 style="font-size:13px;font-weight:600;color:#059669;text-transform:uppercase;letter-spacing:.04em;margin:0 0 10px">✅ Posted to QBO</h2>
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead><tr style="background:#f8f9fc">
         <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:500">Vendor</th>
@@ -584,31 +618,38 @@ Invoice ID in system: {invoice_id}"""
       </tr></thead>
       <tbody>{posted_html}</tbody>
     </table>
-    <h2 style="font-size:13px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;margin:24px 0 10px">Forwarded for review</h2>
+    <h2 style="font-size:13px;font-weight:600;color:#d97706;text-transform:uppercase;letter-spacing:.04em;margin:24px 0 10px">⏳ Needs Review</h2>
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead><tr style="background:#f8f9fc">
         <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:500">Vendor</th>
+        <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:500">Invoice #</th>
         <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:500">Amount</th>
-        <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:500">Forwarded to</th>
-        <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:500">Note</th>
+        <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:500">Source</th>
       </tr></thead>
-      <tbody>{forwarded_html}</tbody>
+      <tbody>{queued_html}</tbody>
     </table>
-    {"<h2 style='font-size:13px;font-weight:600;color:#dc2626;text-transform:uppercase;letter-spacing:.04em;margin:24px 0 10px'>Failed — action required</h2><table style='width:100%;border-collapse:collapse;font-size:13px'><thead><tr style='background:#fef2f2'><th style='padding:8px 12px;text-align:left;color:#6b7280;font-weight:500'>Invoice</th><th style='padding:8px 12px;text-align:left;color:#6b7280;font-weight:500'>Error</th></tr></thead><tbody>" + failed_html + "</tbody></table>" if self._failed else ""}
+    {"<h2 style='font-size:13px;font-weight:600;color:#dc2626;text-transform:uppercase;letter-spacing:.04em;margin:24px 0 10px'>❌ Failed — Action Required</h2><table style='width:100%;border-collapse:collapse;font-size:13px'><thead><tr style='background:#fef2f2'><th style='padding:8px 12px;text-align:left;color:#6b7280;font-weight:500'>Vendor</th><th style='padding:8px 12px;text-align:left;color:#6b7280;font-weight:500'>Invoice #</th><th style='padding:8px 12px;text-align:left;color:#6b7280;font-weight:500'>Amount</th><th style='padding:8px 12px;text-align:left;color:#6b7280;font-weight:500'>Error</th></tr></thead><tbody>" + failed_html + "</tbody></table>" if errors else ""}
+    <h2 style="font-size:13px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;margin:24px 0 10px">Non-invoices skipped</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="background:#f8f9fc">
+        <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:500">Subject</th>
+        <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:500">From</th>
+      </tr></thead>
+      <tbody>{skipped_html}</tbody>
+    </table>
   </div>
   <div style="background:#f8f9fc;padding:16px 32px;border-radius:0 0 8px 8px;border-top:1px solid #e2e6ed">
-    <p style="font-size:12px;color:#6b7280;margin:0">AP Automation · Dario's Landscape Services · {n_posted + n_forwarded} invoices processed · {n_skipped} non-invoices skipped</p>
+    <p style="font-size:12px;color:#6b7280;margin:0">AP Automation · Dario's Landscape Services · {n_posted + n_queued} invoices processed · {n_skipped} non-invoices skipped</p>
   </div>
 </div>"""
 
         await self.graph.send_email(
             mailbox=settings.MS_AP_INBOX,
             to_addresses=SUMMARY_TO,
-            subject=f"AP Daily Summary — {today} ({n_posted} posted, {n_failed} failed)",
+            subject=f"AP Daily Summary — {today} ({n_posted} posted, {n_queued} needs review, {n_failed} failed)",
             body_html=html,
         )
-        logger.info(f"Daily summary sent — {n_posted} posted, {n_forwarded} forwarded, {n_failed} failed, {n_skipped} skipped")
-        self._posted.clear(); self._forwarded.clear()
+        logger.info(f"Daily summary sent — {n_posted} posted, {n_queued} queued, {n_failed} failed, {n_skipped} skipped")
         self._failed.clear(); self._skipped.clear()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
