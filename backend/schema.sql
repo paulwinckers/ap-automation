@@ -131,6 +131,9 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- ── Schema migrations (run on every startup, safe to re-run) ─────────────────
--- These ALTER TABLE statements are applied by _D1Backend._ensure_schema()
--- on every deploy. They are no-ops if the column already exists.
+-- These ALTER TABLE statements are applied by _ensure_schema() on every deploy.
+-- They are no-ops if the column already exists.
 ALTER TABLE invoices ADD COLUMN gl_name TEXT;
+ALTER TABLE vendor_rules ADD COLUMN is_employee INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE vendor_rules ADD COLUMN forward_to TEXT;
+ALTER TABLE vendor_rules ADD COLUMN default_gl_name TEXT;
