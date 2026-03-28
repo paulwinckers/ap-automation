@@ -228,19 +228,22 @@ class QBOClient:
         # 2. Partial match (active) — handles minor name differences
         result = await self._get(
             "query",
-            {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{like_term}%' MAXRESULTS 1"},
+            {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{like_term}%' MAXRESULTS 5"},
         )
-        vendors = result.get("QueryResponse", {}).get("Vendor", [])
-        if vendors:
-            return vendors[0]
+        for v in result.get("QueryResponse", {}).get("Vendor", []):
+            if "(deleted)" not in v.get("DisplayName", "").lower():
+                return v
 
-        # 3. Partial match (inactive) — prevents duplicate creation when vendor was deactivated
+        # 3. Partial match (inactive, non-deleted) — prevents duplicates when vendor was deactivated
         result = await self._get(
             "query",
-            {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{like_term}%' AND Active = false MAXRESULTS 1"},
+            {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{like_term}%' AND Active = false MAXRESULTS 5"},
         )
-        vendors = result.get("QueryResponse", {}).get("Vendor", [])
-        return vendors[0] if vendors else None
+        for v in result.get("QueryResponse", {}).get("Vendor", []):
+            if "(deleted)" not in v.get("DisplayName", "").lower():
+                return v
+
+        return None
 
     async def find_or_create_vendor(self, vendor_name: str) -> dict:
         """Find vendor in QBO, creating a stub record only if truly not found."""
