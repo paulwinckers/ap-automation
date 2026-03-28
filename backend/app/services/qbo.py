@@ -710,15 +710,18 @@ async def qbo_callback(code: str, realmId: str, state: str):
     access_token  = tokens["access_token"]
 
     logger.info(f"QBO OAuth complete — realmId: {realmId}")
-    logger.info(f"Add to .env:  QBO_REALM_ID={realmId}")
-    logger.info(f"Add to .env:  QBO_REFRESH_TOKEN={refresh_token}")
+
+    # Save the new refresh token to D1 immediately so the running app picks it up
+    from app.services.d1_settings import set_setting
+    await set_setting("QBO_REFRESH_TOKEN", refresh_token)
+    logger.info("New QBO refresh token saved to D1")
 
     return {
-        "message":       "QBO connected. Copy these values into your .env file.",
-        "QBO_REALM_ID":        realmId,
-        "QBO_REFRESH_TOKEN":   refresh_token,
+        "message": "✅ QBO reconnected successfully. Token saved — no manual steps needed.",
+        "QBO_REALM_ID":      realmId,
+        "QBO_REFRESH_TOKEN": refresh_token,
         "note": (
-            "The access_token is short-lived (60 min) and NOT needed in .env. "
-            "Only store the refresh_token — the app renews the access token automatically."
+            "The refresh token has been saved to D1 automatically. "
+            "Also update QBO_REFRESH_TOKEN in Railway env vars so it survives a full redeploy."
         ),
     }
