@@ -301,9 +301,30 @@ class EmailIntakeService:
 
     async def _is_invoice(self, email: dict, body_content: str) -> bool:
         subject = email.get("subject", "")
+        subject_lower = subject.lower()
+        sender = email.get("from", {}).get("emailAddress", {}).get("address", "").lower()
+
+        # Never process our own outgoing invoices replied to by customers,
+        # quotes/estimates, or employment/HR documents
+        skip_phrases = [
+            "from darios landscape",
+            "from dario's landscape",
+            "darios landscape services",
+        ]
+        if any(p in subject_lower for p in skip_phrases):
+            return False
+
+        # Skip quotes/estimates — not payable invoices
+        if any(k in subject_lower for k in ["quote for ", "estimate for ", "proposal for "]):
+            return False
+
+        # Skip HR / legal documents
+        if any(k in subject_lower for k in ["offer of employment", "employment offer", "contract of employment"]):
+            return False
+
         invoice_keywords = ["invoice", "bill", "receipt", "statement", "purchase order",
                            "payment due", "amount due", "total due", "po #", "inv #"]
-        if any(k in subject.lower() for k in invoice_keywords):
+        if any(k in subject_lower for k in invoice_keywords):
             return True
         if email.get("hasAttachments"):
             return True

@@ -54,7 +54,8 @@ Rules:
 """
 
 # MIME types Claude accepts for documents vs images
-PDF_MIME = "application/pdf"
+PDF_MIME   = "application/pdf"
+HTML_MIME  = "text/html"
 IMAGE_MIMES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
 
@@ -67,6 +68,8 @@ def _detect_mime(filename: str, raw_bytes: bytes) -> str:
         name_lower = filename.lower()
         if name_lower.endswith(".pdf"):
             return PDF_MIME
+        if name_lower.endswith((".html", ".htm")):
+            return HTML_MIME
         if name_lower.endswith((".jpg", ".jpeg")):
             return "image/jpeg"
         if name_lower.endswith(".png"):
@@ -81,6 +84,8 @@ def _detect_mime(filename: str, raw_bytes: bytes) -> str:
     # Fall back to magic bytes
     if raw_bytes[:4] == b"%PDF":
         return PDF_MIME
+    if raw_bytes[:5].lower().startswith(b"<html") or raw_bytes[:14].lower().startswith(b"<!doctype html"):
+        return HTML_MIME
     if raw_bytes[:2] in (b"\xff\xd8",):
         return "image/jpeg"
     if raw_bytes[:8] == b"\x89PNG\r\n\x1a\n":
@@ -113,45 +118,64 @@ class InvoiceExtractor:
     async def _call_claude(self, file_b64: str, mime_type: str) -> InvoiceExtraction:
         logger.info(f"Calling Claude for invoice extraction — mime: {mime_type}")
 
-        # Build content block — document type for PDFs, image type for images
-        if mime_type == PDF_MIME:
-            file_content = {
-                "type": "document",
-                "source": {
-                    "type": "base64",
-                    "media_type": PDF_MIME,
-                    "data": file_b64,
-                },
-            }
+        # HTML email bodies — send as plain text, not as image/document
+        if mime_type == HTML_MIME:
+            import base64 as _b64
+            import re
+            html_text = _b64.standard_b64decode(file_b64).decode("utf-8", errors="replace")
+            # Strip HTML tags to get readable text
+            plain_text = re.sub(r"<[^>]+>", " ", html_text)
+            plain_text = re.sub(r"\s+", " ", plain_text).strip()
+            message = await self.client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=2048,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"Email body text:\n\n{plain_text[:8000]}\n\n{EXTRACTION_PROMPT}",
+                    }
+                ],
+            )
         else:
-            # Ensure mime is one Claude accepts
-            if mime_type not in IMAGE_MIMES:
-                mime_type = "image/jpeg"
-            file_content = {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": mime_type,
-                    "data": file_b64,
-                },
-            }
-
-        message = await self.client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=2048,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        file_content,
-                        {
-                            "type": "text",
-                            "text": EXTRACTION_PROMPT,
-                        },
-                    ],
+            # Build content block — document type for PDFs, image type for images
+            if mime_type == PDF_MIME:
+                file_content = {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": PDF_MIME,
+                        "data": file_b64,
+                    },
                 }
-            ],
-        )
+            else:
+                # Ensure mime is one Claude accepts
+                if mime_type not in IMAGE_MIMES:
+                    mime_type = "image/jpeg"
+                file_content = {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime_type,
+                        "data": file_b64,
+                    },
+                }
+
+            message = await self.client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=2048,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            file_content,
+                            {
+                                "type": "text",
+                                "text": EXTRACTION_PROMPT,
+                            },
+                        ],
+                    }
+                ],
+            )
 
         raw_text = message.content[0].text.strip()
         logger.info(f"Claude extraction response: {raw_text[:300]}")
