@@ -354,12 +354,11 @@ class QBOClient:
             ]
 
         # ── Build bill payload ────────────────────────────────────────────────
+        # QBO rejects explicit null for optional fields — omit them entirely
         bill_body = {
             "VendorRef": vendor_ref,
             "CurrencyRef": {"value": invoice.currency or "CAD"},
             "TxnDate": invoice.invoice_date,
-            "DueDate": invoice.due_date,
-            "DocNumber": invoice.invoice_number,
             "PrivateNote": (
                 f"Auto-posted by AP Automation | "
                 f"Source: {invoice.intake_source or 'upload'} | "
@@ -368,6 +367,10 @@ class QBOClient:
             "Line": lines,
             "GlobalTaxCalculation": "TaxExcluded",
         }
+        if invoice.due_date:
+            bill_body["DueDate"] = invoice.due_date
+        if invoice.invoice_number:
+            bill_body["DocNumber"] = invoice.invoice_number
 
         logger.info(
             f"Posting QBO bill — vendor: {invoice.vendor_name}, "
@@ -525,13 +528,13 @@ class QBOClient:
             ]
 
         # ── Build purchase payload ────────────────────────────────────────────
+        # QBO rejects explicit null for optional fields — omit them entirely
         employee_note = f" | Purchased by: {employee_name}" if employee_name else ""
         purchase_body = {
             "PaymentType": "CreditCard",
             "AccountRef": pay_account_ref,
             "CurrencyRef": {"value": invoice.currency or "CAD"},
             "TxnDate": invoice.invoice_date,
-            "DocNumber": invoice.invoice_number,
             "PrivateNote": (
                 f"Auto-posted by AP Automation | MasterCard receipt{employee_note} | "
                 f"Source: {invoice.intake_source or 'upload'} | "
@@ -540,6 +543,8 @@ class QBOClient:
             "Line": lines,
             "GlobalTaxCalculation": "TaxExcluded",
         }
+        if invoice.invoice_number:
+            purchase_body["DocNumber"] = invoice.invoice_number
 
         # Optional: link to employee/vendor as EntityRef on the purchase
         if invoice.vendor_name:
