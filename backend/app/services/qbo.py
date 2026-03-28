@@ -365,7 +365,8 @@ class QBOClient:
                 f"PDF: {invoice.pdf_filename or 'n/a'}"
             ),
             "Line": lines,
-            "GlobalTaxCalculation": "TaxExcluded",
+            # QBO Canada: TaxExcluded requires TaxCodeRef on lines; use NotApplicable when no tax
+            "GlobalTaxCalculation": "TaxExcluded" if tax_code_id else "NotApplicable",
         }
         if invoice.due_date:
             bill_body["DueDate"] = invoice.due_date
@@ -541,7 +542,7 @@ class QBOClient:
                 f"PDF: {invoice.pdf_filename or 'n/a'}"
             ),
             "Line": lines,
-            "GlobalTaxCalculation": "TaxExcluded",
+            "GlobalTaxCalculation": "TaxExcluded" if tax_code_id else "NotApplicable",
         }
         if invoice.invoice_number:
             purchase_body["DocNumber"] = invoice.invoice_number
