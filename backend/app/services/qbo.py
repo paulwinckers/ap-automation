@@ -19,6 +19,7 @@ Flow:
 
 import logging
 import time
+from datetime import date
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -375,7 +376,7 @@ class QBOClient:
         bill_body = {
             "VendorRef": vendor_ref,
             "CurrencyRef": {"value": invoice.currency or "CAD"},
-            "TxnDate": invoice.invoice_date,
+            "TxnDate": invoice.invoice_date or date.today().isoformat(),
             "PrivateNote": (
                 f"Auto-posted by AP Automation | "
                 f"Source: {invoice.intake_source or 'upload'} | "
@@ -552,7 +553,7 @@ class QBOClient:
             "PaymentType": "CreditCard",
             "AccountRef": pay_account_ref,
             "CurrencyRef": {"value": invoice.currency or "CAD"},
-            "TxnDate": invoice.invoice_date,
+            "TxnDate": invoice.invoice_date or date.today().isoformat(),
             "PrivateNote": (
                 f"Auto-posted by AP Automation | MasterCard receipt{employee_note} | "
                 f"Source: {invoice.intake_source or 'upload'} | "
