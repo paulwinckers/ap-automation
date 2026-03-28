@@ -214,7 +214,8 @@ class QBOClient:
         escaped = vendor_name.replace("'", "\\'")
         # For LIKE queries strip anything after '(' to avoid QBO query parser issues
         # e.g. "Paul Winckers (expenses)" → search LIKE '%Paul Winckers%'
-        like_term = escaped.split("(")[0].strip().replace("'", "\\'")
+        # Also collapse multiple spaces to one so "Paul  Winckers" matches "Paul Winckers"
+        like_term = " ".join(escaped.split("(")[0].split()).replace("'", "\\'")
 
         # 1. Exact match (active)
         result = await self._get(
