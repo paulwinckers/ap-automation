@@ -48,10 +48,11 @@ async def seed_vendors_if_empty(db: Database):
                 vendor_name=vendor_name,
                 vendor_type=vendor_type,
                 default_gl_account=row.get("default_gl_account") or None,
-                default_gl_name=None,
+                default_gl_name=row.get("default_gl_name") or None,
                 vendor_id_aspire=None,
                 vendor_id_qbo=None,
                 notes=row.get("notes") or None,
+                forward_to=row.get("forward_to") or None,
             )
             count += 1
     logger.info(f"Seeded {count} vendor rules from {VENDOR_SEED_FILE}")
