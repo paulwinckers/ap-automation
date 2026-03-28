@@ -99,14 +99,17 @@ class _D1Backend:
         # Split on semicolons and run each non-empty statement individually
         statements = [s.strip() for s in schema.split(";") if s.strip()]
         for stmt in statements:
-            # Only run safe DDL — skip INSERT seed data (seeded from CSV)
-            upper = stmt.upper().lstrip()
-            if upper.startswith(("CREATE TABLE", "CREATE INDEX")):
+            # Strip leading SQL comment lines to find the real statement type
+            code = "\n".join(
+                line for line in stmt.splitlines()
+                if not line.strip().startswith("--")
+            ).strip().upper()
+            if code.startswith(("CREATE TABLE", "CREATE INDEX")):
                 try:
                     await self._run(stmt)
                 except Exception as e:
                     logger.debug(f"Schema stmt skipped: {e}")
-            elif upper.startswith("ALTER TABLE"):
+            elif code.startswith("ALTER TABLE"):
                 # Migrations — safe to run every time; ignore "already exists" errors
                 try:
                     await self._run(stmt)
@@ -147,10 +150,14 @@ class _SQLiteBackend:
             schema = f.read()
         statements = [s.strip() for s in schema.split(";") if s.strip()]
         for stmt in statements:
-            upper = stmt.upper().lstrip()
-            if upper.startswith(("CREATE TABLE", "CREATE INDEX")):
+            # Strip leading SQL comment lines to find the real statement type
+            code = "\n".join(
+                line for line in stmt.splitlines()
+                if not line.strip().startswith("--")
+            ).strip().upper()
+            if code.startswith(("CREATE TABLE", "CREATE INDEX")):
                 await self._db.execute(stmt)
-            elif upper.startswith("ALTER TABLE"):
+            elif code.startswith("ALTER TABLE"):
                 # Migration — ignore if column already exists
                 try:
                     await self._db.execute(stmt)
