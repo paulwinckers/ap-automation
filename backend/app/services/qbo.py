@@ -19,7 +19,7 @@ Flow:
 
 import logging
 import time
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -42,6 +42,23 @@ QBO_BASE_PROD    = "https://quickbooks.api.intuit.com"
 QBO_BASE_SANDBOX = "https://sandbox-quickbooks.api.intuit.com"
 
 SCOPE = "com.intuit.quickbooks.accounting"
+
+
+def _to_qbo_date(d: str | None) -> str:
+    """Normalize any date string to YYYY-MM-DD for QBO. Falls back to today."""
+    if not d:
+        return date.today().isoformat()
+    # Already correct
+    if len(d) == 10 and d[4] == "-":
+        return d
+    # Try common formats
+    for fmt in ("%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(d, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    logger.warning(f"Could not parse date '{d}' — using today")
+    return date.today().isoformat()
 
 # ── Canadian BC tax codes ─────────────────────────────────────────────────────
 # These must match the tax agency names in your QBO company exactly.
@@ -376,7 +393,7 @@ class QBOClient:
         bill_body = {
             "VendorRef": vendor_ref,
             "CurrencyRef": {"value": invoice.currency or "CAD"},
-            "TxnDate": invoice.invoice_date or date.today().isoformat(),
+            "TxnDate": _to_qbo_date(invoice.invoice_date),
             "PrivateNote": (
                 f"Auto-posted by AP Automation | "
                 f"Source: {invoice.intake_source or 'upload'} | "
@@ -387,7 +404,7 @@ class QBOClient:
             "GlobalTaxCalculation": "TaxExcluded" if tax_code_id else "NotApplicable",
         }
         if invoice.due_date:
-            bill_body["DueDate"] = invoice.due_date
+            bill_body["DueDate"] = _to_qbo_date(invoice.due_date)
         if invoice.invoice_number:
             bill_body["DocNumber"] = invoice.invoice_number
 
@@ -553,7 +570,7 @@ class QBOClient:
             "PaymentType": "CreditCard",
             "AccountRef": pay_account_ref,
             "CurrencyRef": {"value": invoice.currency or "CAD"},
-            "TxnDate": invoice.invoice_date or date.today().isoformat(),
+            "TxnDate": _to_qbo_date(invoice.invoice_date),
             "PrivateNote": (
                 f"Auto-posted by AP Automation | MasterCard receipt{employee_note} | "
                 f"Source: {invoice.intake_source or 'upload'} | "
