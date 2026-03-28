@@ -191,10 +191,10 @@ class Database:
 
     async def connect(self):
         if _d1_configured():
-            logger.info("Using Cloudflare D1 database")
+            logger.warning("DATABASE: Using Cloudflare D1")
             self._backend = _D1Backend()
         else:
-            logger.info("D1 not configured — using local SQLite")
+            logger.warning("DATABASE: D1 not configured — using local SQLite (data will not persist)")
             self._backend = _SQLiteBackend()
         await self._backend.connect()
         self._db = True
