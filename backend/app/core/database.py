@@ -72,7 +72,7 @@ class _D1Backend:
             json={"sql": sql, "params": params or []},
         )
         if not resp.is_success:
-            logger.error(f"D1 HTTP {resp.status_code} — body: {resp.text[:1000]}")
+            logger.warning(f"D1 HTTP {resp.status_code} — body: {resp.text[:500]}")
         resp.raise_for_status()
         data = resp.json()
         if not data.get("success"):
