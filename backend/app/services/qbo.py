@@ -212,6 +212,9 @@ class QBOClient:
         Returns the vendor object or None.
         """
         escaped = vendor_name.replace("'", "\\'")
+        # For LIKE queries strip anything after '(' to avoid QBO query parser issues
+        # e.g. "Paul Winckers (expenses)" → search LIKE '%Paul Winckers%'
+        like_term = escaped.split("(")[0].strip().replace("'", "\\'")
 
         # 1. Exact match (active)
         result = await self._get(
@@ -225,7 +228,7 @@ class QBOClient:
         # 2. Partial match (active) — handles minor name differences
         result = await self._get(
             "query",
-            {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{escaped}%' MAXRESULTS 1"},
+            {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{like_term}%' MAXRESULTS 1"},
         )
         vendors = result.get("QueryResponse", {}).get("Vendor", [])
         if vendors:
@@ -234,7 +237,7 @@ class QBOClient:
         # 3. Partial match (inactive) — prevents duplicate creation when vendor was deactivated
         result = await self._get(
             "query",
-            {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{escaped}%' AND Active = false MAXRESULTS 1"},
+            {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{like_term}%' AND Active = false MAXRESULTS 1"},
         )
         vendors = result.get("QueryResponse", {}).get("Vendor", [])
         return vendors[0] if vendors else None
