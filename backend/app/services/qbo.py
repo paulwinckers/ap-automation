@@ -206,13 +206,14 @@ class QBOClient:
     async def find_vendor(self, vendor_name: str) -> Optional[dict]:
         """
         Look up a vendor by name in QBO.
-        Tries exact match first, then partial match to handle minor name differences
-        (e.g. "Aspire Software" vs "Aspire Software Inc.").
+        Tries exact match first, then partial LIKE match (active vendors), then
+        inactive vendors — so we never create a duplicate just because someone
+        deactivated the old record.
         Returns the vendor object or None.
         """
         escaped = vendor_name.replace("'", "\\'")
 
-        # Exact match
+        # 1. Exact match (active)
         result = await self._get(
             "query",
             {"query": f"SELECT * FROM Vendor WHERE DisplayName = '{escaped}' MAXRESULTS 1"},
@@ -221,10 +222,19 @@ class QBOClient:
         if vendors:
             return vendors[0]
 
-        # Partial match — handles "Aspire Software" matching "Aspire Software Inc."
+        # 2. Partial match (active) — handles minor name differences
         result = await self._get(
             "query",
             {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{escaped}%' MAXRESULTS 1"},
+        )
+        vendors = result.get("QueryResponse", {}).get("Vendor", [])
+        if vendors:
+            return vendors[0]
+
+        # 3. Partial match (inactive) — prevents duplicate creation when vendor was deactivated
+        result = await self._get(
+            "query",
+            {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{escaped}%' AND Active = false MAXRESULTS 1"},
         )
         vendors = result.get("QueryResponse", {}).get("Vendor", [])
         return vendors[0] if vendors else None
