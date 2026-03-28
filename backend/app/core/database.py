@@ -1,8 +1,11 @@
 """
-Database layer — wraps Cloudflare D1 (SQLite) queries.
+Database layer — Cloudflare D1 in production, local SQLite in development.
 
-For local development, uses a local SQLite file (local.db) via aiosqlite.
-In production on Cloudflare, the D1 binding is used instead.
+In production (Railway): uses D1 REST API when CF credentials are set.
+In development (local):  falls back to local SQLite via aiosqlite.
+
+All public methods are identical regardless of backend — nothing else needs
+to know which one is in use.
 
 Usage:
     db = Database()
@@ -14,129 +17,205 @@ Usage:
 import json
 import logging
 import os
-import sqlite3
 from typing import Optional
 
-import aiosqlite
+import httpx
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.vendor import VendorRule, VendorType
 
 logger = logging.getLogger(__name__)
 
-# Use DB_PATH env var if set (for Railway persistent volume), otherwise local.db
+# ── Config ────────────────────────────────────────────────────────────────────
+
 LOCAL_DB_PATH = os.environ.get("DB_PATH", "local.db")
 SCHEMA_PATH   = os.path.join(os.path.dirname(__file__), "../../infrastructure/schema.sql")
 
+CF_D1_URL = (
+    "https://api.cloudflare.com/client/v4/accounts/{account_id}"
+    "/d1/database/{db_id}/query"
+)
 
-class Database:
+
+def _d1_configured() -> bool:
+    return bool(
+        os.environ.get("CF_ACCOUNT_ID")
+        and os.environ.get("CF_D1_DATABASE_ID")
+        and os.environ.get("CF_API_TOKEN")
+    )
+
+
+# ── D1 backend ────────────────────────────────────────────────────────────────
+
+class _D1Backend:
+    """Executes SQL against Cloudflare D1 via REST API."""
+
     def __init__(self):
-        self._db: Optional[aiosqlite.Connection] = None
+        account_id = os.environ["CF_ACCOUNT_ID"]
+        db_id      = os.environ["CF_D1_DATABASE_ID"]
+        self._url  = CF_D1_URL.format(account_id=account_id, db_id=db_id)
+        self._token = os.environ["CF_API_TOKEN"]
+        self._http  = httpx.AsyncClient(timeout=30.0)
 
     async def connect(self):
-        """Open the local SQLite database, creating and seeding it if needed."""
+        await self._ensure_schema()
+        logger.info("D1 database connected")
+
+    async def close(self):
+        await self._http.aclose()
+
+    async def _run(self, sql: str, params: list = None) -> dict:
+        """Execute one SQL statement. Returns the full result block."""
+        resp = await self._http.post(
+            self._url,
+            headers={"Authorization": f"Bearer {self._token}"},
+            json={"sql": sql, "params": params or []},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not data.get("success"):
+            errors = data.get("errors", [])
+            raise RuntimeError(f"D1 query failed: {errors}")
+        return data["result"][0]
+
+    async def query(self, sql: str, params: list = None) -> list[dict]:
+        """SELECT — returns list of row dicts."""
+        result = await self._run(sql, params)
+        return result.get("results", [])
+
+    async def execute(self, sql: str, params: list = None) -> int:
+        """INSERT/UPDATE/DELETE — returns last_row_id (0 if not applicable)."""
+        result = await self._run(sql, params)
+        return result.get("meta", {}).get("last_row_id", 0)
+
+    async def _ensure_schema(self):
+        """Run CREATE TABLE IF NOT EXISTS for every table in schema.sql."""
+        schema_path = os.path.abspath(SCHEMA_PATH)
+        if not os.path.exists(schema_path):
+            logger.warning(f"Schema file not found at {schema_path}")
+            return
+        with open(schema_path, "r") as f:
+            schema = f.read()
+        # Split on semicolons and run each non-empty statement individually
+        statements = [s.strip() for s in schema.split(";") if s.strip()]
+        for stmt in statements:
+            # Only run safe DDL — skip INSERT seed data (seeded from CSV)
+            upper = stmt.upper().lstrip()
+            if upper.startswith(("CREATE TABLE", "CREATE INDEX")):
+                try:
+                    await self._run(stmt)
+                except Exception as e:
+                    logger.debug(f"Schema stmt skipped: {e}")
+        logger.info("D1 schema ensured")
+
+
+# ── SQLite backend (local dev fallback) ───────────────────────────────────────
+
+class _SQLiteBackend:
+    """Executes SQL against a local SQLite file via aiosqlite."""
+
+    def __init__(self):
+        self._db = None
+
+    async def connect(self):
+        import aiosqlite
         os.makedirs(os.path.dirname(os.path.abspath(LOCAL_DB_PATH)), exist_ok=True)
         db_exists = os.path.exists(LOCAL_DB_PATH)
         self._db = await aiosqlite.connect(LOCAL_DB_PATH)
         self._db.row_factory = aiosqlite.Row
-
-        # Enable foreign keys
         await self._db.execute("PRAGMA foreign_keys = ON")
-
         if not db_exists:
-            logger.info("Creating local database from schema.sql")
             await self._apply_schema()
-
-        logger.info(f"Database connected — {LOCAL_DB_PATH}")
-
-    async def _apply_schema(self):
-        """Apply schema.sql to the local database."""
-        schema_path = os.path.abspath(SCHEMA_PATH)
-        if not os.path.exists(schema_path):
-            logger.warning(f"Schema file not found at {schema_path} — skipping")
-            return
-        with open(schema_path, "r") as f:
-            schema = f.read()
-        await self._db.executescript(schema)
-        await self._db.commit()
-        logger.info("Schema applied successfully")
+        logger.info(f"SQLite database connected — {LOCAL_DB_PATH}")
 
     async def close(self):
         if self._db:
             await self._db.close()
 
+    async def _apply_schema(self):
+        schema_path = os.path.abspath(SCHEMA_PATH)
+        if not os.path.exists(schema_path):
+            return
+        with open(schema_path, "r") as f:
+            schema = f.read()
+        await self._db.executescript(schema)
+        await self._db.commit()
+
+    async def query(self, sql: str, params: list = None) -> list[dict]:
+        async with self._db.execute(sql, params or []) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def execute(self, sql: str, params: list = None) -> int:
+        cursor = await self._db.execute(sql, params or [])
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+
+# ── Public Database class ─────────────────────────────────────────────────────
+
+class Database:
+    """
+    Public database interface. Delegates to D1 in production, SQLite in dev.
+    The _db attribute is kept for legacy compatibility checks (is not None = connected).
+    """
+
+    def __init__(self):
+        self._backend: Optional[_D1Backend | _SQLiteBackend] = None
+        self._db = None  # legacy compat — set to True when connected
+
+    async def connect(self):
+        if _d1_configured():
+            logger.info("Using Cloudflare D1 database")
+            self._backend = _D1Backend()
+        else:
+            logger.info("D1 not configured — using local SQLite")
+            self._backend = _SQLiteBackend()
+        await self._backend.connect()
+        self._db = True
+
+    async def close(self):
+        if self._backend:
+            await self._backend.close()
+        self._db = None
+
+    async def _q(self, sql: str, params: list = None) -> list[dict]:
+        return await self._backend.query(sql, params)
+
+    async def _x(self, sql: str, params: list = None) -> int:
+        return await self._backend.execute(sql, params)
+
     # ── Vendor rules ──────────────────────────────────────────────────────────
 
     async def get_vendor_rule_by_name(self, vendor_name: str) -> Optional[VendorRule]:
         """
-        Look up a vendor rule by name.
-        First tries exact match (case-insensitive),
-        then falls back to fuzzy match — checks if any rule name
-        is contained within the extracted vendor name.
-        This handles cases where Claude extracts a longer name like
-        "James Tirecraft, Traction, Truck Pro" when the rule is "James Tirecraft".
+        Exact match first (case-insensitive), then fuzzy match —
+        checks if any rule name is contained within the extracted vendor name.
         """
-        # Exact match first
-        async with self._db.execute(
+        rows = await self._q(
             "SELECT * FROM vendor_rules WHERE LOWER(vendor_name) = LOWER(?) AND active = 1",
-            (vendor_name,),
-        ) as cursor:
-            row = await cursor.fetchone()
+            [vendor_name],
+        )
+        row = rows[0] if rows else None
 
         if not row:
-            # Fuzzy match — check if any rule name is a substring of the extracted name
-            async with self._db.execute(
-                "SELECT * FROM vendor_rules WHERE active = 1 ORDER BY LENGTH(vendor_name) DESC",
-            ) as cursor:
-                all_rules = await cursor.fetchall()
-
+            all_rules = await self._q(
+                "SELECT * FROM vendor_rules WHERE active = 1 ORDER BY LENGTH(vendor_name) DESC"
+            )
             vendor_lower = vendor_name.lower()
-            for rule_row in all_rules:
-                if rule_row["vendor_name"].lower() in vendor_lower:
-                    row = rule_row
-                    logger.info(
-                        f"Fuzzy vendor match: '{vendor_name}' matched rule '{rule_row['vendor_name']}'"
-                    )
+            for r in all_rules:
+                if r["vendor_name"].lower() in vendor_lower:
+                    row = r
+                    logger.info(f"Fuzzy vendor match: '{vendor_name}' → '{r['vendor_name']}'")
                     break
 
         if not row:
             return None
-
-        return VendorRule(
-            id=row["id"],
-            vendor_name=row["vendor_name"],
-            vendor_id_aspire=row["vendor_id_aspire"],
-            vendor_id_qbo=row["vendor_id_qbo"],
-            type=VendorType(row["type"]),
-            default_gl_account=row["default_gl_account"],
-            default_gl_name=row["default_gl_name"],
-            forward_to=row["forward_to"] if "forward_to" in row.keys() else None,
-            notes=row["notes"],
-            is_employee=bool(row["is_employee"]) if "is_employee" in row.keys() else False,
-            active=bool(row["active"]),
-        )
+        return self._row_to_vendor_rule(row)
 
     async def get_all_vendor_rules(self) -> list[VendorRule]:
-        async with self._db.execute(
-            "SELECT * FROM vendor_rules ORDER BY vendor_name"
-        ) as cursor:
-            rows = await cursor.fetchall()
-        return [
-            VendorRule(
-                id=r["id"],
-                vendor_name=r["vendor_name"],
-                vendor_id_aspire=r["vendor_id_aspire"],
-                vendor_id_qbo=r["vendor_id_qbo"],
-                type=VendorType(r["type"]),
-                default_gl_account=r["default_gl_account"],
-                default_gl_name=r["default_gl_name"],
-                forward_to=r["forward_to"] if "forward_to" in r.keys() else None,
-                notes=r["notes"],
-                is_employee=bool(r["is_employee"]) if "is_employee" in r.keys() else False,
-                active=bool(r["active"]),
-            )
-            for r in rows
-        ]
+        rows = await self._q("SELECT * FROM vendor_rules ORDER BY vendor_name")
+        return [self._row_to_vendor_rule(r) for r in rows]
 
     async def create_vendor_rule(
         self,
@@ -150,39 +229,33 @@ class Database:
         forward_to: Optional[str] = None,
         is_employee: bool = False,
     ) -> int:
-        cursor = await self._db.execute(
+        return await self._x(
             """INSERT INTO vendor_rules
                (vendor_name, type, default_gl_account, default_gl_name,
                 vendor_id_aspire, vendor_id_qbo, notes, forward_to, is_employee)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (vendor_name, vendor_type, default_gl_account, default_gl_name,
-             vendor_id_aspire, vendor_id_qbo, notes, forward_to, int(is_employee)),
+            [vendor_name, vendor_type, default_gl_account, default_gl_name,
+             vendor_id_aspire, vendor_id_qbo, notes, forward_to, int(is_employee)],
         )
-        await self._db.commit()
-        return cursor.lastrowid
 
     async def get_employees(self) -> list[str]:
-        """Return names of all active employee expense vendors, sorted alphabetically.
-        Detects employees by is_employee flag OR by name containing 'expense/expenses'."""
-        async with self._db.execute(
+        rows = await self._q(
             """SELECT vendor_name FROM vendor_rules
                WHERE active = 1
                AND (is_employee = 1
                     OR LOWER(vendor_name) LIKE '%expense%'
                     OR LOWER(vendor_name) LIKE '%expenses%')
                ORDER BY vendor_name"""
-        ) as cursor:
-            rows = await cursor.fetchall()
+        )
         return [r["vendor_name"] for r in rows]
 
     async def update_vendor_rule(self, vendor_id: int, updates: dict) -> None:
         fields = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [vendor_id]
-        await self._db.execute(
+        await self._x(
             f"UPDATE vendor_rules SET {fields}, updated_at = datetime('now') WHERE id = ?",
             values,
         )
-        await self._db.commit()
 
     # ── Invoice CRUD ──────────────────────────────────────────────────────────
 
@@ -201,30 +274,23 @@ class Database:
         intake_source: str,
         intake_raw: dict,
     ) -> int:
-        cursor = await self._db.execute(
+        invoice_id = await self._x(
             """INSERT INTO invoices
                (vendor_name, invoice_number, invoice_date, due_date,
                 subtotal, tax_amount, total_amount, currency,
                 po_number, pdf_filename, intake_source, intake_raw, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
-            (vendor_name, invoice_number, invoice_date, due_date,
+            [vendor_name, invoice_number, invoice_date, due_date,
              subtotal, tax_amount, total_amount, currency,
-             po_number, pdf_filename, intake_source, json.dumps(intake_raw)),
+             po_number, pdf_filename, intake_source, json.dumps(intake_raw)],
         )
-        await self._db.commit()
-        invoice_id = cursor.lastrowid
         await self.audit(invoice_id, "received", "system", {"source": intake_source})
         return invoice_id
 
     async def find_duplicate_invoice(
         self, vendor_name: str, invoice_number: str
     ) -> Optional[dict]:
-        """
-        Return an existing invoice row if we've already seen this vendor+invoice_number.
-        Only matches invoices that are posted or queued (not errors — errors can be retried).
-        Returns None if no duplicate found.
-        """
-        async with self._db.execute(
+        rows = await self._q(
             """SELECT id, status, qbo_bill_id, aspire_receipt_id, received_at
                FROM invoices
                WHERE LOWER(vendor_name) = LOWER(?)
@@ -232,19 +298,13 @@ class Database:
                AND status IN ('posted', 'queued', 'pending')
                ORDER BY received_at DESC
                LIMIT 1""",
-            (vendor_name, invoice_number),
-        ) as cursor:
-            row = await cursor.fetchone()
-        return dict(row) if row else None
+            [vendor_name, invoice_number],
+        )
+        return rows[0] if rows else None
 
     async def get_invoice(self, invoice_id: int) -> Optional[dict]:
-        async with self._db.execute(
-            "SELECT * FROM invoices WHERE id = ?", (invoice_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
-        if not row:
-            return None
-        return dict(row)
+        rows = await self._q("SELECT * FROM invoices WHERE id = ?", [invoice_id])
+        return rows[0] if rows else None
 
     async def list_invoices(
         self,
@@ -253,8 +313,7 @@ class Database:
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict]:
-        conditions = []
-        params = []
+        conditions, params = [], []
         if status:
             conditions.append("status = ?")
             params.append(status)
@@ -263,15 +322,13 @@ class Database:
             params.append(destination)
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params += [limit, offset]
-        async with self._db.execute(
+        return await self._q(
             f"SELECT * FROM invoices {where} ORDER BY received_at DESC LIMIT ? OFFSET ?",
             params,
-        ) as cursor:
-            rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        )
 
     async def get_queue_counts(self) -> dict:
-        async with self._db.execute(
+        rows = await self._q(
             """SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) as queued,
@@ -282,66 +339,52 @@ class Database:
                 SUM(CASE WHEN status='queued' THEN total_amount ELSE 0 END) as queued_value,
                 SUM(CASE WHEN status='posted' AND date(received_at)=date('now') THEN total_amount ELSE 0 END) as posted_today_value
                FROM invoices"""
-        ) as cursor:
-            row = await cursor.fetchone()
-        return dict(row) if row else {}
+        )
+        return rows[0] if rows else {}
 
     # ── Invoice status transitions ────────────────────────────────────────────
 
     async def mark_queued(self, invoice_id: int, reason: str) -> None:
-        await self._db.execute(
+        await self._x(
             """UPDATE invoices
-               SET status='queued', queued_at=datetime('now'),
-                   error_message=?
+               SET status='queued', queued_at=datetime('now'), error_message=?
                WHERE id=?""",
-            (reason, invoice_id),
+            [reason, invoice_id],
         )
-        await self._db.commit()
 
-    async def mark_posted_aspire(
-        self, invoice_id: int, receipt_id: str, aspire_po_id: str
-    ) -> None:
-        await self._db.execute(
+    async def mark_posted_aspire(self, invoice_id: int, receipt_id: str, aspire_po_id: str) -> None:
+        await self._x(
             """UPDATE invoices
                SET status='posted', destination='aspire',
                    aspire_receipt_id=?, po_aspire_id=?,
                    posted_at=datetime('now'), error_message=NULL
                WHERE id=?""",
-            (receipt_id, aspire_po_id, invoice_id),
+            [receipt_id, aspire_po_id, invoice_id],
         )
-        await self._db.commit()
 
-    async def mark_posted_qbo(
-        self, invoice_id: int, bill_id: str, gl_account: str
-    ) -> None:
-        await self._db.execute(
+    async def mark_posted_qbo(self, invoice_id: int, bill_id: str, gl_account: str) -> None:
+        await self._x(
             """UPDATE invoices
                SET status='posted', destination='qbo',
                    qbo_bill_id=?, gl_account=?,
                    posted_at=datetime('now'), error_message=NULL
                WHERE id=?""",
-            (bill_id, gl_account, invoice_id),
+            [bill_id, gl_account, invoice_id],
         )
-        await self._db.commit()
 
     async def mark_error(self, invoice_id: int, error_message: str) -> None:
-        await self._db.execute(
+        await self._x(
             "UPDATE invoices SET status='error', error_message=? WHERE id=?",
-            (error_message, invoice_id),
+            [error_message, invoice_id],
         )
-        await self._db.commit()
 
-    async def apply_po_override(
-        self, invoice_id: int, po_number: str, reviewed_by: str
-    ) -> None:
-        await self._db.execute(
+    async def apply_po_override(self, invoice_id: int, po_number: str, reviewed_by: str) -> None:
+        await self._x(
             """UPDATE invoices
-               SET po_number_override=?, reviewed_by=?,
-                   reviewed_at=datetime('now')
+               SET po_number_override=?, reviewed_by=?, reviewed_at=datetime('now')
                WHERE id=?""",
-            (po_number, reviewed_by, invoice_id),
+            [po_number, reviewed_by, invoice_id],
         )
-        await self._db.commit()
         await self.audit(invoice_id, "po_override", reviewed_by, {"po_number": po_number})
 
     # ── Audit log ─────────────────────────────────────────────────────────────
@@ -353,55 +396,61 @@ class Database:
         actor: str,
         detail: Optional[dict] = None,
     ) -> None:
-        await self._db.execute(
-            """INSERT INTO audit_log (invoice_id, action, actor, detail)
-               VALUES (?, ?, ?, ?)""",
-            (invoice_id, action, actor, json.dumps(detail or {})),
+        await self._x(
+            "INSERT INTO audit_log (invoice_id, action, actor, detail) VALUES (?, ?, ?, ?)",
+            [invoice_id, action, actor, json.dumps(detail or {})],
         )
-        await self._db.commit()
 
-    async def get_audit_log(
-        self, invoice_id: Optional[int] = None, limit: int = 100
-    ) -> list[dict]:
+    async def get_audit_log(self, invoice_id: Optional[int] = None, limit: int = 100) -> list[dict]:
         if invoice_id:
-            async with self._db.execute(
+            return await self._q(
                 "SELECT * FROM audit_log WHERE invoice_id=? ORDER BY created_at DESC LIMIT ?",
-                (invoice_id, limit),
-            ) as cursor:
-                rows = await cursor.fetchall()
-        else:
-            async with self._db.execute(
-                "SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ) as cursor:
-                rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+                [invoice_id, limit],
+            )
+        return await self._q(
+            "SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?",
+            [limit],
+        )
 
     # ── PO cache ──────────────────────────────────────────────────────────────
 
     async def get_cached_po(self, po_number: str) -> Optional[dict]:
-        async with self._db.execute(
+        rows = await self._q(
             """SELECT aspire_data FROM po_cache
-               WHERE po_number=?
-               AND fetched_at > datetime('now', '-1 hour')""",
-            (po_number,),
-        ) as cursor:
-            row = await cursor.fetchone()
-        if not row:
+               WHERE po_number=? AND fetched_at > datetime('now', '-1 hour')""",
+            [po_number],
+        )
+        if not rows:
             return None
-        return json.loads(row["aspire_data"])
-
-    async def delete_invoice(self, invoice_id: int) -> bool:
-        await self._db.execute("DELETE FROM audit_log WHERE invoice_id=?", (invoice_id,))
-        await self._db.execute("DELETE FROM invoice_line_items WHERE invoice_id=?", (invoice_id,))
-        cursor = await self._db.execute("DELETE FROM invoices WHERE id=?", (invoice_id,))
-        await self._db.commit()
-        return cursor.rowcount > 0
+        return json.loads(rows[0]["aspire_data"])
 
     async def cache_po(self, po_number: str, aspire_data: dict) -> None:
-        await self._db.execute(
+        await self._x(
             """INSERT OR REPLACE INTO po_cache (po_number, aspire_data, fetched_at)
                VALUES (?, ?, datetime('now'))""",
-            (po_number, json.dumps(aspire_data)),
+            [po_number, json.dumps(aspire_data)],
         )
-        await self._db.commit()
+
+    async def delete_invoice(self, invoice_id: int) -> bool:
+        await self._x("DELETE FROM audit_log WHERE invoice_id=?", [invoice_id])
+        await self._x("DELETE FROM invoice_line_items WHERE invoice_id=?", [invoice_id])
+        changes = await self._x("DELETE FROM invoices WHERE id=?", [invoice_id])
+        return changes > 0
+
+    # ── Helper ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _row_to_vendor_rule(r: dict) -> VendorRule:
+        return VendorRule(
+            id=r["id"],
+            vendor_name=r["vendor_name"],
+            vendor_id_aspire=r.get("vendor_id_aspire"),
+            vendor_id_qbo=r.get("vendor_id_qbo"),
+            type=VendorType(r["type"]),
+            default_gl_account=r.get("default_gl_account"),
+            default_gl_name=r.get("default_gl_name"),
+            forward_to=r.get("forward_to"),
+            notes=r.get("notes"),
+            is_employee=bool(r.get("is_employee", 0)),
+            active=bool(r.get("active", 1)),
+        )
