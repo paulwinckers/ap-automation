@@ -87,6 +87,7 @@ export default function APDashboard() {
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState<string | null>(null);
   const [pulse, setPulse]         = useState(false);
+  const [retrying, setRetrying]   = useState<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function refresh() {
@@ -108,6 +109,18 @@ export default function APDashboard() {
       setError(e.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function retryInvoice(id: number) {
+    setRetrying(id);
+    try {
+      await fetch(`${API}/invoices/${id}/retry`, { method: 'POST' });
+      await refresh();
+    } catch (e) {
+      alert('Retry failed — check Railway logs');
+    } finally {
+      setRetrying(null);
     }
   }
 
@@ -314,6 +327,19 @@ export default function APDashboard() {
                   </td>
                   <td style={styles.td}>
                     {statusBadge(e)}
+                    {e.status === 'error' && (
+                      <button
+                        onClick={() => retryInvoice(e.id)}
+                        disabled={retrying === e.id}
+                        style={{
+                          marginLeft: 8, background: '#fef2f2', border: '1px solid #fca5a5',
+                          color: '#dc2626', borderRadius: 6, padding: '2px 8px',
+                          cursor: retrying === e.id ? 'wait' : 'pointer', fontSize: 11, fontWeight: 600,
+                        }}
+                      >
+                        {retrying === e.id ? '…' : '↺ Retry'}
+                      </button>
+                    )}
                     {e.error_message && (
                       <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                            title={e.error_message}>
