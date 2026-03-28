@@ -403,6 +403,10 @@ class QBOClient:
             # QBO Canada: TaxExcluded requires TaxCodeRef on lines; use NotApplicable when no tax
             "GlobalTaxCalculation": "TaxExcluded" if tax_code_id else "NotApplicable",
         }
+        # Foreign currency bills require an ExchangeRate — default to 1.0 (update in QBO)
+        if (invoice.currency or "CAD") != "CAD":
+            bill_body["ExchangeRate"] = 1.0
+            logger.warning(f"Foreign currency bill ({invoice.currency}) — ExchangeRate defaulted to 1.0, update in QBO")
         if invoice.due_date:
             bill_body["DueDate"] = _to_qbo_date(invoice.due_date)
         if invoice.invoice_number:
