@@ -231,7 +231,7 @@ class QBOClient:
             {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{like_term}%' MAXRESULTS 5"},
         )
         for v in result.get("QueryResponse", {}).get("Vendor", []):
-            if "(deleted)" not in v.get("DisplayName", "").lower():
+            if "deleted" not in v.get("DisplayName", "").lower():
                 return v
 
         # 3. Partial match (inactive, non-deleted) — prevents duplicates when vendor was deactivated
@@ -240,7 +240,7 @@ class QBOClient:
             {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{like_term}%' AND Active = false MAXRESULTS 5"},
         )
         for v in result.get("QueryResponse", {}).get("Vendor", []):
-            if "(deleted)" not in v.get("DisplayName", "").lower():
+            if "deleted" not in v.get("DisplayName", "").lower():
                 return v
 
         return None
