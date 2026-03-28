@@ -60,8 +60,8 @@ async def route_invoice(
     if invoice.gl_account:
         logger.info(f"Using user-confirmed GL '{invoice.gl_account}' for invoice {invoice.id}")
         if invoice.doc_type == "mastercard":
-            return await _route_to_qbo_purchase(invoice, invoice.gl_account, db, qbo, employee_name)
-        return await _route_to_qbo(invoice, invoice.gl_account, db, qbo, employee_name)
+            return await _route_to_qbo_purchase(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None)
+        return await _route_to_qbo(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None)
 
     # ── Step 1: Vendor lookup ─────────────────────────────────────────────────
     vendor_rule = await db.get_vendor_rule_by_name(invoice.vendor_name)
@@ -94,17 +94,19 @@ async def route_invoice(
 
     elif decision == RoutingDecision.QBO:
         gl_account = vendor_rule.default_gl_account
+        gl_name    = vendor_rule.default_gl_name
         if not gl_account:
             if invoice.doc_type == "mastercard":
                 gl_account = MASTERCARD_FALLBACK_GL
+                gl_name    = "General Overhead"
                 logger.info(f"No GL for MC vendor '{invoice.vendor_name}' — using fallback {gl_account}")
             else:
                 logger.warning(f"No GL account for vendor '{invoice.vendor_name}' — queuing")
                 await _queue(invoice, db, reason="no_gl_account")
                 return RoutingOutcome.QUEUED
         if invoice.doc_type == "mastercard":
-            return await _route_to_qbo_purchase(invoice, gl_account, db, qbo, employee_name)
-        return await _route_to_qbo(invoice, gl_account, db, qbo, employee_name)
+            return await _route_to_qbo_purchase(invoice, gl_account, db, qbo, employee_name, gl_name=gl_name)
+        return await _route_to_qbo(invoice, gl_account, db, qbo, employee_name, gl_name=gl_name)
 
     else:  # QUEUE
         await _queue(invoice, db, reason="mixed_vendor_no_po")
@@ -183,6 +185,7 @@ async def _route_to_qbo(
     db: Database,
     qbo: QBOClient,
     employee_name: Optional[str] = None,
+    gl_name: Optional[str] = None,
 ) -> RoutingOutcome:
     """Post the bill to QBO against the resolved GL account."""
 
@@ -193,13 +196,14 @@ async def _route_to_qbo(
             file_bytes=invoice.file_bytes,
             filename=invoice.pdf_filename,
         )
-        await db.mark_posted_qbo(invoice.id, bill_id, gl_account)
+        await db.mark_posted_qbo(invoice.id, bill_id, gl_account, gl_name=gl_name)
         await db.audit(invoice.id, "posted", "system", {
             "destination": "qbo",
             "bill_id": bill_id,
             "gl_account": gl_account,
+            "gl_name": gl_name,
         })
-        logger.info(f"Invoice {invoice.id} posted to QBO — bill {bill_id}")
+        logger.info(f"Invoice {invoice.id} posted to QBO — bill {bill_id}, GL {gl_account} ({gl_name})")
 
         # Send confirmation email if this was an employee/field submission
         if employee_name:
@@ -210,7 +214,7 @@ async def _route_to_qbo(
                     to_address=emp_rule.forward_to,
                     vendor_name=invoice.vendor_name or "Unknown vendor",
                     total_amount=invoice.total_amount or 0,
-                    gl_name=gl_account,
+                    gl_name=gl_name or gl_account,
                     qbo_id=bill_id,
                     txn_date=invoice.invoice_date,
                     file_bytes=invoice.file_bytes,
@@ -231,6 +235,7 @@ async def _route_to_qbo_purchase(
     db: Database,
     qbo: QBOClient,
     employee_name: Optional[str] = None,
+    gl_name: Optional[str] = None,
 ) -> RoutingOutcome:
     """Post a MasterCard receipt to QBO as a Purchase (CreditCardCharge)."""
     try:
@@ -241,14 +246,15 @@ async def _route_to_qbo_purchase(
             file_bytes=invoice.file_bytes,
             filename=invoice.pdf_filename,
         )
-        await db.mark_posted_qbo(invoice.id, purchase_id, gl_account)
+        await db.mark_posted_qbo(invoice.id, purchase_id, gl_account, gl_name=gl_name)
         await db.audit(invoice.id, "posted", "system", {
             "destination": "qbo",
             "bill_id": purchase_id,
             "gl_account": gl_account,
+            "gl_name": gl_name,
             "type": "purchase",
         })
-        logger.info(f"Invoice {invoice.id} posted to QBO as purchase — id: {purchase_id}")
+        logger.info(f"Invoice {invoice.id} posted to QBO as purchase — id: {purchase_id}, GL {gl_account} ({gl_name})")
 
         # Send confirmation email to the employee who made the purchase
         if employee_name:
@@ -259,7 +265,7 @@ async def _route_to_qbo_purchase(
                     to_address=emp_rule.forward_to,
                     vendor_name=invoice.vendor_name or "Unknown vendor",
                     total_amount=invoice.total_amount or 0,
-                    gl_name=gl_account,
+                    gl_name=gl_name or gl_account,
                     qbo_id=purchase_id,
                     txn_date=invoice.invoice_date,
                     file_bytes=invoice.file_bytes,

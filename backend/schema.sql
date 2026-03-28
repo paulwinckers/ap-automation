@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     po_number_override  TEXT,           -- manually entered by AP staff
     po_aspire_id        TEXT,           -- validated Aspire PO/Opportunity ID
     gl_account          TEXT,           -- resolved GL account for QBO
+    gl_name             TEXT,           -- human-readable GL name
 
     -- File reference
     pdf_r2_key          TEXT,           -- R2 object key for the PDF
@@ -129,6 +130,7 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- ── Schema update: add forward_to field to vendor_rules ──────────────────────
--- forward_to is now included in the CREATE TABLE above.
--- This section kept for reference only.
+-- ── Schema migrations (run on every startup, safe to re-run) ─────────────────
+-- These ALTER TABLE statements are applied by _D1Backend._ensure_schema()
+-- on every deploy. They are no-ops if the column already exists.
+ALTER TABLE invoices ADD COLUMN gl_name TEXT;

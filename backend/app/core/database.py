@@ -106,6 +106,13 @@ class _D1Backend:
                     await self._run(stmt)
                 except Exception as e:
                     logger.debug(f"Schema stmt skipped: {e}")
+            elif upper.startswith("ALTER TABLE"):
+                # Migrations — safe to run every time; ignore "already exists" errors
+                try:
+                    await self._run(stmt)
+                    logger.info(f"Migration applied: {stmt[:60]}")
+                except Exception as e:
+                    logger.debug(f"Migration skipped (already applied): {e}")
         logger.info("D1 schema ensured")
 
 
@@ -362,14 +369,16 @@ class Database:
             [receipt_id, aspire_po_id, invoice_id],
         )
 
-    async def mark_posted_qbo(self, invoice_id: int, bill_id: str, gl_account: str) -> None:
+    async def mark_posted_qbo(
+        self, invoice_id: int, bill_id: str, gl_account: str, gl_name: Optional[str] = None
+    ) -> None:
         await self._x(
             """UPDATE invoices
                SET status='posted', destination='qbo',
-                   qbo_bill_id=?, gl_account=?,
+                   qbo_bill_id=?, gl_account=?, gl_name=?,
                    posted_at=datetime('now'), error_message=NULL
                WHERE id=?""",
-            [bill_id, gl_account, invoice_id],
+            [bill_id, gl_account, gl_name, invoice_id],
         )
 
     async def mark_error(self, invoice_id: int, error_message: str) -> None:
@@ -429,6 +438,21 @@ class Database:
             """INSERT OR REPLACE INTO po_cache (po_number, aspire_data, fetched_at)
                VALUES (?, ?, datetime('now'))""",
             [po_number, json.dumps(aspire_data)],
+        )
+
+    async def get_invoice_feed(self, limit: int = 100) -> list[dict]:
+        """Return recent invoices for the AP live feed, newest first."""
+        return await self._q(
+            """SELECT id, status, destination, vendor_name,
+                      total_amount, tax_amount, subtotal,
+                      gl_account, gl_name,
+                      qbo_bill_id, aspire_receipt_id,
+                      received_at, posted_at, error_message,
+                      intake_source
+               FROM invoices
+               ORDER BY received_at DESC
+               LIMIT ?""",
+            [limit],
         )
 
     async def delete_invoice(self, invoice_id: int) -> bool:

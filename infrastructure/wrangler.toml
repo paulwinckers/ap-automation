@@ -9,7 +9,7 @@ bucket = "../frontend/dist"
 [[d1_databases]]
 binding  = "DB"
 database_name = "ap-automation-db"
-database_id   = ""   # fill in after: npx wrangler d1 create ap-automation-db
+database_id   = "6e3fa1a4-aa7b-4233-bda8-4a35459b7712"
 
 # ── R2 Bucket (PDF storage) ───────────────────────────────────────────────────
 [[r2_buckets]]

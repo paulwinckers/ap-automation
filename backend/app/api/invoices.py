@@ -312,6 +312,20 @@ async def validate_po_endpoint(
     return {"valid": True, "job": po_data, "cached": False}
 
 
+@router.get("/feed")
+async def get_invoice_feed(
+    limit: int      = Query(100, le=500),
+    db:    Database = Depends(get_db),
+):
+    """
+    Live activity feed for the AP dashboard.
+    Returns recent invoices with GL code, GL name, amounts, and taxes.
+    Designed to be polled every 10 seconds.
+    """
+    entries = await db.get_invoice_feed(limit=limit)
+    return {"entries": entries}
+
+
 @router.get("/audit")
 async def get_audit_log(
     limit: int      = Query(100, le=500),
@@ -400,10 +414,12 @@ async def mark_as_overhead(
         raise HTTPException(status_code=400, detail="Invoice is not in the queue")
 
     gl_account = body.gl_account
+    gl_name    = None
     if not gl_account:
         vendor_rule = await db.get_vendor_rule_by_name(row["vendor_name"])
         if vendor_rule:
             gl_account = vendor_rule.default_gl_account
+            gl_name    = vendor_rule.default_gl_name
     if not gl_account:
         raise HTTPException(status_code=422, detail="No GL account available — provide one or add it to the vendor rule")
 
@@ -426,9 +442,9 @@ async def mark_as_overhead(
 
     try:
         bill_id = await _qbo.post_bill(invoice, gl_account)
-        await db.mark_posted_qbo(invoice_id, bill_id, gl_account)
+        await db.mark_posted_qbo(invoice_id, bill_id, gl_account, gl_name=gl_name)
         await db.audit(invoice_id, "posted", body.reviewed_by, {
-            "destination": "qbo", "bill_id": bill_id, "gl_account": gl_account, "manual": True
+            "destination": "qbo", "bill_id": bill_id, "gl_account": gl_account, "gl_name": gl_name, "manual": True
         })
         return {"invoice_id": invoice_id, "outcome": "posted_qbo", "bill_id": bill_id, "gl_account": gl_account, "message": f"Posted to QBO — bill {bill_id}"}
     except Exception as e:
