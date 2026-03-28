@@ -179,6 +179,20 @@ async def _route_to_aspire(
         return RoutingOutcome.ERROR
 
 
+async def _resolve_gl_name(gl_account: str, gl_name: Optional[str], qbo: QBOClient) -> Optional[str]:
+    """If gl_name is missing, look it up from the QBO chart of accounts."""
+    if gl_name:
+        return gl_name
+    try:
+        accounts = await qbo.list_expense_accounts()
+        for acc in accounts:
+            if acc.get("AcctNum") == gl_account:
+                return acc.get("Name")
+    except Exception as e:
+        logger.debug(f"GL name lookup failed for {gl_account}: {e}")
+    return None
+
+
 async def _route_to_qbo(
     invoice: Invoice,
     gl_account: str,
@@ -188,6 +202,8 @@ async def _route_to_qbo(
     gl_name: Optional[str] = None,
 ) -> RoutingOutcome:
     """Post the bill to QBO against the resolved GL account."""
+
+    gl_name = await _resolve_gl_name(gl_account, gl_name, qbo)
 
     try:
         bill_id = await qbo.post_bill(
@@ -238,6 +254,7 @@ async def _route_to_qbo_purchase(
     gl_name: Optional[str] = None,
 ) -> RoutingOutcome:
     """Post a MasterCard receipt to QBO as a Purchase (CreditCardCharge)."""
+    gl_name = await _resolve_gl_name(gl_account, gl_name, qbo)
     try:
         purchase_id = await qbo.post_purchase(
             invoice,
