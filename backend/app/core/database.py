@@ -71,6 +71,8 @@ class _D1Backend:
             headers={"Authorization": f"Bearer {self._token}"},
             json={"sql": sql, "params": params or []},
         )
+        if not resp.is_success:
+            logger.error(f"D1 HTTP {resp.status_code} — body: {resp.text[:1000]}")
         resp.raise_for_status()
         data = resp.json()
         if not data.get("success"):
