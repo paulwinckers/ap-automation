@@ -4,9 +4,17 @@ Aspire API client — wraps the Aspire External REST API (OData v4).
 Docs: https://guide.youraspire.com/apidocs
 Base URL: https://cloud-api.youraspire.com
 Auth: Bearer token (OAuth2 client credentials)
+
+Receipt workflow:
+  1. Look up VendorID from /Vendors by vendor name
+  2. Look up WorkTicketID via Opportunity → OpportunityServices → WorkTickets
+  3. POST to /Receipts with status "Received"
+     - Received  = job cost recorded, waiting for approval
+     - Approved  = triggers QBO export (handled by Aspire, not us)
 """
 
 import logging
+import re
 from typing import Optional
 
 import httpx
@@ -18,6 +26,17 @@ logger = logging.getLogger(__name__)
 
 PRODUCTION_BASE = "https://cloud-api.youraspire.com"
 SANDBOX_BASE    = "https://cloudsandbox-api.youraspire.com"
+
+
+def _normalize_date(date_str: Optional[str]) -> Optional[str]:
+    """Normalize any date format to YYYY-MM-DD for Aspire."""
+    if not date_str:
+        return None
+    # MM/DD/YYYY → YYYY-MM-DD
+    m = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{4})$', date_str.strip())
+    if m:
+        return f"{m.group(3)}-{m.group(1).zfill(2)}-{m.group(2).zfill(2)}"
+    return date_str
 
 
 class AspireClient:
@@ -67,6 +86,10 @@ class AspireClient:
                 "Accept": "application/json",
             },
         )
+        if not resp.is_success:
+            logger.error(
+                f"Aspire POST {path} failed {resp.status_code}: {resp.text[:500]}"
+            )
         resp.raise_for_status()
         return resp.json()
 
@@ -106,43 +129,243 @@ class AspireClient:
             return False, f"PO '{po_number}' is {status}"
         return True, None
 
+    # ── Vendor lookup ─────────────────────────────────────────────────────────
+
+    async def get_vendor_id(self, vendor_name: str) -> Optional[int]:
+        """
+        Look up a vendor in Aspire /Vendors by name.
+        Returns the integer VendorID, or None if not found.
+        """
+        if not vendor_name:
+            return None
+        escaped = vendor_name.replace("'", "''")
+        try:
+            result = await self._get(
+                "Vendors",
+                params={
+                    "$filter": f"contains(VendorName, '{escaped}')",
+                    "$top": 5,
+                },
+            )
+            records = result.get("value", result if isinstance(result, list) else [])
+            if records:
+                vid = (
+                    records[0].get("VendorID")
+                    or records[0].get("Id")
+                    or records[0].get("id")
+                )
+                logger.info(f"Aspire vendor '{vendor_name}' → VendorID {vid}")
+                return int(vid) if vid is not None else None
+            logger.warning(f"Aspire vendor '{vendor_name}' not found in /Vendors")
+            return None
+        except Exception as e:
+            logger.error(f"Aspire vendor lookup failed for '{vendor_name}': {e}")
+            return None
+
+    # ── Work ticket lookup ────────────────────────────────────────────────────
+
+    async def get_work_tickets_for_opportunity(self, opportunity_id) -> list[dict]:
+        """
+        Get work tickets for an Opportunity.
+
+        Aspire data model:
+          Opportunity → OpportunityServices (one per service/category)
+                        → WorkTickets (one per visit/phase)
+
+        We first try filtering WorkTickets directly by OpportunityID
+        (works if the API exposes it as a top-level field).
+        If that returns nothing, we walk the OpportunityServices chain.
+        """
+        opp_id = str(opportunity_id)
+
+        # ── Attempt 1: direct OpportunityID filter ────────────────────────────
+        try:
+            wt_result = await self._get(
+                "WorkTickets",
+                params={
+                    "$filter": f"OpportunityID eq {opp_id}",
+                    "$top": 50,
+                },
+            )
+            tickets = wt_result.get("value", wt_result if isinstance(wt_result, list) else [])
+            if tickets:
+                logger.info(
+                    f"Got {len(tickets)} work tickets via direct OpportunityID={opp_id} filter"
+                )
+                return tickets
+        except Exception as e:
+            logger.debug(f"Direct WorkTicket filter failed (will try via services): {e}")
+
+        # ── Attempt 2: Opportunity → OpportunityServices → WorkTickets ─────────
+        try:
+            svc_result = await self._get(
+                "OpportunityServices",
+                params={
+                    "$filter": f"OpportunityID eq {opp_id}",
+                    "$top": 50,
+                },
+            )
+            services = svc_result.get("value", svc_result if isinstance(svc_result, list) else [])
+            if not services:
+                logger.warning(f"No OpportunityServices found for OpportunityID {opp_id}")
+                return []
+
+            svc_ids = [
+                s.get("OpportunityServiceID")
+                for s in services
+                if s.get("OpportunityServiceID")
+            ]
+            if not svc_ids:
+                return []
+
+            # OData OR filter — cap at 10 IDs to avoid URL length issues
+            filter_parts = " or ".join(
+                f"OpportunityServiceID eq {sid}" for sid in svc_ids[:10]
+            )
+            wt_result = await self._get(
+                "WorkTickets",
+                params={"$filter": filter_parts, "$top": 50},
+            )
+            tickets = wt_result.get("value", wt_result if isinstance(wt_result, list) else [])
+            logger.info(
+                f"Got {len(tickets)} work tickets via OpportunityServices chain for OpportunityID={opp_id}"
+            )
+            return tickets
+        except Exception as e:
+            logger.error(f"Work ticket lookup failed for OpportunityID {opp_id}: {e}")
+            return []
+
     # ── Bill / Receipt creation ───────────────────────────────────────────────
 
     async def post_bill(self, invoice: Invoice, po_data: dict) -> str:
         """
-        Create a Receipt (AP bill) in Aspire matched to the given PO.
-        Returns the Aspire ReceiptID.
+        Create a Receipt (AP bill) in Aspire matched to the given Opportunity/PO.
+        Sets status to "Received" — Aspire will export to QBO when Approved.
+        Returns the Aspire ReceiptID as a string.
 
-        NOTE: The exact POST body shape depends on your Aspire version
-        and the Receipts endpoint schema. Adjust fields to match your
-        Aspire API reference under the Receipts/Purchasing section.
+        Raises ValueError if BranchID is not configured or no work ticket found.
+        Raises httpx.HTTPStatusError on API failure.
         """
-        opportunity_id = po_data["OpportunityID"]
+        opportunity_id = po_data.get("OpportunityID")
+        if not opportunity_id:
+            raise ValueError(f"po_data missing OpportunityID: {po_data}")
 
-        body = {
-            "OpportunityID":    opportunity_id,
-            "VendorName":       invoice.vendor_name,
-            "InvoiceNumber":    invoice.invoice_number,
-            "InvoiceDate":      invoice.invoice_date,
-            "DueDate":          invoice.due_date,
-            "TotalAmount":      invoice.total_amount,
-            "TaxAmount":        invoice.tax_amount,
-            "Notes":            f"Auto-posted by AP Automation | PDF: {invoice.pdf_filename}",
-            "LineItems": [
+        # ── Guard: BranchID must be configured ────────────────────────────────
+        branch_id = settings.ASPIRE_BRANCH_ID
+        if not branch_id:
+            raise ValueError(
+                "ASPIRE_BRANCH_ID is not set. Add it as a Railway env var "
+                "(integer — find it in Aspire Settings → Branches)."
+            )
+
+        # ── Vendor lookup ──────────────────────────────────────────────────────
+        vendor_id = await self.get_vendor_id(invoice.vendor_name or "")
+        if vendor_id is None:
+            raise ValueError(
+                f"Vendor '{invoice.vendor_name}' not found in Aspire /Vendors. "
+                "Add the vendor in Aspire first, or map the name to an existing vendor."
+            )
+
+        # ── Work ticket lookup ─────────────────────────────────────────────────
+        work_tickets = await self.get_work_tickets_for_opportunity(opportunity_id)
+        if not work_tickets:
+            raise ValueError(
+                f"No work tickets found for OpportunityID {opportunity_id}. "
+                "Ensure the opportunity has active work tickets in Aspire."
+            )
+
+        # Prefer a "Subs" or "Other" type work ticket; fall back to first open one
+        def ticket_priority(t: dict) -> int:
+            wt_type = (t.get("WorkTicketType") or t.get("TicketType") or "").lower()
+            if wt_type in ("subs", "sub"):       return 0
+            if wt_type in ("other",):             return 1
+            if wt_type in ("material", "materials"): return 2
+            return 9
+
+        work_tickets_sorted = sorted(work_tickets, key=ticket_priority)
+        chosen_ticket = work_tickets_sorted[0]
+        work_ticket_id = (
+            chosen_ticket.get("WorkTicketID")
+            or chosen_ticket.get("Id")
+            or chosen_ticket.get("id")
+        )
+        logger.info(
+            f"Using WorkTicketID {work_ticket_id} "
+            f"(type={chosen_ticket.get('WorkTicketType') or chosen_ticket.get('TicketType')}) "
+            f"for OpportunityID {opportunity_id}"
+        )
+
+        # ── Build receipt items ────────────────────────────────────────────────
+        # If the invoice has extracted line items, post them individually.
+        # Otherwise create a single summary line from the total.
+        if invoice.line_items:
+            receipt_items = [
                 {
-                    "Description": li.description,
-                    "Quantity":    li.quantity,
-                    "UnitPrice":   li.unit_price,
-                    "Amount":      li.amount,
+                    "ItemName":     li.description or "Invoice line",
+                    "ItemQuantity": li.quantity if li.quantity is not None else 1,
+                    "ItemUnitCost": li.unit_price if li.unit_price is not None else li.amount,
+                    "ItemType":     "other",
+                    "ItemAllocations": [
+                        {
+                            "WorkTicketID":      work_ticket_id,
+                            "AllocationPercent": 100,
+                        }
+                    ],
                 }
-                for li in (invoice.line_items or [])
-            ],
+                for li in invoice.line_items
+            ]
+        else:
+            receipt_items = [
+                {
+                    "ItemName":     f"Invoice {invoice.invoice_number or '—'}",
+                    "ItemQuantity": 1,
+                    "ItemUnitCost": float(invoice.total_amount or 0),
+                    "ItemType":     "other",
+                    "ItemAllocations": [
+                        {
+                            "WorkTicketID":      work_ticket_id,
+                            "AllocationPercent": 100,
+                        }
+                    ],
+                }
+            ]
+
+        # ── Build the POST body ────────────────────────────────────────────────
+        body = {
+            "BranchID":           branch_id,
+            "VendorID":           vendor_id,
+            "VendorInvoiceNum":   invoice.invoice_number or "",
+            "VendorInvoiceDate":  _normalize_date(invoice.invoice_date),
+            "ReceiptStatusName":  "Received",
+            "Notes": (
+                f"Auto-posted by AP Automation | "
+                f"PO: {invoice.po_number or po_data.get('CustomerPONum') or '—'} | "
+                f"File: {invoice.pdf_filename or '—'}"
+            ),
+            "ReceiptItems": receipt_items,
         }
 
-        logger.info(f"Posting bill to Aspire — OpportunityID {opportunity_id}")
+        logger.info(
+            f"Posting receipt to Aspire — "
+            f"OpportunityID {opportunity_id}, VendorID {vendor_id}, "
+            f"WorkTicketID {work_ticket_id}, "
+            f"total ${invoice.total_amount}"
+        )
+
         result = await self._post("Receipts", body)
-        receipt_id = str(result.get("ReceiptID") or result.get("id"))
-        return receipt_id
+
+        receipt_id = (
+            result.get("ReceiptID")
+            or result.get("receiptId")
+            or result.get("Id")
+            or result.get("id")
+            or result.get("value")
+        )
+        if receipt_id is None:
+            logger.warning(f"Aspire Receipts POST returned no ID — full response: {result}")
+            receipt_id = "unknown"
+
+        return str(receipt_id)
 
     async def close(self):
         await self._http.aclose()

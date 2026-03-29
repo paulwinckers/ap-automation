@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     ASPIRE_CLIENT_ID:    str = ""
     ASPIRE_CLIENT_SECRET: str = ""
     ASPIRE_SANDBOX:      bool = False
+    ASPIRE_BRANCH_ID:    int = 0    # Required — set in Railway env vars
 
     # QBO
     QBO_CLIENT_ID:       str = ""
