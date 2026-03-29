@@ -255,7 +255,7 @@ class AspireClient:
         if not branch_id:
             raise ValueError(
                 "ASPIRE_BRANCH_ID is not set. Add it as a Railway env var "
-                "(integer — find it in Aspire Settings → Branches)."
+                "(UUID — find it in Aspire Settings → Branches)."
             )
 
         # ── Vendor lookup ──────────────────────────────────────────────────────
