@@ -98,17 +98,28 @@ class AspireClient:
     async def get_purchase_order(self, po_number: str) -> Optional[dict]:
         """
         Look up a PO/Opportunity in Aspire by CustomerPONum.
+        Expands OpportunityServices and their WorkTickets in the same call
+        so post_bill doesn't need extra round-trips.
         Returns the first matching record, or None if not found.
         """
         logger.info(f"Looking up PO '{po_number}' in Aspire")
         try:
             result = await self._get(
                 "Opportunities",
-                params={"$filter": f"CustomerPONum eq '{po_number}'", "$top": 1},
+                params={
+                    "$filter": f"CustomerPONum eq '{po_number}'",
+                    "$top": 1,
+                    "$expand": "OpportunityServices($expand=WorkTickets)",
+                },
             )
             records = result.get("value", result if isinstance(result, list) else [])
             if records:
-                logger.info(f"PO '{po_number}' found — OpportunityID {records[0].get('OpportunityID')}")
+                opp_id = records[0].get("OpportunityID")
+                svc_count = len(records[0].get("OpportunityServices") or [])
+                logger.info(
+                    f"PO '{po_number}' found — OpportunityID {opp_id}, "
+                    f"{svc_count} service(s) expanded"
+                )
                 return records[0]
             logger.warning(f"PO '{po_number}' not found in Aspire")
             return None
@@ -164,21 +175,37 @@ class AspireClient:
 
     # ── Work ticket lookup ────────────────────────────────────────────────────
 
-    async def get_work_tickets_for_opportunity(self, opportunity_id) -> list[dict]:
+    async def get_work_tickets_for_opportunity(
+        self, opportunity_id, po_data: dict = None
+    ) -> list[dict]:
         """
         Get work tickets for an Opportunity.
 
         Aspire data model:
-          Opportunity → OpportunityServices (one per service/category)
-                        → WorkTickets (one per visit/phase)
+          Opportunity → OpportunityServices → WorkTickets
 
-        We first try filtering WorkTickets directly by OpportunityID
-        (works if the API exposes it as a top-level field).
-        If that returns nothing, we walk the OpportunityServices chain.
+        Resolution order:
+          1. Extract from already-expanded po_data (zero extra API calls)
+          2. Direct WorkTickets $filter on OpportunityID
+          3. OpportunityServices chain with $expand=WorkTickets
         """
         opp_id = str(opportunity_id)
 
-        # ── Attempt 1: direct OpportunityID filter ────────────────────────────
+        # ── Attempt 1: extract from expanded po_data ──────────────────────────
+        if po_data:
+            services = po_data.get("OpportunityServices") or []
+            if services:
+                tickets = []
+                for svc in services:
+                    tickets.extend(svc.get("WorkTickets") or [])
+                if tickets:
+                    logger.info(
+                        f"Got {len(tickets)} work tickets from expanded po_data "
+                        f"(OpportunityID={opp_id})"
+                    )
+                    return tickets
+
+        # ── Attempt 2: direct $filter on WorkTickets ──────────────────────────
         try:
             wt_result = await self._get(
                 "WorkTickets",
@@ -190,19 +217,21 @@ class AspireClient:
             tickets = wt_result.get("value", wt_result if isinstance(wt_result, list) else [])
             if tickets:
                 logger.info(
-                    f"Got {len(tickets)} work tickets via direct OpportunityID={opp_id} filter"
+                    f"Got {len(tickets)} work tickets via direct "
+                    f"OpportunityID={opp_id} filter"
                 )
                 return tickets
         except Exception as e:
             logger.debug(f"Direct WorkTicket filter failed (will try via services): {e}")
 
-        # ── Attempt 2: Opportunity → OpportunityServices → WorkTickets ─────────
+        # ── Attempt 3: OpportunityServices $expand WorkTickets ────────────────
         try:
             svc_result = await self._get(
                 "OpportunityServices",
                 params={
                     "$filter": f"OpportunityID eq {opp_id}",
                     "$top": 50,
+                    "$expand": "WorkTickets",
                 },
             )
             services = svc_result.get("value", svc_result if isinstance(svc_result, list) else [])
@@ -210,6 +239,18 @@ class AspireClient:
                 logger.warning(f"No OpportunityServices found for OpportunityID {opp_id}")
                 return []
 
+            tickets = []
+            for svc in services:
+                tickets.extend(svc.get("WorkTickets") or [])
+
+            if tickets:
+                logger.info(
+                    f"Got {len(tickets)} work tickets via OpportunityServices "
+                    f"$expand for OpportunityID={opp_id}"
+                )
+                return tickets
+
+            # Last resort: fetch WorkTickets by ServiceID with proper OData grouping
             svc_ids = [
                 s.get("OpportunityServiceID")
                 for s in services
@@ -218,19 +259,21 @@ class AspireClient:
             if not svc_ids:
                 return []
 
-            # OData OR filter — cap at 10 IDs to avoid URL length issues
-            filter_parts = " or ".join(
+            # OData OR — group in parentheses per spec
+            or_clauses = " or ".join(
                 f"OpportunityServiceID eq {sid}" for sid in svc_ids[:10]
             )
             wt_result = await self._get(
                 "WorkTickets",
-                params={"$filter": filter_parts, "$top": 50},
+                params={"$filter": f"({or_clauses})", "$top": 50},
             )
             tickets = wt_result.get("value", wt_result if isinstance(wt_result, list) else [])
             logger.info(
-                f"Got {len(tickets)} work tickets via OpportunityServices chain for OpportunityID={opp_id}"
+                f"Got {len(tickets)} work tickets via ServiceID OR filter "
+                f"for OpportunityID={opp_id}"
             )
             return tickets
+
         except Exception as e:
             logger.error(f"Work ticket lookup failed for OpportunityID {opp_id}: {e}")
             return []
@@ -283,7 +326,10 @@ class AspireClient:
                 )
 
         # ── Work ticket lookup ─────────────────────────────────────────────────
-        work_tickets = await self.get_work_tickets_for_opportunity(opportunity_id)
+        # Pass po_data so expanded services/tickets are used without extra calls
+        work_tickets = await self.get_work_tickets_for_opportunity(
+            opportunity_id, po_data=po_data
+        )
         if not work_tickets:
             raise ValueError(
                 f"No work tickets found for OpportunityID {opportunity_id}. "
