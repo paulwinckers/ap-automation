@@ -32,7 +32,7 @@ class TaxLine(BaseModel):
 
 class InvoiceExtraction(BaseModel):
     """Structured data returned by Claude extraction."""
-    vendor_name:    str
+    vendor_name:    Optional[str] = None
     invoice_number: Optional[str] = None
     invoice_date:   Optional[str] = None
     due_date:       Optional[str] = None

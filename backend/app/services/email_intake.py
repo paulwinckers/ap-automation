@@ -355,6 +355,16 @@ class EmailIntakeService:
         if any(k in subject_lower for k in renewal_reminder_phrases):
             return "skip"
 
+        # Skip software/account notifications — not financial transactions
+        notification_phrases = [
+            "updates to your", "changes to your", "new features in",
+            "your account has been", "we've updated", "important changes to",
+            "terms of service", "privacy policy", "security alert",
+            "verify your", "confirm your email", "welcome to",
+        ]
+        if any(k in subject_lower for k in notification_phrases):
+            return "skip"
+
         # Fast-path: receipt keywords with no PDF attachment → receipt
         receipt_keywords = ["renewal receipt", "order receipt", "purchase receipt",
                             "subscription receipt", "payment receipt", "order confirmation",
@@ -567,11 +577,11 @@ class EmailIntakeService:
             f"order: {extraction.invoice_number}"
         )
 
-        # Guard: if Claude couldn't find an amount this is a reminder/promo, not a real receipt
-        if not extraction.total_amount:
+        # Guard: if Claude couldn't extract vendor or amount this is a notification, not a real receipt
+        if not extraction.vendor_name or not extraction.total_amount:
             logger.info(
-                f"Receipt skipped — no amount found in '{subject}' from {sender}. "
-                f"Likely a renewal reminder, not a payment confirmation."
+                f"Receipt skipped — no vendor/amount found in '{subject}' from {sender}. "
+                f"Likely a notification or reminder, not a payment confirmation."
             )
             self._skipped.append({"subject": subject, "from": sender})
             await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
