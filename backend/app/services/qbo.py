@@ -305,9 +305,20 @@ class QBOClient:
             if acct.get("AcctNum") == account_code:
                 return acct
 
-        # Last resort: name contains the code
+        # Also search credit card / liability accounts (not in list_expense_accounts)
+        # MasterCard, Visa, AMEX accounts live under AccountType = 'Credit Card'
+        cc_result = await self._get(
+            "query",
+            {"query": "SELECT Id, Name, AcctNum, AccountType FROM Account WHERE Active = true AND AccountType = 'Credit Card' MAXRESULTS 50"},
+        )
+        cc_accounts = cc_result.get("QueryResponse", {}).get("Account", [])
+        for acct in cc_accounts:
+            if acct.get("AcctNum") == account_code:
+                return acct
+
+        # Last resort: name contains the code (all account types)
         code_lower = account_code.lower()
-        for acct in all_accounts:
+        for acct in all_accounts + cc_accounts:
             if code_lower in (acct.get("Name") or "").lower():
                 return acct
 
