@@ -49,6 +49,7 @@ class VendorUpdateRequest(BaseModel):
     vendor_id_aspire:   Optional[str] = None
     vendor_id_qbo:      Optional[str] = None
     notes:              Optional[str] = None
+    match_keyword:      Optional[str] = None
     is_employee:        Optional[bool] = None
     active:             Optional[bool] = None
 

@@ -120,7 +120,16 @@ async def route_invoice(
         return await _route_to_qbo(invoice, gl_account, db, qbo, employee_name, gl_name=gl_name)
 
     else:  # QUEUE
-        await _queue(invoice, db, reason="mixed_vendor_no_po")
+        # Use a meaningful reason depending on why we're queuing
+        if vendor_rule.type == VendorType.JOB_COST or (
+            vendor_rule.type == VendorType.MIXED and effective_po
+        ):
+            reason = "aspire_not_configured"
+        else:
+            reason = "mixed_vendor_no_po"
+        await _queue(invoice, db, reason=reason)
+        # Notify the assigned contact (e.g. Keeland) so they can enter it in Aspire
+        await _notify_queued(invoice, vendor_rule, reason)
         return RoutingOutcome.QUEUED
 
 
@@ -312,6 +321,63 @@ async def _route_to_qbo_purchase(
         logger.error(f"QBO purchase post failed for invoice {invoice.id}: {e}")
         await db.mark_error(invoice.id, str(e))
         return RoutingOutcome.ERROR
+
+
+async def _notify_queued(invoice: Invoice, vendor_rule, reason: str) -> None:
+    """
+    Email the vendor's assigned contact when a job-cost invoice queues for Aspire.
+    Silently swallows failures so a missed email never blocks the queue write.
+    """
+    if not vendor_rule or not vendor_rule.forward_to:
+        return
+    try:
+        from app.services.email_intake import GraphClient
+        if not settings.MS_AP_INBOX:
+            logger.debug("MS_AP_INBOX not set — skipping queue notification")
+            return
+
+        po_info = invoice.po_number_override or invoice.po_number or "none on file"
+        amount  = f"${invoice.total_amount:,.2f}" if invoice.total_amount else "unknown"
+        reason_label = {
+            "aspire_not_configured": "Aspire not yet connected — manual entry required",
+            "mixed_vendor_no_po":    "No PO number found on invoice",
+            "job_cost_no_po":        "No PO number — cannot post to Aspire",
+        }.get(reason, reason.replace("_", " ").title())
+
+        graph = GraphClient()
+        try:
+            await graph.send_email(
+                mailbox=settings.MS_AP_INBOX,
+                to_addresses=[vendor_rule.forward_to],
+                subject=f"Invoice queued for review — {invoice.vendor_name or 'Unknown vendor'} {amount}",
+                body_html=f"""
+<div style="font-family:sans-serif;max-width:520px">
+  <h3 style="color:#1e3a2f;margin-bottom:16px">Invoice Pending Review</h3>
+  <table style="border-collapse:collapse;width:100%">
+    <tr><td style="padding:6px 16px 6px 0;color:#666;white-space:nowrap">Vendor</td>
+        <td><strong>{invoice.vendor_name or '—'}</strong></td></tr>
+    <tr><td style="padding:6px 16px 6px 0;color:#666">Amount</td>
+        <td><strong>{amount}</strong></td></tr>
+    <tr><td style="padding:6px 16px 6px 0;color:#666">PO Number</td>
+        <td>{po_info}</td></tr>
+    <tr><td style="padding:6px 16px 6px 0;color:#666">Invoice #</td>
+        <td>{invoice.invoice_number or '—'}</td></tr>
+    <tr><td style="padding:6px 16px 6px 0;color:#666">Reason</td>
+        <td style="color:#b45309">{reason_label}</td></tr>
+  </table>
+  <p style="margin-top:16px">
+    <a href="https://darios-ap.pages.dev/ap"
+       style="background:#1e3a2f;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-weight:600">
+      Open AP Dashboard
+    </a>
+  </p>
+</div>""",
+            )
+            logger.info(f"Queue notification sent to {vendor_rule.forward_to} for invoice {invoice.id}")
+        finally:
+            await graph.close()
+    except Exception as e:
+        logger.warning(f"Queue notification failed (non-fatal): {e}")
 
 
 async def _queue(
