@@ -130,17 +130,35 @@ class GraphClient:
             {"comment": comment, "toRecipients": [{"emailAddress": {"address": to_address}}]},
         )
 
-    async def send_email(self, mailbox: str, to_addresses: list[str], subject: str, body_html: str) -> None:
+    async def send_email(
+        self,
+        mailbox: str,
+        to_addresses: list[str],
+        subject: str,
+        body_html: str,
+        attachment_bytes: Optional[bytes] = None,
+        attachment_filename: Optional[str] = None,
+    ) -> None:
+        message: dict = {
+            "subject": subject,
+            "body": {"contentType": "HTML", "content": body_html},
+            "toRecipients": [{"emailAddress": {"address": a}} for a in to_addresses],
+        }
+        if attachment_bytes and attachment_filename:
+            import mimetypes
+            mime_type, _ = mimetypes.guess_type(attachment_filename)
+            mime_type = mime_type or "application/octet-stream"
+            message["attachments"] = [
+                {
+                    "@odata.type": "#microsoft.graph.fileAttachment",
+                    "name": attachment_filename,
+                    "contentType": mime_type,
+                    "contentBytes": base64.b64encode(attachment_bytes).decode("utf-8"),
+                }
+            ]
         await self._post(
             f"users/{mailbox}/sendMail",
-            {
-                "message": {
-                    "subject": subject,
-                    "body": {"contentType": "HTML", "content": body_html},
-                    "toRecipients": [{"emailAddress": {"address": a}} for a in to_addresses],
-                },
-                "saveToSentItems": True,
-            },
+            {"message": message, "saveToSentItems": True},
         )
 
     async def send_receipt_confirmation(

@@ -351,27 +351,47 @@ async def _notify_queued(invoice: Invoice, vendor_rule, reason: str) -> None:
                 to_addresses=[vendor_rule.forward_to],
                 subject=f"Invoice queued for review — {invoice.vendor_name or 'Unknown vendor'} {amount}",
                 body_html=f"""
-<div style="font-family:sans-serif;max-width:520px">
-  <h3 style="color:#1e3a2f;margin-bottom:16px">Invoice Pending Review</h3>
-  <table style="border-collapse:collapse;width:100%">
-    <tr><td style="padding:6px 16px 6px 0;color:#666;white-space:nowrap">Vendor</td>
-        <td><strong>{invoice.vendor_name or '—'}</strong></td></tr>
-    <tr><td style="padding:6px 16px 6px 0;color:#666">Amount</td>
-        <td><strong>{amount}</strong></td></tr>
-    <tr><td style="padding:6px 16px 6px 0;color:#666">PO Number</td>
-        <td>{po_info}</td></tr>
-    <tr><td style="padding:6px 16px 6px 0;color:#666">Invoice #</td>
-        <td>{invoice.invoice_number or '—'}</td></tr>
-    <tr><td style="padding:6px 16px 6px 0;color:#666">Reason</td>
-        <td style="color:#b45309">{reason_label}</td></tr>
+<html><body style="font-family:Arial,sans-serif;color:#1a1d23;max-width:600px">
+<div style="background:#1e3a2f;padding:20px 24px;border-radius:8px 8px 0 0">
+  <h2 style="color:#fff;margin:0;font-size:18px">📋 Invoice Pending — Action Required</h2>
+</div>
+<div style="background:#fff;border:1px solid #e2e6ed;border-top:none;padding:24px;border-radius:0 0 8px 8px">
+  <p style="margin:0 0 16px;color:#374151">
+    An invoice has been received and is waiting for manual entry into Aspire.
+    The original invoice is attached.
+  </p>
+  <table style="width:100%;border-collapse:collapse;font-size:14px">
+    <tr><td style="padding:8px 0;color:#6b7280;width:140px">Vendor</td>
+        <td style="padding:8px 0;font-weight:600">{invoice.vendor_name or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Amount</td>
+        <td style="padding:8px 0;font-weight:600">{amount}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">PO Number</td>
+        <td style="padding:8px 0">{po_info}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Invoice #</td>
+        <td style="padding:8px 0">{invoice.invoice_number or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Invoice Date</td>
+        <td style="padding:8px 0">{invoice.invoice_date or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Status</td>
+        <td style="padding:8px 0;color:#b45309;font-weight:600">{reason_label}</td></tr>
   </table>
-  <p style="margin-top:16px">
+  <p style="margin:24px 0 0">
     <a href="https://darios-ap.pages.dev/ap"
-       style="background:#1e3a2f;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-weight:600">
+       style="background:#1e3a2f;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">
       Open AP Dashboard
     </a>
   </p>
-</div>""",
+  <p style="margin:16px 0 0;font-size:12px;color:#9ca3af">
+    AP Automation · Dario's Landscape Services
+  </p>
+</div>
+</body></html>""",
+                attachment_bytes=invoice.file_bytes,
+                attachment_filename=invoice.pdf_filename or f"invoice_{invoice.id}.pdf",
             )
             logger.info(f"Queue notification sent to {vendor_rule.forward_to} for invoice {invoice.id}")
         finally:
