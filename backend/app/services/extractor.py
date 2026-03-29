@@ -48,9 +48,13 @@ Rules:
 - Return ONLY the JSON object. No preamble, no markdown, no explanation.
 - If a field is not present, use null.
 - All amounts must be numbers, not strings.
-- po_number: only include if explicitly labelled as PO, P.O., Purchase Order,
-  or similar. Do not infer it from other reference numbers.
-- If multiple PO numbers appear, use the first one.
+- po_number: look for fields explicitly labelled "PO", "P.O.", "Purchase Order",
+  "Purchase Order No.", "PO Number", "Customer PO", or similar.
+  This is the CUSTOMER'S purchase order number, not the vendor's invoice number,
+  contract number, account number, or job number. It is typically a short
+  numeric value (e.g. 1540) placed near the top of the invoice in a PO field.
+  Do not infer it from other reference numbers.
+- If multiple PO numbers appear, use the one in the field explicitly labelled PO.
 """
 
 # MIME types Claude accepts for documents vs images
