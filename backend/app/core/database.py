@@ -72,7 +72,13 @@ class _D1Backend:
             json={"sql": sql, "params": params or []},
         )
         if not resp.is_success:
-            logger.warning(f"D1 HTTP {resp.status_code} — body: {resp.text[:500]}")
+            # Demote "duplicate column" errors to debug — these are expected
+            # on every startup when ALTER TABLE migrations have already run
+            body = resp.text[:500]
+            if "duplicate column" in body.lower():
+                logger.debug(f"D1 migration already applied (skipping): {body[:120]}")
+            else:
+                logger.warning(f"D1 HTTP {resp.status_code} — body: {body}")
         resp.raise_for_status()
         data = resp.json()
         if not data.get("success"):
