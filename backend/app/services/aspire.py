@@ -237,7 +237,7 @@ class AspireClient:
 
     # ── Bill / Receipt creation ───────────────────────────────────────────────
 
-    async def post_bill(self, invoice: Invoice, po_data: dict) -> str:
+    async def post_bill(self, invoice: Invoice, po_data: dict, vendor_rule=None) -> str:
         """
         Create a Receipt (AP bill) in Aspire matched to the given Opportunity/PO.
         Sets status to "Received" — Aspire will export to QBO when Approved.
@@ -259,12 +259,28 @@ class AspireClient:
             )
 
         # ── Vendor lookup ──────────────────────────────────────────────────────
-        vendor_id = await self.get_vendor_id(invoice.vendor_name or "")
+        # Use cached Aspire VendorID from vendor_rules table if available.
+        # Fall back to searching /Vendors by name (vendors sync from QBO).
+        vendor_id: Optional[int] = None
+        if vendor_rule and vendor_rule.vendor_id_aspire:
+            try:
+                vendor_id = int(vendor_rule.vendor_id_aspire)
+                logger.info(
+                    f"Using cached Aspire VendorID {vendor_id} "
+                    f"for '{invoice.vendor_name}'"
+                )
+            except (ValueError, TypeError):
+                pass
+
         if vendor_id is None:
-            raise ValueError(
-                f"Vendor '{invoice.vendor_name}' not found in Aspire /Vendors. "
-                "Add the vendor in Aspire first, or map the name to an existing vendor."
-            )
+            vendor_id = await self.get_vendor_id(invoice.vendor_name or "")
+            if vendor_id is None:
+                raise ValueError(
+                    f"Vendor '{invoice.vendor_name}' not found in Aspire /Vendors. "
+                    "The vendor should be present if it was synced from QBO — "
+                    "check the vendor name matches exactly, or set vendor_id_aspire "
+                    "in the /vendors page."
+                )
 
         # ── Work ticket lookup ─────────────────────────────────────────────────
         work_tickets = await self.get_work_tickets_for_opportunity(opportunity_id)

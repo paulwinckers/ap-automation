@@ -90,7 +90,7 @@ async def route_invoice(
 
     # ── Step 4: Execute the decision ──────────────────────────────────────────
     if decision == RoutingDecision.ASPIRE:
-        return await _route_to_aspire(invoice, effective_po, db, aspire)
+        return await _route_to_aspire(invoice, effective_po, db, aspire, vendor_rule=vendor_rule)
 
     elif decision == RoutingDecision.QBO:
         gl_account = vendor_rule.default_gl_account
@@ -139,6 +139,7 @@ async def _route_to_aspire(
     po_number: Optional[str],
     db: Database,
     aspire: AspireClient,
+    vendor_rule=None,
 ) -> RoutingOutcome:
     """Validate PO in Aspire, then post the bill."""
 
@@ -163,7 +164,7 @@ async def _route_to_aspire(
 
     # Post the bill
     try:
-        receipt_id = await aspire.post_bill(invoice, po_data)
+        receipt_id = await aspire.post_bill(invoice, po_data, vendor_rule=vendor_rule)
         await db.mark_posted_aspire(invoice.id, receipt_id, po_data["OpportunityID"])
         await db.audit(invoice.id, "posted", "system", {
             "destination": "aspire",
