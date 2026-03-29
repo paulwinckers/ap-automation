@@ -4,6 +4,16 @@ import io
 import logging
 import os
 from contextlib import asynccontextmanager
+
+# ── Configure logging before anything else ────────────────────────────────────
+# Without this, Python's root logger defaults to WARNING and all INFO logs
+# from routing, email, etc. are silently discarded in Railway.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:     %(name)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+    force=True,
+)
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

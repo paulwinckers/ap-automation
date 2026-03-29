@@ -333,7 +333,7 @@ async def _notify_queued(invoice: Invoice, vendor_rule, reason: str) -> None:
     try:
         from app.services.email_intake import GraphClient
         if not settings.MS_AP_INBOX:
-            logger.debug("MS_AP_INBOX not set — skipping queue notification")
+            logger.warning("MS_AP_INBOX not set — skipping queue notification email")
             return
 
         po_info = invoice.po_number_override or invoice.po_number or "none on file"
