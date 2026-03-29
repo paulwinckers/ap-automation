@@ -353,15 +353,15 @@ export default function APDashboard() {
                   </td>
                   <td style={styles.td}>
                     {statusBadge(e)}
-                    {(e.status === 'error' || e.status === 'queued') && (
+                    {(e.status === 'error' || e.status === 'queued' || e.status === 'pending') && (
                       <button
                         onClick={() => retryInvoice(e.id)}
                         disabled={retrying === e.id}
                         style={{
                           marginLeft: 8,
-                          background: e.status === 'error' ? '#fef2f2' : '#fffbeb',
-                          border: `1px solid ${e.status === 'error' ? '#fca5a5' : '#fcd34d'}`,
-                          color: e.status === 'error' ? '#dc2626' : '#b45309',
+                          background: e.status === 'error' ? '#fef2f2' : e.status === 'pending' ? '#f0f9ff' : '#fffbeb',
+                          border: `1px solid ${e.status === 'error' ? '#fca5a5' : e.status === 'pending' ? '#7dd3fc' : '#fcd34d'}`,
+                          color: e.status === 'error' ? '#dc2626' : e.status === 'pending' ? '#0369a1' : '#b45309',
                           borderRadius: 6, padding: '2px 8px',
                           cursor: retrying === e.id ? 'wait' : 'pointer', fontSize: 11, fontWeight: 600,
                         }}
