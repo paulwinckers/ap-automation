@@ -69,7 +69,7 @@ class AspireClient:
             params=params,
             headers={
                 "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
+                "Accept": "application/json;odata.metadata=minimal",
             },
         )
         resp.raise_for_status()
@@ -297,8 +297,9 @@ class AspireClient:
         branch_id = settings.ASPIRE_BRANCH_ID
         if not branch_id:
             raise ValueError(
-                "ASPIRE_BRANCH_ID is not set. Add it as a Railway env var "
-                "(UUID — find it in Aspire Settings → Branches)."
+                "ASPIRE_BRANCH_ID is not set. Add it as a Railway env var. "
+                "Find it in Aspire: Settings → Branches — it's the integer ID "
+                "(e.g. 1, 2, 3 — not the UUID company ID)."
             )
 
         # ── Vendor lookup ──────────────────────────────────────────────────────

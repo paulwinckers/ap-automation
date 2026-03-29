@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     ASPIRE_CLIENT_ID:    str = ""
     ASPIRE_CLIENT_SECRET: str = ""
     ASPIRE_SANDBOX:      bool = False
-    ASPIRE_BRANCH_ID:    str = ""   # Required — UUID from Aspire Settings → Branches
+    ASPIRE_BRANCH_ID:    int = 0    # Required — integer, find in Aspire Settings → Branches
 
     # QBO
     QBO_CLIENT_ID:       str = ""
