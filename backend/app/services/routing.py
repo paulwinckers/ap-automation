@@ -25,6 +25,17 @@ from app.models.vendor import VendorRule, VendorType
 from app.services.aspire import AspireClient
 from app.services.qbo import QBOClient
 from app.core.database import Database
+from app.core.config import settings
+
+
+def _aspire_configured() -> bool:
+    """True only when Aspire credentials are fully set up and not default placeholders."""
+    return bool(
+        settings.ASPIRE_TOKEN_URL
+        and settings.ASPIRE_CLIENT_ID
+        and settings.ASPIRE_CLIENT_SECRET
+        and "youraspire.com/token" not in settings.ASPIRE_TOKEN_URL
+    )
 
 # Fallback GL account when a MasterCard vendor is not in vendor_rules.
 # This is the "General overhead" catch-all account — AP can recode later.
@@ -117,18 +128,23 @@ def _decide(vendor_rule: VendorRule, effective_po: Optional[str]) -> RoutingDeci
     """
     Pure function — no I/O. Makes the routing decision based on vendor
     type and whether a PO number is available.
+    When Aspire is not configured, job_cost invoices queue for manual review.
     """
+    aspire_up = _aspire_configured()
+
     if vendor_rule.type == VendorType.JOB_COST:
-        return RoutingDecision.ASPIRE
+        return RoutingDecision.ASPIRE if aspire_up else RoutingDecision.QUEUE
 
     elif vendor_rule.type == VendorType.OVERHEAD:
         return RoutingDecision.QBO
 
     elif vendor_rule.type == VendorType.MIXED:
-        if effective_po:
+        if effective_po and aspire_up:
             return RoutingDecision.ASPIRE
+        elif effective_po:
+            return RoutingDecision.QUEUE  # has PO but Aspire not ready
         else:
-            return RoutingDecision.QUEUE
+            return RoutingDecision.QBO   # no PO → overhead GL
 
     # Fallback — should not reach here
     return RoutingDecision.QUEUE
