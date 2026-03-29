@@ -97,12 +97,19 @@ class AspireClient:
 
     async def get_purchase_order(self, po_number: str) -> Optional[dict]:
         """
-        Look up a PO/Opportunity in Aspire by CustomerPONum.
-        Expands OpportunityServices and their WorkTickets in the same call
-        so post_bill doesn't need extra round-trips.
-        Returns the first matching record, or None if not found.
+        Look up an Opportunity in Aspire by PO number.
+
+        Search order:
+          1. Opportunities.CustomerPONum  (contract-level PO)
+          2. Jobs.CustomerPO              (job-level PO) → resolves to its Opportunity
+
+        Expands OpportunityServices → WorkTickets in the same call so
+        post_bill doesn't need extra round-trips.
+        Returns the Opportunity record, or None if not found.
         """
         logger.info(f"Looking up PO '{po_number}' in Aspire")
+
+        # ── 1. Opportunity-level PO ────────────────────────────────────────────
         try:
             result = await self._get(
                 "Opportunities",
@@ -117,14 +124,73 @@ class AspireClient:
                 opp_id = records[0].get("OpportunityID")
                 svc_count = len(records[0].get("OpportunityServices") or [])
                 logger.info(
-                    f"PO '{po_number}' found — OpportunityID {opp_id}, "
-                    f"{svc_count} service(s) expanded"
+                    f"PO '{po_number}' found on Opportunity — "
+                    f"OpportunityID {opp_id}, {svc_count} service(s) expanded"
                 )
                 return records[0]
-            logger.warning(f"PO '{po_number}' not found in Aspire")
-            return None
         except httpx.HTTPStatusError as e:
-            logger.error(f"Aspire PO lookup failed: {e}")
+            logger.error(f"Aspire Opportunity PO lookup failed: {e}")
+            return None
+
+        # ── 2. Job-level PO → resolve to Opportunity ──────────────────────────
+        logger.info(
+            f"PO '{po_number}' not on Opportunity — trying Jobs.CustomerPO"
+        )
+        try:
+            job_result = await self._get(
+                "Jobs",
+                params={
+                    "$filter": f"CustomerPO eq '{po_number}'",
+                    "$top": 1,
+                },
+            )
+            jobs = job_result.get("value", job_result if isinstance(job_result, list) else [])
+            if not jobs:
+                logger.warning(f"PO '{po_number}' not found in Opportunities or Jobs")
+                return None
+
+            job = jobs[0]
+            opportunity_id = job.get("OpportunityID")
+            if not opportunity_id:
+                logger.warning(
+                    f"Job found for PO '{po_number}' but has no OpportunityID"
+                )
+                return None
+
+            # Check job isn't cancelled
+            if job.get("CancelDate"):
+                logger.warning(
+                    f"Job for PO '{po_number}' was cancelled on {job['CancelDate']}"
+                )
+                return None
+
+            logger.info(
+                f"PO '{po_number}' found on Job — "
+                f"JobID {job.get('JobID')}, OpportunityID {opportunity_id}"
+            )
+
+            # Fetch the full Opportunity with expanded services/tickets
+            opp_result = await self._get(
+                "Opportunities",
+                params={
+                    "$filter": f"OpportunityID eq {opportunity_id}",
+                    "$top": 1,
+                    "$expand": "OpportunityServices($expand=WorkTickets)",
+                },
+            )
+            opp_records = opp_result.get("value", opp_result if isinstance(opp_result, list) else [])
+            if opp_records:
+                # Preserve the CustomerPO so routing.py can log it
+                opp_records[0].setdefault("CustomerPONum", po_number)
+                return opp_records[0]
+
+            logger.warning(
+                f"Could not fetch Opportunity {opportunity_id} for Job PO '{po_number}'"
+            )
+            return None
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Aspire Job PO lookup failed: {e}")
             return None
 
     async def validate_po(self, po_number: str) -> tuple[bool, Optional[str]]:
