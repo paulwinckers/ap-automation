@@ -467,8 +467,8 @@ async def retry_invoice(invoice_id: int, db: Database = Depends(get_db)):
     row = await db.get_invoice(invoice_id)
     if not row:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    if row["status"] != "error":
-        raise HTTPException(status_code=400, detail="Only error invoices can be retried")
+    if row["status"] not in ("error", "queued"):
+        raise HTTPException(status_code=400, detail="Only error or queued invoices can be retried")
 
     raw = json.loads(row.get("intake_raw") or "{}")
     invoice = Invoice(
