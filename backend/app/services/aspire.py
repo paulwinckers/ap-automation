@@ -384,15 +384,40 @@ class AspireClient:
                 "Ensure the opportunity has active work tickets in Aspire."
             )
 
+        # ── Filter out closed work tickets ────────────────────────────────────
+        # Posting a cost to a closed work ticket is treated as warranty in Aspire.
+        # Only post to open/active tickets.
+        def _is_closed(t: dict) -> bool:
+            status = (
+                t.get("WorkTicketStatusName")
+                or t.get("StatusName")
+                or t.get("Status")
+                or ""
+            ).lower()
+            return "closed" in status or "complete" in status or "cancelled" in status
+
+        open_tickets = [t for t in work_tickets if not _is_closed(t)]
+
+        if not open_tickets:
+            closed_statuses = [
+                t.get("WorkTicketStatusName") or t.get("Status") or "unknown"
+                for t in work_tickets
+            ]
+            raise ValueError(
+                f"All work tickets for OpportunityID {opportunity_id} are closed "
+                f"(statuses: {closed_statuses}). Posting to a closed work ticket "
+                "creates a warranty entry — queuing for manual review."
+            )
+
         # Prefer a "Subs" or "Other" type work ticket; fall back to first open one
         def ticket_priority(t: dict) -> int:
             wt_type = (t.get("WorkTicketType") or t.get("TicketType") or "").lower()
-            if wt_type in ("subs", "sub"):       return 0
-            if wt_type in ("other",):             return 1
+            if wt_type in ("subs", "sub"):          return 0
+            if wt_type in ("other",):               return 1
             if wt_type in ("material", "materials"): return 2
             return 9
 
-        work_tickets_sorted = sorted(work_tickets, key=ticket_priority)
+        work_tickets_sorted = sorted(open_tickets, key=ticket_priority)
         chosen_ticket = work_tickets_sorted[0]
         work_ticket_id = (
             chosen_ticket.get("WorkTicketID")
