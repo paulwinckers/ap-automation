@@ -278,6 +278,53 @@ class AspireClient:
             logger.error(f"Work ticket lookup failed for OpportunityID {opp_id}: {e}")
             return []
 
+    # ── Work ticket items ─────────────────────────────────────────────────────
+
+    async def get_work_ticket_items(self, work_ticket_id: int) -> list[dict]:
+        """
+        Fetch WorkTicketItems for a given WorkTicketID.
+        These are the budgeted line items (Sub, Material, Equipment, Other, Labor, Kit).
+        Linking receipts to a WorkTicketItemID lets Aspire track budget vs. actual.
+        """
+        try:
+            result = await self._get(
+                "WorkTicketItems",
+                params={
+                    "$filter": f"WorkTicketID eq {work_ticket_id}",
+                    "$top": 50,
+                },
+            )
+            items = result.get("value", result if isinstance(result, list) else [])
+            logger.info(
+                f"Got {len(items)} WorkTicketItems for WorkTicketID={work_ticket_id}"
+            )
+            return items
+        except Exception as e:
+            logger.warning(
+                f"WorkTicketItems lookup failed for WorkTicketID={work_ticket_id}: {e}"
+            )
+            return []
+
+    def _pick_work_ticket_item(
+        self, items: list[dict], preferred_type: str
+    ) -> Optional[dict]:
+        """
+        Pick the best WorkTicketItem to allocate a receipt line to.
+        Matches on ItemType first, then falls back to first non-labor item.
+        preferred_type: 'Sub', 'Other', 'Material', 'Equipment'
+        """
+        preferred_lower = preferred_type.lower()
+        # Exact type match
+        for item in items:
+            if (item.get("ItemType") or "").lower() == preferred_lower:
+                return item
+        # Any non-labor, non-kit item as fallback
+        for item in items:
+            t = (item.get("ItemType") or "").lower()
+            if t not in ("labor", "kit"):
+                return item
+        return items[0] if items else None
+
     # ── Bill / Receipt creation ───────────────────────────────────────────────
 
     async def post_bill(self, invoice: Invoice, po_data: dict, vendor_rule=None) -> str:
@@ -358,6 +405,34 @@ class AspireClient:
             f"for OpportunityID {opportunity_id}"
         )
 
+        # ── Work ticket item lookup ────────────────────────────────────────────
+        # Determine preferred item type based on vendor rule type
+        vendor_type = getattr(vendor_rule, "type", None)
+        preferred_item_type = "Sub" if str(vendor_type) in ("job_cost", "VendorType.JOB_COST") else "Other"
+
+        wt_items = await self.get_work_ticket_items(work_ticket_id)
+        chosen_item = self._pick_work_ticket_item(wt_items, preferred_item_type)
+        work_ticket_item_id = (
+            chosen_item.get("WorkTicketItemID") if chosen_item else None
+        )
+        if work_ticket_item_id:
+            logger.info(
+                f"Using WorkTicketItemID {work_ticket_item_id} "
+                f"(ItemType={chosen_item.get('ItemType')}, "
+                f"ItemName='{chosen_item.get('ItemName')}')"
+            )
+        else:
+            logger.warning(
+                f"No WorkTicketItems found for WorkTicketID={work_ticket_id} — "
+                "allocating to WorkTicket only"
+            )
+
+        def _allocation(wt_id, wti_id) -> dict:
+            alloc = {"WorkTicketID": wt_id, "AllocationPercent": 100}
+            if wti_id:
+                alloc["WorkTicketItemID"] = wti_id
+            return alloc
+
         # ── Build receipt items ────────────────────────────────────────────────
         # If the invoice has extracted line items, post them individually.
         # Otherwise create a single summary line from the total.
@@ -367,13 +442,8 @@ class AspireClient:
                     "ItemName":     li.description or "Invoice line",
                     "ItemQuantity": li.quantity if li.quantity is not None else 1,
                     "ItemUnitCost": li.unit_price if li.unit_price is not None else li.amount,
-                    "ItemType":     "other",
-                    "ItemAllocations": [
-                        {
-                            "WorkTicketID":      work_ticket_id,
-                            "AllocationPercent": 100,
-                        }
-                    ],
+                    "ItemType":     preferred_item_type,
+                    "ItemAllocations": [_allocation(work_ticket_id, work_ticket_item_id)],
                 }
                 for li in invoice.line_items
             ]
@@ -383,13 +453,8 @@ class AspireClient:
                     "ItemName":     f"Invoice {invoice.invoice_number or '—'}",
                     "ItemQuantity": 1,
                     "ItemUnitCost": float(invoice.total_amount or 0),
-                    "ItemType":     "other",
-                    "ItemAllocations": [
-                        {
-                            "WorkTicketID":      work_ticket_id,
-                            "AllocationPercent": 100,
-                        }
-                    ],
+                    "ItemType":     preferred_item_type,
+                    "ItemAllocations": [_allocation(work_ticket_id, work_ticket_item_id)],
                 }
             ]
 
