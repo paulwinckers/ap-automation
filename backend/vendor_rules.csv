@@ -1,4 +1,4 @@
-vendor_name,type,forward_to,default_gl_account,notes
+vendor_name,type,forward_to,default_gl_account,notes,match_keyword
 Telus Business,overhead,,6400,Phone and internet
 Shaw Business,overhead,,6400,Internet - office
 James Tirecraft,overhead,,6840,Fleet tires and maintenance
@@ -151,7 +151,7 @@ SMS Equipment,overhead,,6820,
 Sonic Wash Inc.,overhead,,6840,
 Staples Business Depot,overhead,,6750,
 Summit Tools,overhead,,6720,
-Sunbelt Rentals of Canada Inc.,job_cost,keeland@darios.ca,,
+Sunbelt Rentals of Canada Inc.,job_cost,keeland@darios.ca,,,Sunbelt
 Sun Valley Tree & Lawn Care Ltd.,job_cost,paul@darios.ca,,
 Superpass-Petrocan - 993 678 1450,overhead,,6930,
 Swiss Skid Steer Solutions,overhead,,6810,

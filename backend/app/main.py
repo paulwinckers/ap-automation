@@ -53,6 +53,7 @@ async def seed_vendors_if_empty(db: Database):
                 vendor_id_qbo=None,
                 notes=row.get("notes") or None,
                 forward_to=row.get("forward_to") or None,
+                match_keyword=row.get("match_keyword") or None,
             )
             count += 1
     logger.info(f"Seeded {count} vendor rules from {VENDOR_SEED_FILE}")

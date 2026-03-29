@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS vendor_rules (
     default_gl_account TEXT,         -- QBO GL account code for OH vendors
     default_gl_name    TEXT,         -- Human-readable GL name
     forward_to      TEXT,            -- Email destination for job cost vendors
+    match_keyword   TEXT,            -- Override keyword for fuzzy name matching (e.g. "Sunbelt")
     notes           TEXT,
     is_employee     INTEGER NOT NULL DEFAULT 0,  -- 1 = appears in employee expense dropdown
     active          INTEGER NOT NULL DEFAULT 1,
@@ -124,6 +125,9 @@ VALUES
 -- ── Schema update: add forward_to field to vendor_rules ──────────────────────
 -- forward_to is now included in the CREATE TABLE above.
 -- This section kept for reference only.
+
+-- ── Migration: add match_keyword column ──────────────────────────────────
+ALTER TABLE vendor_rules ADD COLUMN match_keyword TEXT;
 
 -- ── Migration: add is_employee column ────────────────────────────────────────
 -- Safe to run on existing databases. No-op if column already exists.

@@ -19,6 +19,7 @@ class VendorRule(BaseModel):
     default_gl_account:  Optional[str] = None
     default_gl_name:     Optional[str] = None
     forward_to:          Optional[str] = None   # email for confirmation / forwarding
+    match_keyword:       Optional[str] = None   # override keyword for fuzzy matching
     notes:               Optional[str] = None
     is_employee:         bool = False
     active:              bool = True
@@ -41,6 +42,7 @@ class VendorRuleUpdate(BaseModel):
     type:                Optional[VendorType] = None
     default_gl_account:  Optional[str] = None
     default_gl_name:     Optional[str] = None
+    match_keyword:       Optional[str] = None
     notes:               Optional[str] = None
     is_employee:         Optional[bool] = None
     active:              Optional[bool] = None
