@@ -138,3 +138,4 @@ ALTER TABLE vendor_rules ADD COLUMN is_employee INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE vendor_rules ADD COLUMN forward_to TEXT;
 ALTER TABLE vendor_rules ADD COLUMN default_gl_name TEXT;
 ALTER TABLE vendor_rules ADD COLUMN match_keyword TEXT;
+ALTER TABLE invoices ADD COLUMN doc_type TEXT;

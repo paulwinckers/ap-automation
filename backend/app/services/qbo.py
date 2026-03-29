@@ -495,7 +495,7 @@ class QBOClient:
         self,
         invoice: Invoice,
         gl_account: str,
-        payment_account: str = "2240",
+        payment_account: str = None,   # None → use settings.MASTERCARD_GL
         employee_name: str = None,
         file_bytes: bytes = None,
         filename: str = None,
@@ -509,6 +509,8 @@ class QBOClient:
         Returns the QBO Purchase Id.
         """
         # ── Resolve payment account (MasterCard liability) ────────────────────
+        if payment_account is None:
+            payment_account = settings.MASTERCARD_GL
         pay_account = await self.find_account(payment_account)
         if not pay_account:
             raise ValueError(

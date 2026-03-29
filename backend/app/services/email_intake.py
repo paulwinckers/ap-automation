@@ -42,12 +42,13 @@ PROCESSED_FOLDER = "AP Processed"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_URL  = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 
-SCREENING_PROMPT = """Look at this email and reply with ONLY one word: INVOICE or NOT_INVOICE.
+SCREENING_PROMPT = """Look at this email and reply with ONLY one word.
 
-INVOICE: vendor bills, invoices, receipts, statements, purchase confirmations with amounts owed
-NOT_INVOICE: newsletters, marketing, meeting requests, personal emails, reports, notifications, HR, legal documents
+INVOICE  — vendor bills or invoices with a PDF attachment, or emails where payment is still due
+RECEIPT  — online purchase confirmations or subscription renewal receipts with no PDF, from vendors like GoDaddy, Adobe, Microsoft, Intuit, Google, AWS, QuickBooks — payment already charged to a credit card
+NOT_INVOICE — newsletters, marketing, meeting requests, reports, HR, legal, bank notifications, calendar invites
 
-Reply with only: INVOICE or NOT_INVOICE"""
+Reply with only: INVOICE, RECEIPT, or NOT_INVOICE"""
 
 
 class GraphClient:
@@ -317,7 +318,11 @@ class EmailIntakeService:
         finally:
             await db.close()
 
-    async def _is_invoice(self, email: dict, body_content: str) -> bool:
+    async def _classify_email(self, email: dict, body_content: str) -> str:
+        """
+        Classify an email as 'invoice', 'receipt', or 'skip'.
+        Returns one of those three strings.
+        """
         subject = email.get("subject", "")
         subject_lower = subject.lower()
         sender = email.get("from", {}).get("emailAddress", {}).get("address", "").lower()
@@ -330,22 +335,33 @@ class EmailIntakeService:
             "darios landscape services",
         ]
         if any(p in subject_lower for p in skip_phrases):
-            return False
+            return "skip"
 
         # Skip quotes/estimates — not payable invoices
         if any(k in subject_lower for k in ["quote for ", "estimate for ", "proposal for "]):
-            return False
+            return "skip"
 
         # Skip HR / legal documents
         if any(k in subject_lower for k in ["offer of employment", "employment offer", "contract of employment"]):
-            return False
+            return "skip"
 
-        invoice_keywords = ["invoice", "bill", "receipt", "statement", "purchase order",
-                           "payment due", "amount due", "total due", "po #", "inv #"]
+        # Fast-path: receipt keywords with no PDF attachment → receipt
+        receipt_keywords = ["renewal receipt", "order receipt", "purchase receipt",
+                            "subscription receipt", "payment receipt", "order confirmation",
+                            "purchase confirmation", "billing receipt", "your receipt for",
+                            "renewal for order", "receipt for order"]
+        if any(k in subject_lower for k in receipt_keywords) and not email.get("hasAttachments"):
+            return "receipt"
+
+        # Fast-path: invoice keywords → invoice
+        invoice_keywords = ["invoice", "bill", "statement", "purchase order",
+                            "payment due", "amount due", "total due", "po #", "inv #"]
         if any(k in subject_lower for k in invoice_keywords):
-            return True
+            return "invoice"
         if email.get("hasAttachments"):
-            return True
+            return "invoice"
+
+        # Ask Claude to classify
         try:
             snippet = body_content[:2000] if body_content else subject
             msg = await self._claude.messages.create(
@@ -353,10 +369,15 @@ class EmailIntakeService:
                 max_tokens=10,
                 messages=[{"role": "user", "content": f"Subject: {subject}\n\nBody:\n{snippet}\n\n{SCREENING_PROMPT}"}],
             )
-            return msg.content[0].text.strip().upper() == "INVOICE"
+            result = msg.content[0].text.strip().upper()
+            if result == "INVOICE":
+                return "invoice"
+            elif result == "RECEIPT":
+                return "receipt"
+            return "skip"
         except Exception as e:
-            logger.warning(f"Invoice screening failed: {e} — defaulting to processing")
-            return True
+            logger.warning(f"Email screening failed: {e} — defaulting to skip")
+            return "skip"
 
     async def _process_email(self, email: dict, db: Database):
         message_id   = email["id"]
@@ -364,10 +385,16 @@ class EmailIntakeService:
         sender       = email.get("from", {}).get("emailAddress", {}).get("address", "unknown")
         body_content = email.get("body", {}).get("content", "")
 
-        # Screen — is this an invoice?
-        if not await self._is_invoice(email, body_content):
+        # Classify — invoice, receipt, or skip?
+        email_type = await self._classify_email(email, body_content)
+        if email_type == "skip":
             logger.info(f"Not an invoice — leaving untouched in inbox: '{subject}' from {sender}")
             self._skipped.append({"subject": subject, "from": sender})
+            return
+
+        if email_type == "receipt":
+            logger.info(f"Processing credit card receipt: '{subject}' from {sender}")
+            await self._process_receipt_email(email, body_content, db)
             return
 
         logger.info(f"Processing invoice: '{subject}' from {sender}")
@@ -506,6 +533,101 @@ class EmailIntakeService:
             await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
         except Exception as e:
             logger.warning(f"Could not mark email as read (already processed): {e}")
+
+    async def _process_receipt_email(self, email: dict, body_content: str, db: Database):
+        """
+        Process a credit card receipt email (no PDF — extract from HTML body).
+        Posts directly to QBO as a Purchase against the MasterCard account.
+        """
+        message_id = email["id"]
+        subject    = email.get("subject", "(no subject)")
+        sender     = email.get("from", {}).get("emailAddress", {}).get("address", "unknown")
+
+        # Extract receipt data from email body
+        try:
+            extraction = await self.extractor.extract_from_html_body(body_content)
+        except Exception as e:
+            logger.error(f"Receipt extraction failed for '{subject}': {e}")
+            self._failed.append({"subject": subject, "from": sender, "error": f"Receipt extraction failed: {e}"})
+            return
+
+        logger.info(
+            f"Receipt extracted — vendor: {extraction.vendor_name}, "
+            f"amount: {extraction.total_amount} {extraction.currency}, "
+            f"order: {extraction.invoice_number}"
+        )
+
+        # Duplicate check
+        if extraction.invoice_number:
+            duplicate = await db.find_duplicate_invoice(extraction.vendor_name, extraction.invoice_number)
+            if duplicate:
+                logger.info(f"Duplicate receipt skipped: {extraction.vendor_name} #{extraction.invoice_number}")
+                await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+                await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
+                return
+
+        # Save to database with doc_type='mastercard'
+        invoice_id = await db.create_invoice(
+            vendor_name    = extraction.vendor_name,
+            invoice_number = extraction.invoice_number,
+            invoice_date   = extraction.invoice_date,
+            due_date       = None,
+            subtotal       = extraction.subtotal,
+            tax_amount     = extraction.tax_amount,
+            total_amount   = extraction.total_amount,
+            currency       = extraction.currency,
+            po_number      = None,
+            pdf_filename   = "email_receipt.html",
+            intake_source  = "email",
+            intake_raw     = extraction.model_dump(),
+            doc_type       = "mastercard",
+        )
+        await db.audit(invoice_id, "received", "email", {"from": sender, "subject": subject, "type": "receipt"})
+
+        # Build Invoice and route — routing already handles doc_type='mastercard'
+        invoice = Invoice(
+            id             = invoice_id,
+            status         = InvoiceStatus.PENDING,
+            vendor_name    = extraction.vendor_name,
+            invoice_number = extraction.invoice_number,
+            invoice_date   = extraction.invoice_date,
+            due_date       = None,
+            subtotal       = extraction.subtotal,
+            tax_amount     = extraction.tax_amount,
+            total_amount   = extraction.total_amount,
+            currency       = extraction.currency,
+            po_number      = None,
+            pdf_filename   = "email_receipt.html",
+            intake_source  = "email",
+            doc_type       = "mastercard",
+            line_items     = [LineItem(**li.model_dump()) for li in extraction.line_items],
+            tax_lines      = [TaxLine(**tl.model_dump()) for tl in extraction.tax_lines],
+        )
+
+        outcome = await route_invoice(invoice, db, self.aspire, self.qbo)
+        if outcome == RoutingOutcome.POSTED_QBO:
+            logger.info(f"Receipt {invoice_id} posted to QBO — {extraction.vendor_name} {extraction.total_amount}")
+            self._posted.append({
+                "vendor": extraction.vendor_name,
+                "amount": extraction.total_amount,
+                "currency": extraction.currency,
+                "invoice_no": extraction.invoice_number,
+                "destination": "QBO (MasterCard)",
+                "invoice_id": invoice_id,
+            })
+            await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
+        else:
+            logger.warning(f"Receipt {invoice_id} could not be auto-posted — outcome: {outcome}")
+            self._failed.append({
+                "vendor": extraction.vendor_name,
+                "amount": extraction.total_amount,
+                "error": f"Receipt posting failed — outcome: {outcome}",
+            })
+
+        try:
+            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+        except Exception as e:
+            logger.warning(f"Could not mark receipt email as read: {e}")
 
     async def _handle_unknown_vendor(self, message_id: str, extraction, invoice_id: int):
         suggested = self._guess_type(extraction.vendor_name)

@@ -129,6 +129,10 @@ VALUES
 -- ── Migration: add match_keyword column ──────────────────────────────────
 ALTER TABLE vendor_rules ADD COLUMN match_keyword TEXT;
 
+-- ── Migration: add doc_type column to invoices ────────────────────────────
+-- Distinguishes credit card receipts ('mastercard') from vendor invoices (NULL)
+ALTER TABLE invoices ADD COLUMN doc_type TEXT;
+
 -- ── Migration: add is_employee column ────────────────────────────────────────
 -- Safe to run on existing databases. No-op if column already exists.
 -- For D1: npx wrangler d1 execute ap-automation-db --command="ALTER TABLE vendor_rules ADD COLUMN is_employee INTEGER NOT NULL DEFAULT 0"

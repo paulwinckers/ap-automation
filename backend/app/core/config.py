@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     QBO_REALM_ID:        str = ""
     QBO_REFRESH_TOKEN:   str = ""
     QBO_SANDBOX:         bool = False
+    MASTERCARD_GL:       str = "2240"   # QBO account code for MasterCard liability
 
     # Anthropic
     ANTHROPIC_API_KEY:   str = ""

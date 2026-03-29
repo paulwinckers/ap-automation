@@ -345,16 +345,17 @@ class Database:
         pdf_filename: Optional[str],
         intake_source: str,
         intake_raw: dict,
+        doc_type: Optional[str] = None,
     ) -> int:
         invoice_id = await self._x(
             """INSERT INTO invoices
                (vendor_name, invoice_number, invoice_date, due_date,
                 subtotal, tax_amount, total_amount, currency,
-                po_number, pdf_filename, intake_source, intake_raw, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                po_number, pdf_filename, intake_source, intake_raw, status, doc_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
             [vendor_name, invoice_number, invoice_date, due_date,
              subtotal, tax_amount, total_amount, currency,
-             po_number, pdf_filename, intake_source, json.dumps(intake_raw)],
+             po_number, pdf_filename, intake_source, json.dumps(intake_raw), doc_type],
         )
         await self.audit(invoice_id, "received", "system", {"source": intake_source})
         return invoice_id

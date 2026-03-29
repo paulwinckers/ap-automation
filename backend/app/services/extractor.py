@@ -57,6 +57,32 @@ Rules:
 - If multiple PO numbers appear, use the one in the field explicitly labelled PO.
 """
 
+RECEIPT_EXTRACTION_PROMPT = """
+You are an accounts payable assistant for a Canadian company.
+Extract data from this credit card receipt email and return ONLY a JSON object.
+
+Required fields:
+- vendor_name: string — the company that charged the card (e.g. "GoDaddy", "Adobe", "Microsoft")
+- invoice_number: string or null — the order number, receipt number, or confirmation number
+- invoice_date: string — ISO 8601 date (YYYY-MM-DD) of the charge or renewal date
+- due_date: null — always null for receipts (already paid)
+- po_number: null — always null for credit card receipts
+- subtotal: number — amount before tax, or same as total if taxes not broken out
+- tax_lines: array of { tax_name, tax_rate, tax_amount } — GST/HST/PST if shown separately
+- total_amount: number — the total charged amount including all taxes
+- currency: string — "CAD" or "USD" as shown; default "CAD"
+- line_items: array of { description, quantity, unit_price, amount } — the product(s) purchased
+- notes: string or null — subscription period, renewal date, or product/plan description
+
+Rules:
+- Return ONLY the JSON object. No preamble, no markdown, no explanation.
+- If a field is not present, use null.
+- All amounts must be numbers, not strings.
+- For subscription renewals, use the renewal/charge date as invoice_date.
+- line_items should capture what was purchased (e.g. "Microsoft 365 Business - 1 Month").
+- vendor_name should be the brand name, not the legal entity (e.g. "GoDaddy" not "GoDaddy.com LLC").
+"""
+
 # MIME types Claude accepts for documents vs images
 PDF_MIME   = "application/pdf"
 HTML_MIME  = "text/html"
@@ -110,6 +136,34 @@ class InvoiceExtractor:
         mime_type = _detect_mime(filename, file_bytes)
         file_b64 = base64.standard_b64encode(file_bytes).decode("utf-8")
         return await self._call_claude(file_b64, mime_type)
+
+    async def extract_from_html_body(self, html_text: str) -> InvoiceExtraction:
+        """Extract receipt data from an HTML email body using the receipt-specific prompt."""
+        import re
+        plain_text = re.sub(r"<[^>]+>", " ", html_text)
+        plain_text = re.sub(r"\s+", " ", plain_text).strip()
+        logger.info("Calling Claude for receipt extraction from HTML email body")
+        message = await self.client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=2048,
+            messages=[{
+                "role": "user",
+                "content": f"Email body text:\n\n{plain_text[:8000]}\n\n{RECEIPT_EXTRACTION_PROMPT}",
+            }],
+        )
+        raw_text = message.content[0].text.strip()
+        logger.info(f"Claude receipt extraction response: {raw_text[:300]}")
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("```")[1]
+            if raw_text.startswith("json"):
+                raw_text = raw_text[4:]
+            raw_text = raw_text.strip()
+        try:
+            data = json.loads(raw_text)
+        except json.JSONDecodeError as e:
+            logger.error(f"Claude returned invalid JSON for receipt: {e}\nRaw: {raw_text}")
+            raise ValueError(f"Receipt extraction failed — invalid JSON: {e}")
+        return InvoiceExtraction(**data)
 
     async def extract_from_pdf_url(self, url: str) -> InvoiceExtraction:
         """Fetch a file from URL (e.g. R2 presigned URL) and extract."""

@@ -494,6 +494,7 @@ async def retry_invoice(invoice_id: int, db: Database = Depends(get_db)):
         po_number_override = row["po_number_override"],
         pdf_filename       = row["pdf_filename"],
         intake_source      = row["intake_source"],
+        doc_type           = row.get("doc_type"),
         line_items         = [LineItem(**li) for li in raw.get("line_items", [])],
         tax_lines          = [TaxLine(**tl) for tl in raw.get("tax_lines", [])],
     )
