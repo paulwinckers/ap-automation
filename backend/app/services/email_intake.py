@@ -345,6 +345,16 @@ class EmailIntakeService:
         if any(k in subject_lower for k in ["offer of employment", "employment offer", "contract of employment"]):
             return "skip"
 
+        # Skip renewal reminders / expiry notices — no money has changed hands yet
+        renewal_reminder_phrases = [
+            "renew your", "renewal reminder", "your domain expires",
+            "expiring soon", "expires soon", "before you lose",
+            "before they expire", "don't lose your", "action required: renew",
+            "your subscription is expiring", "your plan is expiring",
+        ]
+        if any(k in subject_lower for k in renewal_reminder_phrases):
+            return "skip"
+
         # Fast-path: receipt keywords with no PDF attachment → receipt
         receipt_keywords = ["renewal receipt", "order receipt", "purchase receipt",
                             "subscription receipt", "payment receipt", "order confirmation",
@@ -556,6 +566,17 @@ class EmailIntakeService:
             f"amount: {extraction.total_amount} {extraction.currency}, "
             f"order: {extraction.invoice_number}"
         )
+
+        # Guard: if Claude couldn't find an amount this is a reminder/promo, not a real receipt
+        if not extraction.total_amount:
+            logger.info(
+                f"Receipt skipped — no amount found in '{subject}' from {sender}. "
+                f"Likely a renewal reminder, not a payment confirmation."
+            )
+            self._skipped.append({"subject": subject, "from": sender})
+            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+            await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
+            return
 
         # Duplicate check
         if extraction.invoice_number:

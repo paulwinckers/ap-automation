@@ -21,13 +21,13 @@ class LineItem(BaseModel):
     description: Optional[str] = None
     quantity:    Optional[float] = None
     unit_price:  Optional[float] = None
-    amount:      float
+    amount:      Optional[float] = None
 
 
 class TaxLine(BaseModel):
     tax_name:   str
     tax_rate:   Optional[float] = None
-    tax_amount: float
+    tax_amount: Optional[float] = None
 
 
 class InvoiceExtraction(BaseModel):
@@ -39,7 +39,7 @@ class InvoiceExtraction(BaseModel):
     po_number:      Optional[str] = None
     subtotal:       Optional[float] = None
     tax_lines:      list[TaxLine] = []
-    total_amount:   float
+    total_amount:   Optional[float] = None
     currency:       str = "CAD"
     line_items:     list[LineItem] = []
     notes:          Optional[str] = None
