@@ -390,23 +390,24 @@ class QBOClient:
 
         # ── Build bill payload ────────────────────────────────────────────────
         # QBO rejects explicit null for optional fields — omit them entirely
+        # Always post in CAD — multi-currency not enabled in QBO.
+        # If original invoice was in another currency, note it in the private note.
+        orig_currency = invoice.currency or "CAD"
+        currency_note = f" | Original currency: {orig_currency} — update amount in QBO" if orig_currency != "CAD" else ""
         bill_body = {
             "VendorRef": vendor_ref,
-            "CurrencyRef": {"value": invoice.currency or "CAD"},
+            "CurrencyRef": {"value": "CAD"},
             "TxnDate": _to_qbo_date(invoice.invoice_date),
             "PrivateNote": (
                 f"Auto-posted by AP Automation | "
                 f"Source: {invoice.intake_source or 'upload'} | "
                 f"PDF: {invoice.pdf_filename or 'n/a'}"
+                f"{currency_note}"
             ),
             "Line": lines,
             # QBO Canada: TaxExcluded requires TaxCodeRef on lines; use NotApplicable when no tax
             "GlobalTaxCalculation": "TaxExcluded" if tax_code_id else "NotApplicable",
         }
-        # Foreign currency bills require an ExchangeRate — default to 1.0 (update in QBO)
-        if (invoice.currency or "CAD") != "CAD":
-            bill_body["ExchangeRate"] = 1.0
-            logger.warning(f"Foreign currency bill ({invoice.currency}) — ExchangeRate defaulted to 1.0, update in QBO")
         if invoice.due_date:
             bill_body["DueDate"] = _to_qbo_date(invoice.due_date)
         if invoice.invoice_number:
