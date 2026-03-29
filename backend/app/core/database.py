@@ -230,10 +230,37 @@ class Database:
                 "SELECT * FROM vendor_rules WHERE active = 1 ORDER BY LENGTH(vendor_name) DESC"
             )
             vendor_lower = vendor_name.lower()
+            # Strip common legal suffixes that add noise
+            _noise = (" inc", " inc.", " ltd", " ltd.", " llc", " corp",
+                      " co.", " co,", " company", " of canada", " canada")
+            vendor_stripped = vendor_lower
+            for n in _noise:
+                vendor_stripped = vendor_stripped.replace(n, "")
+            vendor_stripped = vendor_stripped.strip()
+
             for r in all_rules:
-                if r["vendor_name"].lower() in vendor_lower:
+                rule_lower = r["vendor_name"].lower()
+                rule_stripped = rule_lower
+                for n in _noise:
+                    rule_stripped = rule_stripped.replace(n, "")
+                rule_stripped = rule_stripped.strip()
+
+                # 1. Bidirectional full-string contains
+                if rule_lower in vendor_lower or vendor_lower in rule_lower:
                     row = r
-                    logger.info(f"Fuzzy vendor match: '{vendor_name}' → '{r['vendor_name']}'")
+                    logger.info(f"Fuzzy vendor match (contains): '{vendor_name}' → '{r['vendor_name']}'")
+                    break
+                # 2. Strip legal suffixes and try again
+                if rule_stripped and (rule_stripped in vendor_stripped or vendor_stripped in rule_stripped):
+                    row = r
+                    logger.info(f"Fuzzy vendor match (stripped): '{vendor_name}' → '{r['vendor_name']}'")
+                    break
+                # 3. First significant word match (min 5 chars to avoid false positives)
+                rule_words = [w for w in rule_stripped.split() if len(w) >= 5]
+                vendor_words = [w for w in vendor_stripped.split() if len(w) >= 5]
+                if rule_words and vendor_words and rule_words[0] == vendor_words[0]:
+                    row = r
+                    logger.info(f"Fuzzy vendor match (first word): '{vendor_name}' → '{r['vendor_name']}'")
                     break
 
         if not row:
