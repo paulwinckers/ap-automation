@@ -88,6 +88,8 @@ export default function APDashboard() {
   const [error, setError]         = useState<string | null>(null);
   const [pulse, setPulse]         = useState(false);
   const [retrying, setRetrying]   = useState<number | null>(null);
+  const [poInputs, setPoInputs]   = useState<Record<number, string>>({});
+  const [poSaving, setPoSaving]   = useState<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function refresh() {
@@ -109,6 +111,30 @@ export default function APDashboard() {
       setError(e.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function applyPoOverride(id: number) {
+    const po = (poInputs[id] || '').trim();
+    if (!po) return;
+    setPoSaving(id);
+    try {
+      const res = await fetch(`${API}/invoices/${id}/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ po_number: po, reviewed_by: 'dashboard' }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(`PO override failed: ${err.detail || res.statusText}`);
+      } else {
+        setPoInputs(p => { const n = {...p}; delete n[id]; return n; });
+        await refresh();
+      }
+    } catch (e) {
+      alert('PO override failed — check Railway logs');
+    } finally {
+      setPoSaving(null);
     }
   }
 
@@ -347,6 +373,33 @@ export default function APDashboard() {
                       <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                            title={e.error_message}>
                         {e.error_message}
+                      </div>
+                    )}
+                    {(e.status === 'queued' || e.status === 'error') && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                        <input
+                          type="text"
+                          placeholder="Enter PO #"
+                          value={poInputs[e.id] || ''}
+                          onChange={ev => setPoInputs(p => ({ ...p, [e.id]: ev.target.value }))}
+                          onKeyDown={ev => ev.key === 'Enter' && applyPoOverride(e.id)}
+                          style={{
+                            fontSize: 11, padding: '2px 6px', borderRadius: 5,
+                            border: '1px solid #cbd5e1', width: 80, outline: 'none',
+                          }}
+                        />
+                        <button
+                          onClick={() => applyPoOverride(e.id)}
+                          disabled={poSaving === e.id || !poInputs[e.id]}
+                          style={{
+                            fontSize: 11, padding: '2px 7px', borderRadius: 5,
+                            background: '#f0f9ff', border: '1px solid #7dd3fc',
+                            color: '#0369a1', fontWeight: 600,
+                            cursor: poSaving === e.id ? 'wait' : 'pointer',
+                          }}
+                        >
+                          {poSaving === e.id ? '…' : '✓ PO'}
+                        </button>
                       </div>
                     )}
                   </td>
