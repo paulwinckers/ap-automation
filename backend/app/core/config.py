@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     MS_CLIENT_SECRET:    str = ""
     MS_AP_INBOX:         str = ""   # e.g. ap@darios.ca
     EMAIL_POLLING:       bool = False  # set True to enable email intake
+    EMAIL_PROCESS_SINCE: str = ""     # ISO date e.g. "2026-03-30" — ignore emails before this date
 
     # Aspire
     ASPIRE_BASE_URL:     str = "https://cloud-api.youraspire.com"

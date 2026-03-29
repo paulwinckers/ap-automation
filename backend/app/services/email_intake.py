@@ -301,10 +301,12 @@ class EmailIntakeService:
             await asyncio.sleep(300)
 
     async def _process_inbox(self):
-        emails = await self.graph.get_unread_emails(settings.MS_AP_INBOX)
+        since = settings.EMAIL_PROCESS_SINCE.strip() if settings.EMAIL_PROCESS_SINCE else None
+        emails = await self.graph.get_unread_emails(settings.MS_AP_INBOX, received_after=since)
         if not emails:
             return
-        logger.info(f"Found {len(emails)} unread email(s) in AP inbox")
+        cutoff_note = f" received after {since}" if since else ""
+        logger.info(f"Found {len(emails)} unread email(s) in AP inbox{cutoff_note}")
         db = Database()
         await db.connect()
         try:
