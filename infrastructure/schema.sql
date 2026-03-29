@@ -132,6 +132,7 @@ ALTER TABLE vendor_rules ADD COLUMN match_keyword TEXT;
 -- ── Migration: add doc_type column to invoices ────────────────────────────
 -- Distinguishes credit card receipts ('mastercard') from vendor invoices (NULL)
 ALTER TABLE invoices ADD COLUMN doc_type TEXT;
+ALTER TABLE invoices ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
 
 -- ── Migration: add is_employee column ────────────────────────────────────────
 -- Safe to run on existing databases. No-op if column already exists.

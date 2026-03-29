@@ -13,6 +13,7 @@ interface FeedEntry {
   status: 'pending' | 'queued' | 'posted' | 'error';
   destination: 'aspire' | 'qbo' | null;
   vendor_name: string | null;
+  invoice_number: string | null;
   total_amount: number | null;
   tax_amount: number | null;
   subtotal: number | null;
@@ -24,6 +25,7 @@ interface FeedEntry {
   posted_at: string | null;
   error_message: string | null;
   intake_source: string | null;
+  archived: number | null;
 }
 
 interface Counts {
@@ -81,21 +83,29 @@ function statusBadge(entry: FeedEntry) {
 }
 
 export default function APDashboard() {
-  const [entries, setEntries]     = useState<FeedEntry[]>([]);
-  const [counts, setCounts]       = useState<Counts | null>(null);
+  const [entries, setEntries]         = useState<FeedEntry[]>([]);
+  const [counts, setCounts]           = useState<Counts | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState<string | null>(null);
-  const [pulse, setPulse]         = useState(false);
-  const [retrying, setRetrying]   = useState<number | null>(null);
-  const [poInputs, setPoInputs]   = useState<Record<number, string>>({});
-  const [poSaving, setPoSaving]   = useState<number | null>(null);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState<string | null>(null);
+  const [pulse, setPulse]             = useState(false);
+  const [retrying, setRetrying]       = useState<number | null>(null);
+  const [archiving, setArchiving]     = useState<number | null>(null);
+  const [poInputs, setPoInputs]       = useState<Record<number, string>>({});
+  const [poSaving, setPoSaving]       = useState<number | null>(null);
+  const [view, setView]               = useState<'active' | 'archived'>('active');
+  const [search, setSearch]           = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function refresh() {
     try {
+      const feedUrl = view === 'archived'
+        ? `${API}/invoices/archived?limit=200`
+        : `${API}/invoices/feed?limit=100`;
+
       const [feedRes, countRes] = await Promise.all([
-        fetch(`${API}/invoices/feed?limit=100`),
+        fetch(feedUrl),
         fetch(`${API}/invoices/counts`),
       ]);
       if (!feedRes.ok || !countRes.ok) throw new Error('API error');
@@ -150,11 +160,62 @@ export default function APDashboard() {
     }
   }
 
+  async function archiveInvoice(id: number) {
+    setArchiving(id);
+    try {
+      await fetch(`${API}/invoices/${id}/archive`, { method: 'POST' });
+      await refresh();
+    } catch (e) {
+      alert('Archive failed — check Railway logs');
+    } finally {
+      setArchiving(null);
+    }
+  }
+
+  async function unarchiveInvoice(id: number) {
+    setArchiving(id);
+    try {
+      await fetch(`${API}/invoices/${id}/unarchive`, { method: 'POST' });
+      await refresh();
+    } catch (e) {
+      alert('Unarchive failed — check Railway logs');
+    } finally {
+      setArchiving(null);
+    }
+  }
+
+  // Re-fetch when view changes
+  useEffect(() => {
+    setLoading(true);
+    setEntries([]);
+    refresh();
+  }, [view]);
+
   useEffect(() => {
     refresh();
     timerRef.current = setInterval(refresh, 10_000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
+
+  // Filter entries client-side
+  const filteredEntries = entries.filter(e => {
+    // Status filter
+    if (statusFilter !== 'all' && e.status !== statusFilter) return false;
+    // Search: vendor name, invoice number, GL name, ref
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      const haystack = [
+        e.vendor_name,
+        e.invoice_number,
+        e.gl_name,
+        e.gl_account,
+        e.qbo_bill_id,
+        e.aspire_receipt_id,
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    return true;
+  });
 
   const styles = {
     page: {
@@ -307,18 +368,85 @@ export default function APDashboard() {
         </div>
       )}
 
+      {/* Toolbar: tabs + search + filter */}
+      <div style={{ padding: '0 24px 12px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        {/* View tabs */}
+        <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: '1px solid #e2e8f0' }}>
+          <button
+            onClick={() => setView('active')}
+            style={{
+              padding: '6px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none',
+              background: view === 'active' ? '#1e3a2f' : '#fff',
+              color: view === 'active' ? '#fff' : '#64748b',
+            }}
+          >
+            Active
+          </button>
+          <button
+            onClick={() => setView('archived')}
+            style={{
+              padding: '6px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              border: 'none', borderLeft: '1px solid #e2e8f0',
+              background: view === 'archived' ? '#1e3a2f' : '#fff',
+              color: view === 'archived' ? '#fff' : '#64748b',
+            }}
+          >
+            📦 Archive
+          </button>
+        </div>
+
+        {/* Search box */}
+        <input
+          type="text"
+          placeholder="Search vendor, invoice #, GL…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{
+            flex: '1 1 200px', maxWidth: 320, padding: '6px 12px', fontSize: 13,
+            border: '1px solid #e2e8f0', borderRadius: 8, outline: 'none',
+            background: '#fff', color: '#1e293b',
+          }}
+        />
+
+        {/* Status filter */}
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          style={{
+            padding: '6px 12px', fontSize: 13, border: '1px solid #e2e8f0',
+            borderRadius: 8, background: '#fff', color: '#1e293b', cursor: 'pointer',
+          }}
+        >
+          <option value="all">All statuses</option>
+          <option value="posted">✓ Posted</option>
+          <option value="queued">⏳ Review</option>
+          <option value="error">✗ Error</option>
+          <option value="pending">○ Pending</option>
+        </select>
+
+        {/* Result count */}
+        <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 'auto' }}>
+          {filteredEntries.length} {filteredEntries.length === 1 ? 'row' : 'rows'}
+          {(search || statusFilter !== 'all') && entries.length !== filteredEntries.length
+            ? ` of ${entries.length}` : ''}
+        </span>
+      </div>
+
       {/* Feed table */}
       <div style={styles.tableWrap}>
         {loading ? (
           <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>Loading feed…</div>
-        ) : entries.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>No invoices yet.</div>
+        ) : filteredEntries.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
+            {view === 'archived' ? 'No archived invoices.' : search || statusFilter !== 'all' ? 'No results match your filter.' : 'No invoices yet.'}
+          </div>
         ) : (
           <table style={styles.table}>
             <thead>
               <tr>
                 <th style={styles.th}>Received</th>
                 <th style={styles.th}>Vendor</th>
+                <th style={styles.th}>Invoice #</th>
                 <th style={styles.th}>Amount</th>
                 <th style={styles.th}>Tax</th>
                 <th style={styles.th}>GL Account</th>
@@ -328,7 +456,7 @@ export default function APDashboard() {
               </tr>
             </thead>
             <tbody>
-              {entries.map(e => (
+              {filteredEntries.map(e => (
                 <tr key={e.id} style={{ background: e.status === 'error' ? '#fff5f5' : e.status === 'queued' ? '#fffbeb' : undefined }}>
                   <td style={{ ...styles.td, color: '#94a3b8', fontSize: 12, whiteSpace: 'nowrap' }}>
                     {timeAgo(e.received_at)}
@@ -338,6 +466,9 @@ export default function APDashboard() {
                     {e.intake_source === 'email' && (
                       <span style={{ marginLeft: 6, fontSize: 10, color: '#94a3b8' }}>✉</span>
                     )}
+                  </td>
+                  <td style={{ ...styles.td, fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>
+                    {e.invoice_number || '—'}
                   </td>
                   <td style={{ ...styles.td, fontWeight: 600, textAlign: 'right' }}>
                     {fmt(e.total_amount)}
@@ -353,7 +484,9 @@ export default function APDashboard() {
                   </td>
                   <td style={styles.td}>
                     {statusBadge(e)}
-                    {(e.status === 'error' || e.status === 'queued' || e.status === 'pending') && (
+
+                    {/* Retry button — error / queued / pending */}
+                    {(e.status === 'error' || e.status === 'queued' || e.status === 'pending') && view === 'active' && (
                       <button
                         onClick={() => retryInvoice(e.id)}
                         disabled={retrying === e.id}
@@ -369,13 +502,51 @@ export default function APDashboard() {
                         {retrying === e.id ? '…' : '↺ Retry'}
                       </button>
                     )}
+
+                    {/* Archive button — posted rows in active view */}
+                    {e.status === 'posted' && view === 'active' && (
+                      <button
+                        onClick={() => archiveInvoice(e.id)}
+                        disabled={archiving === e.id}
+                        title="Move to archive"
+                        style={{
+                          marginLeft: 8,
+                          background: '#f8fafc', border: '1px solid #cbd5e1',
+                          color: '#64748b', borderRadius: 6, padding: '2px 8px',
+                          cursor: archiving === e.id ? 'wait' : 'pointer', fontSize: 11,
+                        }}
+                      >
+                        {archiving === e.id ? '…' : '📦'}
+                      </button>
+                    )}
+
+                    {/* Unarchive button — archive view */}
+                    {view === 'archived' && (
+                      <button
+                        onClick={() => unarchiveInvoice(e.id)}
+                        disabled={archiving === e.id}
+                        title="Restore to active feed"
+                        style={{
+                          marginLeft: 8,
+                          background: '#f0fdf4', border: '1px solid #86efac',
+                          color: '#16a34a', borderRadius: 6, padding: '2px 8px',
+                          cursor: archiving === e.id ? 'wait' : 'pointer', fontSize: 11,
+                        }}
+                      >
+                        {archiving === e.id ? '…' : '↩ Restore'}
+                      </button>
+                    )}
+
+                    {/* Error message */}
                     {e.error_message && (
                       <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                            title={e.error_message}>
                         {e.error_message}
                       </div>
                     )}
-                    {(e.status === 'queued' || e.status === 'error') && (
+
+                    {/* PO override input */}
+                    {(e.status === 'queued' || e.status === 'error') && view === 'active' && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 6 }}>
                         <input
                           type="text"

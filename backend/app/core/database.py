@@ -507,19 +507,82 @@ class Database:
         )
 
     async def get_invoice_feed(self, limit: int = 100) -> list[dict]:
-        """Return recent invoices for the AP live feed, newest first."""
+        """Return recent active (non-archived) invoices for the AP live feed, newest first."""
         return await self._q(
             """SELECT id, status, destination, vendor_name,
-                      total_amount, tax_amount, subtotal,
+                      invoice_number, total_amount, tax_amount, subtotal,
                       gl_account, gl_name,
                       qbo_bill_id, aspire_receipt_id,
                       received_at, posted_at, error_message,
-                      intake_source
+                      intake_source, archived
                FROM invoices
+               WHERE (archived IS NULL OR archived = 0)
                ORDER BY received_at DESC
                LIMIT ?""",
             [limit],
         )
+
+    async def get_archived_feed(self, limit: int = 200) -> list[dict]:
+        """Return archived invoices, newest first."""
+        return await self._q(
+            """SELECT id, status, destination, vendor_name,
+                      invoice_number, total_amount, tax_amount, subtotal,
+                      gl_account, gl_name,
+                      qbo_bill_id, aspire_receipt_id,
+                      received_at, posted_at, error_message,
+                      intake_source, archived
+               FROM invoices
+               WHERE archived = 1
+               ORDER BY received_at DESC
+               LIMIT ?""",
+            [limit],
+        )
+
+    async def archive_invoice(self, invoice_id: int) -> None:
+        """Mark an invoice as archived (hidden from main feed)."""
+        await self._x(
+            "UPDATE invoices SET archived = 1 WHERE id = ?",
+            [invoice_id],
+        )
+
+    async def unarchive_invoice(self, invoice_id: int) -> None:
+        """Restore an archived invoice to the main feed."""
+        await self._x(
+            "UPDATE invoices SET archived = 0 WHERE id = ?",
+            [invoice_id],
+        )
+
+    async def cleanup_sibling_errors(
+        self, current_invoice_id: int, vendor_name: str, invoice_number: Optional[str]
+    ) -> int:
+        """
+        After a successful retry, delete other error rows for the same
+        vendor + invoice number so the log doesn't show stale failures.
+        Returns the number of rows deleted.
+        """
+        if not vendor_name or not invoice_number:
+            return 0
+        # Delete audit trail for siblings first
+        sibling_rows = await self._q(
+            """SELECT id FROM invoices
+               WHERE LOWER(vendor_name) = LOWER(?)
+               AND invoice_number = ?
+               AND status = 'error'
+               AND id != ?""",
+            [vendor_name, invoice_number, current_invoice_id],
+        )
+        for r in sibling_rows:
+            await self._x("DELETE FROM audit_log WHERE invoice_id = ?", [r["id"]])
+            await self._x("DELETE FROM invoice_line_items WHERE invoice_id = ?", [r["id"]])
+        deleted = await self._x(
+            """DELETE FROM invoices
+               WHERE LOWER(vendor_name) = LOWER(?)
+               AND invoice_number = ?
+               AND status = 'error'
+               AND id != ?""",
+            [vendor_name, invoice_number, current_invoice_id],
+        )
+        return len(sibling_rows)
 
     async def delete_invoice(self, invoice_id: int) -> bool:
         await self._x("DELETE FROM audit_log WHERE invoice_id=?", [invoice_id])

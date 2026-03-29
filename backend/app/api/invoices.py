@@ -319,10 +319,20 @@ async def get_invoice_feed(
 ):
     """
     Live activity feed for the AP dashboard.
-    Returns recent invoices with GL code, GL name, amounts, and taxes.
+    Returns recent active (non-archived) invoices.
     Designed to be polled every 10 seconds.
     """
     entries = await db.get_invoice_feed(limit=limit)
+    return {"entries": entries}
+
+
+@router.get("/archived")
+async def get_archived_feed(
+    limit: int      = Query(200, le=500),
+    db:    Database = Depends(get_db),
+):
+    """Archived invoices — hidden from the main feed."""
+    entries = await db.get_archived_feed(limit=limit)
     return {"entries": entries}
 
 
@@ -460,6 +470,28 @@ async def mark_as_overhead(
         raise HTTPException(status_code=500, detail=f"QBO posting failed: {e}")
 
 
+@router.post("/{invoice_id}/archive")
+async def archive_invoice(invoice_id: int, db: Database = Depends(get_db)):
+    """Archive an invoice — hides it from the main feed."""
+    row = await db.get_invoice(invoice_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    await db.archive_invoice(invoice_id)
+    await db.audit(invoice_id, "archived", "dashboard", {})
+    return {"invoice_id": invoice_id, "archived": True}
+
+
+@router.post("/{invoice_id}/unarchive")
+async def unarchive_invoice(invoice_id: int, db: Database = Depends(get_db)):
+    """Restore an archived invoice to the main feed."""
+    row = await db.get_invoice(invoice_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    await db.unarchive_invoice(invoice_id)
+    await db.audit(invoice_id, "unarchived", "dashboard", {})
+    return {"invoice_id": invoice_id, "archived": False}
+
+
 @router.delete("/{invoice_id}")
 async def delete_invoice(invoice_id: int, db: Database = Depends(get_db)):
     """Delete an invoice and its audit log entries."""
@@ -501,6 +533,15 @@ async def retry_invoice(invoice_id: int, db: Database = Depends(get_db)):
 
     await db.audit(invoice_id, "retry", "system", {})
     outcome = await route_invoice(invoice, db, _aspire, _qbo)
+
+    # On success, clean up any sibling error rows for the same invoice number
+    if outcome in (RoutingOutcome.POSTED_QBO, RoutingOutcome.POSTED_ASPIRE):
+        cleaned = await db.cleanup_sibling_errors(
+            invoice_id, row["vendor_name"], row.get("invoice_number")
+        )
+        if cleaned:
+            logger.info(f"Cleaned up {cleaned} sibling error row(s) for invoice {invoice_id}")
+
     return {"invoice_id": invoice_id, "outcome": outcome, "message": _outcome_message(outcome)}
 
 
