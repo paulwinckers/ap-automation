@@ -610,13 +610,7 @@ class AspireClient:
         the current year target. Excludes Lost and Cancelled statuses.
         """
         year_start = f"{year}-01-01T00:00:00Z"
-        filter_expr = (
-            f"DivisionName eq 'Construction' "
-            f"and ("
-            f"  OpportunityStatusName eq 'Won' "
-            f"  or (OpportunityStatusName eq 'Complete' and CompleteDate ge {year_start})"
-            f")"
-        )
+        filter_expr = f"DivisionName eq 'Construction' and (OpportunityStatusName eq 'Won' or (OpportunityStatusName eq 'Complete' and CompleteDate ge {year_start}))"
         select_fields = ",".join([
             "OpportunityID", "OpportunityName", "OpportunityNumber",
             "OpportunityStatusName", "JobStatusName",
