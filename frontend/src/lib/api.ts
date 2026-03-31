@@ -241,10 +241,22 @@ export interface ConstructionJob {
   BranchName: string | null;
 }
 
+export interface DivisionTotals {
+  won_dollars: number;
+  actual_earned_revenue: number;
+  actual_gross_margin: number;
+  estimated_revenue: number;
+  estimated_gross_margin: number;
+  job_count: number;
+}
+
 export interface ConstructionDashboardData {
   year: number;
   targets: { revenue: number; margin: number };
-  totals: {
+  completed: DivisionTotals;
+  in_progress: DivisionTotals;
+  // legacy totals field removed — use completed + in_progress
+  totals?: {
     won_dollars: number;
     actual_earned_revenue: number;
     actual_gross_margin: number;

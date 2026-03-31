@@ -47,8 +47,8 @@ async def probe_aspire():
 @router.get("/construction")
 async def get_construction_dashboard(year: int = Query(default=2026)):
     """
-    Returns Construction division jobs for the given year plus
-    aggregate totals vs the $1.6M revenue / $600K margin targets.
+    Returns Construction division jobs split into completed vs in-progress,
+    with separate totals for each against the $1.6M / $600K targets.
     """
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
         raise HTTPException(
@@ -62,12 +62,22 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         logger.error(f"Dashboard fetch failed: {e}")
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
-    # Aggregate totals
-    total_won    = sum(float(o.get("WonDollars") or 0) for o in opps)
-    total_earned = sum(float(o.get("ActualEarnedRevenue") or 0) for o in opps)
-    total_margin = sum(float(o.get("ActualGrossMarginDollars") or 0) for o in opps)
-    total_est_rev = sum(float(o.get("EstimatedDollars") or 0) for o in opps)
-    total_est_margin = sum(float(o.get("EstimatedGrossMarginDollars") or 0) for o in opps)
+    def is_complete(o: dict) -> bool:
+        status = (o.get("OpportunityStatusName") or "").lower()
+        return "complete" in status
+
+    completed   = [o for o in opps if is_complete(o)]
+    in_progress = [o for o in opps if not is_complete(o)]
+
+    def totals(jobs: list) -> dict:
+        return {
+            "won_dollars":            sum(float(o.get("WonDollars") or 0) for o in jobs),
+            "actual_earned_revenue":  sum(float(o.get("ActualEarnedRevenue") or 0) for o in jobs),
+            "actual_gross_margin":    sum(float(o.get("ActualGrossMarginDollars") or 0) for o in jobs),
+            "estimated_revenue":      sum(float(o.get("EstimatedDollars") or 0) for o in jobs),
+            "estimated_gross_margin": sum(float(o.get("EstimatedGrossMarginDollars") or 0) for o in jobs),
+            "job_count":              len(jobs),
+        }
 
     return {
         "year": year,
@@ -75,15 +85,9 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
             "revenue": REVENUE_TARGET,
             "margin":  MARGIN_TARGET,
         },
-        "totals": {
-            "won_dollars":              total_won,
-            "actual_earned_revenue":    total_earned,
-            "actual_gross_margin":      total_margin,
-            "estimated_revenue":        total_est_rev,
-            "estimated_gross_margin":   total_est_margin,
-            "job_count":                len(opps),
-        },
-        "jobs": opps,
+        "completed":   totals(completed),
+        "in_progress": totals(in_progress),
+        "jobs": opps,   # all jobs; frontend filters by OpportunityStatusName
     }
 
 
