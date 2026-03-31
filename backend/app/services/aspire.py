@@ -645,24 +645,18 @@ class AspireClient:
         logger.info(f"Statuses: {seen_statuses}")
         logger.info(f"Divisions: {seen_divisions}")
 
-        # Filter to Construction division
+        # Filter to Construction division only — return ALL statuses so
+        # dashboard.py can see every status name and filter appropriately.
         construction = [
             o for o in all_opps
             if (o.get("DivisionName") or "").lower() == "construction"
             or o.get("DivisionID") == 8
         ]
-
-        # Keep only Won and any Complete-variant statuses
-        def _is_active(o: dict) -> bool:
-            status = (o.get("OpportunityStatusName") or "").lower()
-            return status == "won" or "complete" in status
-
-        active = [o for o in construction if _is_active(o)]
         logger.info(
-            f"{len(all_opps)} total → {len(construction)} Construction "
-            f"→ {len(active)} Won/Complete"
+            f"{len(all_opps)} total opps → {len(construction)} Construction "
+            f"(statuses: { {o.get('OpportunityStatusName') for o in construction} })"
         )
-        return active
+        return construction
 
     async def get_work_tickets_summary(self, opportunity_id: int) -> list[dict]:
         """

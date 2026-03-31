@@ -146,26 +146,31 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
     def is_complete(o: dict) -> bool:
-        status = (o.get("OpportunityStatusName") or "").lower()
-        return "complete" in status
+        # In Aspire: OpportunityStatusName stays "Won" even after work is done.
+        # JobStatusName is what changes to "Complete" when work is finished.
+        job_status = (o.get("JobStatusName") or "").lower()
+        return "complete" in job_status
 
     def complete_in_year(o: dict, yr: int) -> bool:
-        """True only if the job is Complete AND its CompleteDate falls in the target year."""
+        """True if JobStatus is Complete AND CompleteDate is in the target year."""
         if not is_complete(o):
             return False
         complete_date = o.get("CompleteDate") or ""
-        # Dates from Aspire arrive as ISO strings like "2026-03-15T00:00:00" or "2026-03-15"
         return complete_date.startswith(str(yr))
 
     def won_in_year(o: dict, yr: int) -> bool:
-        """True if job is Won (in-progress) and WonDate is in the target year."""
+        """True if job is in-progress (not complete) and WonDate is in the target year."""
         if is_complete(o):
+            return False
+        # Only include Won opportunities (exclude Lost, Cancelled, etc.)
+        opp_status = (o.get("OpportunityStatusName") or "").lower()
+        if opp_status not in ("won",):
             return False
         won_date = o.get("WonDate") or ""
         return won_date.startswith(str(yr))
 
-    # Completed jobs: Complete status AND CompleteDate in target year
-    # In-progress jobs: Won status AND WonDate in target year
+    # Completed: JobStatus=Complete AND CompleteDate in target year
+    # In-progress: OpportunityStatus=Won AND not complete AND WonDate in target year
     completed   = [o for o in opps if complete_in_year(o, year)]
     in_progress = [o for o in opps if won_in_year(o, year)]
 
