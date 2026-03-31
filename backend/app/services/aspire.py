@@ -610,14 +610,31 @@ class AspireClient:
         fields including DivisionName/DivisionID), then filters to Construction
         in Python. Avoids OData combined-filter parser bugs.
         """
-        # Single $top=500 request — no filter, no $skip.
-        # Probe confirmed this works and returns all ~500 opps including Construction.
+        # Single $top=500 request with $select to keep payload small.
+        # Probe confirmed this works. No $filter or $skip — both cause issues.
         # All filtering (division + status + year) done in Python.
+        select_fields = ",".join([
+            "OpportunityID", "OpportunityName", "OpportunityNumber",
+            "OpportunityStatusName", "JobStatusName",
+            "DivisionName", "DivisionID",
+            "WonDollars", "ActualEarnedRevenue",
+            "ActualGrossMarginDollars", "ActualGrossMarginPercent",
+            "EstimatedDollars", "EstimatedGrossMarginDollars", "EstimatedGrossMarginPercent",
+            "ActualCostDollars",
+            "EstimatedLaborHours", "ActualLaborHours",
+            "PercentComplete",
+            "StartDate", "EndDate", "CompleteDate", "WonDate",
+            "SalesRepContactName", "OperationsManagerContactName",
+            "PropertyName", "BranchName",
+        ])
         try:
-            result = await self._get("Opportunities", {"$top": "500"})
+            result = await self._get("Opportunities", {
+                "$top":    "500",
+                "$select": select_fields,
+            })
             all_opps = self._extract_list(result)
         except Exception as e:
-            logger.error(f"Opportunities fetch failed: {e}")
+            logger.error(f"Opportunities fetch failed: {e}", exc_info=True)
             return []
 
         logger.info(f"Fetched {len(all_opps)} total opps from Aspire")
