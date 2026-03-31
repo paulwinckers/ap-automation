@@ -610,43 +610,42 @@ class AspireClient:
         fields including DivisionName/DivisionID), then filters to Construction
         in Python. Avoids OData combined-filter parser bugs.
         """
-        # $skip pagination fails on Aspire — use $top=500 per status in one shot.
-        # Probe confirmed the API handles $top=500 fine (returned all 500 opps).
-        all_opps: list[dict] = []
+        # Single $top=500 request — no filter, no $skip.
+        # Probe confirmed this works and returns all ~500 opps including Construction.
+        # All filtering (division + status + year) done in Python.
+        try:
+            result = await self._get("Opportunities", {"$top": "500"})
+            all_opps = self._extract_list(result)
+        except Exception as e:
+            logger.error(f"Opportunities fetch failed: {e}")
+            return []
 
-        for status_filter in [
-            "OpportunityStatusName eq 'Won'",
-            "OpportunityStatusName eq 'Complete'",
-            "OpportunityStatusName eq 'Completed'",
-        ]:
-            try:
-                result = await self._get("Opportunities", {
-                    "$filter": status_filter,
-                    "$top": "500",
-                })
-                page = self._extract_list(result)
-                logger.info(f"Status filter '{status_filter}' → {len(page)} records")
-                all_opps.extend(page)
-            except Exception as e:
-                logger.error(f"Opportunities fetch failed ({status_filter}): {e}")
+        logger.info(f"Fetched {len(all_opps)} total opps from Aspire")
 
-        # Log all unique statuses/divisions seen to confirm filtering
+        # Log unique statuses and divisions for diagnostics
         seen_statuses  = {o.get("OpportunityStatusName") for o in all_opps}
         seen_divisions = {o.get("DivisionName") for o in all_opps}
-        logger.info(f"All opportunity statuses in response: {seen_statuses}")
-        logger.info(f"All opportunity divisions in response: {seen_divisions}")
+        logger.info(f"Statuses: {seen_statuses}")
+        logger.info(f"Divisions: {seen_divisions}")
 
-        # Filter to Construction division in Python
+        # Filter to Construction division
         construction = [
             o for o in all_opps
             if (o.get("DivisionName") or "").lower() == "construction"
             or o.get("DivisionID") == 8
         ]
+
+        # Keep only Won and any Complete-variant statuses
+        def _is_active(o: dict) -> bool:
+            status = (o.get("OpportunityStatusName") or "").lower()
+            return status == "won" or "complete" in status
+
+        active = [o for o in construction if _is_active(o)]
         logger.info(
-            f"Fetched {len(all_opps)} total opps → "
-            f"{len(construction)} Construction division"
+            f"{len(all_opps)} total → {len(construction)} Construction "
+            f"→ {len(active)} Won/Complete"
         )
-        return construction
+        return active
 
     async def get_work_tickets_summary(self, opportunity_id: int) -> list[dict]:
         """
