@@ -230,6 +230,8 @@ export interface ConstructionJob {
   EstimatedGrossMarginDollars: number | null;
   EstimatedGrossMarginPercent: number | null;
   ActualCostDollars: number | null;
+  EstimatedLaborHours: number | null;
+  ActualLaborHours: number | null;
   PercentComplete: number | null;
   StartDate: string | null;
   EndDate: string | null;

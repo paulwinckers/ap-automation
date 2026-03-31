@@ -250,6 +250,23 @@ function JobRow({ job, index, showProjected }: { job: ConstructionJob; index: nu
           <div style={{ fontWeight: 600, color: margin < 0 ? '#ef4444' : '#374151' }}>{fmt$(margin)}</div>
           {marginPct != null && <div style={{ fontSize: 11, color: '#9ca3af' }}>{fmtPct(marginPct)}</div>}
         </td>
+        <td style={{ padding: '10px 12px', textAlign: 'right', fontSize: 13 }}>
+          {job.EstimatedLaborHours != null || job.ActualLaborHours != null ? (
+            <div>
+              <span style={{ color: '#374151' }}>{fmtHrs(job.ActualLaborHours)}</span>
+              <span style={{ color: '#9ca3af' }}> / {fmtHrs(job.EstimatedLaborHours)}</span>
+              {job.ActualLaborHours != null && job.EstimatedLaborHours != null && (
+                <div style={{
+                  fontSize: 11, fontWeight: 600,
+                  color: job.ActualLaborHours > job.EstimatedLaborHours ? '#ef4444' : '#22c55e',
+                }}>
+                  {job.ActualLaborHours > job.EstimatedLaborHours ? '+' : ''}
+                  {(job.ActualLaborHours - job.EstimatedLaborHours).toFixed(1)} h
+                </div>
+              )}
+            </div>
+          ) : '—'}
+        </td>
         <td style={{ padding: '10px 12px', textAlign: 'right' }}>
           {job.PercentComplete != null ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
@@ -263,7 +280,7 @@ function JobRow({ job, index, showProjected }: { job: ConstructionJob; index: nu
       </tr>
       {expanded && (
         <tr style={{ background: '#f0f9ff' }}>
-          <td colSpan={7} style={{ padding: '0 12px 12px 40px' }}>
+          <td colSpan={8} style={{ padding: '0 12px 12px 40px' }}>
             <WorkTicketsTable tickets={tickets} loading={ticketsLoading} />
           </td>
         </tr>
@@ -497,12 +514,13 @@ export default function ConstructionDashboard() {
                       <SortHeader label="Contracted" field="WonDollars" />
                       <SortHeader label="Revenue" field="ActualEarnedRevenue" />
                       <SortHeader label="Margin" field="ActualGrossMarginDollars" />
+                      <th style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280', fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', borderBottom: '2px solid #e5e7eb' }}>Est / Act Hrs</th>
                       <SortHeader label="% Complete" field="PercentComplete" />
                     </tr>
                   </thead>
                   <tbody>
                     {sortedJobs.length === 0 ? (
-                      <tr><td colSpan={7} style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No jobs found.</td></tr>
+                      <tr><td colSpan={8} style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No jobs found.</td></tr>
                     ) : (
                       sortedJobs.map((job, i) => (
                         <JobRow key={job.OpportunityID} job={job} index={i} showProjected={showProjected} />

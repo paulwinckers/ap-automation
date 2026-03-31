@@ -624,6 +624,7 @@ class AspireClient:
             "ActualGrossMarginDollars", "ActualGrossMarginPercent",
             "EstimatedDollars", "EstimatedGrossMarginDollars", "EstimatedGrossMarginPercent",
             "ActualCostDollars", "EstimatedCostDollars",
+            "EstimatedLaborHours", "ActualLaborHours",
             "PercentComplete",
             "StartDate", "EndDate", "CompleteDate", "WonDate",
             "SalesRepContactName", "OperationsManagerContactName",
