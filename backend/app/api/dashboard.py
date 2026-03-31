@@ -158,21 +158,17 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         complete_date = o.get("CompleteDate") or ""
         return complete_date.startswith(str(yr))
 
-    def won_in_year(o: dict, yr: int) -> bool:
-        """True if job is in-progress (not complete) and WonDate is in the target year."""
+    def is_in_progress(o: dict) -> bool:
+        """Won jobs that haven't been completed — the current active pipeline."""
         if is_complete(o):
             return False
-        # Only include Won opportunities (exclude Lost, Cancelled, etc.)
         opp_status = (o.get("OpportunityStatusName") or "").lower()
-        if opp_status not in ("won",):
-            return False
-        won_date = o.get("WonDate") or ""
-        return won_date.startswith(str(yr))
+        return opp_status == "won"
 
     # Completed: JobStatus=Complete AND CompleteDate in target year
-    # In-progress: OpportunityStatus=Won AND not complete AND WonDate in target year
+    # In-progress: OpportunityStatus=Won AND JobStatus not Complete (all pipeline, no date cap)
     completed   = [o for o in opps if complete_in_year(o, year)]
-    in_progress = [o for o in opps if won_in_year(o, year)]
+    in_progress = [o for o in opps if is_in_progress(o)]
 
     def totals(jobs: list) -> dict:
         return {

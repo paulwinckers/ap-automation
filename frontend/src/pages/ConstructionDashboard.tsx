@@ -39,14 +39,16 @@ function progressColor(pct: number): string {
 }
 
 function isComplete(job: ConstructionJob): boolean {
-  return (job.OpportunityStatusName || '').toLowerCase().includes('complete');
+  // In Aspire, OpportunityStatusName stays "Won" even after work is done.
+  // JobStatusName is what changes to "Complete" when work is finished.
+  return (job.JobStatusName || '').toLowerCase().includes('complete');
 }
 
-function statusColor(status: string | null): { bg: string; text: string } {
-  const s = (status || '').toLowerCase();
-  if (s.includes('complete'))                      return { bg: '#dcfce7', text: '#166534' };
-  if (s.includes('progress') || s.includes('won')) return { bg: '#dbeafe', text: '#1e40af' };
-  if (s.includes('cancel') || s.includes('lost'))  return { bg: '#fee2e2', text: '#991b1b' };
+function statusColor(job: ConstructionJob): { bg: string; text: string } {
+  if (isComplete(job))                                                        return { bg: '#dcfce7', text: '#166534' };
+  const s = (job.OpportunityStatusName || '').toLowerCase();
+  if (s.includes('progress') || s.includes('won'))                           return { bg: '#dbeafe', text: '#1e40af' };
+  if (s.includes('cancel') || s.includes('lost'))                            return { bg: '#fee2e2', text: '#991b1b' };
   return { bg: '#f3f4f6', text: '#374151' };
 }
 
