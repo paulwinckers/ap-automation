@@ -21,4 +21,4 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          command: pages deploy frontend/dist --project-name=ap-automation-6li
+          command: pages deploy frontend/dist --project-name=darios-ap
