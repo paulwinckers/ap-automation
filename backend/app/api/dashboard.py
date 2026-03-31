@@ -19,6 +19,25 @@ REVENUE_TARGET = 1_600_000.0
 MARGIN_TARGET  =   600_000.0
 
 
+@router.get("/construction/probe")
+async def probe_aspire():
+    """Diagnostic: returns first 20 opportunities with no filter to check divisions/dates."""
+    try:
+        token = await _aspire._get_token()
+        result = await _aspire._get("Opportunities", {
+            "$select": "OpportunityID,OpportunityName,DivisionName,DivisionID,OpportunityStatusName,WonDate,StartDate",
+            "$top": "20",
+        })
+        opps = result.get("value", result if isinstance(result, list) else [])
+        divisions = {}
+        for o in opps:
+            d = o.get("DivisionName") or "(none)"
+            divisions[d] = o.get("DivisionID")
+        return {"sample_count": len(opps), "divisions": divisions, "sample": opps[:5]}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @router.get("/construction")
 async def get_construction_dashboard(year: int = Query(default=2026)):
     """
