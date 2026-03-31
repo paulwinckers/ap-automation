@@ -66,7 +66,17 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         status = (o.get("OpportunityStatusName") or "").lower()
         return "complete" in status
 
-    completed   = [o for o in opps if is_complete(o)]
+    def complete_in_year(o: dict, yr: int) -> bool:
+        """True only if the job is Complete AND its CompleteDate falls in the target year."""
+        if not is_complete(o):
+            return False
+        complete_date = o.get("CompleteDate") or ""
+        # Dates from Aspire arrive as ISO strings like "2026-03-15T00:00:00" or "2026-03-15"
+        return complete_date.startswith(str(yr))
+
+    # Completed jobs: status is Complete AND CompleteDate is in the target year
+    # In-progress jobs: status is Won (regardless of date)
+    completed   = [o for o in opps if complete_in_year(o, year)]
     in_progress = [o for o in opps if not is_complete(o)]
 
     def totals(jobs: list) -> dict:
@@ -87,7 +97,7 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         },
         "completed":   totals(completed),
         "in_progress": totals(in_progress),
-        "jobs": opps,   # all jobs; frontend filters by OpportunityStatusName
+        "jobs": completed + in_progress,   # completed (year-filtered) + all Won
     }
 
 
