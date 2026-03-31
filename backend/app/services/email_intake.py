@@ -869,11 +869,12 @@ class EmailIntakeService:
                 diff_result = {"error": str(e)}
 
             # Summarize diff for email
-            summary = diff_result.get("summary", {})
-            n_matched  = summary.get("matched", 0)
-            n_mismatch = summary.get("amount_mismatch", 0)
-            n_missing  = summary.get("in_stmt_not_qbo", 0)
-            n_extra    = summary.get("in_qbo_not_stmt", 0)
+            diff_inner = diff_result.get("diff", diff_result)
+            summary = diff_inner.get("summary", {})
+            n_matched  = summary.get("matched_count", 0)
+            n_mismatch = summary.get("mismatch_count", 0)
+            n_missing  = summary.get("missing_from_qbo", 0)
+            n_extra    = summary.get("extra_in_qbo", 0)
             closing_balance = extraction.get("closing_balance") or 0
             currency        = extraction.get("currency", "CAD")
             balance_fmt     = f"${closing_balance:,.2f} {currency}"

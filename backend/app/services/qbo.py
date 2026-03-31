@@ -788,10 +788,15 @@ class QBOClient:
         to_date: str,
     ) -> list[dict]:
         """
-        Fetch all bills for a vendor in a date range.
+        Fetch all bills for a vendor.
         Used for vendor statement reconciliation.
 
-        from_date / to_date: "YYYY-MM-DD"
+        Date range is intentionally NOT applied — vendor statements show all
+        outstanding invoices regardless of age (Jan/Feb bills appear on a March
+        statement). We fetch all bills and let the diff engine match by invoice
+        number.
+
+        from_date / to_date: retained in signature for API compatibility but unused.
         """
         vendor = await self.find_vendor(vendor_name)
         if not vendor:
@@ -804,8 +809,6 @@ class QBOClient:
                 "query": (
                     f"SELECT * FROM Bill "
                     f"WHERE VendorRef = '{vendor_id}' "
-                    f"AND TxnDate >= '{from_date}' "
-                    f"AND TxnDate <= '{to_date}' "
                     f"MAXRESULTS 200"
                 )
             },
