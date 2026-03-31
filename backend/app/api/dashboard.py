@@ -157,10 +157,17 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         # Dates from Aspire arrive as ISO strings like "2026-03-15T00:00:00" or "2026-03-15"
         return complete_date.startswith(str(yr))
 
-    # Completed jobs: status is Complete AND CompleteDate is in the target year
-    # In-progress jobs: status is Won (regardless of date)
+    def won_in_year(o: dict, yr: int) -> bool:
+        """True if job is Won (in-progress) and WonDate is in the target year."""
+        if is_complete(o):
+            return False
+        won_date = o.get("WonDate") or ""
+        return won_date.startswith(str(yr))
+
+    # Completed jobs: Complete status AND CompleteDate in target year
+    # In-progress jobs: Won status AND WonDate in target year
     completed   = [o for o in opps if complete_in_year(o, year)]
-    in_progress = [o for o in opps if not is_complete(o)]
+    in_progress = [o for o in opps if won_in_year(o, year)]
 
     def totals(jobs: list) -> dict:
         return {

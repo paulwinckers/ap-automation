@@ -296,15 +296,19 @@ export default function ConstructionDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showProjected, setShowProjected] = useState(false);
+  const [year, setYear] = useState(2026);
   const [sortField, setSortField] = useState<'WonDollars' | 'ActualEarnedRevenue' | 'ActualGrossMarginDollars' | 'PercentComplete'>('WonDollars');
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
 
   useEffect(() => {
-    getConstructionDashboard(2026)
+    setLoading(true);
+    setData(null);
+    setError(null);
+    getConstructionDashboard(year)
       .then(setData)
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [year]);
 
   function toggleSort(field: typeof sortField) {
     if (sortField === field) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
@@ -349,24 +353,41 @@ export default function ConstructionDashboard() {
           <div>
             <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, letterSpacing: -0.5 }}>Construction Division</h1>
             <p style={{ margin: '4px 0 0', opacity: 0.8, fontSize: 14 }}>
-              2026 Performance Dashboard
+              {year} Performance Dashboard
               {data && ` · ${data.completed.job_count} completed · ${data.in_progress.job_count} in progress`}
             </p>
           </div>
 
-          {/* Toggle */}
-          <button
-            onClick={() => setShowProjected(p => !p)}
-            style={{
-              padding: '10px 20px', borderRadius: 999, border: 'none', cursor: 'pointer',
-              fontWeight: 700, fontSize: 14, transition: 'all 0.2s',
-              background: showProjected ? '#fff' : 'rgba(255,255,255,0.15)',
-              color: showProjected ? '#2563eb' : '#fff',
-              boxShadow: showProjected ? '0 2px 8px rgba(0,0,0,0.15)' : 'none',
-            }}
-          >
-            {showProjected ? '✓ Including Projected' : '+ Include Projected'}
-          </button>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Year picker */}
+            <select
+              value={year}
+              onChange={e => setYear(Number(e.target.value))}
+              style={{
+                padding: '9px 14px', borderRadius: 999, border: 'none', cursor: 'pointer',
+                fontWeight: 700, fontSize: 14, background: 'rgba(255,255,255,0.15)',
+                color: '#fff', appearance: 'none', outline: 'none',
+              }}
+            >
+              {[2024, 2025, 2026].map(y => (
+                <option key={y} value={y} style={{ background: '#1e3a5f', color: '#fff' }}>{y}</option>
+              ))}
+            </select>
+
+            {/* Toggle */}
+            <button
+              onClick={() => setShowProjected(p => !p)}
+              style={{
+                padding: '10px 20px', borderRadius: 999, border: 'none', cursor: 'pointer',
+                fontWeight: 700, fontSize: 14, transition: 'all 0.2s',
+                background: showProjected ? '#fff' : 'rgba(255,255,255,0.15)',
+                color: showProjected ? '#2563eb' : '#fff',
+                boxShadow: showProjected ? '0 2px 8px rgba(0,0,0,0.15)' : 'none',
+              }}
+            >
+              {showProjected ? '✓ Including Projected' : '+ Include Projected'}
+            </button>
+          </div>
         </div>
       </div>
 
