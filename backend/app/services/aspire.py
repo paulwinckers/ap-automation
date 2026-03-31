@@ -610,38 +610,27 @@ class AspireClient:
         fields including DivisionName/DivisionID), then filters to Construction
         in Python. Avoids OData combined-filter parser bugs.
         """
-        # Use Won-only filter in OData to get a bounded result set fast,
-        # then also fetch a separate pass for Complete/Completed variants.
-        # Division filtering done in Python. Hard page cap prevents infinite loops.
+        # $skip pagination fails on Aspire — use $top=500 per status in one shot.
+        # Probe confirmed the API handles $top=500 fine (returned all 500 opps).
         all_opps: list[dict] = []
-        page_size = 100
-        max_pages = 10  # safety cap — 1000 records max
 
         for status_filter in [
             "OpportunityStatusName eq 'Won'",
             "OpportunityStatusName eq 'Complete'",
             "OpportunityStatusName eq 'Completed'",
         ]:
-            skip = 0
-            for _ in range(max_pages):
-                try:
-                    result = await self._get("Opportunities", {
-                        "$filter": status_filter,
-                        "$top":    str(page_size),
-                        "$skip":   str(skip),
-                    })
-                    page = self._extract_list(result)
-                    if not page:
-                        break
-                    all_opps.extend(page)
-                    if len(page) < page_size:
-                        break
-                    skip += page_size
-                except Exception as e:
-                    logger.error(f"Opportunities fetch failed ({status_filter}): {e}")
-                    break
+            try:
+                result = await self._get("Opportunities", {
+                    "$filter": status_filter,
+                    "$top": "500",
+                })
+                page = self._extract_list(result)
+                logger.info(f"Status filter '{status_filter}' → {len(page)} records")
+                all_opps.extend(page)
+            except Exception as e:
+                logger.error(f"Opportunities fetch failed ({status_filter}): {e}")
 
-        # Log all unique statuses/divisions seen
+        # Log all unique statuses/divisions seen to confirm filtering
         seen_statuses  = {o.get("OpportunityStatusName") for o in all_opps}
         seen_divisions = {o.get("DivisionName") for o in all_opps}
         logger.info(f"All opportunity statuses in response: {seen_statuses}")
