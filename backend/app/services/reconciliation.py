@@ -239,10 +239,13 @@ class ReconciliationService:
             qbo_bills=qbo_bills,
         )
 
+        qbo_total_balance = round(sum(float(b.get("Balance") or 0) for b in qbo_bills), 2)
+
         return {
             "vendor_name": vendor_name,
             "statement_date": statement.get("statement_date"),
             "closing_balance": statement.get("closing_balance"),
+            "qbo_total_balance": qbo_total_balance,
             "currency": statement.get("currency", "CAD"),
             "aging": statement.get("aging", {}),
             "statement_line_count": len(statement.get("lines", [])),

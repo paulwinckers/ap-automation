@@ -55,6 +55,7 @@ interface DiffResult {
   vendor_name: string;
   statement_date: string | null;
   closing_balance: number | null;
+  qbo_total_balance: number | null;
   currency: string;
   diff: {
     matched: DiffRow[];
@@ -307,7 +308,20 @@ export default function Reconcile() {
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 700, fontSize: 16, color: '#1e293b' }}>{stmt.vendor_name}</div>
                   <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
-                    {stmt.statement_date || '—'} · Statement balance: {fmt(stmt.closing_balance, stmt.currency)}
+                    {stmt.statement_date || '—'} · Statement: {fmt(stmt.closing_balance, stmt.currency)}
+                    {diffData?.data && (() => {
+                      const d = diffData.data as DiffResult;
+                      const qboBalance = d.qbo_total_balance ?? null;
+                      if (qboBalance === null) return null;
+                      const diff = (stmt.closing_balance ?? 0) - qboBalance;
+                      const diffColor = Math.abs(diff) < 0.01 ? '#16a34a' : '#dc2626';
+                      return (
+                        <>
+                          {' · '}QBO: <span style={{ color: '#1e293b', fontWeight: 600 }}>{fmt(qboBalance, stmt.currency)}</span>
+                          {' · '}Diff: <span style={{ color: diffColor, fontWeight: 700 }}>{diff >= 0 ? '+' : ''}{fmt(diff, stmt.currency)}</span>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 
