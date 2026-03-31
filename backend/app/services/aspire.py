@@ -606,16 +606,14 @@ class AspireClient:
     async def get_construction_opportunities(self, year: int = 2026) -> list[dict]:
         """
         Fetch all active Construction division opportunities.
-        No date filter — jobs are set up in prior years but tracked against
-        the current year target. Excludes Lost and Cancelled statuses.
+        Fetches all Won + Complete opps (no division filter in OData — Aspire's
+        OData parser is unreliable with combined filters), then filters to
+        Construction division and year in Python.
         """
-        # DivisionName filter confirmed working; keep to single-level parens to
-        # avoid Aspire OData parser dropping the division clause.
-        # CompleteDate year filtering is done in Python (dashboard.py).
-        filter_expr = "DivisionName eq 'Construction' and (OpportunityStatusName eq 'Won' or OpportunityStatusName eq 'Complete')"
         select_fields = ",".join([
             "OpportunityID", "OpportunityName", "OpportunityNumber",
             "OpportunityStatusName", "JobStatusName",
+            "DivisionName", "DivisionID",
             "WonDollars", "ActualEarnedRevenue",
             "ActualGrossMarginDollars", "ActualGrossMarginPercent",
             "EstimatedDollars", "EstimatedGrossMarginDollars", "EstimatedGrossMarginPercent",
@@ -626,6 +624,9 @@ class AspireClient:
             "SalesRepContactName", "OperationsManagerContactName",
             "PropertyName", "BranchName",
         ])
+        # Only filter by status in OData — avoid complex combined filters that
+        # Aspire's parser silently drops. Division filtering done in Python.
+        filter_expr = "OpportunityStatusName eq 'Won' or OpportunityStatusName eq 'Complete'"
         all_opps = []
         skip = 0
         page_size = 100
@@ -646,8 +647,18 @@ class AspireClient:
             except Exception as e:
                 logger.error(f"Construction opportunities fetch failed: {e}")
                 break
-        logger.info(f"Fetched {len(all_opps)} Construction opportunities for {year}")
-        return all_opps
+
+        # Filter to Construction division in Python — reliable, no OData parser risk
+        construction = [
+            o for o in all_opps
+            if (o.get("DivisionName") or "").lower() == "construction"
+            or o.get("DivisionID") == 8
+        ]
+        logger.info(
+            f"Fetched {len(all_opps)} Won/Complete opps total, "
+            f"{len(construction)} in Construction division"
+        )
+        return construction
 
     async def get_work_tickets_summary(self, opportunity_id: int) -> list[dict]:
         """
