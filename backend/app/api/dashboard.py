@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-_aspire = AspireClient(sandbox=settings.ASPIRE_SANDBOX)
+# Dashboard always reads from production — never sandbox
+# (read-only, no risk; use ASPIRE_SANDBOX for AP invoice posting)
+_aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)
 
 REVENUE_TARGET = 1_600_000.0
 MARGIN_TARGET  =   600_000.0

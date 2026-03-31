@@ -15,8 +15,9 @@ class Settings(BaseSettings):
     ASPIRE_TOKEN_URL:    str = ""
     ASPIRE_CLIENT_ID:    str = ""
     ASPIRE_CLIENT_SECRET: str = ""
-    ASPIRE_SANDBOX:      bool = False
-    ASPIRE_BRANCH_ID:    int = 0    # Required — integer, find in Aspire Settings → Branches
+    ASPIRE_SANDBOX:           bool = False  # AP invoice posting (set True for sandbox testing)
+    ASPIRE_DASHBOARD_SANDBOX: bool = False  # Dashboard reads — always False (production data)
+    ASPIRE_BRANCH_ID:         int = 0    # Required — integer, find in Aspire Settings → Branches
 
     # QBO
     QBO_CLIENT_ID:       str = ""
