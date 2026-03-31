@@ -610,54 +610,54 @@ class AspireClient:
         fields including DivisionName/DivisionID), then filters to Construction
         in Python. Avoids OData combined-filter parser bugs.
         """
-        # No OData filter at all — Aspire's filter parser is unreliable with
-        # combined/complex expressions. Fetch all opps, filter in Python.
-        # Probe confirmed ~500 total opps which is fast enough to paginate.
-        all_opps = []
-        skip = 0
+        # Use Won-only filter in OData to get a bounded result set fast,
+        # then also fetch a separate pass for Complete/Completed variants.
+        # Division filtering done in Python. Hard page cap prevents infinite loops.
+        all_opps: list[dict] = []
         page_size = 100
-        while True:
-            try:
-                result = await self._get("Opportunities", {
-                    "$top":  str(page_size),
-                    "$skip": str(skip),
-                })
-                page = self._extract_list(result)
-                if not page:
-                    break
-                all_opps.extend(page)
-                if len(page) < page_size:
-                    break
-                skip += page_size
-            except Exception as e:
-                logger.error(f"Construction opportunities fetch failed: {e}")
-                break
+        max_pages = 10  # safety cap — 1000 records max
 
-        # Log all unique status names in the data so we can confirm correct matching
-        seen_statuses   = {o.get("OpportunityStatusName") for o in all_opps}
-        seen_divisions  = {o.get("DivisionName") for o in all_opps}
-        logger.info(f"All opportunity statuses: {seen_statuses}")
-        logger.info(f"All opportunity divisions: {seen_divisions}")
+        for status_filter in [
+            "OpportunityStatusName eq 'Won'",
+            "OpportunityStatusName eq 'Complete'",
+            "OpportunityStatusName eq 'Completed'",
+        ]:
+            skip = 0
+            for _ in range(max_pages):
+                try:
+                    result = await self._get("Opportunities", {
+                        "$filter": status_filter,
+                        "$top":    str(page_size),
+                        "$skip":   str(skip),
+                    })
+                    page = self._extract_list(result)
+                    if not page:
+                        break
+                    all_opps.extend(page)
+                    if len(page) < page_size:
+                        break
+                    skip += page_size
+                except Exception as e:
+                    logger.error(f"Opportunities fetch failed ({status_filter}): {e}")
+                    break
 
-        # Filter to Construction division
+        # Log all unique statuses/divisions seen
+        seen_statuses  = {o.get("OpportunityStatusName") for o in all_opps}
+        seen_divisions = {o.get("DivisionName") for o in all_opps}
+        logger.info(f"All opportunity statuses in response: {seen_statuses}")
+        logger.info(f"All opportunity divisions in response: {seen_divisions}")
+
+        # Filter to Construction division in Python
         construction = [
             o for o in all_opps
             if (o.get("DivisionName") or "").lower() == "construction"
             or o.get("DivisionID") == 8
         ]
-
-        # Keep only Won and Complete-like statuses (handles "Complete", "Completed", etc.)
-        def _is_active(o: dict) -> bool:
-            status = (o.get("OpportunityStatusName") or "").lower()
-            return status == "won" or "complete" in status
-
-        active = [o for o in construction if _is_active(o)]
         logger.info(
             f"Fetched {len(all_opps)} total opps → "
-            f"{len(construction)} Construction → "
-            f"{len(active)} Won/Complete"
+            f"{len(construction)} Construction division"
         )
-        return active
+        return construction
 
     async def get_work_tickets_summary(self, opportunity_id: int) -> list[dict]:
         """
