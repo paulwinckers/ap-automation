@@ -100,7 +100,11 @@ export default function Reconcile() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { loadPeriods(); }, []);
-  useEffect(() => { loadStatements(activePeriod); }, [activePeriod]);
+  useEffect(() => {
+    setStatements([]);
+    setDiffs({});
+    loadStatements(activePeriod);
+  }, [activePeriod]);
 
   async function loadPeriods() {
     const res = await fetch(`${API}/reconcile/periods`);
