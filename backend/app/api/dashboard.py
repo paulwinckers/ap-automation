@@ -30,7 +30,7 @@ async def probe_aspire():
             "$select": "OpportunityID,OpportunityName,DivisionName,DivisionID,OpportunityStatusName,WonDate,StartDate",
             "$top": "20",
         })
-        opps = result.get("value", result if isinstance(result, list) else [])
+        opps = _aspire._extract_list(result)
         divisions = {}
         for o in opps:
             d = o.get("DivisionName") or "(none)"

@@ -79,6 +79,17 @@ class AspireClient:
         resp.raise_for_status()
         return resp.json()
 
+    @staticmethod
+    def _extract_list(result) -> list:
+        """
+        Normalise Aspire API responses — handles both:
+          - OData wrapper: {"value": [...], "@odata.count": N}
+          - Raw list:      [...]
+        """
+        if isinstance(result, list):
+            return result
+        return result.get("value", [])
+
     async def _post(self, path: str, body: dict) -> dict:
         token = await self._get_token()
         resp = await self._http.post(
@@ -629,7 +640,7 @@ class AspireClient:
                     "$skip":    str(skip),
                     "$orderby": "WonDate desc",
                 })
-                page = result.get("value", result if isinstance(result, list) else [])
+                page = self._extract_list(result)
                 all_opps.extend(page)
                 if len(page) < page_size:
                     break
@@ -659,8 +670,7 @@ class AspireClient:
                 "$select": select_fields,
                 "$top":    "50",
             })
-            tickets = result.get("value", result if isinstance(result, list) else [])
-            return tickets
+            return self._extract_list(result)
         except Exception as e:
             logger.warning(f"WorkTickets fetch failed for OpportunityID={opportunity_id}: {e}")
             return []
