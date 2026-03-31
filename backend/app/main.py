@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from app.api import invoices, vendors, health
 from app.api.vendor_import import router as vendor_import_router
 from app.api.reconcile import router as reconcile_router
+from app.api.dashboard import router as dashboard_router
 from app.core.config import settings
 from app.core.database import Database
 from app.services.qbo import qbo_auth_router
@@ -120,4 +121,5 @@ app.include_router(invoices.router, prefix="/invoices", tags=["invoices"])
 app.include_router(vendors.router,  prefix="/vendors",  tags=["vendors"])
 app.include_router(vendor_import_router, prefix="/vendors", tags=["vendors"])
 app.include_router(reconcile_router)
+app.include_router(dashboard_router)
 app.include_router(qbo_auth_router)

@@ -15,6 +15,7 @@ Receipt workflow:
 
 import logging
 import re
+import time
 from typing import Optional
 
 import httpx
@@ -43,23 +44,26 @@ class AspireClient:
     def __init__(self, sandbox: bool = False):
         self.base_url = SANDBOX_BASE if sandbox else PRODUCTION_BASE
         self._token: Optional[str] = None
+        self._token_expires_at: float = 0.0
         self._http = httpx.AsyncClient(timeout=30.0)
 
     async def _get_token(self) -> str:
-        """Fetch a Bearer token using client credentials."""
-        if self._token:
+        """Fetch a Bearer token via POST /Authorization (valid 24 hours)."""
+        if self._token and time.time() < self._token_expires_at:
             return self._token
 
         resp = await self._http.post(
-            settings.ASPIRE_TOKEN_URL,
-            data={
-                "grant_type":    "client_credentials",
-                "client_id":     settings.ASPIRE_CLIENT_ID,
-                "client_secret": settings.ASPIRE_CLIENT_SECRET,
+            f"{self.base_url}/Authorization",
+            json={
+                "ClientId": settings.ASPIRE_CLIENT_ID,
+                "Secret":   settings.ASPIRE_CLIENT_SECRET,
             },
         )
         resp.raise_for_status()
-        self._token = resp.json()["access_token"]
+        data = resp.json()
+        self._token = data["Token"]
+        # Tokens are valid 24 hours; refresh after 23 to be safe
+        self._token_expires_at = time.time() + 23 * 3600
         return self._token
 
     async def _get(self, path: str, params: dict = None) -> dict:
@@ -585,6 +589,81 @@ class AspireClient:
             receipt_id = "unknown"
 
         return str(receipt_id)
+
+    # ── Construction dashboard ────────────────────────────────────────────────
+
+    async def get_construction_opportunities(self, year: int = 2026) -> list[dict]:
+        """
+        Fetch all Construction division opportunities for the given year.
+        Excludes Lost and Cancelled statuses.
+        """
+        year_start = f"{year}-01-01T00:00:00Z"
+        year_end   = f"{year + 1}-01-01T00:00:00Z"
+        filter_expr = (
+            f"DivisionName eq 'Construction' "
+            f"and OpportunityStatusName ne 'Lost' "
+            f"and OpportunityStatusName ne 'Cancelled' "
+            f"and (StartDate ge {year_start} or WonDate ge {year_start})"
+        )
+        select_fields = ",".join([
+            "OpportunityID", "OpportunityName", "OpportunityNumber",
+            "OpportunityStatusName", "JobStatusName",
+            "WonDollars", "ActualEarnedRevenue",
+            "ActualGrossMarginDollars", "ActualGrossMarginPercent",
+            "EstimatedDollars", "EstimatedGrossMarginDollars", "EstimatedGrossMarginPercent",
+            "ActualCostDollars", "EstimatedCostDollars",
+            "PercentComplete",
+            "StartDate", "EndDate", "CompleteDate", "WonDate",
+            "SalesRepContactName", "OperationsManagerContactName",
+            "PropertyName", "BranchName",
+        ])
+        all_opps = []
+        skip = 0
+        page_size = 100
+        while True:
+            try:
+                result = await self._get("Opportunities", {
+                    "$filter":  filter_expr,
+                    "$select":  select_fields,
+                    "$top":     str(page_size),
+                    "$skip":    str(skip),
+                    "$orderby": "WonDate desc",
+                })
+                page = result.get("value", result if isinstance(result, list) else [])
+                all_opps.extend(page)
+                if len(page) < page_size:
+                    break
+                skip += page_size
+            except Exception as e:
+                logger.error(f"Construction opportunities fetch failed: {e}")
+                break
+        logger.info(f"Fetched {len(all_opps)} Construction opportunities for {year}")
+        return all_opps
+
+    async def get_work_tickets_summary(self, opportunity_id: int) -> list[dict]:
+        """
+        Fetch work tickets for an opportunity with hours and cost fields
+        for the construction dashboard.
+        """
+        select_fields = ",".join([
+            "WorkTicketID", "OpportunityID", "WorkTicketTitle",
+            "WorkTicketStatusName", "WorkTicketType",
+            "EstimatedLaborHours", "ActualLaborHours",
+            "BudgetedLaborCost", "ActualLaborCost",
+            "BudgetedCost", "ActualCost",
+            "CompleteDate", "ScheduledDate",
+        ])
+        try:
+            result = await self._get("WorkTickets", {
+                "$filter": f"OpportunityID eq {opportunity_id}",
+                "$select": select_fields,
+                "$top":    "50",
+            })
+            tickets = result.get("value", result if isinstance(result, list) else [])
+            return tickets
+        except Exception as e:
+            logger.warning(f"WorkTickets fetch failed for OpportunityID={opportunity_id}: {e}")
+            return []
 
     async def close(self):
         await self._http.aclose()

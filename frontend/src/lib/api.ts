@@ -197,3 +197,68 @@ export async function updateVendor(id: number, data: Partial<VendorRule>) {
 export async function deactivateVendor(id: number) {
   return request('DELETE', `/vendors/${id}`);
 }
+
+// ── Construction Dashboard ─────────────────────────────────────────────────────
+
+export interface WorkTicket {
+  WorkTicketID: number;
+  OpportunityID: number;
+  WorkTicketTitle: string | null;
+  WorkTicketStatusName: string | null;
+  WorkTicketType: string | null;
+  EstimatedLaborHours: number | null;
+  ActualLaborHours: number | null;
+  BudgetedLaborCost: number | null;
+  ActualLaborCost: number | null;
+  BudgetedCost: number | null;
+  ActualCost: number | null;
+  CompleteDate: string | null;
+  ScheduledDate: string | null;
+}
+
+export interface ConstructionJob {
+  OpportunityID: number;
+  OpportunityName: string | null;
+  OpportunityNumber: number | null;
+  OpportunityStatusName: string | null;
+  JobStatusName: string | null;
+  WonDollars: number | null;
+  ActualEarnedRevenue: number | null;
+  ActualGrossMarginDollars: number | null;
+  ActualGrossMarginPercent: number | null;
+  EstimatedDollars: number | null;
+  EstimatedGrossMarginDollars: number | null;
+  EstimatedGrossMarginPercent: number | null;
+  ActualCostDollars: number | null;
+  PercentComplete: number | null;
+  StartDate: string | null;
+  EndDate: string | null;
+  CompleteDate: string | null;
+  WonDate: string | null;
+  SalesRepContactName: string | null;
+  OperationsManagerContactName: string | null;
+  PropertyName: string | null;
+  BranchName: string | null;
+}
+
+export interface ConstructionDashboard {
+  year: number;
+  targets: { revenue: number; margin: number };
+  totals: {
+    won_dollars: number;
+    actual_earned_revenue: number;
+    actual_gross_margin: number;
+    estimated_revenue: number;
+    estimated_gross_margin: number;
+    job_count: number;
+  };
+  jobs: ConstructionJob[];
+}
+
+export async function getConstructionDashboard(year = 2026): Promise<ConstructionDashboard> {
+  return request('GET', `/dashboard/construction?year=${year}`);
+}
+
+export async function getJobTickets(opportunityId: number): Promise<{ opportunity_id: number; tickets: WorkTicket[] }> {
+  return request('GET', `/dashboard/construction/${opportunityId}/tickets`);
+}
