@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from app.core.database import Database
 from app.core.config import settings
 from app.services.reconciliation import ReconciliationService
+from app.services.r2 import upload_statement_pdf, get_presigned_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reconcile", tags=["reconcile"])
@@ -187,6 +188,11 @@ async def upload_statement(
         )
         await db.create_statement_lines(statement_id, extraction.get("lines", []))
 
+        # Upload PDF to R2
+        r2_key = await upload_statement_pdf(file_bytes, period, vendor_name, filename)
+        if r2_key:
+            await db.save_pdf_r2_key(statement_id, r2_key)
+
         # Run live QBO diff
         from_date, to_date = _period_date_range(period)
         diff_result = await svc.reconcile(extraction, from_date, to_date)
@@ -288,5 +294,24 @@ async def delete_statement(statement_id: int, db: Database = Depends(get_db)):
             raise HTTPException(status_code=404, detail="Statement not found")
         await db.delete_statement(statement_id)
         return {"deleted": statement_id}
+    finally:
+        await db.close()
+
+
+@router.get("/statements/{statement_id}/pdf")
+async def get_statement_pdf_url(statement_id: int, db: Database = Depends(get_db)):
+    """Return a presigned R2 URL to download the original statement PDF."""
+    await db.connect()
+    try:
+        stmt = await db.get_statement(statement_id)
+        if not stmt:
+            raise HTTPException(status_code=404, detail="Statement not found")
+        r2_key = stmt.get("pdf_r2_key")
+        if not r2_key:
+            raise HTTPException(status_code=404, detail="No PDF stored for this statement")
+        url = await get_presigned_url(r2_key)
+        if not url:
+            raise HTTPException(status_code=503, detail="R2 storage not configured")
+        return {"url": url, "filename": stmt.get("pdf_filename") or "statement.pdf"}
     finally:
         await db.close()

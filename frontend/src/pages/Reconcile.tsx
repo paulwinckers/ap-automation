@@ -368,6 +368,15 @@ export default function Reconcile() {
                       borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
                     }}>↺ Refresh</button>
                   )}
+                  <button onClick={async () => {
+                    const res = await fetch(`${API}/reconcile/statements/${stmt.id}/pdf`);
+                    if (!res.ok) { alert('No PDF stored for this statement'); return; }
+                    const { url } = await res.json();
+                    window.open(url, '_blank');
+                  }} style={{
+                    padding: '4px 12px', fontSize: 12, border: '1px solid #e2e8f0',
+                    borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
+                  }} title="Download original PDF">⬇ PDF</button>
                   {periodStatus === 'open' && (
                     <button onClick={() => handleDelete(stmt.id, stmt.vendor_name)} style={{
                       padding: '4px 12px', fontSize: 12, border: '1px solid #fecaca',

@@ -648,6 +648,12 @@ class Database:
             [statement_id],
         )
 
+    async def save_pdf_r2_key(self, statement_id: int, r2_key: str) -> None:
+        await self._x(
+            "UPDATE vendor_statements SET pdf_r2_key = ? WHERE id = ?",
+            [r2_key, statement_id],
+        )
+
     async def save_qbo_snapshot(self, statement_id: int, snapshot: dict) -> None:
         await self._x(
             "UPDATE vendor_statements SET qbo_snapshot = ? WHERE id = ?",

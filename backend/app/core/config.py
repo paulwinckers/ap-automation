@@ -32,7 +32,9 @@ class Settings(BaseSettings):
     # Cloudflare
     CLOUDFLARE_ACCOUNT_ID: str = ""
     D1_DATABASE_ID:      str = ""
-    R2_BUCKET_NAME:      str = "ap-invoices"
+    R2_BUCKET_NAME:      str = "darios-ap-statements"
+    R2_ACCESS_KEY_ID:    str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
     CF_ACCESS_TEAM_DOMAIN: str = ""
     CF_ACCOUNT_ID:       str = "cb7841b6dae457461972a8c2cca12896"
     CF_D1_DATABASE_ID:   str = "6e3fa1a4-aa7b-4233-bda8-4a35459b7712"

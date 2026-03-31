@@ -780,6 +780,7 @@ class EmailIntakeService:
         """
         import calendar as _calendar
         from app.services.reconciliation import ReconciliationService
+        from app.services.r2 import upload_statement_pdf
 
         message_id = email["id"]
         subject    = email.get("subject", "(no subject)")
@@ -869,6 +870,11 @@ class EmailIntakeService:
                 intake_source="email",
             )
             await db.create_statement_lines(statement_id, extraction.get("lines", []))
+
+            # Upload PDF to R2
+            r2_key = await upload_statement_pdf(file_bytes, period, vendor_name, filename or "statement.pdf")
+            if r2_key:
+                await db.save_pdf_r2_key(statement_id, r2_key)
 
             # Live QBO diff
             try:
