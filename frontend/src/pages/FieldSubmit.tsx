@@ -174,10 +174,10 @@ export default function FieldSubmit() {
       {/* Header */}
       <div style={S.header}>
         <div style={S.headerTop}>
-          <span style={S.h1}>Submit Receipt</span>
+          <img src="/darios-logo.png" alt="Dario's Landscape Services" style={{ height: 32, filter: 'brightness(0) invert(1)' }} />
           <span style={S.chip}>{employee || 'Field crew'}</span>
         </div>
-        <div style={S.hsub}>Dario's Landscape Services</div>
+        <div style={S.hsub}>Submit Receipt</div>
       </div>
 
       {/* Progress */}
@@ -374,7 +374,7 @@ function RR({label,value,color}:{label:string,value:string,color?:string}) {
 
 const S: Record<string,React.CSSProperties> = {
   phone:{maxWidth:430,margin:'0 auto',minHeight:'100vh',background:'#f4f6f9',display:'flex',flexDirection:'column',fontFamily:"'DM Sans',sans-serif"},
-  header:{background:'#2563eb',color:'#fff',padding:'16px 20px 20px',flexShrink:0},
+  header:{background:'#1e3a2f',color:'#fff',padding:'16px 20px 20px',flexShrink:0},
   headerTop:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4},
   h1:{fontSize:20,fontWeight:600},hsub:{fontSize:13,opacity:.8},
   chip:{background:'rgba(255,255,255,.2)',borderRadius:20,padding:'4px 12px',fontSize:12,fontWeight:500},

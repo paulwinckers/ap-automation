@@ -134,6 +134,50 @@ ALTER TABLE vendor_rules ADD COLUMN match_keyword TEXT;
 ALTER TABLE invoices ADD COLUMN doc_type TEXT;
 ALTER TABLE invoices ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
 
+-- ── Vendor Statement Reconciliation ─────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS reconciliation_periods (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    period      TEXT NOT NULL UNIQUE,   -- 'YYYY-MM' e.g. '2026-03'
+    label       TEXT NOT NULL,          -- 'March 2026'
+    status      TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed')),
+    closed_at   TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS vendor_statements (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    period_id           INTEGER NOT NULL REFERENCES reconciliation_periods(id),
+    vendor_name         TEXT NOT NULL,
+    statement_date      TEXT,
+    closing_balance     REAL,
+    currency            TEXT DEFAULT 'CAD',
+    aging_current       REAL DEFAULT 0,
+    aging_1_30          REAL DEFAULT 0,
+    aging_31_60         REAL DEFAULT 0,
+    aging_61_90         REAL DEFAULT 0,
+    aging_over_90       REAL DEFAULT 0,
+    pdf_filename        TEXT,
+    intake_source       TEXT DEFAULT 'upload',  -- 'upload' | 'email'
+    -- Snapshot of QBO data at close time (JSON) — null while period is open
+    qbo_snapshot        TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS statement_lines (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    statement_id    INTEGER NOT NULL REFERENCES vendor_statements(id) ON DELETE CASCADE,
+    line_date       TEXT,
+    invoice_number  TEXT,   -- normalized (INV # prefix stripped)
+    raw_description TEXT,   -- original text from statement
+    amount          REAL,
+    running_balance REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_stmt_period ON vendor_statements(period_id);
+CREATE INDEX IF NOT EXISTS idx_stmt_vendor ON vendor_statements(vendor_name);
+CREATE INDEX IF NOT EXISTS idx_stmt_lines  ON statement_lines(statement_id);
+
 -- ── Migration: add is_employee column ────────────────────────────────────────
 -- Safe to run on existing databases. No-op if column already exists.
 -- For D1: npx wrangler d1 execute ap-automation-db --command="ALTER TABLE vendor_rules ADD COLUMN is_employee INTEGER NOT NULL DEFAULT 0"

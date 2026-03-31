@@ -565,6 +565,99 @@ class Database:
             [invoice_id],
         )
 
+    # ── Reconciliation ────────────────────────────────────────────────────────
+
+    async def get_or_create_period(self, period: str, label: str) -> dict:
+        """Get or create a reconciliation period (e.g. '2026-03', 'March 2026')."""
+        rows = await self._q("SELECT * FROM reconciliation_periods WHERE period = ?", [period])
+        if rows:
+            return rows[0]
+        row_id = await self._x(
+            "INSERT INTO reconciliation_periods (period, label) VALUES (?, ?)",
+            [period, label],
+        )
+        return {"id": row_id, "period": period, "label": label, "status": "open"}
+
+    async def list_periods(self) -> list[dict]:
+        return await self._q("SELECT * FROM reconciliation_periods ORDER BY period DESC")
+
+    async def get_period(self, period: str) -> Optional[dict]:
+        rows = await self._q("SELECT * FROM reconciliation_periods WHERE period = ?", [period])
+        return rows[0] if rows else None
+
+    async def close_period(self, period: str) -> None:
+        await self._x(
+            "UPDATE reconciliation_periods SET status = 'closed', closed_at = datetime('now') WHERE period = ?",
+            [period],
+        )
+
+    async def create_vendor_statement(
+        self,
+        period_id: int,
+        vendor_name: str,
+        statement_date: Optional[str],
+        closing_balance: Optional[float],
+        currency: str,
+        aging: dict,
+        pdf_filename: Optional[str],
+        intake_source: str = "upload",
+    ) -> int:
+        return await self._x(
+            """INSERT INTO vendor_statements
+               (period_id, vendor_name, statement_date, closing_balance, currency,
+                aging_current, aging_1_30, aging_31_60, aging_61_90, aging_over_90,
+                pdf_filename, intake_source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                period_id, vendor_name, statement_date, closing_balance, currency,
+                aging.get("current", 0), aging.get("days_1_30", 0),
+                aging.get("days_31_60", 0), aging.get("days_61_90", 0),
+                aging.get("over_90", 0), pdf_filename, intake_source,
+            ],
+        )
+
+    async def create_statement_lines(self, statement_id: int, lines: list[dict]) -> None:
+        for line in lines:
+            await self._x(
+                """INSERT INTO statement_lines
+                   (statement_id, line_date, invoice_number, raw_description, amount, running_balance)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                [
+                    statement_id,
+                    line.get("line_date"),
+                    line.get("invoice_number"),
+                    line.get("raw_description"),
+                    line.get("amount"),
+                    line.get("running_balance"),
+                ],
+            )
+
+    async def get_statements_for_period(self, period_id: int) -> list[dict]:
+        return await self._q(
+            "SELECT * FROM vendor_statements WHERE period_id = ? ORDER BY vendor_name",
+            [period_id],
+        )
+
+    async def get_statement(self, statement_id: int) -> Optional[dict]:
+        rows = await self._q("SELECT * FROM vendor_statements WHERE id = ?", [statement_id])
+        return rows[0] if rows else None
+
+    async def get_statement_lines(self, statement_id: int) -> list[dict]:
+        return await self._q(
+            "SELECT * FROM statement_lines WHERE statement_id = ? ORDER BY line_date, id",
+            [statement_id],
+        )
+
+    async def save_qbo_snapshot(self, statement_id: int, snapshot: dict) -> None:
+        await self._x(
+            "UPDATE vendor_statements SET qbo_snapshot = ? WHERE id = ?",
+            [json.dumps(snapshot), statement_id],
+        )
+
+    async def delete_statement(self, statement_id: int) -> None:
+        await self._x("DELETE FROM statement_lines WHERE statement_id = ?", [statement_id])
+        await self._x("DELETE FROM vendor_statements WHERE id = ?", [statement_id])
+
     async def cleanup_sibling_errors(
         self, current_invoice_id: int, vendor_name: str, invoice_number: Optional[str]
     ) -> int:
