@@ -26,16 +26,20 @@ async def probe_aspire():
     """Diagnostic: returns first 20 opportunities with no filter to check divisions/dates."""
     try:
         token = await _aspire._get_token()
+        # Fetch up to 500 to find all divisions across the full dataset
         result = await _aspire._get("Opportunities", {
             "$select": "OpportunityID,OpportunityName,DivisionName,DivisionID,OpportunityStatusName,WonDate,StartDate",
-            "$top": "20",
+            "$top": "500",
         })
         opps = _aspire._extract_list(result)
-        divisions = {}
-        for o in opps:
-            d = o.get("DivisionName") or "(none)"
-            divisions[d] = o.get("DivisionID")
-        return {"sample_count": len(opps), "divisions": divisions, "sample": opps[:5]}
+        # Tally all unique divisions with counts
+        from collections import Counter
+        division_counts = Counter(
+            (o.get("DivisionName") or "(none)", o.get("DivisionID"))
+            for o in opps
+        )
+        divisions = {f"{name} (ID:{did})": count for (name, did), count in division_counts.most_common()}
+        return {"total_fetched": len(opps), "divisions": divisions, "sample": opps[:5]}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
