@@ -4,6 +4,7 @@ GET /dashboard/construction          — all jobs + targets
 GET /dashboard/construction/{id}/tickets — work tickets for one job
 """
 import logging
+from collections import Counter
 from fastapi import APIRouter, HTTPException, Query
 
 from app.core.config import settings
@@ -33,13 +34,95 @@ async def probe_aspire():
         })
         opps = _aspire._extract_list(result)
         # Tally all unique divisions with counts
-        from collections import Counter
         division_counts = Counter(
             (o.get("DivisionName") or "(none)", o.get("DivisionID"))
             for o in opps
         )
         divisions = {f"{name} (ID:{did})": count for (name, did), count in division_counts.most_common()}
         return {"total_fetched": len(opps), "divisions": divisions, "sample": opps[:5]}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/construction/debug")
+async def debug_filters():
+    """
+    Diagnostic: tries multiple filter approaches and returns counts.
+    Helps identify which Aspire OData filters actually work.
+    """
+    results = {}
+    try:
+        # Test 1: No filter — should return records
+        r1 = await _aspire._get("Opportunities", {
+            "$select": "OpportunityID,DivisionName,OpportunityStatusName,CompleteDate",
+            "$top": "10",
+        })
+        raw1 = _aspire._extract_list(r1)
+        results["no_filter_top10"] = {
+            "count": len(raw1),
+            "sample_statuses": list({o.get("OpportunityStatusName") for o in raw1}),
+            "sample_divisions": list({o.get("DivisionName") for o in raw1}),
+        }
+
+        # Test 2: DivisionName filter only
+        try:
+            r2 = await _aspire._get("Opportunities", {
+                "$filter": "DivisionName eq 'Construction'",
+                "$select": "OpportunityID,DivisionName,OpportunityStatusName,CompleteDate",
+                "$top": "50",
+            })
+            raw2 = _aspire._extract_list(r2)
+            results["division_name_filter"] = {
+                "count": len(raw2),
+                "statuses": dict(Counter(o.get("OpportunityStatusName") for o in raw2)),
+            }
+        except Exception as e:
+            results["division_name_filter"] = {"error": str(e)}
+
+        # Test 3: DivisionID filter only
+        try:
+            r3 = await _aspire._get("Opportunities", {
+                "$filter": "DivisionID eq 8",
+                "$select": "OpportunityID,DivisionName,OpportunityStatusName,CompleteDate",
+                "$top": "50",
+            })
+            raw3 = _aspire._extract_list(r3)
+            results["division_id_filter"] = {
+                "count": len(raw3),
+                "statuses": dict(Counter(o.get("OpportunityStatusName") for o in raw3)),
+            }
+        except Exception as e:
+            results["division_id_filter"] = {"error": str(e)}
+
+        # Test 4: Status filter only (Won)
+        try:
+            r4 = await _aspire._get("Opportunities", {
+                "$filter": "OpportunityStatusName eq 'Won'",
+                "$select": "OpportunityID,DivisionName,OpportunityStatusName",
+                "$top": "50",
+            })
+            raw4 = _aspire._extract_list(r4)
+            results["status_won_filter"] = {
+                "count": len(raw4),
+                "divisions": dict(Counter(o.get("DivisionName") for o in raw4)),
+            }
+        except Exception as e:
+            results["status_won_filter"] = {"error": str(e)}
+
+        # Test 5: Combined DivisionName + Won (one-level parens)
+        try:
+            r5 = await _aspire._get("Opportunities", {
+                "$filter": "DivisionName eq 'Construction' and OpportunityStatusName eq 'Won'",
+                "$select": "OpportunityID,DivisionName,OpportunityStatusName,CompleteDate",
+                "$top": "50",
+            })
+            raw5 = _aspire._extract_list(r5)
+            results["division_and_won"] = {"count": len(raw5)}
+        except Exception as e:
+            results["division_and_won"] = {"error": str(e)}
+
+        return results
+
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
