@@ -624,9 +624,9 @@ class AspireClient:
             "SalesRepContactName", "OperationsManagerContactName",
             "PropertyName", "BranchName",
         ])
-        # Only filter by status in OData — avoid complex combined filters that
-        # Aspire's parser silently drops. Division filtering done in Python.
-        filter_expr = "OpportunityStatusName eq 'Won' or OpportunityStatusName eq 'Complete'"
+        # Simple status-only filter in OData — no AND/division clause to avoid
+        # Aspire's parser silently dropping filters. Division filtered in Python.
+        filter_expr = "(OpportunityStatusName eq 'Won' or OpportunityStatusName eq 'Complete')"
         all_opps = []
         skip = 0
         page_size = 100
