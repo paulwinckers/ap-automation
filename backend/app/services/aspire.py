@@ -605,16 +605,14 @@ class AspireClient:
 
     async def get_construction_opportunities(self, year: int = 2026) -> list[dict]:
         """
-        Fetch all Construction division opportunities for the given year.
-        Excludes Lost and Cancelled statuses.
+        Fetch all active Construction division opportunities.
+        No date filter — jobs are set up in prior years but tracked against
+        the current year target. Excludes Lost and Cancelled statuses.
         """
-        year_start = f"{year}-01-01T00:00:00Z"
-        year_end   = f"{year + 1}-01-01T00:00:00Z"
         filter_expr = (
-            f"DivisionName eq 'Construction' "
-            f"and OpportunityStatusName ne 'Lost' "
-            f"and OpportunityStatusName ne 'Cancelled' "
-            f"and (StartDate ge {year_start} or WonDate ge {year_start})"
+            "DivisionName eq 'Construction' "
+            "and OpportunityStatusName ne 'Lost' "
+            "and OpportunityStatusName ne 'Cancelled'"
         )
         select_fields = ",".join([
             "OpportunityID", "OpportunityName", "OpportunityNumber",
