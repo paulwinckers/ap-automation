@@ -44,11 +44,14 @@ TOKEN_URL  = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 
 SCREENING_PROMPT = """Look at this email and reply with ONLY one word.
 
+CREDIT_MEMO — vendor credit notes, credit memos, or refund notices where money is owed TO us (negative amount, return, credit)
 INVOICE  — vendor bills or invoices with a PDF attachment, or emails where payment is still due
 RECEIPT  — online purchase confirmations or subscription renewal receipts with no PDF, from vendors like GoDaddy, Adobe, Microsoft, Intuit, Google, AWS, QuickBooks — payment already charged to a credit card
 NOT_INVOICE — newsletters, marketing, meeting requests, reports, HR, legal, bank notifications, calendar invites
 
-Reply with only: INVOICE, RECEIPT, or NOT_INVOICE"""
+Reply with only: CREDIT_MEMO, INVOICE, RECEIPT, or NOT_INVOICE"""
+
+CREDIT_MEMO_GL = "5105"  # Job cost GL for vendor credits
 
 
 class GraphClient:
@@ -367,6 +370,14 @@ class EmailIntakeService:
         if any(k in subject_lower for k in notification_phrases):
             return "skip"
 
+        # Fast-path: credit memo keywords → credit_memo
+        credit_memo_keywords = [
+            "credit memo", "credit note", "credit memorandum",
+            "vendor credit", "return credit", "credit adjustment",
+        ]
+        if any(k in subject_lower for k in credit_memo_keywords):
+            return "credit_memo"
+
         # Fast-path: receipt keywords with no PDF attachment → receipt
         receipt_keywords = ["renewal receipt", "order receipt", "purchase receipt",
                             "subscription receipt", "payment receipt", "order confirmation",
@@ -392,7 +403,9 @@ class EmailIntakeService:
                 messages=[{"role": "user", "content": f"Subject: {subject}\n\nBody:\n{snippet}\n\n{SCREENING_PROMPT}"}],
             )
             result = msg.content[0].text.strip().upper()
-            if result == "INVOICE":
+            if result == "CREDIT_MEMO":
+                return "credit_memo"
+            elif result == "INVOICE":
                 return "invoice"
             elif result == "RECEIPT":
                 return "receipt"
@@ -412,6 +425,11 @@ class EmailIntakeService:
         if email_type == "skip":
             logger.info(f"Not an invoice — leaving untouched in inbox: '{subject}' from {sender}")
             self._skipped.append({"subject": subject, "from": sender})
+            return
+
+        if email_type == "credit_memo":
+            logger.info(f"Processing credit memo: '{subject}' from {sender}")
+            await self._process_credit_memo_email(email, body_content, db)
             return
 
         if email_type == "receipt":
@@ -555,6 +573,166 @@ class EmailIntakeService:
             await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
         except Exception as e:
             logger.warning(f"Could not mark email as read (already processed): {e}")
+
+    async def _process_credit_memo_email(self, email: dict, body_content: str, db: Database):
+        """
+        Process a vendor credit memo email.
+        1. Extract data with credit-memo-specific prompt
+        2. Post to QBO as VendorCredit against GL 5105
+        3. Email keeland@darios.ca to action in Aspire
+        4. On uncertainty → exception queue
+        """
+        message_id = email["id"]
+        subject    = email.get("subject", "(no subject)")
+        sender     = email.get("from", {}).get("emailAddress", {}).get("address", "unknown")
+
+        # Get attachment or fall back to email body
+        file_bytes: Optional[bytes] = None
+        filename:   Optional[str]   = None
+        if email.get("hasAttachments"):
+            for att in await self.graph.get_attachments(settings.MS_AP_INBOX, message_id):
+                name = att.get("name", "")
+                if name.lower().endswith((".pdf", ".jpg", ".jpeg", ".png", ".webp")):
+                    file_bytes = base64.b64decode(att["contentBytes"])
+                    filename   = name
+                    break
+        if file_bytes is None:
+            file_bytes = body_content.encode("utf-8")
+            filename   = "credit_memo.html"
+
+        # Extract with credit-memo prompt
+        try:
+            extraction = await self.extractor.extract_credit_memo(file_bytes, filename)
+        except Exception as e:
+            logger.error(f"Credit memo extraction failed for '{subject}': {e}")
+            self._failed.append({"subject": subject, "from": sender, "error": f"Credit memo extraction failed: {e}"})
+            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+            return
+
+        # Save to DB
+        invoice_id = await db.create_invoice(
+            vendor_name    = extraction.vendor_name,
+            invoice_number = extraction.invoice_number,
+            invoice_date   = extraction.invoice_date,
+            due_date       = extraction.due_date,
+            subtotal       = extraction.subtotal,
+            tax_amount     = extraction.tax_amount,
+            total_amount   = extraction.total_amount,
+            currency       = extraction.currency,
+            po_number      = extraction.po_number,
+            pdf_filename   = filename or "credit_memo",
+            intake_source  = "email",
+            intake_raw     = extraction.model_dump(),
+            doc_type       = "credit_memo",
+        )
+        await db.audit(invoice_id, "received", "email", {"from": sender, "subject": subject, "type": "credit_memo"})
+
+        invoice = Invoice(
+            id=invoice_id, status=InvoiceStatus.PENDING,
+            vendor_name=extraction.vendor_name,
+            invoice_number=extraction.invoice_number,
+            invoice_date=extraction.invoice_date,
+            due_date=extraction.due_date,
+            subtotal=extraction.subtotal,
+            tax_amount=extraction.tax_amount,
+            total_amount=extraction.total_amount,
+            currency=extraction.currency,
+            po_number=extraction.po_number,
+            pdf_filename=filename or "credit_memo",
+            intake_source="email",
+            doc_type="credit_memo",
+            line_items=[LineItem(**li.model_dump()) for li in extraction.line_items],
+            tax_lines=[TaxLine(**tl.model_dump()) for tl in extraction.tax_lines],
+            file_bytes=file_bytes,
+        )
+
+        # Post to QBO as vendor credit against GL 5105
+        try:
+            credit_id = await self.qbo.post_vendor_credit(
+                invoice, CREDIT_MEMO_GL,
+                file_bytes=file_bytes, filename=filename,
+            )
+            await db.mark_posted_qbo(invoice_id, credit_id, CREDIT_MEMO_GL, gl_name="Job Cost")
+            await db.audit(invoice_id, "posted", "system", {
+                "destination": "qbo_vendor_credit",
+                "credit_id": credit_id,
+                "gl_account": CREDIT_MEMO_GL,
+            })
+            logger.info(f"Credit memo {invoice_id} posted to QBO — credit id {credit_id}")
+        except Exception as e:
+            logger.error(f"QBO vendor credit post failed for '{subject}': {e}")
+            await db.mark_queued(invoice_id, "credit_memo_post_failed")
+            await db.audit(invoice_id, "queued", "system", {"reason": "credit_memo_post_failed", "error": str(e)})
+            self._failed.append({"subject": subject, "from": sender, "error": f"QBO credit post failed: {e}"})
+            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+            return
+
+        # Notify Keeland to action in Aspire
+        amount = extraction.total_amount or 0
+        amount_fmt = f"${abs(amount):,.2f} CAD"
+        try:
+            await self.graph.send_email(
+                mailbox=settings.MS_AP_INBOX,
+                to_addresses=[DEST_KEELAND],
+                subject=f"Credit memo posted to QBO — {extraction.vendor_name or 'Unknown vendor'} {amount_fmt}",
+                body_html=f"""
+<html><body style="font-family:Arial,sans-serif;color:#1a1d23;max-width:600px">
+<div style="background:#1e3a2f;padding:20px 24px;border-radius:8px 8px 0 0">
+  <h2 style="color:#fff;margin:0;font-size:18px">Credit Memo — Action Required in Aspire</h2>
+</div>
+<div style="background:#fff;border:1px solid #e2e6ed;border-top:none;padding:24px;border-radius:0 0 8px 8px">
+  <p style="margin:0 0 16px;color:#374151">
+    A vendor credit memo has been received and posted to QuickBooks Online (GL 5105).
+    Please apply this credit in Aspire against the appropriate job.
+  </p>
+  <table style="width:100%;border-collapse:collapse;font-size:14px">
+    <tr><td style="padding:8px 0;color:#6b7280;width:160px">Vendor</td>
+        <td style="padding:8px 0;font-weight:600">{extraction.vendor_name or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Credit Amount</td>
+        <td style="padding:8px 0;font-weight:600;color:#059669">{amount_fmt}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Credit Memo #</td>
+        <td style="padding:8px 0">{extraction.invoice_number or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Date</td>
+        <td style="padding:8px 0">{extraction.invoice_date or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">PO Number</td>
+        <td style="padding:8px 0">{extraction.po_number or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">QBO Credit ID</td>
+        <td style="padding:8px 0;font-size:12px;color:#6b7280">{credit_id}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">GL Posted</td>
+        <td style="padding:8px 0">5105 — Job Cost</td></tr>
+  </table>
+  <p style="margin:24px 0 0;font-size:12px;color:#9ca3af">
+    AP Automation · Dario's Landscape Services
+  </p>
+</div>
+</body></html>""",
+                attachment_bytes=file_bytes,
+                attachment_filename=filename or "credit_memo.pdf",
+            )
+            logger.info(f"Credit memo notification sent to {DEST_KEELAND} for invoice {invoice_id}")
+        except Exception as e:
+            logger.warning(f"Credit memo Keeland notification failed (non-fatal): {e}")
+
+        self._posted.append({
+            "vendor": extraction.vendor_name,
+            "amount": extraction.total_amount,
+            "currency": extraction.currency,
+            "invoice_no": extraction.invoice_number,
+            "destination": "QBO (vendor credit)",
+            "invoice_id": invoice_id,
+        })
+
+        await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
+        try:
+            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+        except Exception as e:
+            logger.warning(f"Could not mark credit memo email as read: {e}")
 
     async def _process_receipt_email(self, email: dict, body_content: str, db: Database):
         """

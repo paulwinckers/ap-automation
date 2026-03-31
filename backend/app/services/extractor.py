@@ -57,6 +57,30 @@ Rules:
 - If multiple PO numbers appear, use the one in the field explicitly labelled PO.
 """
 
+CREDIT_MEMO_EXTRACTION_PROMPT = """
+You are an accounts payable assistant for a Canadian landscaping company.
+Extract all data from this vendor credit memo and return ONLY a JSON object.
+
+Required fields:
+- vendor_name: string — the supplier/vendor company name
+- invoice_number: string — the credit memo number or reference number
+- invoice_date: string — ISO 8601 date (YYYY-MM-DD) of the credit memo
+- due_date: null — always null for credit memos
+- po_number: string or null — purchase order number if present
+- subtotal: number — credit amount before tax (use a NEGATIVE number, e.g. -250.00)
+- tax_lines: array of { tax_name, tax_rate, tax_amount } — GST/PST if shown (use negative amounts)
+- total_amount: number — total credit amount (NEGATIVE number, e.g. -281.25)
+- currency: string — "CAD" unless clearly stated otherwise
+- line_items: array of { description, quantity, unit_price, amount } — items being credited (amounts negative)
+- notes: string or null — reason for credit or any special instructions
+
+Rules:
+- Return ONLY the JSON object. No preamble, no markdown, no explanation.
+- All amounts MUST be negative numbers (this is a credit, not a charge).
+- If a field is not present, use null.
+- Documents may say "Credit Memo", "Credit Note", "Credit", "Return", or show a negative balance due.
+"""
+
 RECEIPT_EXTRACTION_PROMPT = """
 You are an accounts payable assistant for a Canadian company.
 Extract data from this credit card receipt email and return ONLY a JSON object.
@@ -163,6 +187,36 @@ class InvoiceExtractor:
         except json.JSONDecodeError as e:
             logger.error(f"Claude returned invalid JSON for receipt: {e}\nRaw: {raw_text}")
             raise ValueError(f"Receipt extraction failed — invalid JSON: {e}")
+        return InvoiceExtraction(**data)
+
+    async def extract_credit_memo(self, file_bytes: bytes, filename: str = "") -> InvoiceExtraction:
+        """Extract credit memo data — amounts will be negative."""
+        mime_type = _detect_mime(filename, file_bytes)
+        file_b64 = base64.standard_b64encode(file_bytes).decode("utf-8")
+
+        if mime_type == PDF_MIME:
+            file_content = {"type": "document", "source": {"type": "base64", "media_type": PDF_MIME, "data": file_b64}}
+        else:
+            if mime_type not in IMAGE_MIMES:
+                mime_type = "image/jpeg"
+            file_content = {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": file_b64}}
+
+        message = await self.client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=2048,
+            messages=[{"role": "user", "content": [file_content, {"type": "text", "text": CREDIT_MEMO_EXTRACTION_PROMPT}]}],
+        )
+        raw_text = message.content[0].text.strip()
+        logger.info(f"Claude credit memo extraction response: {raw_text[:300]}")
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("```")[1]
+            if raw_text.startswith("json"):
+                raw_text = raw_text[4:]
+            raw_text = raw_text.strip()
+        try:
+            data = json.loads(raw_text)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Credit memo extraction failed — invalid JSON: {e}")
         return InvoiceExtraction(**data)
 
     async def extract_from_pdf_url(self, url: str) -> InvoiceExtraction:

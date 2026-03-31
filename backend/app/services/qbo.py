@@ -456,6 +456,33 @@ class QBOClient:
 
         return bill_id
 
+    async def _attach_file(self, entity_id: str, entity_type: str, file_bytes: bytes, filename: str) -> None:
+        """Upload a file and attach it to any QBO entity (Bill, VendorCredit, Purchase, etc.)."""
+        import base64
+        import mimetypes as _mimetypes
+        mime_type, _ = _mimetypes.guess_type(filename)
+        if not mime_type:
+            mime_type = "application/pdf" if filename.lower().endswith(".pdf") else "image/jpeg"
+        body = {
+            "AttachableRef": [{"EntityRef": {"type": entity_type, "value": entity_id}}],
+            "FileName": filename,
+            "ContentType": mime_type,
+            "Note": f"Original document — auto-attached by AP Automation",
+        }
+        token = await self._ensure_token()
+        upload_url = f"{self.base_url}/v3/company/{self.realm_id}/upload"
+        resp = await self._http.post(
+            upload_url,
+            params={"minorversion": "70"},
+            headers={"Authorization": f"Bearer {token}"},
+            files={
+                "file_metadata_01": (None, __import__("json").dumps(body), "application/json"),
+                "file_content_01":  (filename, file_bytes, mime_type),
+            },
+        )
+        if resp.status_code not in (200, 201):
+            raise ValueError(f"Attachment upload failed: {resp.status_code} {resp.text[:200]}")
+
     async def _attach_file_to_bill(self, bill_id: str, file_bytes: bytes, filename: str) -> None:
         """
         Upload a file and attach it to a QBO bill using the attachable endpoint.
@@ -638,6 +665,91 @@ class QBOClient:
                 logger.warning(f"Could not attach file to QBO purchase {purchase_id}: {e}")
 
         return purchase_id
+
+    # ── Vendor credit creation ────────────────────────────────────────────────
+
+    async def post_vendor_credit(self, invoice: Invoice, gl_account: str, file_bytes: bytes = None, filename: str = None) -> str:
+        """
+        Create a VendorCredit in QBO for a vendor credit memo.
+        gl_account: GL to credit (default 5105 — job cost)
+        Returns the QBO VendorCredit Id.
+        """
+        vendor = await self.find_or_create_vendor(invoice.vendor_name)
+        vendor_ref = {"value": vendor["Id"], "name": vendor["DisplayName"]}
+
+        account = await self.find_account(gl_account)
+        if not account:
+            raise ValueError(f"GL account '{gl_account}' not found in QBO chart of accounts.")
+        account_ref = {"value": account["Id"], "name": account["Name"]}
+
+        # Build line items (amounts should already be negative from extraction)
+        if invoice.line_items:
+            lines = [
+                {
+                    "Amount": abs(li.amount),  # QBO VendorCredit lines use positive amounts
+                    "DetailType": "AccountBasedExpenseLineDetail",
+                    "Description": li.description or "",
+                    "AccountBasedExpenseLineDetail": {
+                        "AccountRef": account_ref,
+                        "BillableStatus": "NotBillable",
+                    },
+                }
+                for li in invoice.line_items
+            ]
+        else:
+            lines = [
+                {
+                    "Amount": abs(invoice.subtotal or invoice.total_amount),
+                    "DetailType": "AccountBasedExpenseLineDetail",
+                    "Description": f"Credit Memo {invoice.invoice_number or ''} — {invoice.vendor_name}",
+                    "AccountBasedExpenseLineDetail": {
+                        "AccountRef": account_ref,
+                        "BillableStatus": "NotBillable",
+                    },
+                }
+            ]
+
+        credit_body = {
+            "VendorRef": vendor_ref,
+            "CurrencyRef": {"value": "CAD"},
+            "TxnDate": _to_qbo_date(invoice.invoice_date),
+            "PrivateNote": (
+                f"Auto-posted by AP Automation | Credit memo | "
+                f"Source: {invoice.intake_source or 'email'} | "
+                f"PDF: {invoice.pdf_filename or 'n/a'} | "
+                f"Keeland notified for Aspire action"
+            ),
+            "Line": lines,
+        }
+        if invoice.invoice_number:
+            credit_body["DocNumber"] = invoice.invoice_number
+
+        logger.info(
+            f"Posting QBO vendor credit — vendor: {invoice.vendor_name}, "
+            f"amount: {invoice.total_amount} CAD, GL: {gl_account}"
+        )
+
+        try:
+            result = await self._post("vendorcredit", credit_body)
+        except httpx.HTTPStatusError as e:
+            logger.error(f"QBO vendor credit POST failed — status {e.response.status_code}: {e.response.text}")
+            raise
+
+        credit = result.get("VendorCredit", {})
+        credit_id = credit.get("Id")
+        if not credit_id:
+            raise ValueError(f"QBO vendor credit creation returned no Id. Response: {result}")
+
+        logger.info(f"QBO vendor credit created — Id: {credit_id}, DocNumber: {invoice.invoice_number}")
+
+        if file_bytes and filename:
+            try:
+                await self._attach_file(credit_id, "VendorCredit", file_bytes, filename)
+                logger.info(f"Attached '{filename}' to QBO vendor credit {credit_id}")
+            except Exception as e:
+                logger.warning(f"Could not attach file to QBO vendor credit {credit_id}: {e}")
+
+        return credit_id
 
     # ── Chart of accounts ─────────────────────────────────────────────────────
 

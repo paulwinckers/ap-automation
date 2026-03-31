@@ -65,6 +65,13 @@ async def route_invoice(
     """
     logger.info(f"Routing invoice {invoice.id} — vendor: {invoice.vendor_name}")
 
+    # ── Credit memos are handled by email_intake._process_credit_memo_email ──
+    # They should never reach the general router, but guard against it.
+    if invoice.doc_type == "credit_memo":
+        logger.warning(f"Credit memo {invoice.id} reached general router — queuing for review")
+        await _queue(invoice, db, reason="credit_memo_unexpected")
+        return RoutingOutcome.QUEUED
+
     # ── GL override from frontend confirmation step ───────────────────────────
     # If the user confirmed (or corrected) a GL account before submitting, use it
     # directly and skip vendor rule lookup for the GL.
