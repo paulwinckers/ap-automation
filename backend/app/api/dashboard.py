@@ -44,6 +44,20 @@ async def probe_aspire():
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@router.get("/construction/opp/{opp_id}")
+async def get_opp_raw(opp_id: int):
+    """Debug: fetch one opportunity with ALL fields to see exact API field names."""
+    try:
+        result = await _aspire._get("Opportunities", {
+            "$filter": f"OpportunityID eq {opp_id}",
+            "$top": "1",
+        })
+        opps = _aspire._extract_list(result)
+        return {"opportunity_id": opp_id, "record": opps[0] if opps else None}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @router.get("/construction/debug")
 async def debug_filters():
     """
