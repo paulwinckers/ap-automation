@@ -465,6 +465,13 @@ class EmailIntakeService:
             await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
             return  # Leave in inbox — failed items stay visible
 
+        # If extraction yielded no vendor name, this isn't a real invoice — skip it
+        if not extraction.vendor_name:
+            logger.info(f"No vendor name extracted from '{subject}' — skipping (not a real invoice)")
+            self._skipped.append({"subject": subject, "from": sender, "reason": "no vendor name extracted"})
+            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+            return
+
         # Duplicate check — skip if we've already processed this invoice number
         if extraction.invoice_number:
             duplicate = await db.find_duplicate_invoice(extraction.vendor_name, extraction.invoice_number)
