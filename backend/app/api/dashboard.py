@@ -146,13 +146,16 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
     def is_complete(o: dict) -> bool:
-        # In Aspire: OpportunityStatusName stays "Won" even after work is done.
-        # JobStatusName is what changes to "Complete" when work is finished.
+        # Most reliable indicator: job has a CompleteDate set.
+        # OpportunityStatusName stays "Won" even for completed jobs in Aspire.
+        # JobStatusName field name may vary — CompleteDate is always present when done.
+        if o.get("CompleteDate"):
+            return True
         job_status = (o.get("JobStatusName") or "").lower()
         return "complete" in job_status
 
     def complete_in_year(o: dict, yr: int) -> bool:
-        """True if JobStatus is Complete AND CompleteDate is in the target year."""
+        """True if job is complete AND CompleteDate is in the target year."""
         if not is_complete(o):
             return False
         complete_date = o.get("CompleteDate") or ""

@@ -386,7 +386,7 @@ export default function ConstructionDashboard() {
                 color: '#fff', appearance: 'none', outline: 'none',
               }}
             >
-              {[2024, 2025, 2026].map(y => (
+              {[2025, 2026].map(y => (
                 <option key={y} value={y} style={{ background: '#1e3a5f', color: '#fff' }}>{y}</option>
               ))}
             </select>
