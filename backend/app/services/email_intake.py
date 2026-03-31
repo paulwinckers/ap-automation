@@ -346,6 +346,11 @@ class EmailIntakeService:
         if any(k in subject_lower for k in ["quote for ", "estimate for ", "proposal for "]):
             return "skip"
 
+        # Skip Amazon/retailer order confirmations — these are pre-shipment, not receipts
+        # Amazon sends a separate invoice; order confirmations should not be posted
+        if any(k in subject_lower for k in ["your amazon", "your order of", "order of \""]):
+            return "skip"
+
         # Skip HR / legal documents
         if any(k in subject_lower for k in ["offer of employment", "employment offer", "contract of employment"]):
             return "skip"
