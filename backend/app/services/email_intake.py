@@ -45,11 +45,12 @@ TOKEN_URL  = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 SCREENING_PROMPT = """Look at this email and reply with ONLY one word.
 
 CREDIT_MEMO — vendor credit notes, credit memos, or refund notices where money is owed TO us (negative amount, return, credit)
+STATEMENT   — vendor account statements showing a list of invoices, payments, and the total balance owed over a period (monthly statement, account statement)
 INVOICE  — vendor bills or invoices with a PDF attachment, or emails where payment is still due
 RECEIPT  — online purchase confirmations or subscription renewal receipts with no PDF, from vendors like GoDaddy, Adobe, Microsoft, Intuit, Google, AWS, QuickBooks — payment already charged to a credit card
 NOT_INVOICE — newsletters, marketing, meeting requests, reports, HR, legal, bank notifications, calendar invites
 
-Reply with only: CREDIT_MEMO, INVOICE, RECEIPT, or NOT_INVOICE"""
+Reply with only: CREDIT_MEMO, STATEMENT, INVOICE, RECEIPT, or NOT_INVOICE"""
 
 CREDIT_MEMO_GL = "LS - Construction Materials"  # Job cost GL for vendor credits
 
@@ -383,6 +384,14 @@ class EmailIntakeService:
         if any(k in subject_lower for k in credit_memo_keywords):
             return "credit_memo"
 
+        # Fast-path: vendor account statement keywords → statement
+        statement_keywords = [
+            "account statement", "vendor statement", "monthly statement",
+            "statement of account", "statement for ", "your statement",
+        ]
+        if any(k in subject_lower for k in statement_keywords) and email.get("hasAttachments"):
+            return "statement"
+
         # Fast-path: receipt keywords with no PDF attachment → receipt
         receipt_keywords = ["renewal receipt", "order receipt", "purchase receipt",
                             "subscription receipt", "payment receipt", "order confirmation",
@@ -410,6 +419,8 @@ class EmailIntakeService:
             result = msg.content[0].text.strip().upper()
             if result == "CREDIT_MEMO":
                 return "credit_memo"
+            elif result == "STATEMENT":
+                return "statement"
             elif result == "INVOICE":
                 return "invoice"
             elif result == "RECEIPT":
@@ -435,6 +446,11 @@ class EmailIntakeService:
         if email_type == "credit_memo":
             logger.info(f"Processing credit memo: '{subject}' from {sender}")
             await self._process_credit_memo_email(email, body_content, db)
+            return
+
+        if email_type == "statement":
+            logger.info(f"Processing vendor statement: '{subject}' from {sender}")
+            await self._process_statement_email(email, body_content, db)
             return
 
         if email_type == "receipt":
@@ -752,6 +768,191 @@ class EmailIntakeService:
             await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
         except Exception as e:
             logger.warning(f"Could not mark credit memo email as read: {e}")
+
+    async def _process_statement_email(self, email: dict, body_content: str, db: Database):
+        """
+        Process a vendor account statement email.
+        1. Extract the PDF attachment
+        2. Use ReconciliationService to extract statement data via Claude
+        3. Save to D1 (vendor_statements + statement_lines tables)
+        4. Run live QBO diff
+        5. Email paul@darios.ca with a summary
+        """
+        import calendar as _calendar
+        from app.services.reconciliation import ReconciliationService
+
+        message_id = email["id"]
+        subject    = email.get("subject", "(no subject)")
+        sender     = email.get("from", {}).get("emailAddress", {}).get("address", "unknown")
+
+        # Must have a PDF attachment
+        file_bytes: Optional[bytes] = None
+        filename:   Optional[str]   = None
+        if email.get("hasAttachments"):
+            for att in await self.graph.get_attachments(settings.MS_AP_INBOX, message_id):
+                name = att.get("name", "")
+                if name.lower().endswith((".pdf", ".jpg", ".jpeg", ".png")):
+                    file_bytes = base64.b64decode(att["contentBytes"])
+                    filename   = name
+                    break
+
+        if file_bytes is None:
+            logger.info(f"Statement email has no PDF attachment — skipping: '{subject}'")
+            self._skipped.append({"subject": subject, "from": sender, "reason": "no PDF attachment"})
+            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+            return
+
+        svc = ReconciliationService()
+        try:
+            # Extract statement data
+            try:
+                extraction = await svc.extract_statement(file_bytes, filename or "statement.pdf")
+            except Exception as e:
+                logger.error(f"Statement extraction failed for '{subject}': {e}")
+                self._failed.append({"subject": subject, "from": sender, "error": f"Statement extraction failed: {e}"})
+                await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+                return
+
+            vendor_name = extraction.get("vendor_name")
+            if not vendor_name:
+                logger.info(f"Statement skipped — no vendor name extracted from '{subject}'")
+                self._skipped.append({"subject": subject, "from": sender, "reason": "no vendor name extracted"})
+                await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+                return
+
+            # Determine period from statement date or today
+            stmt_date = extraction.get("statement_date") or date.today().isoformat()
+            period = stmt_date[:7]  # e.g. "2026-03"
+            try:
+                y, m = int(period.split("-")[0]), int(period.split("-")[1])
+                from calendar import month_name
+                label = f"{month_name[m]} {y}"
+                last_day = _calendar.monthrange(y, m)[1]
+                from_date = f"{period}-01"
+                to_date   = f"{period}-{last_day:02d}"
+            except Exception:
+                from calendar import month_name
+                today = date.today()
+                period = today.isoformat()[:7]
+                y, m = today.year, today.month
+                label = f"{month_name[m]} {y}"
+                from_date = f"{period}-01"
+                to_date   = f"{period}-{_calendar.monthrange(y, m)[1]:02d}"
+
+            # Ensure period exists in DB
+            period_row = await db.get_or_create_period(period, label)
+
+            if period_row.get("status") == "closed":
+                logger.warning(f"Statement for closed period {period} — skipping: '{subject}'")
+                self._skipped.append({"subject": subject, "from": sender, "reason": f"period {period} is closed"})
+                await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+                return
+
+            # Save statement and lines
+            statement_id = await db.create_vendor_statement(
+                period_id=period_row["id"],
+                vendor_name=vendor_name,
+                statement_date=extraction.get("statement_date"),
+                closing_balance=extraction.get("closing_balance"),
+                currency=extraction.get("currency", "CAD"),
+                aging=extraction.get("aging") or {},
+                pdf_filename=filename or "statement.pdf",
+                intake_source="email",
+            )
+            await db.create_statement_lines(statement_id, extraction.get("lines", []))
+
+            # Live QBO diff
+            try:
+                diff_result = await svc.reconcile(extraction, from_date, to_date)
+            except Exception as e:
+                logger.warning(f"QBO diff failed for statement {statement_id}: {e}")
+                diff_result = {"error": str(e)}
+
+            # Summarize diff for email
+            summary = diff_result.get("summary", {})
+            n_matched  = summary.get("matched", 0)
+            n_mismatch = summary.get("amount_mismatch", 0)
+            n_missing  = summary.get("in_stmt_not_qbo", 0)
+            n_extra    = summary.get("in_qbo_not_stmt", 0)
+            closing_balance = extraction.get("closing_balance") or 0
+            currency        = extraction.get("currency", "CAD")
+            balance_fmt     = f"${closing_balance:,.2f} {currency}"
+
+            status_color = "#059669" if (n_mismatch == 0 and n_missing == 0) else "#d97706"
+            status_text  = "Clean match" if (n_mismatch == 0 and n_missing == 0) else "Discrepancies found"
+
+            try:
+                await self.graph.send_email(
+                    mailbox=settings.MS_AP_INBOX,
+                    to_addresses=[DEST_PAUL],
+                    subject=f"Vendor statement received — {vendor_name} {balance_fmt} ({label})",
+                    body_html=f"""
+<html><body style="font-family:Arial,sans-serif;color:#1a1d23;max-width:600px">
+<div style="background:#1e3a2f;padding:20px 24px;border-radius:8px 8px 0 0">
+  <h2 style="color:#fff;margin:0;font-size:18px">Vendor Statement Auto-Imported</h2>
+</div>
+<div style="background:#fff;border:1px solid #e2e6ed;border-top:none;padding:24px;border-radius:0 0 8px 8px">
+  <p style="margin:0 0 16px;color:#374151">
+    A vendor account statement was received and automatically imported into the reconciliation system.
+  </p>
+  <table style="width:100%;border-collapse:collapse;font-size:14px">
+    <tr><td style="padding:8px 0;color:#6b7280;width:160px">Vendor</td>
+        <td style="padding:8px 0;font-weight:600">{vendor_name}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Closing Balance</td>
+        <td style="padding:8px 0;font-weight:600">{balance_fmt}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Period</td>
+        <td style="padding:8px 0">{label}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Statement Date</td>
+        <td style="padding:8px 0">{extraction.get("statement_date") or "—"}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">QBO Status</td>
+        <td style="padding:8px 0;color:{status_color};font-weight:600">{status_text}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Matched</td>
+        <td style="padding:8px 0">{n_matched} lines</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Amount Mismatch</td>
+        <td style="padding:8px 0;color:{'#d97706' if n_mismatch else '#6b7280'}">{n_mismatch} lines</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Missing from QBO</td>
+        <td style="padding:8px 0;color:{'#dc2626' if n_missing else '#6b7280'}">{n_missing} lines</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Extra in QBO</td>
+        <td style="padding:8px 0;color:#6b7280">{n_extra} lines</td></tr>
+  </table>
+  <p style="margin:24px 0 0;font-size:12px;color:#9ca3af">
+    View full reconciliation at the Reconcile tab · AP Automation · Dario's Landscape Services
+  </p>
+</div>
+</body></html>""",
+                )
+            except Exception as e:
+                logger.warning(f"Statement notification email failed (non-fatal): {e}")
+
+            logger.info(
+                f"Statement imported: {vendor_name} {balance_fmt} for {label} "
+                f"(id={statement_id}, matched={n_matched}, mismatch={n_mismatch}, missing={n_missing})"
+            )
+            self._posted.append({
+                "vendor": vendor_name,
+                "amount": closing_balance,
+                "currency": currency,
+                "invoice_no": f"Statement {label}",
+                "destination": "Reconcile",
+                "invoice_id": statement_id,
+            })
+
+        finally:
+            await svc.close()
+
+        await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
+        try:
+            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+        except Exception as e:
+            logger.warning(f"Could not mark statement email as read: {e}")
 
     async def _process_receipt_email(self, email: dict, body_content: str, db: Database):
         """
