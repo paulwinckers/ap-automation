@@ -629,8 +629,9 @@ class AspireClient:
         ])
         try:
             result = await self._get("Opportunities", {
-                "$top":    "500",
-                "$select": select_fields,
+                "$top":     "1000",
+                "$orderby": "WonDate desc",
+                "$select":  select_fields,
             })
             all_opps = self._extract_list(result)
         except Exception as e:

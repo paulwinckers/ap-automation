@@ -175,11 +175,20 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         return "complete" in job_status
 
     def complete_in_year(o: dict, yr: int) -> bool:
-        """True if job is complete AND CompleteDate is in the target year."""
+        """True if job is complete AND its best available date is in the target year.
+        Aspire often leaves CompleteDate null even when JobStatusName=Complete;
+        fall back to EndDate then WonDate for year matching.
+        If no date at all, include the job (it's complete and we don't know when).
+        """
         if not is_complete(o):
             return False
-        complete_date = o.get("CompleteDate") or ""
-        return complete_date.startswith(str(yr))
+        date_str = (
+            o.get("CompleteDate")
+            or o.get("EndDate")
+            or o.get("WonDate")
+            or ""
+        )
+        return not date_str or date_str.startswith(str(yr))
 
     def is_in_progress(o: dict) -> bool:
         """Won jobs that haven't been completed — the current active pipeline."""
