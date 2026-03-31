@@ -234,7 +234,17 @@ function JobRow({ job, index, showProjected }: { job: ConstructionJob; index: nu
           <span style={{ display: 'inline-block', transition: 'transform 0.2s', transform: expanded ? 'rotate(90deg)' : 'none' }}>▶</span>
         </td>
         <td style={{ padding: '10px 12px' }}>
-          <div style={{ fontWeight: 600, color: '#111827', fontSize: 14 }}>{job.OpportunityName || '(unnamed)'}</div>
+          <a
+            href={`https://cloud.youraspire.com/app/opportunities/details/${job.OpportunityID}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            style={{ fontWeight: 600, color: '#1e40af', fontSize: 14, textDecoration: 'none' }}
+            onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+            onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+          >
+            {job.OpportunityName || '(unnamed)'}
+          </a>
           {job.PropertyName && <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{job.PropertyName}</div>}
           {job.OperationsManagerContactName && <div style={{ fontSize: 12, color: '#9ca3af' }}>PM: {job.OperationsManagerContactName}</div>}
         </td>
