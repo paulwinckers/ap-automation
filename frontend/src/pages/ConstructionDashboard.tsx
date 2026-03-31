@@ -136,15 +136,16 @@ function DualProgressBar({
 
 // ── Status badge ──────────────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: string | null }) {
-  const { bg, text } = statusColor(status);
+function StatusBadge({ job }: { job: ConstructionJob }) {
+  const { bg, text } = statusColor(job);
+  const label = isComplete(job) ? (job.JobStatusName || 'Complete') : (job.OpportunityStatusName || '—');
   return (
     <span style={{
       background: bg, color: text,
       padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
       whiteSpace: 'nowrap',
     }}>
-      {status || '—'}
+      {label}
     </span>
   );
 }
@@ -172,7 +173,11 @@ function WorkTicketsTable({ tickets, loading }: { tickets: WorkTicket[]; loading
               <tr key={t.WorkTicketID} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
                 <td style={{ padding: '6px 10px', fontWeight: 500 }}>{t.WorkTicketTitle || `Ticket #${t.WorkTicketID}`}</td>
                 <td style={{ padding: '6px 10px', color: '#6b7280' }}>{t.WorkTicketType || '—'}</td>
-                <td style={{ padding: '6px 10px' }}><StatusBadge status={t.WorkTicketStatusName} /></td>
+                <td style={{ padding: '6px 10px' }}>
+                  <span style={{ background: '#f3f4f6', color: '#374151', padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600 }}>
+                    {t.WorkTicketStatusName || '—'}
+                  </span>
+                </td>
                 <td style={{ padding: '6px 10px' }}>{fmtHrs(t.EstimatedLaborHours)}</td>
                 <td style={{ padding: '6px 10px' }}>{fmtHrs(t.ActualLaborHours)}</td>
                 <td style={{ padding: '6px 10px', color: deltaColor, fontWeight: 600 }}>
@@ -251,7 +256,7 @@ function JobRow({ job, index, showProjected }: { job: ConstructionJob; index: nu
           {job.OperationsManagerContactName && <div style={{ fontSize: 12, color: '#9ca3af' }}>PM: {job.OperationsManagerContactName}</div>}
         </td>
         <td style={{ padding: '10px 12px' }}>
-          <StatusBadge status={job.OpportunityStatusName} />
+          <StatusBadge job={job} />
         </td>
         <td style={{ padding: '10px 12px', textAlign: 'right', fontSize: 14 }}>{fmt$(job.WonDollars)}</td>
         <td style={{ padding: '10px 12px', textAlign: 'right', fontSize: 14 }}>
