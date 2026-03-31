@@ -609,8 +609,10 @@ class AspireClient:
         No date filter — jobs are set up in prior years but tracked against
         the current year target. Excludes Lost and Cancelled statuses.
         """
-        year_start = f"{year}-01-01T00:00:00Z"
-        filter_expr = f"DivisionName eq 'Construction' and (OpportunityStatusName eq 'Won' or (OpportunityStatusName eq 'Complete' and CompleteDate ge {year_start}))"
+        # DivisionName filter confirmed working; keep to single-level parens to
+        # avoid Aspire OData parser dropping the division clause.
+        # CompleteDate year filtering is done in Python (dashboard.py).
+        filter_expr = "DivisionName eq 'Construction' and (OpportunityStatusName eq 'Won' or OpportunityStatusName eq 'Complete')"
         select_fields = ",".join([
             "OpportunityID", "OpportunityName", "OpportunityNumber",
             "OpportunityStatusName", "JobStatusName",
