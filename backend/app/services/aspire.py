@@ -609,9 +609,13 @@ class AspireClient:
         No date filter — jobs are set up in prior years but tracked against
         the current year target. Excludes Lost and Cancelled statuses.
         """
+        year_start = f"{year}-01-01T00:00:00Z"
         filter_expr = (
-            "DivisionName eq 'Construction' "
-            "and (OpportunityStatusName eq 'Won' or OpportunityStatusName eq 'Complete')"
+            f"DivisionName eq 'Construction' "
+            f"and ("
+            f"  OpportunityStatusName eq 'Won' "
+            f"  or (OpportunityStatusName eq 'Complete' and CompleteDate ge {year_start})"
+            f")"
         )
         select_fields = ",".join([
             "OpportunityID", "OpportunityName", "OpportunityNumber",
