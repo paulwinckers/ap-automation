@@ -165,6 +165,15 @@ async def upload_statement(
         if not vendor_name:
             raise HTTPException(status_code=422, detail="Could not extract vendor name from statement")
 
+        # Duplicate check — one statement per vendor per period
+        existing = await db.get_statements_for_period(period_row["id"])
+        for s in existing:
+            if s["vendor_name"].lower() == vendor_name.lower():
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{vendor_name} already has a statement for {label}. Delete it first if you want to replace it."
+                )
+
         # Save statement to D1
         statement_id = await db.create_vendor_statement(
             period_id=period_row["id"],

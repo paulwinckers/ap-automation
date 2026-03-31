@@ -848,6 +848,15 @@ class EmailIntakeService:
                 await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
                 return
 
+            # Duplicate check — one statement per vendor per period
+            existing = await db.get_statements_for_period(period_row["id"])
+            if any(s["vendor_name"].lower() == vendor_name.lower() for s in existing):
+                logger.info(f"Statement already exists for {vendor_name} in {label} — skipping duplicate email")
+                self._skipped.append({"subject": subject, "from": sender, "reason": f"duplicate statement for {vendor_name} in {label}"})
+                await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+                await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
+                return
+
             # Save statement and lines
             statement_id = await db.create_vendor_statement(
                 period_id=period_row["id"],
