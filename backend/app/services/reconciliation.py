@@ -103,7 +103,7 @@ def _diff_statement_vs_qbo(
         stmt_amount = stmt_line.get("amount", 0)
         if num in qbo_map:
             qbo_bill = qbo_map[num]
-            qbo_amount = float(qbo_bill.get("TotalAmt") or qbo_bill.get("Balance") or 0)
+            qbo_amount = float(qbo_bill.get("Balance") or 0)
             # Allow $0.01 rounding tolerance
             if abs(stmt_amount - qbo_amount) <= 0.01:
                 matched.append({

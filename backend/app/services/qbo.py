@@ -809,6 +809,7 @@ class QBOClient:
                 "query": (
                     f"SELECT * FROM Bill "
                     f"WHERE VendorRef = '{vendor_id}' "
+                    f"AND Balance > '0' "
                     f"MAXRESULTS 200"
                 )
             },
