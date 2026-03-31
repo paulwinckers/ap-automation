@@ -205,6 +205,7 @@ export default function Reconcile() {
           {/* Generate last 6 months as period options */}
           {Array.from({ length: 6 }, (_, i) => {
             const d = new Date();
+            d.setDate(1); // prevent month overflow (e.g. Mar 30 - 1 month = Mar 2)
             d.setMonth(d.getMonth() - i);
             const p = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
             const found = periods.find(x => x.period === p);
