@@ -611,8 +611,7 @@ class AspireClient:
         """
         filter_expr = (
             "DivisionName eq 'Construction' "
-            "and OpportunityStatusName ne 'Lost' "
-            "and OpportunityStatusName ne 'Cancelled'"
+            "and (OpportunityStatusName eq 'Won' or OpportunityStatusName eq 'Complete')"
         )
         select_fields = ",".join([
             "OpportunityID", "OpportunityName", "OpportunityNumber",
