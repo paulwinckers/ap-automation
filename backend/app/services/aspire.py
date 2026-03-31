@@ -606,26 +606,12 @@ class AspireClient:
     async def get_construction_opportunities(self, year: int = 2026) -> list[dict]:
         """
         Fetch all active Construction division opportunities.
-        Fetches all Won + Complete opps (no division filter in OData — Aspire's
-        OData parser is unreliable with combined filters), then filters to
-        Construction division and year in Python.
+        Fetches all Won + Complete opps with no $select (so Aspire returns all
+        fields including DivisionName/DivisionID), then filters to Construction
+        in Python. Avoids OData combined-filter parser bugs.
         """
-        select_fields = ",".join([
-            "OpportunityID", "OpportunityName", "OpportunityNumber",
-            "OpportunityStatusName", "JobStatusName",
-            "DivisionName", "DivisionID",
-            "WonDollars", "ActualEarnedRevenue",
-            "ActualGrossMarginDollars", "ActualGrossMarginPercent",
-            "EstimatedDollars", "EstimatedGrossMarginDollars", "EstimatedGrossMarginPercent",
-            "ActualCostDollars", "EstimatedCostDollars",
-            "EstimatedLaborHours", "ActualLaborHours",
-            "PercentComplete",
-            "StartDate", "EndDate", "CompleteDate", "WonDate",
-            "SalesRepContactName", "OperationsManagerContactName",
-            "PropertyName", "BranchName",
-        ])
-        # Simple status-only filter in OData — no AND/division clause to avoid
-        # Aspire's parser silently dropping filters. Division filtered in Python.
+        # Simple status-only filter — no $select, no AND, so Aspire returns
+        # all fields including DivisionName/DivisionID for Python filtering.
         filter_expr = "(OpportunityStatusName eq 'Won' or OpportunityStatusName eq 'Complete')"
         all_opps = []
         skip = 0
@@ -634,12 +620,13 @@ class AspireClient:
             try:
                 result = await self._get("Opportunities", {
                     "$filter":  filter_expr,
-                    "$select":  select_fields,
                     "$top":     str(page_size),
                     "$skip":    str(skip),
                     "$orderby": "WonDate desc",
                 })
                 page = self._extract_list(result)
+                if not page:
+                    break
                 all_opps.extend(page)
                 if len(page) < page_size:
                     break
@@ -648,7 +635,11 @@ class AspireClient:
                 logger.error(f"Construction opportunities fetch failed: {e}")
                 break
 
-        # Filter to Construction division in Python — reliable, no OData parser risk
+        # Log what division names we actually see to confirm filtering
+        seen_divisions = {o.get("DivisionName") for o in all_opps}
+        logger.info(f"Divisions in Won/Complete opps: {seen_divisions}")
+
+        # Filter to Construction division in Python
         construction = [
             o for o in all_opps
             if (o.get("DivisionName") or "").lower() == "construction"
