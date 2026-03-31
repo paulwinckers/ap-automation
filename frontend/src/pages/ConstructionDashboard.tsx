@@ -9,7 +9,7 @@ import React, { useEffect, useState } from 'react';
 import {
   getConstructionDashboard,
   getJobTickets,
-  ConstructionDashboard,
+  ConstructionDashboardData,
   ConstructionJob,
   WorkTicket,
 } from '../lib/api';
@@ -269,7 +269,7 @@ function JobRow({
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
 export default function ConstructionDashboard() {
-  const [data, setData] = useState<ConstructionDashboard | null>(null);
+  const [data, setData] = useState<ConstructionDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sortField, setSortField] = useState<'WonDollars' | 'ActualEarnedRevenue' | 'ActualGrossMarginDollars' | 'PercentComplete'>('WonDollars');

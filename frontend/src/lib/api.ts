@@ -241,7 +241,7 @@ export interface ConstructionJob {
   BranchName: string | null;
 }
 
-export interface ConstructionDashboard {
+export interface ConstructionDashboardData {
   year: number;
   targets: { revenue: number; margin: number };
   totals: {
@@ -255,7 +255,7 @@ export interface ConstructionDashboard {
   jobs: ConstructionJob[];
 }
 
-export async function getConstructionDashboard(year = 2026): Promise<ConstructionDashboard> {
+export async function getConstructionDashboard(year = 2026): Promise<ConstructionDashboardData> {
   return request('GET', `/dashboard/construction?year=${year}`);
 }
 
