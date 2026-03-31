@@ -113,8 +113,15 @@ export default function Reconcile() {
     await fetch(`${API}/reconcile/periods/${period}`, { method: 'POST' });
     const res = await fetch(`${API}/reconcile/periods/${period}/statements`);
     const data = await res.json();
-    setStatements(data.statements || []);
-    setPeriodStatus(data.period?.status || 'open');
+    // Guard against stale responses — if the user switched periods while this
+    // request was in-flight, discard the result to prevent overwriting newer data
+    setActivePeriod(current => {
+      if (current !== period) return current;
+      setStatements(data.statements || []);
+      setPeriodStatus(data.period?.status || 'open');
+      setDiffs({});
+      return current;
+    });
     await loadPeriods();
     // Auto-load diffs for all statements
     for (const stmt of (data.statements || [])) {
