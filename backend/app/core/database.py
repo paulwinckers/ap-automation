@@ -538,6 +538,19 @@ class Database:
             [limit],
         )
 
+    async def archive_unknown_invoices(self) -> int:
+        """Bulk archive all invoices with no vendor name (junk records)."""
+        rows = await self._q(
+            "SELECT id FROM invoices WHERE (vendor_name IS NULL OR vendor_name = '') AND archived = 0"
+        )
+        ids = [r["id"] for r in rows]
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            await self._x(
+                f"UPDATE invoices SET archived = 1 WHERE id IN ({placeholders})", ids
+            )
+        return len(ids)
+
     async def archive_invoice(self, invoice_id: int) -> None:
         """Mark an invoice as archived (hidden from main feed)."""
         await self._x(

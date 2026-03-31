@@ -172,6 +172,18 @@ export default function APDashboard() {
     }
   }
 
+  async function archiveUnknowns() {
+    if (!confirm('Archive all entries with no vendor name?')) return;
+    try {
+      const res = await fetch(`${API}/invoices/archive-unknown`, { method: 'POST' });
+      const data = await res.json();
+      await refresh();
+      alert(`Archived ${data.archived} unknown entries.`);
+    } catch (e) {
+      alert('Bulk archive failed — check Railway logs');
+    }
+  }
+
   async function unarchiveInvoice(id: number) {
     setArchiving(id);
     try {
@@ -424,6 +436,21 @@ export default function APDashboard() {
           <option value="pending">○ Pending</option>
         </select>
 
+        {/* Bulk archive unknowns — only in active view */}
+        {view === 'active' && (
+          <button
+            onClick={archiveUnknowns}
+            title="Archive all entries with no vendor name"
+            style={{
+              padding: '6px 12px', fontSize: 12, cursor: 'pointer',
+              border: '1px solid #e2e8f0', borderRadius: 8,
+              background: '#fff', color: '#94a3b8',
+            }}
+          >
+            🗑 Archive unknowns
+          </button>
+        )}
+
         {/* Result count */}
         <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 'auto' }}>
           {filteredEntries.length} {filteredEntries.length === 1 ? 'row' : 'rows'}
@@ -503,8 +530,8 @@ export default function APDashboard() {
                       </button>
                     )}
 
-                    {/* Archive button — posted rows in active view */}
-                    {e.status === 'posted' && view === 'active' && (
+                    {/* Archive button — any status in active view */}
+                    {view === 'active' && (
                       <button
                         onClick={() => archiveInvoice(e.id)}
                         disabled={archiving === e.id}

@@ -470,6 +470,13 @@ async def mark_as_overhead(
         raise HTTPException(status_code=500, detail=f"QBO posting failed: {e}")
 
 
+@router.post("/archive-unknown")
+async def archive_unknown_invoices(db: Database = Depends(get_db)):
+    """Bulk archive all invoices with no vendor name (junk records)."""
+    count = await db.archive_unknown_invoices()
+    return {"archived": count}
+
+
 @router.post("/{invoice_id}/archive")
 async def archive_invoice(invoice_id: int, db: Database = Depends(get_db)):
     """Archive an invoice — hides it from the main feed."""

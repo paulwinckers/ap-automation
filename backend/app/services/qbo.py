@@ -230,10 +230,16 @@ class QBOClient:
         Returns the vendor object or None.
         """
         escaped = vendor_name.replace("'", "\\'")
-        # For LIKE queries strip anything after '(' to avoid QBO query parser issues
-        # e.g. "Paul Winckers (expenses)" → search LIKE '%Paul Winckers%'
-        # Also collapse multiple spaces to one so "Paul  Winckers" matches "Paul Winckers"
-        like_term = " ".join(escaped.split("(")[0].split()).replace("'", "\\'")
+        # For LIKE queries: strip anything after '(', collapse spaces, and remove
+        # common legal suffixes (LTD, Ltd., Inc., Corp., LLC, Co.) so that
+        # "Lavington Turf Farms LTD" matches the existing QBO vendor "Lavington Turf Farms"
+        import re as _re
+        like_base = " ".join(escaped.split("(")[0].split())
+        like_base = _re.sub(
+            r'\s+(Ltd\.?|LTD\.?|Inc\.?|INC\.?|Corp\.?|CORP\.?|LLC|L\.L\.C\.?|Co\.?|CO\.?)$',
+            '', like_base, flags=_re.IGNORECASE
+        ).strip()
+        like_term = like_base.replace("'", "\\'")
 
         # 1. Exact match (active)
         result = await self._get(

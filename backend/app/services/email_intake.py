@@ -616,6 +616,13 @@ class EmailIntakeService:
             await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
             return
 
+        # Guard: skip if no vendor name extracted
+        if not extraction.vendor_name:
+            logger.info(f"Credit memo skipped — no vendor name extracted from '{subject}'")
+            self._skipped.append({"subject": subject, "from": sender, "reason": "no vendor name extracted"})
+            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+            return
+
         # Save to DB
         invoice_id = await db.create_invoice(
             vendor_name    = extraction.vendor_name,
