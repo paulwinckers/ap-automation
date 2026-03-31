@@ -51,7 +51,7 @@ NOT_INVOICE — newsletters, marketing, meeting requests, reports, HR, legal, ba
 
 Reply with only: CREDIT_MEMO, INVOICE, RECEIPT, or NOT_INVOICE"""
 
-CREDIT_MEMO_GL = "5105"  # Job cost GL for vendor credits
+CREDIT_MEMO_GL = "LS - Construction Materials"  # Job cost GL for vendor credits
 
 
 class GraphClient:
