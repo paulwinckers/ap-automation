@@ -367,6 +367,22 @@ async def get_invoice(invoice_id: int, db: Database = Depends(get_db)):
     return invoice
 
 
+@router.get("/{invoice_id}/pdf")
+async def get_invoice_pdf_url(invoice_id: int, db: Database = Depends(get_db)):
+    """Return a short-lived presigned R2 URL for the invoice PDF."""
+    from app.services.r2 import get_presigned_url
+    invoice = await db.get_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    r2_key = invoice.get("pdf_r2_key")
+    if not r2_key:
+        raise HTTPException(status_code=404, detail="No PDF stored for this invoice")
+    url = await get_presigned_url(r2_key, expires_in=900)  # 15-minute link
+    if not url:
+        raise HTTPException(status_code=503, detail="R2 storage unavailable")
+    return {"url": url}
+
+
 @router.post("/{invoice_id}/override")
 async def apply_po_override(
     invoice_id: int,

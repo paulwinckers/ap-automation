@@ -27,6 +27,7 @@ interface FeedEntry {
   intake_source: string | null;
   archived: number | null;
   forwarded_to: string | null;
+  pdf_r2_key: string | null;
 }
 
 interface Counts {
@@ -185,6 +186,17 @@ export default function APDashboard() {
       alert('Archive failed — check Railway logs');
     } finally {
       setArchiving(null);
+    }
+  }
+
+  async function openPdf(id: number) {
+    try {
+      const res = await fetch(`${API}/invoices/${id}/pdf`);
+      if (!res.ok) { alert('PDF not available for this invoice'); return; }
+      const { url } = await res.json();
+      window.open(url, '_blank');
+    } catch (e) {
+      alert('Could not load PDF');
     }
   }
 
@@ -588,6 +600,22 @@ export default function APDashboard() {
                         }}
                       >
                         {archiving === e.id ? '…' : '↩ Restore'}
+                      </button>
+                    )}
+
+                    {/* PDF viewer button — only shown when PDF is stored in R2 */}
+                    {e.pdf_r2_key && (
+                      <button
+                        onClick={() => openPdf(e.id)}
+                        title="View invoice PDF"
+                        style={{
+                          marginLeft: 8,
+                          background: '#fafaf9', border: '1px solid #d6d3d1',
+                          color: '#78716c', borderRadius: 6, padding: '2px 8px',
+                          cursor: 'pointer', fontSize: 11,
+                        }}
+                      >
+                        📄
                       </button>
                     )}
 

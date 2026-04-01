@@ -533,7 +533,7 @@ class Database:
                       gl_account, gl_name,
                       qbo_bill_id, aspire_receipt_id,
                       received_at, posted_at, error_message,
-                      intake_source, archived, forwarded_to
+                      intake_source, archived, forwarded_to, pdf_r2_key
                FROM invoices
                WHERE (archived IS NULL OR archived = 0)
                ORDER BY received_at DESC
@@ -549,7 +549,7 @@ class Database:
                       gl_account, gl_name,
                       qbo_bill_id, aspire_receipt_id,
                       received_at, posted_at, error_message,
-                      intake_source, archived, forwarded_to
+                      intake_source, archived, forwarded_to, pdf_r2_key
                FROM invoices
                WHERE archived = 1
                ORDER BY received_at DESC
