@@ -631,15 +631,16 @@ class EmailIntakeService:
                 })
                 logger.info(f"Invoice {invoice_id} forwarded to {forward_to}")
 
-        # Move to processed only if everything succeeded; leave in inbox on any failure
-        if not any_failed:
-            await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
-
-        # Always mark as read — message ID can go stale after a move, hence the try/catch
+        # Mark as read BEFORE moving — Graph API changes the message ID after a move,
+        # which causes mark_as_read to silently fail if called afterwards.
         try:
             await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
         except Exception as e:
-            logger.warning(f"Could not mark email as read (already processed): {e}")
+            logger.warning(f"Could not mark email as read: {e}")
+
+        # Move to processed only if everything succeeded; leave in inbox on any failure
+        if not any_failed:
+            await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
 
     async def _process_credit_memo_email(self, email: dict, body_content: str, db: Database):
         """
@@ -802,11 +803,11 @@ class EmailIntakeService:
             "invoice_id": invoice_id,
         })
 
-        await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
         try:
             await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
         except Exception as e:
             logger.warning(f"Could not mark credit memo email as read: {e}")
+        await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
 
     async def _process_statement_email(self, email: dict, body_content: str, db: Database):
         """
@@ -1003,11 +1004,11 @@ class EmailIntakeService:
         finally:
             await svc.close()
 
-        await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
         try:
             await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
         except Exception as e:
             logger.warning(f"Could not mark statement email as read: {e}")
+        await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
 
     async def _process_receipt_email(self, email: dict, body_content: str, db: Database):
         """
@@ -1117,6 +1118,10 @@ class EmailIntakeService:
                 "destination": "QBO (MasterCard)",
                 "invoice_id": invoice_id,
             })
+            try:
+                await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+            except Exception as e:
+                logger.warning(f"Could not mark receipt email as read: {e}")
             await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
         else:
             logger.warning(f"Receipt {invoice_id} could not be auto-posted — outcome: {outcome}")
@@ -1125,11 +1130,6 @@ class EmailIntakeService:
                 "amount": extraction.total_amount,
                 "error": f"Receipt posting failed — outcome: {outcome}",
             })
-
-        try:
-            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
-        except Exception as e:
-            logger.warning(f"Could not mark receipt email as read: {e}")
 
     async def _handle_unknown_vendor(self, message_id: str, extraction, invoice_id: int):
         suggested = self._guess_type(extraction.vendor_name)
