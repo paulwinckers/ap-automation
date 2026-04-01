@@ -120,7 +120,7 @@ function Section({ title, count, accent, children }: {
   accent: string;
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   return (
     <div style={{
       background: '#fff', borderRadius: 16,
@@ -226,6 +226,65 @@ function fmtHrs(n: number | null | undefined): string {
   return `${n.toFixed(1)}h`;
 }
 
+// ── Sortable column header ────────────────────────────────────────────────────
+
+type SortDir = 'asc' | 'desc';
+
+function SortTh({
+  children, field, sortField, sortDir, onSort, align = 'right',
+}: {
+  children: React.ReactNode;
+  field: string;
+  sortField: string;
+  sortDir: SortDir;
+  onSort: (f: string) => void;
+  align?: 'left' | 'right';
+}) {
+  const active = sortField === field;
+  return (
+    <th
+      onClick={() => onSort(field)}
+      style={{
+        padding: '7px 12px', textAlign: align, cursor: 'pointer',
+        color: active ? '#2563eb' : '#6b7280',
+        fontWeight: 600, fontSize: 11, borderBottom: '2px solid #e5e7eb',
+        whiteSpace: 'nowrap', background: '#f8fafc',
+        textTransform: 'uppercase', letterSpacing: 0.4,
+        userSelect: 'none',
+      }}
+    >
+      {children}{active ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}
+    </th>
+  );
+}
+
+function useSorted(jobs: ConstructionJob[], defaultField: string) {
+  const [sortField, setSortField] = useState(defaultField);
+  const [sortDir, setSortDir]     = useState<SortDir>('desc');
+
+  function onSort(field: string) {
+    if (field === sortField) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    else { setSortField(field); setSortDir('desc'); }
+  }
+
+  const sorted = [...jobs].sort((a, b) => {
+    const av = (a as unknown as Record<string, unknown>)[sortField];
+    const bv = (b as unknown as Record<string, unknown>)[sortField];
+    // String sort (dates, names)
+    if (typeof av === 'string' || typeof bv === 'string') {
+      const as = (av as string) ?? '';
+      const bs = (bv as string) ?? '';
+      return sortDir === 'desc' ? bs.localeCompare(as) : as.localeCompare(bs);
+    }
+    // Numeric sort
+    const an = (av as number) ?? (sortDir === 'desc' ? -Infinity : Infinity);
+    const bn = (bv as number) ?? (sortDir === 'desc' ? -Infinity : Infinity);
+    return sortDir === 'desc' ? bn - an : an - bn;
+  });
+
+  return { sorted, sortField, sortDir, onSort };
+}
+
 function HoursCell({ actual, estimated }: { actual: number | null | undefined; estimated: number | null | undefined }) {
   const over = (actual ?? 0) > (estimated ?? 0) && estimated != null && actual != null;
   return (
@@ -241,26 +300,27 @@ function HoursCell({ actual, estimated }: { actual: number | null | undefined; e
 // ── Completed jobs table ──────────────────────────────────────────────────────
 
 function CompletedTable({ jobs }: { jobs: ConstructionJob[] }) {
+  const { sorted, sortField, sortDir, onSort } = useSorted(jobs, 'WonDollars');
   if (!jobs.length) {
     return <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No completed jobs this year.</div>;
   }
-  const sorted = [...jobs].sort((a, b) => (b.WonDollars ?? 0) - (a.WonDollars ?? 0));
-  const totalRevenue = jobs.reduce((s, j) => s + (j.ActualEarnedRevenue ?? 0), 0);
-  const totalMargin  = jobs.reduce((s, j) => s + (j.ActualGrossMarginDollars ?? 0), 0);
+  const totalRevenue  = jobs.reduce((s, j) => s + (j.ActualEarnedRevenue ?? 0), 0);
+  const totalMargin   = jobs.reduce((s, j) => s + (j.ActualGrossMarginDollars ?? 0), 0);
   const totalContract = jobs.reduce((s, j) => s + (j.WonDollars ?? 0), 0);
+  const sp = { sortField, sortDir, onSort };
 
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
-            <Th>Job</Th>
-            <Th align="right">Contracted</Th>
-            <Th align="right">Revenue</Th>
-            <Th align="right">Margin $</Th>
-            <Th align="right">Margin %</Th>
-            <Th align="right">Act / Est Hrs</Th>
-            <Th align="right">Completed</Th>
+            <SortTh field="PropertyName"              align="left"  {...sp}>Job</SortTh>
+            <SortTh field="WonDollars"                             {...sp}>Contracted</SortTh>
+            <SortTh field="ActualEarnedRevenue"                    {...sp}>Revenue</SortTh>
+            <SortTh field="ActualGrossMarginDollars"               {...sp}>Margin $</SortTh>
+            <SortTh field="ActualGrossMarginPercent"               {...sp}>Margin %</SortTh>
+            <SortTh field="ActualLaborHours"                       {...sp}>Act / Est Hrs</SortTh>
+            <SortTh field="CompleteDate"                           {...sp}>Completed</SortTh>
           </tr>
         </thead>
         <tbody>
@@ -295,26 +355,27 @@ function CompletedTable({ jobs }: { jobs: ConstructionJob[] }) {
 // ── In Production table ───────────────────────────────────────────────────────
 
 function InProductionTable({ jobs }: { jobs: ConstructionJob[] }) {
+  const { sorted, sortField, sortDir, onSort } = useSorted(jobs, 'WonDollars');
   if (!jobs.length) {
     return <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No jobs currently in production.</div>;
   }
-  const sorted = [...jobs].sort((a, b) => (b.WonDollars ?? 0) - (a.WonDollars ?? 0));
-  const totalContract = jobs.reduce((s, j) => s + (j.WonDollars ?? 0), 0);
-  const totalActualRev = jobs.reduce((s, j) => s + (j.ActualEarnedRevenue ?? 0), 0);
+  const totalContract     = jobs.reduce((s, j) => s + (j.WonDollars ?? 0), 0);
+  const totalActualRev    = jobs.reduce((s, j) => s + (j.ActualEarnedRevenue ?? 0), 0);
   const totalActualMargin = jobs.reduce((s, j) => s + (j.ActualGrossMarginDollars ?? 0), 0);
+  const sp = { sortField, sortDir, onSort };
 
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
-            <Th>Job</Th>
-            <Th align="right">Contracted</Th>
-            <Th align="right">Revenue (Act.)</Th>
-            <Th align="right">Margin (Act.)</Th>
-            <Th align="right">Est. Margin %</Th>
-            <Th align="right">Act / Est Hrs</Th>
-            <Th align="right">Est. End</Th>
+            <SortTh field="PropertyName"              align="left"  {...sp}>Job</SortTh>
+            <SortTh field="WonDollars"                             {...sp}>Contracted</SortTh>
+            <SortTh field="ActualEarnedRevenue"                    {...sp}>Revenue (Act.)</SortTh>
+            <SortTh field="ActualGrossMarginDollars"               {...sp}>Margin (Act.)</SortTh>
+            <SortTh field="EstimatedGrossMarginPercent"            {...sp}>Est. Margin %</SortTh>
+            <SortTh field="ActualLaborHours"                       {...sp}>Act / Est Hrs</SortTh>
+            <SortTh field="EndDate"                                {...sp}>Est. End</SortTh>
           </tr>
         </thead>
         <tbody>
@@ -347,31 +408,26 @@ function InProductionTable({ jobs }: { jobs: ConstructionJob[] }) {
 // ── In Queue table ────────────────────────────────────────────────────────────
 
 function InQueueTable({ jobs }: { jobs: ConstructionJob[] }) {
+  const { sorted, sortField, sortDir, onSort } = useSorted(jobs, 'StartDate');
   if (!jobs.length) {
     return <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No jobs in queue.</div>;
   }
-  const sorted = [...jobs].sort((a, b) => {
-    // Sort by StartDate ascending (soonest first), nulls last
-    if (!a.StartDate && !b.StartDate) return 0;
-    if (!a.StartDate) return 1;
-    if (!b.StartDate) return -1;
-    return a.StartDate.localeCompare(b.StartDate);
-  });
   const totalContract = jobs.reduce((s, j) => s + (j.WonDollars ?? 0), 0);
   const totalEstRev   = jobs.reduce((s, j) => s + (j.EstimatedDollars ?? 0), 0);
+  const sp = { sortField, sortDir, onSort };
 
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
-            <Th>Job</Th>
+            <SortTh field="PropertyName"                align="left"  {...sp}>Job</SortTh>
             <Th>Readiness</Th>
-            <Th align="right">Contracted</Th>
-            <Th align="right">Est. Revenue</Th>
-            <Th align="right">Est. Margin %</Th>
-            <Th align="right">Est. Hrs</Th>
-            <Th align="right">Start Date</Th>
+            <SortTh field="WonDollars"                               {...sp}>Contracted</SortTh>
+            <SortTh field="EstimatedDollars"                         {...sp}>Est. Revenue</SortTh>
+            <SortTh field="EstimatedGrossMarginPercent"              {...sp}>Est. Margin %</SortTh>
+            <SortTh field="EstimatedLaborHours"                      {...sp}>Est. Hrs</SortTh>
+            <SortTh field="StartDate"                                {...sp}>Start Date</SortTh>
           </tr>
         </thead>
         <tbody>
@@ -409,6 +465,7 @@ export default function ConstructionDashboard() {
   const [error, setError]             = useState<string | null>(null);
   const [showProjected, setShowProjected] = useState(false);
   const [year, setYear]               = useState(2026);
+  const [search, setSearch]           = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -420,9 +477,19 @@ export default function ConstructionDashboard() {
       .finally(() => setLoading(false));
   }, [year]);
 
-  const completedJobs    = data?.completed_jobs    ?? [];
-  const inProductionJobs = data?.in_production_jobs ?? [];
-  const inQueueJobs      = data?.in_queue_jobs      ?? [];
+  const q = search.trim().toLowerCase();
+  function filterJobs(jobs: ConstructionJob[]) {
+    if (!q) return jobs;
+    return jobs.filter(j =>
+      (j.PropertyName   || '').toLowerCase().includes(q) ||
+      (j.OpportunityName || '').toLowerCase().includes(q) ||
+      (j.OperationsManagerContactName || '').toLowerCase().includes(q)
+    );
+  }
+
+  const completedJobs    = filterJobs(data?.completed_jobs    ?? []);
+  const inProductionJobs = filterJobs(data?.in_production_jobs ?? []);
+  const inQueueJobs      = filterJobs(data?.in_queue_jobs      ?? []);
 
   const solidRevenue = data?.completed.actual_earned_revenue ?? 0;
   const solidMargin  = data?.completed.actual_gross_margin   ?? 0;
@@ -544,6 +611,33 @@ export default function ConstructionDashboard() {
                   ))}
                 </div>
               </div>
+            </div>
+
+            {/* Search bar */}
+            <div style={{ position: 'relative', marginBottom: 20 }}>
+              <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', fontSize: 16, color: '#9ca3af', pointerEvents: 'none' }}>🔍</span>
+              <input
+                type="text"
+                placeholder="Search by property, job name, or PM…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  padding: '10px 14px 10px 40px',
+                  borderRadius: 10, border: '1px solid #e5e7eb',
+                  fontSize: 14, background: '#fff',
+                  boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+                  outline: 'none',
+                }}
+                onFocus={e => (e.currentTarget.style.borderColor = '#2563eb')}
+                onBlur={e  => (e.currentTarget.style.borderColor = '#e5e7eb')}
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#9ca3af', lineHeight: 1 }}
+                >✕</button>
+              )}
             </div>
 
             {/* Three job sections */}
