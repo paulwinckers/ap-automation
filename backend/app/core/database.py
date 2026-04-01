@@ -533,7 +533,7 @@ class Database:
                       gl_account, gl_name,
                       qbo_bill_id, aspire_receipt_id,
                       received_at, posted_at, error_message,
-                      intake_source, archived
+                      intake_source, archived, forwarded_to
                FROM invoices
                WHERE (archived IS NULL OR archived = 0)
                ORDER BY received_at DESC
@@ -549,7 +549,7 @@ class Database:
                       gl_account, gl_name,
                       qbo_bill_id, aspire_receipt_id,
                       received_at, posted_at, error_message,
-                      intake_source, archived
+                      intake_source, archived, forwarded_to
                FROM invoices
                WHERE archived = 1
                ORDER BY received_at DESC
@@ -665,6 +665,13 @@ class Database:
         return await self._q(
             "SELECT * FROM statement_lines WHERE statement_id = ? ORDER BY line_date, id",
             [statement_id],
+        )
+
+    async def mark_forwarded(self, invoice_id: int, forwarded_to: str) -> None:
+        """Record that a job-cost invoice was emailed to a recipient for manual processing."""
+        await self._x(
+            "UPDATE invoices SET forwarded_to = ? WHERE id = ?",
+            [forwarded_to, invoice_id],
         )
 
     async def save_invoice_r2_key(self, invoice_id: int, r2_key: str) -> None:

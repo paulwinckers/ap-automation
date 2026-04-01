@@ -134,6 +134,9 @@ ALTER TABLE vendor_rules ADD COLUMN match_keyword TEXT;
 ALTER TABLE invoices ADD COLUMN doc_type TEXT;
 ALTER TABLE invoices ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
 
+-- ── Migration: track where job-cost invoices were forwarded ──────────────
+ALTER TABLE invoices ADD COLUMN forwarded_to TEXT;
+
 -- ── Vendor Statement Reconciliation ─────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS reconciliation_periods (

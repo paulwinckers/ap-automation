@@ -26,6 +26,7 @@ interface FeedEntry {
   error_message: string | null;
   intake_source: string | null;
   archived: number | null;
+  forwarded_to: string | null;
 }
 
 interface Counts {
@@ -52,12 +53,27 @@ function timeAgo(iso: string) {
   return new Date(iso).toLocaleDateString('en-CA');
 }
 
+function forwardedLabel(email: string): string {
+  if (email.toLowerCase().includes('keeland')) return 'Keeland';
+  if (email.toLowerCase().includes('paul'))    return 'Paul';
+  // Show just the part before @ for any other address
+  return email.split('@')[0];
+}
+
 function statusBadge(entry: FeedEntry) {
   if (entry.status === 'posted') {
     const dest = entry.destination === 'aspire' ? 'Aspire' : 'QBO';
     return (
       <span style={{ background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: 12, fontSize: 12, fontWeight: 600 }}>
         ✓ {dest}
+      </span>
+    );
+  }
+  if (entry.forwarded_to) {
+    return (
+      <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: 12, fontSize: 12, fontWeight: 600 }}
+            title={`Emailed to ${entry.forwarded_to}`}>
+        📤 Sent to {forwardedLabel(entry.forwarded_to)}
       </span>
     );
   }

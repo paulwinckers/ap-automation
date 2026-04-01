@@ -621,6 +621,7 @@ class EmailIntakeService:
                     await self.graph.forward_email(
                         settings.MS_AP_INBOX, message_id, forward_to, summary_text
                     )
+                await db.mark_forwarded(invoice_id, forward_to)
                 await db.audit(invoice_id, "forwarded", "system", {"to": forward_to})
                 self._forwarded.append({
                     "vendor": extraction.vendor_name,
