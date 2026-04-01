@@ -390,11 +390,16 @@ class EmailIntakeService:
             return "credit_memo"
 
         # Fast-path: vendor account statement keywords → statement
+        # Checked BEFORE invoice keywords so "statement" in subject routes correctly.
         statement_keywords = [
             "account statement", "vendor statement", "monthly statement",
             "statement of account", "statement for ", "your statement",
+            "statement as of", "ar statement", "a/r statement",
         ]
         if any(k in subject_lower for k in statement_keywords) and email.get("hasAttachments"):
+            return "statement"
+        # Standalone "statement" in subject with a PDF attachment → almost certainly a vendor statement
+        if "statement" in subject_lower and email.get("hasAttachments"):
             return "statement"
 
         # Fast-path: strong receipt subject lines → always receipt, even with PDF attachments
@@ -416,7 +421,8 @@ class EmailIntakeService:
             return "receipt"
 
         # Fast-path: invoice keywords → invoice
-        invoice_keywords = ["invoice", "bill", "statement", "purchase order",
+        # Note: "statement" intentionally removed — handled above by statement fast-path
+        invoice_keywords = ["invoice", "bill", "purchase order",
                             "payment due", "amount due", "total due", "po #", "inv #"]
         if any(k in subject_lower for k in invoice_keywords):
             return "invoice"
