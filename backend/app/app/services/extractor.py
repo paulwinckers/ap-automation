@@ -23,18 +23,26 @@ logger = logging.getLogger(__name__)
 
 EXTRACTION_PROMPT = """
 You are an accounts payable assistant for a Canadian landscaping company.
-Extract all data from this vendor invoice and return ONLY a JSON object.
+Classify and extract data from this document and return ONLY a JSON object.
+
+First, classify the document:
+- "invoice" — a request for payment for specific goods/services (has an invoice number, amount due NOW)
+- "statement" — a periodic account summary listing multiple invoices and the total balance owing
+- "credit_note" — a credit or refund document
+- "receipt" — a proof of purchase / already-paid receipt
+- "other" — anything else (quote, order confirmation, packing slip, etc.)
 
 Required fields:
+- document_type: string — one of: invoice, statement, credit_note, receipt, other
 - vendor_name: string — the supplier/vendor company name
-- invoice_number: string — the invoice or bill number
-- invoice_date: string — ISO 8601 date (YYYY-MM-DD)
+- invoice_number: string or null — the invoice or bill number (null for statements)
+- invoice_date: string or null — ISO 8601 date (YYYY-MM-DD)
 - due_date: string or null — ISO 8601 date if present
 - po_number: string or null — purchase order number if present on the invoice
-- subtotal: number — amount before tax
+- subtotal: number or null — amount before tax (null if not determinable)
 - tax_lines: array of { tax_name, tax_rate, tax_amount }
   (separate GST, HST, PST — do not combine)
-- total_amount: number — final invoice total
+- total_amount: number — closing balance or invoice total (0 if not determinable)
 - currency: string — "CAD" unless clearly stated otherwise
 - line_items: array of {
     description: string,
@@ -51,6 +59,7 @@ Rules:
 - po_number: only include if explicitly labelled as PO, P.O., Purchase Order,
   or similar. Do not infer it from other reference numbers.
 - If multiple PO numbers appear, use the first one.
+- For statements: document_type must be "statement" even if the statement lists individual invoices.
 """
 
 # MIME types Claude accepts for documents vs images

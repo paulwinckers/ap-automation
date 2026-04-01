@@ -32,6 +32,7 @@ class TaxLine(BaseModel):
 
 class InvoiceExtraction(BaseModel):
     """Structured data returned by Claude extraction."""
+    document_type:  str = "invoice"   # invoice | statement | credit_note | receipt | other
     vendor_name:    str
     invoice_number: Optional[str] = None
     invoice_date:   Optional[str] = None
@@ -39,7 +40,7 @@ class InvoiceExtraction(BaseModel):
     po_number:      Optional[str] = None
     subtotal:       Optional[float] = None
     tax_lines:      list[TaxLine] = []
-    total_amount:   float
+    total_amount:   float = 0.0
     currency:       str = "CAD"
     line_items:     list[LineItem] = []
     notes:          Optional[str] = None

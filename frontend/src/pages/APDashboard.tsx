@@ -209,10 +209,16 @@ export default function APDashboard() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
 
+  function toggleStatFilter(value: string) {
+    setStatusFilter(f => f === value ? 'all' : value);
+  }
+
   // Filter entries client-side
   const filteredEntries = entries.filter(e => {
-    // Status filter
-    if (statusFilter !== 'all' && e.status !== statusFilter) return false;
+    // Status / destination filter
+    if (statusFilter === 'qbo')    { if (e.destination !== 'qbo')    return false; }
+    else if (statusFilter === 'aspire') { if (e.destination !== 'aspire') return false; }
+    else if (statusFilter !== 'all' && e.status !== statusFilter)     return false;
     // Search: vendor name, invoice number, GL name, ref
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -263,13 +269,16 @@ export default function APDashboard() {
       padding: '16px 24px',
       flexWrap: 'wrap' as const,
     },
-    statCard: (color: string) => ({
-      background: '#fff',
-      border: `2px solid ${color}`,
+    statCard: (color: string, active: boolean) => ({
+      background: active ? color + '22' : '#fff',
+      border: `2px solid ${active ? color : color + '88'}`,
       borderRadius: 10,
       padding: '12px 20px',
       minWidth: 130,
       flex: '1 1 130px',
+      cursor: 'pointer',
+      transition: 'background 0.15s, border-color 0.15s',
+      userSelect: 'none',
     } as React.CSSProperties),
     statLabel: {
       fontSize: 11,
@@ -352,27 +361,27 @@ export default function APDashboard() {
       {/* Stats bar */}
       {counts && (
         <div style={styles.statsBar}>
-          <div style={styles.statCard('#4ade80')}>
+          <div style={styles.statCard('#4ade80', statusFilter === 'posted')} onClick={() => toggleStatFilter('posted')}>
             <div style={styles.statLabel}>Posted Today</div>
             <div style={styles.statValue('#16a34a')}>{counts.posted}</div>
             <div style={styles.statSub}>{fmt(counts.posted_today_value)}</div>
           </div>
-          <div style={styles.statCard('#fb923c')}>
+          <div style={styles.statCard('#fb923c', statusFilter === 'queued')} onClick={() => toggleStatFilter('queued')}>
             <div style={styles.statLabel}>Needs Review</div>
             <div style={styles.statValue('#ea580c')}>{counts.queued}</div>
             <div style={styles.statSub}>{fmt(counts.queued_value)} held</div>
           </div>
-          <div style={styles.statCard('#f87171')}>
+          <div style={styles.statCard('#f87171', statusFilter === 'error')} onClick={() => toggleStatFilter('error')}>
             <div style={styles.statLabel}>Errors</div>
             <div style={styles.statValue('#dc2626')}>{counts.errors}</div>
             <div style={styles.statSub}>requires attention</div>
           </div>
-          <div style={styles.statCard('#60a5fa')}>
+          <div style={styles.statCard('#60a5fa', statusFilter === 'qbo')} onClick={() => toggleStatFilter('qbo')}>
             <div style={styles.statLabel}>QBO Bills</div>
             <div style={styles.statValue('#2563eb')}>{counts.qbo}</div>
             <div style={styles.statSub}>overhead</div>
           </div>
-          <div style={styles.statCard('#a78bfa')}>
+          <div style={styles.statCard('#a78bfa', statusFilter === 'aspire')} onClick={() => toggleStatFilter('aspire')}>
             <div style={styles.statLabel}>Aspire</div>
             <div style={styles.statValue('#7c3aed')}>{counts.aspire}</div>
             <div style={styles.statSub}>job cost</div>
@@ -434,6 +443,8 @@ export default function APDashboard() {
           <option value="queued">⏳ Review</option>
           <option value="error">✗ Error</option>
           <option value="pending">○ Pending</option>
+          <option value="qbo">QBO Bills</option>
+          <option value="aspire">Aspire</option>
         </select>
 
         {/* Bulk archive unknowns — only in active view */}
@@ -602,7 +613,17 @@ export default function APDashboard() {
                     )}
                   </td>
                   <td style={{ ...styles.td, fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>
-                    {e.qbo_bill_id || e.aspire_receipt_id || '—'}
+                    {e.qbo_bill_id ? (
+                      <a
+                        href={`https://app.qbo.intuit.com/app/bill?txnId=${e.qbo_bill_id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: '#2563eb', textDecoration: 'none' }}
+                        title="Open in QuickBooks"
+                      >
+                        {e.qbo_bill_id} ↗
+                      </a>
+                    ) : e.aspire_receipt_id || '—'}
                   </td>
                 </tr>
               ))}

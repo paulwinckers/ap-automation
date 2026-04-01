@@ -150,6 +150,28 @@ class GraphClient:
             },
         )
 
+    async def get_or_create_folder(self, mailbox: str, display_name: str) -> str:
+        """Return the folder ID for display_name, creating it under Inbox if it doesn't exist."""
+        result = await self._get(
+            f"users/{mailbox}/mailFolders/inbox/childFolders",
+            params={"$filter": f"displayName eq '{display_name}'", "$top": "1"},
+        )
+        folders = result.get("value", [])
+        if folders:
+            return folders[0]["id"]
+        created = await self._post(
+            f"users/{mailbox}/mailFolders/inbox/childFolders",
+            {"displayName": display_name},
+        )
+        return created["id"]
+
+    async def move_message(self, mailbox: str, message_id: str, folder_id: str) -> None:
+        """Move a message to the specified folder."""
+        await self._post(
+            f"users/{mailbox}/messages/{message_id}/move",
+            {"destinationId": folder_id},
+        )
+
     async def close(self):
         await self._http.aclose()
 
@@ -263,6 +285,28 @@ class EmailIntakeService:
         await db.audit(invoice_id, "extracted", "claude", {
             "vendor": extraction.vendor_name, "total": extraction.total_amount,
         })
+
+        # ── Guard: vendor statements are not payables ─────────────────────────
+        if extraction.document_type == "statement":
+            folder_id = await self.graph.get_or_create_folder(settings.MS_AP_INBOX, "Statements")
+            await self.graph.move_message(settings.MS_AP_INBOX, message_id, folder_id)
+            await db.audit(invoice_id, "skipped", "system", {"reason": "vendor_statement"})
+            logger.info(f"Vendor statement from '{extraction.vendor_name}' — moved to Statements folder")
+            return
+
+        # ── Guard: non-invoice documents ──────────────────────────────────────
+        if extraction.document_type not in ("invoice", "credit_note", "receipt"):
+            await self.graph.forward_email(
+                settings.MS_AP_INBOX, message_id, DEST_PAUL,
+                f"📋 AP Automation — Unrecognised Document Type\n\n"
+                f"Document classified as: {extraction.document_type}\n"
+                f"Vendor: {extraction.vendor_name}\n\n"
+                f"Please review manually.",
+            )
+            await db.audit(invoice_id, "skipped", "system", {"reason": f"document_type_{extraction.document_type}"})
+            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+            logger.info(f"Non-invoice document ({extraction.document_type}) from '{extraction.vendor_name}' — skipped")
+            return
 
         # ── Vendor lookup ─────────────────────────────────────────────────────
         vendor_rule = await db.get_vendor_rule_by_name(extraction.vendor_name)
