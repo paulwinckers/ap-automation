@@ -184,3 +184,6 @@ CREATE TABLE IF NOT EXISTS statement_lines (
 CREATE INDEX IF NOT EXISTS idx_stmt_period ON vendor_statements(period_id);
 CREATE INDEX IF NOT EXISTS idx_stmt_vendor ON vendor_statements(vendor_name);
 CREATE INDEX IF NOT EXISTS idx_stmt_lines  ON statement_lines(statement_id);
+
+-- Migration: track where job-cost invoices were forwarded
+ALTER TABLE invoices ADD COLUMN forwarded_to TEXT;
