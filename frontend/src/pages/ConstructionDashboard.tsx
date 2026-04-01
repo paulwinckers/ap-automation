@@ -509,14 +509,17 @@ export default function ConstructionDashboard() {
     <div style={{ minHeight: '100vh', background: '#f1f5f9', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
 
       {/* Header */}
-      <div style={{ background: 'linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)', padding: '24px 32px', color: '#fff', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+      <div style={{ background: '#1e3a2f', padding: '20px 32px', color: '#fff', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
         <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, letterSpacing: -0.5 }}>Construction Division</h1>
-            <p style={{ margin: '4px 0 0', opacity: 0.8, fontSize: 14 }}>
-              {year} Performance Dashboard
-              {data && ` · ${totalJobs} jobs`}
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <img src="/darios-logo.png" alt="Dario's" style={{ height: 40, filter: 'brightness(0) invert(1)' }} />
+            <div>
+              <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>Construction Division</h1>
+              <p style={{ margin: '2px 0 0', opacity: 0.7, fontSize: 13 }}>
+                {year} Performance Dashboard
+                {data && ` · ${totalJobs} jobs`}
+              </p>
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <select
@@ -530,7 +533,7 @@ export default function ConstructionDashboard() {
             </select>
             <button
               onClick={() => setShowProjected(p => !p)}
-              style={{ padding: '10px 20px', borderRadius: 999, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 14, transition: 'all 0.2s', background: showProjected ? '#fff' : 'rgba(255,255,255,0.15)', color: showProjected ? '#2563eb' : '#fff', boxShadow: showProjected ? '0 2px 8px rgba(0,0,0,0.15)' : 'none' }}
+              style={{ padding: '10px 20px', borderRadius: 999, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 14, transition: 'all 0.2s', background: showProjected ? '#fff' : 'rgba(255,255,255,0.15)', color: showProjected ? '#166534' : '#fff', boxShadow: showProjected ? '0 2px 8px rgba(0,0,0,0.15)' : 'none' }}
             >
               {showProjected ? '✓ Including Projected' : '+ Include Projected'}
             </button>
@@ -595,7 +598,7 @@ export default function ConstructionDashboard() {
               </div>
 
               {/* Job Summary */}
-              <div style={{ background: 'linear-gradient(135deg, #1e3a5f, #2563eb)', borderRadius: 16, padding: 24, color: '#fff', boxShadow: '0 2px 12px rgba(37,99,235,0.3)' }}>
+              <div style={{ background: 'linear-gradient(135deg, #1e3a2f, #166534)', borderRadius: 16, padding: 24, color: '#fff', boxShadow: '0 2px 12px rgba(22,101,52,0.3)' }}>
                 <div style={{ fontSize: 12, fontWeight: 600, opacity: 0.7, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 16 }}>Job Summary</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                   {[
