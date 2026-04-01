@@ -256,17 +256,13 @@ export interface ConstructionDashboardData {
   year: number;
   targets: { revenue: number; margin: number };
   completed: DivisionTotals;
-  in_progress: DivisionTotals;
-  // legacy totals field removed — use completed + in_progress
-  totals?: {
-    won_dollars: number;
-    actual_earned_revenue: number;
-    actual_gross_margin: number;
-    estimated_revenue: number;
-    estimated_gross_margin: number;
-    job_count: number;
-  };
-  jobs: ConstructionJob[];
+  in_production: DivisionTotals;
+  in_queue: DivisionTotals;
+  in_progress: DivisionTotals;       // legacy
+  completed_jobs: ConstructionJob[];
+  in_production_jobs: ConstructionJob[];
+  in_queue_jobs: ConstructionJob[];
+  jobs: ConstructionJob[];           // legacy flat list
 }
 
 export async function getConstructionDashboard(year = 2026): Promise<ConstructionDashboardData> {

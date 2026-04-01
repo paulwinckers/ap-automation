@@ -150,8 +150,10 @@ async def debug_filters():
 @router.get("/construction")
 async def get_construction_dashboard(year: int = Query(default=2026)):
     """
-    Returns Construction division jobs split into completed vs in-progress,
-    with separate totals for each against the $1.6M / $600K targets.
+    Returns Construction division jobs split into three buckets:
+    - completed:     jobs with CompleteDate (or EndDate/WonDate) in target year
+    - in_production: Won jobs where work has begun (JobStatus ≠ Not Started)
+    - in_queue:      Won jobs not yet started (JobStatus = Not Started or null)
     """
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
         raise HTTPException(
@@ -166,9 +168,6 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
     def is_complete(o: dict) -> bool:
-        # Most reliable indicator: job has a CompleteDate set.
-        # OpportunityStatusName stays "Won" even for completed jobs in Aspire.
-        # JobStatusName field name may vary — CompleteDate is always present when done.
         if o.get("CompleteDate"):
             return True
         job_status = (o.get("JobStatusName") or "").lower()
@@ -190,17 +189,27 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         )
         return not date_str or date_str.startswith(str(yr))
 
-    def is_in_progress(o: dict) -> bool:
-        """Won jobs that haven't been completed — the current active pipeline."""
+    def is_in_queue(o: dict) -> bool:
+        """Won job with JobStatus = 'Not Started' (or no status) — scheduled but no work begun."""
         if is_complete(o):
             return False
-        opp_status = (o.get("OpportunityStatusName") or "").lower()
-        return opp_status == "won"
+        if (o.get("OpportunityStatusName") or "").lower() != "won":
+            return False
+        job_status = (o.get("JobStatusName") or "").lower()
+        return not job_status or "not started" in job_status
 
-    # Completed: JobStatus=Complete AND CompleteDate in target year
-    # In-progress: OpportunityStatus=Won AND JobStatus not Complete (all pipeline, no date cap)
-    completed   = [o for o in opps if complete_in_year(o, year)]
-    in_progress = [o for o in opps if is_in_progress(o)]
+    def is_in_production(o: dict) -> bool:
+        """Won job where work has begun — JobStatus is set and not 'Not Started'."""
+        if is_complete(o):
+            return False
+        if (o.get("OpportunityStatusName") or "").lower() != "won":
+            return False
+        job_status = (o.get("JobStatusName") or "").lower()
+        return bool(job_status) and "not started" not in job_status
+
+    completed     = [o for o in opps if complete_in_year(o, year)]
+    in_production = [o for o in opps if is_in_production(o)]
+    in_queue      = [o for o in opps if is_in_queue(o)]
 
     def totals(jobs: list) -> dict:
         return {
@@ -218,9 +227,14 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
             "revenue": REVENUE_TARGET,
             "margin":  MARGIN_TARGET,
         },
-        "completed":   totals(completed),
-        "in_progress": totals(in_progress),
-        "jobs": completed + in_progress,   # completed (year-filtered) + all Won
+        "completed":          totals(completed),
+        "in_production":      totals(in_production),
+        "in_queue":           totals(in_queue),
+        "in_progress":        totals(in_production + in_queue),  # legacy compat
+        "completed_jobs":     completed,
+        "in_production_jobs": in_production,
+        "in_queue_jobs":      in_queue,
+        "jobs":               completed + in_production + in_queue,  # legacy compat
     }
 
 
