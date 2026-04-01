@@ -39,6 +39,7 @@ DEST_KEELAND  = "keeland@darios.ca"
 DEST_PAUL     = "paul@darios.ca"
 SUMMARY_TO    = ["paul@darios.ca", "keeland@darios.ca"]
 PROCESSED_FOLDER = "AP Processed"
+ASPIRE_FOLDER    = "Aspire"
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_URL  = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
@@ -498,7 +499,8 @@ class EmailIntakeService:
         if len(attachments) > 1:
             logger.info(f"Email '{subject}' has {len(attachments)} attachments — processing each separately")
 
-        any_failed = False
+        any_failed  = False
+        is_job_cost = False  # track if any attachment routed as job cost/mixed
 
         for filename, file_bytes in attachments:
             att_label = f"'{filename}' in '{subject}'"
@@ -609,6 +611,7 @@ class EmailIntakeService:
                     any_failed = True
 
             elif vendor_rule.type in ("job_cost", "mixed"):
+                is_job_cost = True
                 forward_to = vendor_rule.forward_to or DEST_PAUL
                 summary_text = self._build_summary(extraction, vendor_rule.type)
                 # Send as a new email with the PDF explicitly attached so it
@@ -644,9 +647,11 @@ class EmailIntakeService:
         except Exception as e:
             logger.warning(f"Could not mark email as read: {e}")
 
-        # Move to processed only if everything succeeded; leave in inbox on any failure
+        # Move to correct folder only if everything succeeded; leave in inbox on any failure
+        # Job cost / mixed invoices → Aspire folder; overhead invoices → AP Processed
         if not any_failed:
-            await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
+            dest_folder = ASPIRE_FOLDER if is_job_cost else PROCESSED_FOLDER
+            await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, dest_folder)
 
     async def _process_credit_memo_email(self, email: dict, body_content: str, db: Database):
         """
