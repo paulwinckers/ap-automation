@@ -31,6 +31,7 @@ from app.services.extractor import InvoiceExtractor
 from app.services.qbo import QBOClient
 from app.services.routing import route_invoice, RoutingOutcome
 from app.services.aspire import AspireClient
+from app.services.r2 import upload_invoice_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +322,10 @@ class EmailIntakeService:
                     subject = email.get("subject", "(no subject)")
                     logger.error(f"Failed to process email '{subject}': {e}")
                     self._failed.append({"subject": subject, "error": str(e)})
+                    try:
+                        await self.graph.mark_as_read(settings.MS_AP_INBOX, email["id"])
+                    except Exception:
+                        pass
         finally:
             await db.close()
 
@@ -392,10 +397,20 @@ class EmailIntakeService:
         if any(k in subject_lower for k in statement_keywords) and email.get("hasAttachments"):
             return "statement"
 
+        # Fast-path: strong receipt subject lines → always receipt, even with PDF attachments
+        # These phrases unambiguously mean "already paid by credit card"
+        receipt_subject_keywords = [
+            "your receipt", "receipt from", "payment receipt",
+            "purchase receipt", "billing receipt", "your payment",
+            "payment confirmation", "paid invoice",
+        ]
+        if any(k in subject_lower for k in receipt_subject_keywords):
+            return "receipt"
+
         # Fast-path: receipt keywords with no PDF attachment → receipt
-        receipt_keywords = ["renewal receipt", "order receipt", "purchase receipt",
-                            "subscription receipt", "payment receipt", "order confirmation",
-                            "purchase confirmation", "billing receipt", "your receipt for",
+        receipt_keywords = ["renewal receipt", "order receipt",
+                            "subscription receipt", "order confirmation",
+                            "purchase confirmation", "your receipt for",
                             "renewal for order", "receipt for order"]
         if any(k in subject_lower for k in receipt_keywords) and not email.get("hasAttachments"):
             return "receipt"
@@ -460,143 +475,166 @@ class EmailIntakeService:
 
         logger.info(f"Processing invoice: '{subject}' from {sender}")
 
-        # Get file content
-        file_bytes: Optional[bytes] = None
-        filename:   Optional[str]   = None
+        # Collect all qualifying attachments
+        attachments: list[tuple[str, bytes]] = []  # (filename, file_bytes)
         if email.get("hasAttachments"):
             for att in await self.graph.get_attachments(settings.MS_AP_INBOX, message_id):
                 name = att.get("name", "")
                 if name.lower().endswith((".pdf", ".jpg", ".jpeg", ".png", ".webp")):
-                    file_bytes = base64.b64decode(att["contentBytes"])
-                    filename   = name
-                    break
-        if file_bytes is None:
+                    attachments.append((name, base64.b64decode(att["contentBytes"])))
+
+        if not attachments:
             if not body_content.strip():
                 await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
                 return
-            file_bytes = body_content.encode("utf-8")
-            filename   = "email_body.html"
+            attachments = [("email_body.html", body_content.encode("utf-8"))]
 
-        # Extract with Claude
-        try:
-            extraction = await self.extractor.extract_from_pdf_bytes(file_bytes, filename or "")
-        except Exception as e:
-            logger.error(f"Extraction failed for '{subject}': {e}")
-            self._failed.append({"subject": subject, "from": sender, "error": f"Extraction failed: {e}"})
-            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
-            return  # Leave in inbox — failed items stay visible
+        if len(attachments) > 1:
+            logger.info(f"Email '{subject}' has {len(attachments)} attachments — processing each separately")
 
-        # If extraction yielded no vendor name, this isn't a real invoice — skip it
-        if not extraction.vendor_name:
-            logger.info(f"No vendor name extracted from '{subject}' — skipping (not a real invoice)")
-            self._skipped.append({"subject": subject, "from": sender, "reason": "no vendor name extracted"})
-            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
-            return
+        any_failed = False
 
-        # Duplicate check — skip if we've already processed this invoice number
-        if extraction.invoice_number:
-            duplicate = await db.find_duplicate_invoice(extraction.vendor_name, extraction.invoice_number)
+        for filename, file_bytes in attachments:
+            att_label = f"'{filename}' in '{subject}'"
+
+            # Extract with Claude
+            try:
+                extraction = await self.extractor.extract_from_pdf_bytes(file_bytes, filename)
+            except Exception as e:
+                logger.error(f"Extraction failed for {att_label}: {e}")
+                self._failed.append({"subject": subject, "from": sender, "error": f"Extraction failed ({filename}): {e}"})
+                any_failed = True
+                continue
+
+            if not extraction.vendor_name:
+                logger.info(f"No vendor name extracted from {att_label} — skipping")
+                self._skipped.append({"subject": subject, "from": sender, "reason": f"no vendor name ({filename})"})
+                continue
+
+            # Duplicate check
+            if extraction.invoice_number:
+                duplicate = await db.find_duplicate_invoice(extraction.vendor_name, extraction.invoice_number)
+            elif extraction.total_amount:
+                duplicate = await db.find_duplicate_by_vendor_amount(extraction.vendor_name, extraction.total_amount)
+            else:
+                duplicate = None
             if duplicate:
                 logger.info(
                     f"Duplicate invoice skipped: {extraction.vendor_name} #{extraction.invoice_number} "
                     f"(already in system as id={duplicate['id']}, status={duplicate['status']})"
                 )
-                await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
-                await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
                 self._skipped.append({
                     "subject": subject,
                     "from": sender,
                     "reason": f"duplicate — already in system (id={duplicate['id']}, status={duplicate['status']})",
                 })
-                return
+                continue
 
-        # Save to database
-        invoice_id = await db.create_invoice(
-            vendor_name    = extraction.vendor_name,
-            invoice_number = extraction.invoice_number,
-            invoice_date   = extraction.invoice_date,
-            due_date       = extraction.due_date,
-            subtotal       = extraction.subtotal,
-            tax_amount     = extraction.tax_amount,
-            total_amount   = extraction.total_amount,
-            currency       = extraction.currency,
-            po_number      = extraction.po_number,
-            pdf_filename   = filename or "email",
-            intake_source  = "email",
-            intake_raw     = extraction.model_dump(),
-        )
-        await db.audit(invoice_id, "received", "email", {"from": sender, "subject": subject})
-        await db.audit(invoice_id, "extracted", "claude", {
-            "vendor": extraction.vendor_name, "total": extraction.total_amount,
-        })
-
-        # Route
-        vendor_rule = await db.get_vendor_rule_by_name(extraction.vendor_name)
-        moved = False
-
-        if vendor_rule is None:
-            await self._handle_unknown_vendor(message_id, extraction, invoice_id)
-            await db.mark_queued(invoice_id, "vendor_unknown")
-            moved = True
-
-        elif vendor_rule.type == "overhead":
-            invoice = Invoice(
-                id=invoice_id, status=InvoiceStatus.PENDING,
-                vendor_name=extraction.vendor_name,
-                invoice_number=extraction.invoice_number,
-                invoice_date=extraction.invoice_date,
-                due_date=extraction.due_date,
-                subtotal=extraction.subtotal,
-                tax_amount=extraction.tax_amount,
-                total_amount=extraction.total_amount,
-                currency=extraction.currency,
-                po_number=extraction.po_number,
-                pdf_filename=filename or "email",
-                intake_source="email",
-                line_items=[LineItem(**li.model_dump()) for li in extraction.line_items],
-                tax_lines=[TaxLine(**tl.model_dump()) for tl in extraction.tax_lines],
-                file_bytes=file_bytes,  # pass through for QBO attachment
+            # Save to database
+            invoice_id = await db.create_invoice(
+                vendor_name    = extraction.vendor_name,
+                invoice_number = extraction.invoice_number,
+                invoice_date   = extraction.invoice_date,
+                due_date       = extraction.due_date,
+                subtotal       = extraction.subtotal,
+                tax_amount     = extraction.tax_amount,
+                total_amount   = extraction.total_amount,
+                currency       = extraction.currency,
+                po_number      = extraction.po_number,
+                pdf_filename   = filename,
+                intake_source  = "email",
+                intake_raw     = extraction.model_dump(),
             )
-            outcome = await route_invoice(invoice, db, self.aspire, self.qbo)
-            if outcome == RoutingOutcome.POSTED_QBO:
-                logger.info(f"Invoice {invoice_id} posted to QBO")
-                self._posted.append({
-                    "vendor": extraction.vendor_name,
-                    "amount": extraction.total_amount,
-                    "currency": extraction.currency,
-                    "invoice_no": extraction.invoice_number,
-                    "destination": "QBO",
-                    "invoice_id": invoice_id,
-                })
-                await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
-                moved = True
-            else:
-                self._failed.append({
-                    "vendor": extraction.vendor_name,
-                    "amount": extraction.total_amount,
-                    "error": "QBO posting failed — check exception queue",
-                })
-                # Leave in inbox on failure
-
-        elif vendor_rule.type in ("job_cost", "mixed"):
-            forward_to = vendor_rule.forward_to or DEST_PAUL
-            await self.graph.forward_email(
-                settings.MS_AP_INBOX, message_id, forward_to,
-                self._build_summary(extraction, vendor_rule.type)
-            )
-            await db.audit(invoice_id, "forwarded", "system", {"to": forward_to})
-            self._forwarded.append({
-                "vendor": extraction.vendor_name,
-                "amount": extraction.total_amount,
-                "forwarded_to": forward_to,
-                "invoice_no": extraction.invoice_number,
+            await db.audit(invoice_id, "received", "email", {"from": sender, "subject": subject})
+            await db.audit(invoice_id, "extracted", "claude", {
+                "vendor": extraction.vendor_name, "total": extraction.total_amount,
             })
-            logger.info(f"Invoice {invoice_id} forwarded to {forward_to}")
-            await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
-            moved = True
 
-        # Mark as read — wrapped in try/catch since message ID can go stale
-        # after move operations, but the invoice was still processed correctly
+            # Upload PDF to R2 (non-fatal — continue even if R2 is unavailable)
+            try:
+                r2_key = await upload_invoice_pdf(file_bytes, invoice_id, filename)
+                if r2_key:
+                    await db.save_invoice_r2_key(invoice_id, r2_key)
+            except Exception as e:
+                logger.warning(f"R2 upload failed for invoice {invoice_id} — non-fatal: {e}")
+
+            # Route
+            vendor_rule = await db.get_vendor_rule_by_name(extraction.vendor_name)
+
+            if vendor_rule is None:
+                await self._handle_unknown_vendor(message_id, extraction, invoice_id)
+                await db.mark_queued(invoice_id, "vendor_unknown")
+
+            elif vendor_rule.type == "overhead":
+                invoice = Invoice(
+                    id=invoice_id, status=InvoiceStatus.PENDING,
+                    vendor_name=extraction.vendor_name,
+                    invoice_number=extraction.invoice_number,
+                    invoice_date=extraction.invoice_date,
+                    due_date=extraction.due_date,
+                    subtotal=extraction.subtotal,
+                    tax_amount=extraction.tax_amount,
+                    total_amount=extraction.total_amount,
+                    currency=extraction.currency,
+                    po_number=extraction.po_number,
+                    pdf_filename=filename,
+                    intake_source="email",
+                    line_items=[LineItem(**li.model_dump()) for li in extraction.line_items],
+                    tax_lines=[TaxLine(**tl.model_dump()) for tl in extraction.tax_lines],
+                    file_bytes=file_bytes,
+                )
+                outcome = await route_invoice(invoice, db, self.aspire, self.qbo)
+                if outcome == RoutingOutcome.POSTED_QBO:
+                    logger.info(f"Invoice {invoice_id} posted to QBO")
+                    self._posted.append({
+                        "vendor": extraction.vendor_name,
+                        "amount": extraction.total_amount,
+                        "currency": extraction.currency,
+                        "invoice_no": extraction.invoice_number,
+                        "destination": "QBO",
+                        "invoice_id": invoice_id,
+                    })
+                else:
+                    self._failed.append({
+                        "vendor": extraction.vendor_name,
+                        "amount": extraction.total_amount,
+                        "error": "QBO posting failed — check exception queue",
+                    })
+                    any_failed = True
+
+            elif vendor_rule.type in ("job_cost", "mixed"):
+                forward_to = vendor_rule.forward_to or DEST_PAUL
+                summary_text = self._build_summary(extraction, vendor_rule.type)
+                # Send as a new email with the PDF explicitly attached so it
+                # arrives reliably regardless of how the original was formatted.
+                try:
+                    await self.graph.send_email(
+                        mailbox=settings.MS_AP_INBOX,
+                        to_addresses=[forward_to],
+                        subject=f"Invoice: {extraction.vendor_name or 'Unknown vendor'} — ${extraction.total_amount or 0:,.2f} {extraction.currency}",
+                        body_html=f"<pre style='font-family:monospace;font-size:13px'>{summary_text}</pre>",
+                        attachment_bytes=file_bytes,
+                        attachment_filename=filename,
+                    )
+                except Exception as e:
+                    logger.warning(f"send_email failed for invoice {invoice_id}, falling back to forward: {e}")
+                    await self.graph.forward_email(
+                        settings.MS_AP_INBOX, message_id, forward_to, summary_text
+                    )
+                await db.audit(invoice_id, "forwarded", "system", {"to": forward_to})
+                self._forwarded.append({
+                    "vendor": extraction.vendor_name,
+                    "amount": extraction.total_amount,
+                    "forwarded_to": forward_to,
+                    "invoice_no": extraction.invoice_number,
+                })
+                logger.info(f"Invoice {invoice_id} forwarded to {forward_to}")
+
+        # Move to processed only if everything succeeded; leave in inbox on any failure
+        if not any_failed:
+            await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
+
+        # Always mark as read — message ID can go stale after a move, hence the try/catch
         try:
             await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
         except Exception as e:
@@ -979,6 +1017,17 @@ class EmailIntakeService:
         subject    = email.get("subject", "(no subject)")
         sender     = email.get("from", {}).get("emailAddress", {}).get("address", "unknown")
 
+        # Collect first PDF attachment (if any) to attach to QBO transaction
+        receipt_file_bytes: Optional[bytes] = None
+        receipt_filename:   Optional[str]   = None
+        if email.get("hasAttachments"):
+            for att in await self.graph.get_attachments(settings.MS_AP_INBOX, message_id):
+                name = att.get("name", "")
+                if name.lower().endswith((".pdf", ".jpg", ".jpeg", ".png", ".webp")):
+                    receipt_file_bytes = base64.b64decode(att["contentBytes"])
+                    receipt_filename   = name
+                    break
+
         # Extract receipt data from email body
         try:
             extraction = await self.extractor.extract_from_html_body(body_content)
@@ -1007,11 +1056,15 @@ class EmailIntakeService:
         # Duplicate check
         if extraction.invoice_number:
             duplicate = await db.find_duplicate_invoice(extraction.vendor_name, extraction.invoice_number)
-            if duplicate:
-                logger.info(f"Duplicate receipt skipped: {extraction.vendor_name} #{extraction.invoice_number}")
-                await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
-                await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
-                return
+        elif extraction.total_amount:
+            duplicate = await db.find_duplicate_by_vendor_amount(extraction.vendor_name, extraction.total_amount)
+        else:
+            duplicate = None
+        if duplicate:
+            logger.info(f"Duplicate receipt skipped: {extraction.vendor_name} #{extraction.invoice_number}")
+            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+            await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
+            return
 
         # Save to database with doc_type='mastercard'
         invoice_id = await db.create_invoice(
@@ -1024,7 +1077,7 @@ class EmailIntakeService:
             total_amount   = extraction.total_amount,
             currency       = extraction.currency,
             po_number      = None,
-            pdf_filename   = "email_receipt.html",
+            pdf_filename   = receipt_filename or "email_receipt.html",
             intake_source  = "email",
             intake_raw     = extraction.model_dump(),
             doc_type       = "mastercard",
@@ -1044,11 +1097,12 @@ class EmailIntakeService:
             total_amount   = extraction.total_amount,
             currency       = extraction.currency,
             po_number      = None,
-            pdf_filename   = "email_receipt.html",
+            pdf_filename   = receipt_filename or "email_receipt.html",
             intake_source  = "email",
             doc_type       = "mastercard",
             line_items     = [LineItem(**li.model_dump()) for li in extraction.line_items],
             tax_lines      = [TaxLine(**tl.model_dump()) for tl in extraction.tax_lines],
+            file_bytes     = receipt_file_bytes,
         )
 
         outcome = await route_invoice(invoice, db, self.aspire, self.qbo)

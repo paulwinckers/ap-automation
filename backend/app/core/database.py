@@ -375,6 +375,25 @@ class Database:
         )
         return rows[0] if rows else None
 
+    async def find_duplicate_by_vendor_amount(
+        self, vendor_name: str, total_amount: float
+    ) -> Optional[dict]:
+        """Fallback duplicate check for invoices with no invoice number.
+        Matches vendor + amount received within the last 24 hours."""
+        rows = await self._q(
+            """SELECT id, status, qbo_bill_id, aspire_receipt_id, received_at
+               FROM invoices
+               WHERE LOWER(vendor_name) = LOWER(?)
+               AND total_amount = ?
+               AND (invoice_number IS NULL OR invoice_number = '')
+               AND status IN ('posted', 'queued', 'pending')
+               AND received_at >= datetime('now', '-24 hours')
+               ORDER BY received_at DESC
+               LIMIT 1""",
+            [vendor_name, total_amount],
+        )
+        return rows[0] if rows else None
+
     async def get_invoice(self, invoice_id: int) -> Optional[dict]:
         rows = await self._q("SELECT * FROM invoices WHERE id = ?", [invoice_id])
         return rows[0] if rows else None
@@ -646,6 +665,12 @@ class Database:
         return await self._q(
             "SELECT * FROM statement_lines WHERE statement_id = ? ORDER BY line_date, id",
             [statement_id],
+        )
+
+    async def save_invoice_r2_key(self, invoice_id: int, r2_key: str) -> None:
+        await self._x(
+            "UPDATE invoices SET pdf_r2_key = ? WHERE id = ?",
+            [r2_key, invoice_id],
         )
 
     async def save_pdf_r2_key(self, statement_id: int, r2_key: str) -> None:

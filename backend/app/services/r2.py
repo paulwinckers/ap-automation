@@ -67,6 +67,50 @@ async def upload_statement_pdf(
     return key
 
 
+async def upload_invoice_pdf(
+    file_bytes: bytes,
+    invoice_id: int,
+    filename: str,
+) -> Optional[str]:
+    """
+    Upload an invoice or receipt PDF/image to R2.
+    Returns the R2 object key, or None if R2 is not configured.
+    Key format: invoices/2026-04/invoice_123_original.pdf
+    """
+    if not _r2_available():
+        logger.info("R2 not configured — skipping invoice PDF storage")
+        return None
+
+    from datetime import date
+    period = date.today().strftime("%Y-%m")
+    safe_filename = "".join(c if c.isalnum() or c in (".", "-", "_") else "_" for c in filename)
+    key = f"invoices/{period}/invoice_{invoice_id}_{safe_filename}"
+
+    name_lower = filename.lower()
+    if name_lower.endswith(".pdf"):
+        content_type = "application/pdf"
+    elif name_lower.endswith(".png"):
+        content_type = "image/png"
+    elif name_lower.endswith(".webp"):
+        content_type = "image/webp"
+    else:
+        content_type = "image/jpeg"
+
+    def _upload():
+        client = _make_client()
+        client.put_object(
+            Bucket=settings.R2_BUCKET_NAME,
+            Key=key,
+            Body=file_bytes,
+            ContentType=content_type,
+        )
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _upload)
+    logger.info(f"Invoice PDF uploaded to R2: {key}")
+    return key
+
+
 async def get_presigned_url(key: str, expires_in: int = 3600) -> Optional[str]:
     """
     Generate a presigned URL for a statement PDF.
