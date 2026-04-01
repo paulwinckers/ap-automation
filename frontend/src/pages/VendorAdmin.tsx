@@ -372,15 +372,25 @@ function VendorAdminInner() {
                 </div>
               )}
 
-              {/* Forward to / Confirmation email */}
-              <div style={S.field}>
-                <label style={S.label}>
-                  {form.type === 'job_cost' || form.type === 'mixed'
-                    ? 'Forward invoices to'
-                    : 'Confirmation email'}
-                </label>
-                {/* Quick-pick buttons for job cost / mixed */}
-                {(form.type === 'job_cost' || form.type === 'mixed') && (
+              {/* Confirmation email — employees only */}
+              {form.is_employee && (
+                <div style={S.field}>
+                  <label style={S.label}>Confirmation email</label>
+                  <input
+                    style={S.input}
+                    type="email"
+                    value={form.forward_to}
+                    onChange={e => setForm(f => ({ ...f, forward_to: e.target.value }))}
+                    placeholder="e.g. jake@darios.ca"
+                  />
+                  <div style={S.hint}>Employee receives a confirmation email once their receipt is posted to QBO.</div>
+                </div>
+              )}
+
+              {/* Forward invoices to — job cost / mixed vendors only */}
+              {!form.is_employee && (form.type === 'job_cost' || form.type === 'mixed') && (
+                <div style={S.field}>
+                  <label style={S.label}>Forward invoices to</label>
                   <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
                     {['keeland@darios.ca', 'paul@darios.ca'].map(addr => (
                       <button
@@ -400,26 +410,16 @@ function VendorAdminInner() {
                       </button>
                     ))}
                   </div>
-                )}
-                <input
-                  style={S.input}
-                  type="email"
-                  value={form.forward_to}
-                  onChange={e => setForm(f => ({ ...f, forward_to: e.target.value }))}
-                  placeholder={
-                    form.type === 'job_cost' || form.type === 'mixed'
-                      ? 'keeland@darios.ca or paul@darios.ca'
-                      : 'e.g. jake@darios.ca'
-                  }
-                />
-                <div style={S.hint}>
-                  {form.is_employee
-                    ? 'Employee gets a confirmation email after each receipt is posted to QBO.'
-                    : form.type === 'job_cost' || form.type === 'mixed'
-                    ? 'Invoice PDF will be emailed here when received. Shows in AP log as "Sent to Keeland/Paul".'
-                    : 'Optional — leave blank for overhead vendors.'}
+                  <input
+                    style={S.input}
+                    type="email"
+                    value={form.forward_to}
+                    onChange={e => setForm(f => ({ ...f, forward_to: e.target.value }))}
+                    placeholder="keeland@darios.ca or paul@darios.ca"
+                  />
+                  <div style={S.hint}>Invoice PDF will be emailed here when received. Shows in the AP log as "📤 Sent to Keeland / Paul".</div>
                 </div>
-              </div>
+              )}
 
               {/* Aspire / QBO IDs */}
               <div style={S.fieldRow}>
