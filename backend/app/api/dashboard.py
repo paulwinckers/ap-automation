@@ -190,22 +190,20 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         return not date_str or date_str.startswith(str(yr))
 
     def is_in_queue(o: dict) -> bool:
-        """Won job with JobStatus = 'Not Started' (or no status) — scheduled but no work begun."""
+        """Won job with zero actual labour hours — work not yet begun."""
         if is_complete(o):
             return False
         if (o.get("OpportunityStatusName") or "").lower() != "won":
             return False
-        job_status = (o.get("JobStatusName") or "").lower()
-        return not job_status or "not started" in job_status
+        return float(o.get("ActualLaborHours") or 0) == 0
 
     def is_in_production(o: dict) -> bool:
-        """Won job where work has begun — JobStatus is set and not 'Not Started'."""
+        """Won job with actual labour hours logged — work is underway."""
         if is_complete(o):
             return False
         if (o.get("OpportunityStatusName") or "").lower() != "won":
             return False
-        job_status = (o.get("JobStatusName") or "").lower()
-        return bool(job_status) and "not started" not in job_status
+        return float(o.get("ActualLaborHours") or 0) > 0
 
     completed     = [o for o in opps if complete_in_year(o, year)]
     in_production = [o for o in opps if is_in_production(o)]

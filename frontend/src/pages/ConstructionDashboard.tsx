@@ -202,23 +202,38 @@ function FooterTd({ children, align = 'left', colSpan }: { children: React.React
 // ── Job name cell (shared across all sections) ────────────────────────────────
 
 function JobNameCell({ job }: { job: ConstructionJob }) {
+  const display = job.PropertyName || job.OpportunityName || '(unnamed)';
+  const sub     = job.PropertyName ? job.OpportunityName : null;
   return (
     <Td>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-        <a
-          href={`https://cloud.youraspire.com/app/opportunities/details/${job.OpportunityID}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ fontWeight: 600, color: '#1e40af', fontSize: 13, textDecoration: 'none', whiteSpace: 'nowrap' }}
-          onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
-          onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
-        >
-          {job.OpportunityName || '(unnamed)'}
-        </a>
-        {job.PropertyName && (
-          <span style={{ fontSize: 11, color: '#9ca3af' }}>{job.PropertyName}</span>
-        )}
-      </div>
+      <a
+        href={`https://cloud.youraspire.com/app/opportunities/details/${job.OpportunityID}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{ fontWeight: 600, color: '#1e40af', fontSize: 13, textDecoration: 'none', display: 'block' }}
+        onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+        onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+      >
+        {display}
+      </a>
+      {sub && <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>{sub}</div>}
+    </Td>
+  );
+}
+
+function fmtHrs(n: number | null | undefined): string {
+  if (n == null) return '—';
+  return `${n.toFixed(1)}h`;
+}
+
+function HoursCell({ actual, estimated }: { actual: number | null | undefined; estimated: number | null | undefined }) {
+  const over = (actual ?? 0) > (estimated ?? 0) && estimated != null && actual != null;
+  return (
+    <Td align="right">
+      <span style={{ color: actual != null ? (over ? '#dc2626' : '#374151') : '#9ca3af' }}>
+        {fmtHrs(actual)}
+      </span>
+      <span style={{ color: '#9ca3af' }}> / {fmtHrs(estimated)}</span>
     </Td>
   );
 }
@@ -244,6 +259,7 @@ function CompletedTable({ jobs }: { jobs: ConstructionJob[] }) {
             <Th align="right">Revenue</Th>
             <Th align="right">Margin $</Th>
             <Th align="right">Margin %</Th>
+            <Th align="right">Act / Est Hrs</Th>
             <Th align="right">Completed</Th>
           </tr>
         </thead>
@@ -257,6 +273,7 @@ function CompletedTable({ jobs }: { jobs: ConstructionJob[] }) {
                 {fmt$(job.ActualGrossMarginDollars)}
               </Td>
               <Td align="right"><MarginDot pct={job.ActualGrossMarginPercent} /></Td>
+              <HoursCell actual={job.ActualLaborHours} estimated={job.EstimatedLaborHours} />
               <Td align="right" muted>{fmtDate(job.CompleteDate || job.EndDate)}</Td>
             </tr>
           ))}
@@ -296,6 +313,7 @@ function InProductionTable({ jobs }: { jobs: ConstructionJob[] }) {
             <Th align="right">Revenue (Act.)</Th>
             <Th align="right">Margin (Act.)</Th>
             <Th align="right">Est. Margin %</Th>
+            <Th align="right">Act / Est Hrs</Th>
             <Th align="right">Est. End</Th>
           </tr>
         </thead>
@@ -307,6 +325,7 @@ function InProductionTable({ jobs }: { jobs: ConstructionJob[] }) {
               <Td align="right" bold style={{ color: '#2563eb' }}>{fmt$(job.ActualEarnedRevenue)}</Td>
               <Td align="right" bold style={{ color: '#2563eb' }}>{fmt$(job.ActualGrossMarginDollars)}</Td>
               <Td align="right"><MarginDot pct={job.EstimatedGrossMarginPercent} /></Td>
+              <HoursCell actual={job.ActualLaborHours} estimated={job.EstimatedLaborHours} />
               <Td align="right" muted>{fmtDate(job.EndDate)}</Td>
             </tr>
           ))}
@@ -351,6 +370,7 @@ function InQueueTable({ jobs }: { jobs: ConstructionJob[] }) {
             <Th align="right">Contracted</Th>
             <Th align="right">Est. Revenue</Th>
             <Th align="right">Est. Margin %</Th>
+            <Th align="right">Est. Hrs</Th>
             <Th align="right">Start Date</Th>
           </tr>
         </thead>
@@ -363,6 +383,7 @@ function InQueueTable({ jobs }: { jobs: ConstructionJob[] }) {
               <Td align="right" bold>{fmt$(job.WonDollars)}</Td>
               <Td align="right" muted>{fmt$(job.EstimatedDollars)}</Td>
               <Td align="right"><MarginDot pct={job.EstimatedGrossMarginPercent} /></Td>
+              <Td align="right" muted>{fmtHrs(job.EstimatedLaborHours)}</Td>
               <Td align="right" muted>{fmtDate(job.StartDate)}</Td>
             </tr>
           ))}
