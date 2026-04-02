@@ -4,7 +4,7 @@
  * Create, edit, and deactivate vendor routing rules.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 const ADMIN_PIN = import.meta.env.VITE_ADMIN_PIN || '1946';
 const SESSION_KEY = 'ap_admin_auth';
@@ -101,6 +101,110 @@ function VendorAdminInner() {
   const [showInactive, setShowInactive] = useState(false);
   const [search, setSearch] = useState('');
   const [glLooking, setGlLooking] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
+
+  const CSV_FIELDS = [
+    'vendor_name', 'type', 'default_gl_account', 'default_gl_name',
+    'forward_to', 'vendor_id_aspire', 'vendor_id_qbo', 'notes',
+    'is_employee', 'active',
+  ] as const;
+
+  const csvCell = (val: unknown) => {
+    const s = val === null || val === undefined ? '' : String(val);
+    return /[,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  const exportCSV = () => {
+    const header = CSV_FIELDS.join(',');
+    const rows = vendors.map(v =>
+      CSV_FIELDS.map(f => csvCell(v[f as keyof VendorRule])).join(',')
+    );
+    const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vendor_rules_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const parseCSVRow = (line: string): string[] => {
+    const result: string[] = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+        else inQ = !inQ;
+      } else if (ch === ',' && !inQ) {
+        result.push(cur); cur = '';
+      } else cur += ch;
+    }
+    result.push(cur);
+    return result;
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setImporting(true); setImportResult(null);
+    try {
+      const text = await file.text();
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length < 2) { setImportResult('CSV has no data rows.'); return; }
+      const headers = parseCSVRow(lines[0]).map(h => h.trim());
+      const rows = lines.slice(1).map(l => {
+        const vals = parseCSVRow(l);
+        return Object.fromEntries(headers.map((h, i) => [h, (vals[i] ?? '').trim()]));
+      });
+      const byName = new Map(vendors.map(v => [v.vendor_name.toLowerCase(), v]));
+      let created = 0, updated = 0, errors = 0;
+      for (const row of rows) {
+        if (!row['vendor_name']) continue;
+        const existing = byName.get(row['vendor_name'].toLowerCase());
+        const parseBool = (v: string, fallback: boolean) =>
+          v === '' ? fallback : v === 'true' || v === '1';
+        try {
+          if (existing) {
+            await updateVendor(existing.id, {
+              type:               (row['type'] as VendorType) || existing.type,
+              default_gl_account: row['default_gl_account'] || undefined,
+              default_gl_name:    row['default_gl_name'] || undefined,
+              forward_to:         row['forward_to'] || undefined,
+              vendor_id_aspire:   row['vendor_id_aspire'] || undefined,
+              vendor_id_qbo:      row['vendor_id_qbo'] || undefined,
+              notes:              row['notes'] || undefined,
+              is_employee:        parseBool(row['is_employee'], existing.is_employee ?? false),
+              active:             parseBool(row['active'], existing.active),
+            });
+            updated++;
+          } else {
+            await createVendor({
+              vendor_name:        row['vendor_name'],
+              type:               (row['type'] as VendorType) || 'overhead',
+              default_gl_account: row['default_gl_account'] || undefined,
+              default_gl_name:    row['default_gl_name'] || undefined,
+              forward_to:         row['forward_to'] || undefined,
+              vendor_id_aspire:   row['vendor_id_aspire'] || undefined,
+              vendor_id_qbo:      row['vendor_id_qbo'] || undefined,
+              notes:              row['notes'] || undefined,
+              is_employee:        parseBool(row['is_employee'], false),
+            });
+            created++;
+          }
+        } catch { errors++; }
+      }
+      setImportResult(`Import complete — ${created} created, ${updated} updated${errors ? `, ${errors} errors` : ''}.`);
+      load();
+    } catch (err: unknown) {
+      setImportResult(`Import failed: ${(err as Error).message}`);
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const load = () => {
     setLoading(true);
@@ -213,7 +317,14 @@ function VendorAdminInner() {
             <div style={S.h1}>Vendor Rules</div>
             <div style={S.hsub}>Routing configuration — Aspire &amp; QBO</div>
           </div>
-          <button style={S.addBtn} onClick={openCreate}>+ Add vendor</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input ref={importRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} />
+              <button style={S.secBtn} onClick={() => importRef.current?.click()} disabled={importing}>
+                {importing ? 'Importing…' : '⬆ Import CSV'}
+              </button>
+              <button style={S.secBtn} onClick={exportCSV}>⬇ Export CSV</button>
+              <button style={S.addBtn} onClick={openCreate}>+ Add vendor</button>
+            </div>
         </div>
       </div>
 
@@ -239,6 +350,14 @@ function VendorAdminInner() {
           </label>
           <span style={S.count}>{displayed.length} vendor{displayed.length !== 1 ? 's' : ''}</span>
         </div>
+
+        {/* Import result */}
+        {importResult && (
+          <div style={{ ...S.errBox, background: importResult.startsWith('Import complete') ? '#ecfdf5' : '#fef2f2', borderColor: importResult.startsWith('Import complete') ? '#6ee7b7' : '#fca5a5', color: importResult.startsWith('Import complete') ? '#065f46' : '#dc2626', marginBottom: 12 }}>
+            {importResult}
+            <button onClick={() => setImportResult(null)} style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: 'inherit' }}>✕</button>
+          </div>
+        )}
 
         {/* Error / loading */}
         {loading && <div style={S.info}>Loading…</div>}
@@ -477,6 +596,7 @@ const S: Record<string, React.CSSProperties> = {
   h1:          { fontSize: 20, fontWeight: 600 },
   hsub:        { fontSize: 13, opacity: 0.8, marginTop: 2 },
   addBtn:      { background: '#fff', color: '#2563eb', border: 'none', borderRadius: 8, padding: '10px 18px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+  secBtn:      { background: 'rgba(255,255,255,.15)', color: '#fff', border: '1.5px solid rgba(255,255,255,.4)', borderRadius: 8, padding: '8px 14px', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' },
   content:     { maxWidth: 800, margin: '0 auto', padding: '20px 24px' },
   toolbar:     { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   toggle:      { display: 'flex', alignItems: 'center', fontSize: 13, color: '#6b7280', cursor: 'pointer' },

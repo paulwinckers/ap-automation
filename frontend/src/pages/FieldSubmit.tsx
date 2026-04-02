@@ -13,11 +13,11 @@
  *   5. Success
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
-  uploadInvoice, validatePO, listEmployees,
+  uploadInvoice, listEmployees,
   quickExtract, suggestGL,
-  type POValidationResult, type QuickExtractResult,
+  type QuickExtractResult,
 } from '../lib/api';
 
 type DocType = 'vendor' | 'mastercard' | 'expense' | null;
@@ -38,8 +38,6 @@ export default function FieldSubmit() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [costType, setCostType]   = useState<CostType>('job');
   const [po, setPo]               = useState('');
-  const [poResult, setPoResult]   = useState<POValidationResult | null>(null);
-  const [poValidating, setPoValidating] = useState(false);
   const [description, setDescription] = useState('');  // replaces notes + glDescription
   const [resolvedGL, setResolvedGL]   = useState<{account: string; name: string} | null>(null);
   const [extractResult, setExtractResult] = useState<QuickExtractResult | null>(null);
@@ -55,7 +53,7 @@ export default function FieldSubmit() {
     if (step === 1) return !!docType && ((docType !== 'expense' && docType !== 'mastercard') || !!employee);
     if (step === 2) return !!file;
     if (step === 3) {
-      if (costType === 'job') return !!poResult?.valid;
+      if (costType === 'job') return true;
       return description.trim().length >= 3;
     }
     if (step === 4) return true;
@@ -103,13 +101,6 @@ export default function FieldSubmit() {
     setFile(null); setPreviewUrl(null); setExtractResult(null);
     if (fileRef.current) fileRef.current.value = '';
   };
-
-  const handleValidatePO = useCallback(async () => {
-    if (!po.trim()) return;
-    setPoValidating(true); setPoResult(null);
-    const result = await validatePO(po.trim());
-    setPoValidating(false); setPoResult(result);
-  }, [po]);
 
   // Resolve GL silently in background when user finishes typing description
   const resolveGL = async (desc: string) => {
@@ -162,7 +153,7 @@ export default function FieldSubmit() {
   const reset = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setStep(1); setDocType(null); setEmployee(''); setFile(null); setPreviewUrl(null);
-    setCostType('job'); setPo(''); setPoResult(null); setPoValidating(false);
+    setCostType('job'); setPo('');
     setDescription(''); setResolvedGL(null); setExtractResult(null);
     setReferenceId(null); setSubmitError(null);
   };
@@ -261,7 +252,7 @@ export default function FieldSubmit() {
           <div style={S.card}>
             <div style={S.ctitle}>Is this for a job or overhead?</div>
             <div style={S.toggle}>
-              <button style={{...S.topt,...(costType==='job'?S.tactive:{})}} onClick={()=>{setCostType('job');setPoResult(null);}}>
+              <button style={{...S.topt,...(costType==='job'?S.tactive:{})}} onClick={()=>setCostType('job')}>
                 <span style={{fontSize:18,display:'block',marginBottom:2}}>🏗️</span>Job cost
               </button>
               <button style={{...S.topt,...(costType==='overhead'?S.tactive:{})}} onClick={()=>setCostType('overhead')}>
@@ -270,35 +261,21 @@ export default function FieldSubmit() {
             </div>
 
             {costType === 'job' && <>
-              <div style={S.porow}>
+              <div style={{marginBottom:12}}>
+                <div style={S.flabel}>PO Number (optional)</div>
                 <input
-                  style={{...S.poinput, borderColor: poResult?.valid ? '#059669' : poResult?.valid===false ? '#dc2626' : '#e2e6ed'}}
+                  style={S.poinput}
                   placeholder="e.g. PO-2024-801"
                   value={po}
-                  onChange={e=>{setPo(e.target.value.toUpperCase());setPoResult(null);}}
-                  onKeyDown={e=>e.key==='Enter'&&handleValidatePO()}
+                  onChange={e=>setPo(e.target.value.toUpperCase())}
                 />
-                <button style={{...S.lookup, opacity: po.length<4||poValidating?0.5:1}} onClick={handleValidatePO} disabled={po.length<4||poValidating}>
-                  {poValidating?'Looking...':'Look up'}
-                </button>
+                <div style={{fontSize:11,color:'#6b7280',marginTop:6}}>If you have a PO number it will be noted on the forwarded invoice.</div>
               </div>
-              <div style={{fontSize:11,color:'#6b7280',marginTop:6}}>Type your PO number then tap Look up</div>
-              {poValidating && <div style={{...S.jobres,background:'#fffbeb',borderColor:'#fcd34d',marginTop:10}}><div style={{fontSize:13,color:'#92400e'}}>Checking Aspire...</div></div>}
-              {poResult && !poValidating && (
-                <div style={{...S.jobres, background:poResult.valid?'#ecfdf5':'#fef2f2', borderColor:poResult.valid?'#6ee7b7':'#fca5a5', marginTop:10}}>
-                  <div style={{float:'right',fontSize:18}}>{poResult.valid?'✅':'❌'}</div>
-                  {poResult.valid ? <>
-                    <div style={{fontSize:15,fontWeight:600,marginBottom:4}}>{poResult.job_name||po}</div>
-                    <div style={{fontSize:12,color:'#6b7280',lineHeight:1.7}}>
-                      {poResult.job_address && <span style={{display:'block'}}>{poResult.job_address}</span>}
-                      <span style={{color:'#059669',fontWeight:500}}>PO {po} — Open</span>
-                    </div>
-                  </> : <>
-                    <div style={{fontSize:15,fontWeight:600,color:'#dc2626',marginBottom:4}}>PO not found</div>
-                    <div style={{fontSize:12,color:'#6b7280'}}>{poResult.error||'Check the number and try again.'}</div>
-                  </>}
+              <div style={{...S.jobres,background:'#eff6ff',borderColor:'#bfdbfe'}}>
+                <div style={{fontSize:13,color:'#1e40af',lineHeight:1.6}}>
+                  📋 This invoice will be forwarded to your AP team for entry into Aspire.
                 </div>
-              )}
+              </div>
             </>}
 
             {needsDescription && (
@@ -326,7 +303,7 @@ export default function FieldSubmit() {
             {(docType==='expense'||docType==='mastercard')&&employee && <RR label={docType==='mastercard'?'Purchased by':'Employee'} value={employee}/>}
             <RR label="Document" value={file?.name||'—'} color="#059669"/>
             <RR label="Coding" value={costType==='overhead'?'Overhead':'Job cost'} color={costType==='overhead'?'#d97706':'#059669'}/>
-            {costType==='job' && <RR label="PO / Job" value={poResult?.job_name?`${poResult.job_name} (${po})`:po} color="#059669"/>}
+            {costType==='job' && po && <RR label="PO Number" value={po}/>}
             {description && <RR label="Description" value={description}/>}
           </div>
           <div style={{...S.tip,background:'#eff6ff',borderColor:'#bfdbfe',color:'#1e40af'}}>Claude will read your photo to confirm the vendor, amount, and tax.</div>
@@ -341,7 +318,7 @@ export default function FieldSubmit() {
             <div style={S.ssub}>
               {costType==='overhead'
                 ? "Sent to AP — you'll get a confirmation email once it's posted."
-                : 'Sent to the AP queue. Your PO has been confirmed.'}
+                : 'Forwarded to your AP team for entry into Aspire.'}
             </div>
             {referenceId && <div style={S.ref}>{referenceId}</div>}
           </div>

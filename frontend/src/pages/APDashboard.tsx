@@ -241,10 +241,13 @@ export default function APDashboard() {
     setStatusFilter(f => f === value ? 'all' : value);
   }
 
+  const forwardedCount = entries.filter(e => !!e.forwarded_to).length;
+
   // Filter entries client-side
   const filteredEntries = entries.filter(e => {
     // Status / destination filter
-    if (statusFilter === 'qbo')    { if (e.destination !== 'qbo')    return false; }
+    if (statusFilter === 'forwarded') { if (!e.forwarded_to) return false; }
+    else if (statusFilter === 'qbo')    { if (e.destination !== 'qbo')    return false; }
     else if (statusFilter === 'aspire') { if (e.destination !== 'aspire') return false; }
     else if (statusFilter !== 'all' && e.status !== statusFilter)     return false;
     // Search: vendor name, invoice number, GL name, ref
@@ -412,7 +415,12 @@ export default function APDashboard() {
           <div style={styles.statCard('#a78bfa', statusFilter === 'aspire')} onClick={() => toggleStatFilter('aspire')}>
             <div style={styles.statLabel}>Aspire</div>
             <div style={styles.statValue('#7c3aed')}>{counts.aspire}</div>
-            <div style={styles.statSub}>job cost</div>
+            <div style={styles.statSub}>job cost posted</div>
+          </div>
+          <div style={styles.statCard('#22d3ee', statusFilter === 'forwarded')} onClick={() => toggleStatFilter('forwarded')}>
+            <div style={styles.statLabel}>Forwarded</div>
+            <div style={styles.statValue('#0e7490')}>{forwardedCount}</div>
+            <div style={styles.statSub}>pending Aspire entry</div>
           </div>
         </div>
       )}
@@ -471,6 +479,7 @@ export default function APDashboard() {
           <option value="queued">⏳ Review</option>
           <option value="error">✗ Error</option>
           <option value="pending">○ Pending</option>
+          <option value="forwarded">📤 Forwarded (job cost)</option>
           <option value="qbo">QBO Bills</option>
           <option value="aspire">Aspire</option>
         </select>
