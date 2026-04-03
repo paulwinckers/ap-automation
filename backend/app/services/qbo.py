@@ -229,17 +229,19 @@ class QBOClient:
         deactivated the old record.
         Returns the vendor object or None.
         """
-        escaped = vendor_name.replace("'", "\\'")
-        # For LIKE queries: strip anything after '(', collapse spaces, and remove
-        # common legal suffixes (LTD, Ltd., Inc., Corp., LLC, Co.) so that
-        # "Lavington Turf Farms LTD" matches the existing QBO vendor "Lavington Turf Farms"
+        # QBO's IDS query API is XML-based internally — '&' in a string literal
+        # is treated as a malformed XML entity and causes a 400. Escape it.
+        escaped = vendor_name.replace("&", "&amp;").replace("'", "\\'")
+        # For LIKE queries: use the text before any '&' or '(' so we avoid the
+        # problematic character entirely, then strip legal suffixes and collapse spaces.
         import re as _re
-        like_base = " ".join(escaped.split("(")[0].split())
+        like_base = vendor_name.split("&")[0].split("(")[0]
+        like_base = " ".join(like_base.split())
         like_base = _re.sub(
             r'\s+(Ltd\.?|LTD\.?|Inc\.?|INC\.?|Corp\.?|CORP\.?|LLC|L\.L\.C\.?|Co\.?|CO\.?)$',
             '', like_base, flags=_re.IGNORECASE
         ).strip()
-        like_term = like_base.replace("'", "\\'")
+        like_term = like_base.replace("&", "&amp;").replace("'", "\\'")
 
         # 1. Exact match (active)
         result = await self._get(
@@ -450,7 +452,8 @@ class QBOClient:
         if not bill_id:
             raise ValueError(f"QBO bill creation returned no Id. Response: {result}")
 
-        logger.info(f"QBO bill created — Id: {bill_id}, DocNumber: {invoice.invoice_number}")
+        qbo_amount = bill.get("TotalAmt")
+        logger.info(f"QBO bill created — Id: {bill_id}, DocNumber: {invoice.invoice_number}, TotalAmt: {qbo_amount}")
 
         # ── Attach original invoice file ──────────────────────────────────────
         if file_bytes and filename:
@@ -460,7 +463,7 @@ class QBOClient:
             except Exception as e:
                 logger.warning(f"Could not attach file to QBO bill {bill_id}: {e} — bill was still created")
 
-        return bill_id
+        return bill_id, qbo_amount
 
     async def _attach_file(self, entity_id: str, entity_type: str, file_bytes: bytes, filename: str) -> None:
         """Upload a file and attach it to any QBO entity (Bill, VendorCredit, Purchase, etc.)."""
@@ -660,7 +663,8 @@ class QBOClient:
         if not purchase_id:
             raise ValueError(f"QBO purchase creation returned no Id. Response: {result}")
 
-        logger.info(f"QBO purchase created — Id: {purchase_id}")
+        qbo_amount = purchase.get("TotalAmt")
+        logger.info(f"QBO purchase created — Id: {purchase_id}, TotalAmt: {qbo_amount}")
 
         # ── Attach original receipt file ──────────────────────────────────────
         if file_bytes and filename:
@@ -670,7 +674,7 @@ class QBOClient:
             except Exception as e:
                 logger.warning(f"Could not attach file to QBO purchase {purchase_id}: {e}")
 
-        return purchase_id
+        return purchase_id, qbo_amount
 
     # ── Vendor credit creation ────────────────────────────────────────────────
 
@@ -746,7 +750,8 @@ class QBOClient:
         if not credit_id:
             raise ValueError(f"QBO vendor credit creation returned no Id. Response: {result}")
 
-        logger.info(f"QBO vendor credit created — Id: {credit_id}, DocNumber: {invoice.invoice_number}")
+        qbo_amount = credit.get("TotalAmt")
+        logger.info(f"QBO vendor credit created — Id: {credit_id}, DocNumber: {invoice.invoice_number}, TotalAmt: {qbo_amount}")
 
         if file_bytes and filename:
             try:
@@ -755,7 +760,7 @@ class QBOClient:
             except Exception as e:
                 logger.warning(f"Could not attach file to QBO vendor credit {credit_id}: {e}")
 
-        return credit_id
+        return credit_id, qbo_amount
 
     # ── Chart of accounts ─────────────────────────────────────────────────────
 
@@ -815,6 +820,25 @@ class QBOClient:
             },
         )
         return result.get("QueryResponse", {}).get("Bill", [])
+
+    async def get_transaction_amount(self, entity_id: str, doc_type: Optional[str]) -> Optional[float]:
+        """
+        Fetch TotalAmt for a single QBO transaction by ID.
+        doc_type determines the entity type: 'credit_memo' → VendorCredit,
+        'mastercard' → Purchase, anything else → Bill.
+        Returns None if the entity is not found or has no TotalAmt.
+        """
+        if doc_type == "credit_memo":
+            path, key = f"vendorcredit/{entity_id}", "VendorCredit"
+        elif doc_type == "mastercard":
+            path, key = f"purchase/{entity_id}", "Purchase"
+        else:
+            path, key = f"bill/{entity_id}", "Bill"
+        try:
+            result = await self._get(path)
+            return result.get(key, {}).get("TotalAmt")
+        except Exception:
+            return None
 
     async def close(self):
         await self._http.aclose()

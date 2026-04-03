@@ -187,3 +187,6 @@ CREATE INDEX IF NOT EXISTS idx_stmt_lines  ON statement_lines(statement_id);
 
 -- Migration: track where job-cost invoices were forwarded
 ALTER TABLE invoices ADD COLUMN forwarded_to TEXT;
+
+-- Migration: actual amount confirmed by QBO on posting (vs extracted total_amount)
+ALTER TABLE invoices ADD COLUMN qbo_amount REAL;

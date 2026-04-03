@@ -475,10 +475,10 @@ async def mark_as_overhead(
     )
 
     try:
-        bill_id = await _qbo.post_bill(invoice, gl_account)
-        await db.mark_posted_qbo(invoice_id, bill_id, gl_account, gl_name=gl_name)
+        bill_id, qbo_amount = await _qbo.post_bill(invoice, gl_account)
+        await db.mark_posted_qbo(invoice_id, bill_id, gl_account, gl_name=gl_name, qbo_amount=qbo_amount)
         await db.audit(invoice_id, "posted", body.reviewed_by, {
-            "destination": "qbo", "bill_id": bill_id, "gl_account": gl_account, "gl_name": gl_name, "manual": True
+            "destination": "qbo", "bill_id": bill_id, "gl_account": gl_account, "gl_name": gl_name, "qbo_amount": qbo_amount, "manual": True
         })
         return {"invoice_id": invoice_id, "outcome": "posted_qbo", "bill_id": bill_id, "gl_account": gl_account, "message": f"Posted to QBO — bill {bill_id}"}
     except Exception as e:
@@ -513,6 +513,40 @@ async def unarchive_invoice(invoice_id: int, db: Database = Depends(get_db)):
     await db.unarchive_invoice(invoice_id)
     await db.audit(invoice_id, "unarchived", "dashboard", {})
     return {"invoice_id": invoice_id, "archived": False}
+
+
+@router.post("/backfill-qbo-amounts")
+async def backfill_qbo_amounts(db: Database = Depends(get_db)):
+    """
+    One-time backfill: fetch TotalAmt from QBO for every posted invoice
+    that has a qbo_bill_id but no qbo_amount stored.
+    Safe to call multiple times — skips rows already populated.
+    """
+    rows = await db._q(
+        """SELECT id, qbo_bill_id, doc_type FROM invoices
+           WHERE destination = 'qbo'
+             AND status = 'posted'
+             AND qbo_bill_id IS NOT NULL
+             AND (qbo_amount IS NULL)"""
+    )
+    if not rows:
+        return {"updated": 0, "message": "Nothing to backfill"}
+
+    updated = 0
+    failed = 0
+    for row in rows:
+        amount = await _qbo.get_transaction_amount(row["qbo_bill_id"], row["doc_type"])
+        if amount is not None:
+            await db._x(
+                "UPDATE invoices SET qbo_amount = ? WHERE id = ?",
+                [amount, row["id"]],
+            )
+            updated += 1
+        else:
+            logger.warning(f"Could not fetch QBO amount for invoice {row['id']} bill {row['qbo_bill_id']}")
+            failed += 1
+
+    return {"updated": updated, "failed": failed, "total": len(rows)}
 
 
 @router.delete("/{invoice_id}")

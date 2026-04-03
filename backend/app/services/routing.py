@@ -239,20 +239,21 @@ async def _route_to_qbo(
     gl_name = await _resolve_gl_name(gl_account, gl_name, qbo)
 
     try:
-        bill_id = await qbo.post_bill(
+        bill_id, qbo_amount = await qbo.post_bill(
             invoice,
             gl_account,
             file_bytes=invoice.file_bytes,
             filename=invoice.pdf_filename,
         )
-        await db.mark_posted_qbo(invoice.id, bill_id, gl_account, gl_name=gl_name)
+        await db.mark_posted_qbo(invoice.id, bill_id, gl_account, gl_name=gl_name, qbo_amount=qbo_amount)
         await db.audit(invoice.id, "posted", "system", {
             "destination": "qbo",
             "bill_id": bill_id,
             "gl_account": gl_account,
             "gl_name": gl_name,
+            "qbo_amount": qbo_amount,
         })
-        logger.info(f"Invoice {invoice.id} posted to QBO — bill {bill_id}, GL {gl_account} ({gl_name})")
+        logger.info(f"Invoice {invoice.id} posted to QBO — bill {bill_id}, GL {gl_account} ({gl_name}), TotalAmt: {qbo_amount}")
 
         # Send confirmation email if this was an employee/field submission
         if employee_name:

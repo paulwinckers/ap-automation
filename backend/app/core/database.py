@@ -455,15 +455,16 @@ class Database:
         )
 
     async def mark_posted_qbo(
-        self, invoice_id: int, bill_id: str, gl_account: str, gl_name: Optional[str] = None
+        self, invoice_id: int, bill_id: str, gl_account: str,
+        gl_name: Optional[str] = None, qbo_amount: Optional[float] = None
     ) -> None:
         await self._x(
             """UPDATE invoices
                SET status='posted', destination='qbo',
-                   qbo_bill_id=?, gl_account=?, gl_name=?,
+                   qbo_bill_id=?, gl_account=?, gl_name=?, qbo_amount=?,
                    posted_at=datetime('now'), error_message=NULL
                WHERE id=?""",
-            [bill_id, gl_account, gl_name, invoice_id],
+            [bill_id, gl_account, gl_name, qbo_amount, invoice_id],
         )
 
     async def mark_error(self, invoice_id: int, error_message: str) -> None:

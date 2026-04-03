@@ -15,6 +15,7 @@ interface FeedEntry {
   vendor_name: string | null;
   invoice_number: string | null;
   total_amount: number | null;
+  qbo_amount: number | null;
   tax_amount: number | null;
   subtotal: number | null;
   gl_account: string | null;
@@ -197,6 +198,21 @@ export default function APDashboard() {
       window.open(url, '_blank');
     } catch (e) {
       alert('Could not load PDF');
+    }
+  }
+
+  async function backfillQboAmounts() {
+    try {
+      const res = await fetch(`${API}/invoices/backfill-qbo-amounts`, { method: 'POST' });
+      const data = await res.json();
+      await refresh();
+      if (data.updated === 0) {
+        alert('Nothing to backfill — all QBO entries already have amounts.');
+      } else {
+        alert(`Backfilled QBO amounts for ${data.updated} invoice${data.updated !== 1 ? 's' : ''}.${data.failed ? ` (${data.failed} could not be fetched)` : ''}`);
+      }
+    } catch (e) {
+      alert('Backfill failed — check Railway logs');
     }
   }
 
@@ -484,6 +500,19 @@ export default function APDashboard() {
           <option value="aspire">Aspire</option>
         </select>
 
+        {/* Backfill QBO amounts — fetches TotalAmt from QBO for existing posted invoices */}
+        <button
+          onClick={backfillQboAmounts}
+          title="Fetch confirmed QBO amounts for all previously posted invoices"
+          style={{
+            padding: '6px 12px', fontSize: 12, cursor: 'pointer',
+            border: '1px solid #e2e8f0', borderRadius: 8,
+            background: '#fff', color: '#64748b',
+          }}
+        >
+          ↻ Sync QBO amounts
+        </button>
+
         {/* Bulk archive unknowns — only in active view */}
         {view === 'active' && (
           <button
@@ -523,6 +552,7 @@ export default function APDashboard() {
                 <th style={styles.th}>Vendor</th>
                 <th style={styles.th}>Invoice #</th>
                 <th style={styles.th}>Amount</th>
+                <th style={styles.th}>QBO Total</th>
                 <th style={styles.th}>Tax</th>
                 <th style={styles.th}>GL Account</th>
                 <th style={styles.th}>GL Name</th>
@@ -531,8 +561,18 @@ export default function APDashboard() {
               </tr>
             </thead>
             <tbody>
-              {filteredEntries.map(e => (
-                <tr key={e.id} style={{ background: e.status === 'error' ? '#fff5f5' : e.status === 'queued' ? '#fffbeb' : undefined }}>
+              {filteredEntries.map(e => {
+                const amountMismatch =
+                  e.qbo_amount != null &&
+                  e.total_amount != null &&
+                  Math.abs(e.qbo_amount - e.total_amount) > 0.01;
+                const rowBg = amountMismatch
+                  ? '#fff3cd'
+                  : e.status === 'error' ? '#fff5f5'
+                  : e.status === 'queued' ? '#fffbeb'
+                  : undefined;
+                return (
+                <tr key={e.id} style={{ background: rowBg }}>
                   <td style={{ ...styles.td, color: '#94a3b8', fontSize: 12, whiteSpace: 'nowrap' }}>
                     {timeAgo(e.received_at)}
                   </td>
@@ -547,6 +587,21 @@ export default function APDashboard() {
                   </td>
                   <td style={{ ...styles.td, fontWeight: 600, textAlign: 'right' }}>
                     {fmt(e.total_amount)}
+                  </td>
+                  <td style={{
+                    ...styles.td, textAlign: 'right',
+                    fontWeight: amountMismatch ? 700 : undefined,
+                    color: amountMismatch ? '#b45309' : e.qbo_amount != null ? '#1e293b' : '#94a3b8',
+                    background: amountMismatch ? '#fde68a' : undefined,
+                  }}>
+                    {e.qbo_amount != null ? (
+                      <>
+                        {fmt(e.qbo_amount)}
+                        {amountMismatch && <span title="Does not match invoice amount"> ⚠</span>}
+                      </>
+                    ) : e.destination === 'qbo' && e.status === 'posted' ? (
+                      <span style={{ color: '#94a3b8', fontSize: 11 }}>—</span>
+                    ) : ''}
                   </td>
                   <td style={{ ...styles.td, textAlign: 'right', color: e.tax_amount ? '#1e293b' : '#94a3b8' }}>
                     {e.tax_amount ? fmt(e.tax_amount) : '—'}
@@ -679,7 +734,7 @@ export default function APDashboard() {
                     ) : e.aspire_receipt_id || '—'}
                   </td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         )}

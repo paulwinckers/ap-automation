@@ -235,17 +235,21 @@ class GraphClient:
     async def get_or_create_folder(self, mailbox: str, folder_name: str) -> str:
         if folder_name in self._folder_cache:
             return self._folder_cache[folder_name]
+        # Search inside Inbox child folders (not root mailFolders)
         result = await self._get(
-            f"users/{mailbox}/mailFolders",
+            f"users/{mailbox}/mailFolders/inbox/childFolders",
             params={"$filter": f"displayName eq '{folder_name}'"},
         )
         folders = result.get("value", [])
         if folders:
             folder_id = folders[0]["id"]
         else:
-            result = await self._post(f"users/{mailbox}/mailFolders", {"displayName": folder_name})
+            result = await self._post(
+                f"users/{mailbox}/mailFolders/inbox/childFolders",
+                {"displayName": folder_name},
+            )
             folder_id = result["id"]
-            logger.info(f"Created Outlook folder: {folder_name}")
+            logger.info(f"Created Inbox subfolder: {folder_name}")
         self._folder_cache[folder_name] = folder_id
         return folder_id
 
@@ -734,17 +738,18 @@ class EmailIntakeService:
 
         # Post to QBO as vendor credit against GL 5105
         try:
-            credit_id = await self.qbo.post_vendor_credit(
+            credit_id, qbo_amount = await self.qbo.post_vendor_credit(
                 invoice, CREDIT_MEMO_GL,
                 file_bytes=file_bytes, filename=filename,
             )
-            await db.mark_posted_qbo(invoice_id, credit_id, CREDIT_MEMO_GL, gl_name="Job Cost")
+            await db.mark_posted_qbo(invoice_id, credit_id, CREDIT_MEMO_GL, gl_name="Job Cost", qbo_amount=qbo_amount)
             await db.audit(invoice_id, "posted", "system", {
                 "destination": "qbo_vendor_credit",
                 "credit_id": credit_id,
                 "gl_account": CREDIT_MEMO_GL,
+                "qbo_amount": qbo_amount,
             })
-            logger.info(f"Credit memo {invoice_id} posted to QBO — credit id {credit_id}")
+            logger.info(f"Credit memo {invoice_id} posted to QBO — credit id {credit_id}, TotalAmt: {qbo_amount}")
         except Exception as e:
             logger.error(f"QBO vendor credit post failed for '{subject}': {e}")
             await db.mark_queued(invoice_id, "credit_memo_post_failed")
