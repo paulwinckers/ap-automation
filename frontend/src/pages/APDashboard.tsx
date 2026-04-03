@@ -109,6 +109,7 @@ export default function APDashboard() {
   const [pulse, setPulse]             = useState(false);
   const [retrying, setRetrying]       = useState<number | null>(null);
   const [archiving, setArchiving]     = useState<number | null>(null);
+  const [syncingQbo, setSyncingQbo]   = useState<number | null>(null);
   const [poInputs, setPoInputs]       = useState<Record<number, string>>({});
   const [poSaving, setPoSaving]       = useState<number | null>(null);
   const [view, setView]               = useState<'active' | 'archived'>('active');
@@ -225,6 +226,21 @@ export default function APDashboard() {
       alert(`Archived ${data.archived} unknown entries.`);
     } catch (e) {
       alert('Bulk archive failed — check Railway logs');
+    }
+  }
+
+  async function syncQboAmount(id: number) {
+    setSyncingQbo(id);
+    try {
+      const res = await fetch(`${API}/invoices/${id}/sync-qbo-amount`, { method: 'POST' });
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      const data = await res.json();
+      // Update just this entry inline so the row clears immediately
+      setEntries(prev => prev.map(e => e.id === id ? { ...e, qbo_amount: data.qbo_amount } : e));
+    } catch (e: any) {
+      alert(`QBO sync failed: ${e.message}`);
+    } finally {
+      setSyncingQbo(null);
     }
   }
 
@@ -597,7 +613,24 @@ export default function APDashboard() {
                     {e.qbo_amount != null ? (
                       <>
                         {fmt(e.qbo_amount)}
-                        {amountMismatch && <span title="Does not match invoice amount"> ⚠</span>}
+                        {amountMismatch && (
+                          <>
+                            <span title="Does not match invoice amount"> ⚠</span>
+                            <button
+                              onClick={() => syncQboAmount(e.id)}
+                              disabled={syncingQbo === e.id}
+                              title="Re-fetch amount from QBO"
+                              style={{
+                                marginLeft: 6, padding: '1px 6px', fontSize: 10,
+                                cursor: syncingQbo === e.id ? 'wait' : 'pointer',
+                                border: '1px solid #d97706', borderRadius: 4,
+                                background: '#fef3c7', color: '#92400e', fontWeight: 600,
+                              }}
+                            >
+                              {syncingQbo === e.id ? '…' : '↻'}
+                            </button>
+                          </>
+                        )}
                       </>
                     ) : e.destination === 'qbo' && e.status === 'posted' ? (
                       <span style={{ color: '#94a3b8', fontSize: 11 }}>—</span>

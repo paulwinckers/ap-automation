@@ -549,6 +549,21 @@ async def backfill_qbo_amounts(db: Database = Depends(get_db)):
     return {"updated": updated, "failed": failed, "total": len(rows)}
 
 
+@router.post("/{invoice_id}/sync-qbo-amount")
+async def sync_qbo_amount(invoice_id: int, db: Database = Depends(get_db)):
+    """Re-fetch TotalAmt from QBO for a single invoice and update qbo_amount."""
+    row = await db.get_invoice(invoice_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if not row.get("qbo_bill_id"):
+        raise HTTPException(status_code=400, detail="Invoice has no QBO bill ID")
+    amount = await _qbo.get_transaction_amount(row["qbo_bill_id"], row.get("doc_type"))
+    if amount is None:
+        raise HTTPException(status_code=502, detail="Could not fetch amount from QBO")
+    await db._x("UPDATE invoices SET qbo_amount = ? WHERE id = ?", [amount, invoice_id])
+    return {"invoice_id": invoice_id, "qbo_amount": amount}
+
+
 @router.delete("/{invoice_id}")
 async def delete_invoice(invoice_id: int, db: Database = Depends(get_db)):
     """Delete an invoice and its audit log entries."""
