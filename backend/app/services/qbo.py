@@ -230,23 +230,25 @@ class QBOClient:
                 return [r["TaxRateRef"]["value"] for r in rate_list if "TaxRateRef" in r]
         return []
 
-    def _build_line_and_taxes(
+    async def _build_line_and_taxes(
         self,
         invoice: "Invoice",
         account_ref: dict,
-    ) -> tuple[list, Optional[dict]]:
+    ) -> tuple[list, Optional[dict], str]:
         """
-        Build a single expense line (subtotal) and explicit TxnTaxDetail.
+        Build a single expense line (subtotal) + explicit TxnTaxDetail.
+
+        Returns (lines, txn_tax_detail, global_tax_calculation).
 
         Always posts one line = subtotal so QBO never recalculates per-line taxes.
         Description summarises the extracted line items.
-        Tax amounts come directly from extraction (PercentBased=false) so the
-        QBO total matches the invoice exactly regardless of configured tax rates.
+        Tax amounts come directly from extraction (PercentBased=false).
+        TaxRateRef is included (required by QBO Canada) so taxes hit the correct accounts.
         """
         # ── Description: summarise extracted line items ───────────────────────
         if invoice.line_items:
             parts = [li.description for li in invoice.line_items if li.description]
-            summary = "; ".join(parts[:5])          # cap at 5 items
+            summary = "; ".join(parts[:5])
             if len(invoice.line_items) > 5:
                 summary += f" (+{len(invoice.line_items) - 5} more)"
         else:
@@ -268,23 +270,45 @@ class QBOClient:
             },
         }
 
+        # ── Resolve TaxRateRefs (required by QBO Canada even with PercentBased=false) ──
+        has_gst = any(
+            "gst" in (tl.tax_name or "").lower() or "cra" in (tl.tax_name or "").lower()
+            for tl in (invoice.tax_lines or [])
+        )
+        has_pst = any(
+            "pst" in (tl.tax_name or "").lower() or "bc" in (tl.tax_name or "").lower()
+            for tl in (invoice.tax_lines or [])
+        )
+        if not has_gst and not has_pst and invoice.tax_amount and invoice.tax_amount > 0:
+            has_gst = True
+            has_pst = True
+
+        tax_code_id = await self._resolve_tax_code(has_gst, has_pst)
+        rate_refs: list[str] = []
+        if tax_code_id:
+            rate_refs = await self._get_purchase_tax_rate_refs(tax_code_id)
+
         # ── TxnTaxDetail: explicit extracted amounts, not recalculated ────────
         txn_tax_detail = None
         if invoice.tax_lines:
             tax_lines_payload = []
             total_tax = 0.0
-            for tl in invoice.tax_lines:
+            for i, tl in enumerate(invoice.tax_lines):
                 if not tl.tax_amount:
                     continue
                 total_tax += tl.tax_amount
+                tl_detail: dict = {
+                    "PercentBased": False,
+                    "NetAmountTaxable": line_amount,
+                }
+                if i < len(rate_refs):
+                    tl_detail["TaxRateRef"] = {"value": rate_refs[i]}
+                elif rate_refs:
+                    tl_detail["TaxRateRef"] = {"value": rate_refs[0]}
                 tax_lines_payload.append({
                     "Amount": tl.tax_amount,
                     "DetailType": "TaxLineDetail",
-                    "TaxLineDetail": {
-                        "PercentBased": False,
-                        "NetAmountTaxable": line_amount,
-                        # TaxRateRef omitted — QBO accepts explicit amounts without it
-                    },
+                    "TaxLineDetail": tl_detail,
                 })
             if tax_lines_payload:
                 txn_tax_detail = {
@@ -292,20 +316,20 @@ class QBOClient:
                     "TaxLine": tax_lines_payload,
                 }
         elif invoice.tax_amount and invoice.tax_amount > 0:
-            # Fallback: total tax known but no breakdown
+            tl_detail = {
+                "PercentBased": False,
+                "NetAmountTaxable": line_amount,
+            }
+            if rate_refs:
+                tl_detail["TaxRateRef"] = {"value": rate_refs[0]}
             txn_tax_detail = {
                 "TotalTax": round(invoice.tax_amount, 2),
-                "TaxLine": [{
-                    "Amount": invoice.tax_amount,
-                    "DetailType": "TaxLineDetail",
-                    "TaxLineDetail": {
-                        "PercentBased": False,
-                        "NetAmountTaxable": line_amount,
-                    },
-                }],
+                "TaxLine": [{"Amount": invoice.tax_amount, "DetailType": "TaxLineDetail",
+                              "TaxLineDetail": tl_detail}],
             }
 
-        return [line], txn_tax_detail
+        global_tax_calc = "TaxExcluded" if txn_tax_detail else "NotApplicable"
+        return [line], txn_tax_detail, global_tax_calc
 
     # ── Vendor lookup ─────────────────────────────────────────────────────────
 
@@ -447,7 +471,7 @@ class QBOClient:
         account_ref = {"value": account["Id"], "name": account["Name"]}
 
         # ── Build single expense line + explicit tax detail ───────────────────
-        lines, txn_tax_detail = self._build_line_and_taxes(invoice, account_ref)
+        lines, txn_tax_detail, global_tax_calc = await self._build_line_and_taxes(invoice, account_ref)
 
         # ── Build bill payload ────────────────────────────────────────────────
         # QBO rejects explicit null for optional fields — omit them entirely
@@ -466,7 +490,7 @@ class QBOClient:
                 f"{currency_note}"
             ),
             "Line": lines,
-            "GlobalTaxCalculation": "NotApplicable",
+            "GlobalTaxCalculation": global_tax_calc,
         }
         if txn_tax_detail:
             bill_body["TxnTaxDetail"] = txn_tax_detail
@@ -617,7 +641,7 @@ class QBOClient:
         account_ref = {"value": account["Id"], "name": account["Name"]}
 
         # ── Build single expense line + explicit tax detail ───────────────────
-        lines, txn_tax_detail = self._build_line_and_taxes(invoice, account_ref)
+        lines, txn_tax_detail, global_tax_calc = await self._build_line_and_taxes(invoice, account_ref)
 
         # ── Build purchase payload ────────────────────────────────────────────
         # QBO rejects explicit null for optional fields — omit them entirely
@@ -633,7 +657,7 @@ class QBOClient:
                 f"PDF: {invoice.pdf_filename or 'n/a'}"
             ),
             "Line": lines,
-            "GlobalTaxCalculation": "NotApplicable",
+            "GlobalTaxCalculation": global_tax_calc,
         }
         if txn_tax_detail:
             purchase_body["TxnTaxDetail"] = txn_tax_detail
@@ -698,7 +722,7 @@ class QBOClient:
 
         # Build single expense line + explicit tax detail
         # _build_line_and_taxes uses subtotal; abs() ensures positive amounts for VendorCredit
-        lines, txn_tax_detail = self._build_line_and_taxes(invoice, account_ref)
+        lines, txn_tax_detail, global_tax_calc = await self._build_line_and_taxes(invoice, account_ref)
         for line in lines:
             line["Amount"] = abs(line["Amount"])
 
@@ -713,7 +737,7 @@ class QBOClient:
                 f"Keeland notified for Aspire action"
             ),
             "Line": lines,
-            "GlobalTaxCalculation": "NotApplicable",
+            "GlobalTaxCalculation": global_tax_calc,
         }
         if txn_tax_detail:
             credit_body["TxnTaxDetail"] = txn_tax_detail
