@@ -633,8 +633,8 @@ export default function APDashboard() {
                       </button>
                     )}
 
-                    {/* Archive button — any status in active view */}
-                    {view === 'active' && (
+                    {/* Archive button — only for unposted, unforwarded entries */}
+                    {view === 'active' && e.status !== 'posted' && !e.forwarded_to && (
                       <button
                         onClick={() => archiveInvoice(e.id)}
                         disabled={archiving === e.id}

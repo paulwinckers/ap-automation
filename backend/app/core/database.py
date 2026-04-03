@@ -430,7 +430,8 @@ class Database:
                 SUM(CASE WHEN destination='qbo'    AND status='posted' THEN 1 ELSE 0 END) as qbo,
                 SUM(CASE WHEN status='queued' THEN total_amount ELSE 0 END) as queued_value,
                 SUM(CASE WHEN status='posted' AND date(received_at)=date('now') THEN total_amount ELSE 0 END) as posted_today_value
-               FROM invoices"""
+               FROM invoices
+               WHERE (archived IS NULL OR archived = 0)"""
         )
         return rows[0] if rows else {}
 
