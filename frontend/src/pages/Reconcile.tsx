@@ -353,6 +353,19 @@ export default function Reconcile() {
           </div>
         )}
 
+        {/* Column headers */}
+        {statements.length > 0 && (
+          <div style={{ display: 'flex', gap: 12, padding: '4px 16px 6px', fontSize: 11,
+            fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+            <div style={{ minWidth: 180, flex: '0 0 auto' }}>Vendor</div>
+            <div style={{ minWidth: 90, flex: '0 0 auto' }}>Date</div>
+            <div style={{ minWidth: 100, flex: '0 0 auto' }}>Per Statement</div>
+            <div style={{ minWidth: 100, flex: '0 0 auto' }}>Per QBO</div>
+            <div style={{ minWidth: 90, flex: '0 0 auto' }}>Difference</div>
+            <div style={{ flex: 1 }}>Status</div>
+          </div>
+        )}
+
         {/* Statement cards */}
         {statements.map(stmt => {
           const diffData = diffs[stmt.id];
@@ -361,118 +374,118 @@ export default function Reconcile() {
           const isLoading = refreshing === stmt.id;
           const isExpanded = expandedDiff === stmt.id;
 
+          const qboBalForBorder = (diffData?.data as DiffResult | undefined)?.qbo_total_balance ?? null;
+          const isReconciled = qboBalForBorder !== null && Math.abs((stmt.closing_balance ?? 0) - qboBalForBorder) < 0.01;
+          const hasData = qboBalForBorder !== null;
+          const borderColor = !hasData ? '#e2e8f0' : isReconciled ? '#16a34a' : '#dc2626';
+
           return (
             <div key={stmt.id} style={{
-              background: '#fff', borderRadius: 12, border: '1px solid #e2e8f0',
-              marginBottom: 16, overflow: 'hidden',
+              background: '#fff', borderRadius: 12,
+              border: '1px solid #e2e8f0',
+              borderLeft: `4px solid ${borderColor}`,
+              marginBottom: 8, overflow: 'hidden',
             }}>
-              {/* Card header */}
-              <div style={{
-                padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 16,
-                borderBottom: isExpanded ? '1px solid #f1f5f9' : 'none',
-                cursor: 'pointer',
-              }} onClick={() => setExpandedDiff(isExpanded ? null : stmt.id)}>
-                {/* Vendor + summary */}
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: 16, color: '#1e293b' }}>{stmt.vendor_name}</div>
-                  <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
-                    {stmt.statement_date || '—'} · Statement: {fmt(stmt.closing_balance, stmt.currency)}
-                    {diffData?.data && (() => {
-                      const d = diffData.data as DiffResult;
-                      const qboBalance = d.qbo_total_balance ?? null;
-                      if (qboBalance === null) return null;
-                      const diff = (stmt.closing_balance ?? 0) - qboBalance;
-                      const diffColor = Math.abs(diff) < 0.01 ? '#16a34a' : '#dc2626';
-                      return (
-                        <>
-                          {' · '}QBO: <span style={{ color: '#1e293b', fontWeight: 600 }}>{fmt(qboBalance, stmt.currency)}</span>
-                          {' · '}Diff: <span style={{ color: diffColor, fontWeight: 700 }}>{diff >= 0 ? '+' : ''}{fmt(diff, stmt.currency)}</span>
-                        </>
-                      );
-                    })()}
-                  </div>
-                </div>
-
-                {/* Aging pills */}
-                <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
-                  {[
-                    { label: 'Current', val: stmt.aging_current },
-                    { label: '1-30d', val: stmt.aging_1_30 },
-                    { label: '31-60d', val: stmt.aging_31_60 },
-                    { label: '61-90d', val: stmt.aging_61_90 },
-                    { label: '90+d', val: stmt.aging_over_90 },
-                  ].filter(b => b.val > 0).map(b => (
-                    <span key={b.label} style={{
-                      background: b.label === 'Current' ? '#f0fdf4' : b.label === '1-30d' ? '#fffbeb' : '#fef2f2',
-                      color: b.label === 'Current' ? '#16a34a' : b.label === '1-30d' ? '#d97706' : '#dc2626',
-                      padding: '2px 8px', borderRadius: 10, fontWeight: 600,
-                    }}>
-                      {b.label}: {fmt(b.val, '')}
-                    </span>
-                  ))}
-                </div>
-
-                {/* Match status badge */}
-                {summary && !isLoading && (
+              {/* Compact single-line row */}
+              {(() => {
+                const qboBalance = (diffData?.data as DiffResult | undefined)?.qbo_total_balance ?? null;
+                const balDiff = qboBalance !== null ? (stmt.closing_balance ?? 0) - qboBalance : null;
+                const diffColor = balDiff === null ? '#94a3b8' : Math.abs(balDiff) < 0.01 ? '#16a34a' : '#dc2626';
+                return (
                   <div style={{
-                    background: summary.mismatch_count > 0 || summary.missing_from_qbo > 0 ? '#fef2f2' :
-                      summary.extra_in_qbo > 0 ? '#fffbeb' : '#f0fdf4',
-                    color: diffSummaryColor(diffData!.data),
-                    padding: '4px 12px', borderRadius: 20, fontWeight: 700, fontSize: 13,
-                  }}>
-                    {summary.mismatch_count === 0 && summary.missing_from_qbo === 0 && summary.extra_in_qbo === 0
-                      ? `✓ ${summary.matched_count} matched`
-                      : `⚠ ${summary.missing_from_qbo} missing · ${summary.mismatch_count} mismatch · ${summary.extra_in_qbo} extra`
-                    }
+                    padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                    borderBottom: isExpanded ? '1px solid #f1f5f9' : 'none',
+                    cursor: 'pointer', flexWrap: 'nowrap',
+                  }} onClick={() => setExpandedDiff(isExpanded ? null : stmt.id)}>
+
+                    {/* Vendor name */}
+                    <div style={{ fontWeight: 600, fontSize: 14, color: '#1e293b', minWidth: 180, flex: '0 0 auto' }}>
+                      {stmt.vendor_name}
+                    </div>
+
+                    {/* Date */}
+                    <div style={{ fontSize: 12, color: '#64748b', minWidth: 90, flex: '0 0 auto' }}>
+                      {stmt.statement_date || '—'}
+                    </div>
+
+                    {/* Stmt balance */}
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b', minWidth: 100, flex: '0 0 auto' }}>
+                      {fmt(stmt.closing_balance, stmt.currency)}
+                    </div>
+
+                    {/* QBO balance */}
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b', minWidth: 100, flex: '0 0 auto' }}>
+                      {isLoading ? <span style={{ color: '#94a3b8' }}>…</span> : qboBalance !== null ? fmt(qboBalance, stmt.currency) : '—'}
+                    </div>
+
+                    {/* Difference */}
+                    <div style={{ fontSize: 13, fontWeight: 700, color: diffColor, minWidth: 90, flex: '0 0 auto' }}>
+                      {balDiff === null ? '—' : `${balDiff >= 0 ? '+' : ''}${fmt(balDiff, '')}`}
+                    </div>
+
+                    {/* Match badge */}
+                    <div style={{ flex: 1 }}>
+                      {summary && !isLoading && (
+                        <span style={{
+                          background: summary.mismatch_count > 0 || summary.missing_from_qbo > 0 ? '#fef2f2' :
+                            summary.extra_in_qbo > 0 ? '#fffbeb' : '#f0fdf4',
+                          color: diffSummaryColor(diffData!.data),
+                          padding: '2px 10px', borderRadius: 20, fontWeight: 700, fontSize: 11,
+                        }}>
+                          {summary.mismatch_count === 0 && summary.missing_from_qbo === 0 && summary.extra_in_qbo === 0
+                            ? `✓ ${summary.matched_count} matched`
+                            : `⚠ ${summary.missing_from_qbo} miss · ${summary.mismatch_count} mismatch · ${summary.extra_in_qbo} extra`}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* QBO link */}
+                    <div style={{ fontSize: 11, flex: '0 0 auto' }} onClick={e => e.stopPropagation()}>
+                      {links[stmt.vendor_name] ? (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 4,
+                          background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8,
+                          padding: '2px 8px', color: '#15803d', whiteSpace: 'nowrap' }}>
+                          🔗 {links[stmt.vendor_name]!.qbo_vendor_name}
+                          <button onClick={() => removeLink(stmt.vendor_name)} title="Remove link"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 0, fontSize: 11 }}>✕</button>
+                        </span>
+                      ) : (
+                        <button onClick={() => { setLinkingFor(stmt.vendor_name); setVendorSearch(''); setVendorResults([]); }}
+                          style={{ padding: '2px 8px', fontSize: 11, border: '1px dashed #cbd5e1',
+                            borderRadius: 8, background: '#f8fafc', cursor: 'pointer', color: '#64748b', whiteSpace: 'nowrap' }}>
+                          🔗 Link
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    <div style={{ display: 'flex', gap: 6, flex: '0 0 auto' }} onClick={e => e.stopPropagation()}>
+                      <button onClick={async () => {
+                        const res = await fetch(`${API}/reconcile/statements/${stmt.id}/pdf`);
+                        if (!res.ok) { alert('No PDF stored for this statement'); return; }
+                        const { url } = await res.json();
+                        window.open(url, '_blank');
+                      }} style={{
+                        padding: '3px 10px', fontSize: 11, border: '1px solid #e2e8f0',
+                        borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
+                      }} title="View PDF">📄</button>
+                      {periodStatus === 'open' && (
+                        <button onClick={() => loadDiff(stmt.id)} disabled={isLoading} style={{
+                          padding: '3px 10px', fontSize: 11, border: '1px solid #e2e8f0',
+                          borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
+                        }}>↺</button>
+                      )}
+                      {periodStatus === 'open' && (
+                        <button onClick={() => handleDelete(stmt.id, stmt.vendor_name)} style={{
+                          padding: '3px 8px', fontSize: 11, border: '1px solid #fecaca',
+                          borderRadius: 6, background: '#fff', cursor: 'pointer', color: '#dc2626',
+                        }}>✕</button>
+                      )}
+                      <span style={{ fontSize: 14, color: '#94a3b8', padding: '0 2px' }}>{isExpanded ? '▲' : '▼'}</span>
+                    </div>
                   </div>
-                )}
-                {isLoading && <span style={{ fontSize: 12, color: '#94a3b8' }}>Loading…</span>}
-
-                {/* QBO vendor link badge */}
-                <div style={{ fontSize: 11 }} onClick={e => e.stopPropagation()}>
-                  {links[stmt.vendor_name] ? (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 4,
-                      background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8,
-                      padding: '2px 8px', color: '#15803d', whiteSpace: 'nowrap' }}>
-                      🔗 {links[stmt.vendor_name]!.qbo_vendor_name}
-                      <button onClick={() => removeLink(stmt.vendor_name)} title="Remove link"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 0, fontSize: 11 }}>✕</button>
-                    </span>
-                  ) : (
-                    <button onClick={() => { setLinkingFor(stmt.vendor_name); setVendorSearch(''); setVendorResults([]); }}
-                      style={{ padding: '2px 8px', fontSize: 11, border: '1px dashed #cbd5e1',
-                        borderRadius: 8, background: '#f8fafc', cursor: 'pointer', color: '#64748b' }}>
-                      🔗 Link QBO vendor
-                    </button>
-                  )}
-                </div>
-
-                {/* Actions */}
-                <div style={{ display: 'flex', gap: 8 }} onClick={e => e.stopPropagation()}>
-                  {periodStatus === 'open' && (
-                    <button onClick={() => loadDiff(stmt.id)} disabled={isLoading} style={{
-                      padding: '4px 12px', fontSize: 12, border: '1px solid #e2e8f0',
-                      borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
-                    }}>↺ Refresh</button>
-                  )}
-                  <button onClick={async () => {
-                    const res = await fetch(`${API}/reconcile/statements/${stmt.id}/pdf`);
-                    if (!res.ok) { alert('No PDF stored for this statement'); return; }
-                    const { url } = await res.json();
-                    window.open(url, '_blank');
-                  }} style={{
-                    padding: '4px 12px', fontSize: 12, border: '1px solid #e2e8f0',
-                    borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
-                  }} title="Download original PDF">⬇ PDF</button>
-                  {periodStatus === 'open' && (
-                    <button onClick={() => handleDelete(stmt.id, stmt.vendor_name)} style={{
-                      padding: '4px 12px', fontSize: 12, border: '1px solid #fecaca',
-                      borderRadius: 6, background: '#fff', cursor: 'pointer', color: '#dc2626',
-                    }}>✕</button>
-                  )}
-                  <span style={{ fontSize: 18, color: '#94a3b8' }}>{isExpanded ? '▲' : '▼'}</span>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* Expanded diff table */}
               {isExpanded && diff && (

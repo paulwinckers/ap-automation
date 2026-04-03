@@ -166,6 +166,26 @@ async def upload_statement(
         if not vendor_name:
             raise HTTPException(status_code=422, detail="Could not extract vendor name from statement")
 
+        # ── Month rollback: statements dated Apr 1-5 are really March statements ──
+        # If the statement date falls within the first 5 days of a month that matches
+        # the chosen period, silently roll back to the prior month.
+        stmt_date_str = extraction.get("statement_date")
+        if stmt_date_str:
+            try:
+                stmt_dt = date.fromisoformat(stmt_date_str)
+                if stmt_dt.day <= 5 and f"{stmt_dt.year}-{stmt_dt.month:02d}" == period:
+                    # Roll back to previous month
+                    if stmt_dt.month == 1:
+                        prev_period = f"{stmt_dt.year - 1}-12"
+                    else:
+                        prev_period = f"{stmt_dt.year}-{stmt_dt.month - 1:02d}"
+                    logger.info(f"Statement date {stmt_date_str} is within first 5 days of {period} — assigning to {prev_period}")
+                    period = prev_period
+                    label = _period_label(period)
+                    period_row = await db.get_or_create_period(period, label)
+            except ValueError:
+                pass  # unparseable date — leave period as-is
+
         # Duplicate check — one statement per vendor per period
         existing = await db.get_statements_for_period(period_row["id"])
         for s in existing:
