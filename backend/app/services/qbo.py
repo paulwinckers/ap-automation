@@ -298,6 +298,8 @@ class QBOClient:
         rate_refs: list[str] = []
         if tax_code_id:
             rate_refs = await self._get_purchase_tax_rate_refs(tax_code_id)
+            # TaxExcluded requires TaxCodeRef on each line item too
+            line["AccountBasedExpenseLineDetail"]["TaxCodeRef"] = {"value": tax_code_id}
 
         # ── TxnTaxDetail: explicit extracted amounts, not recalculated ────────
         txn_tax_detail = None
