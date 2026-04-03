@@ -824,21 +824,26 @@ class QBOClient:
     async def get_transaction_amount(self, entity_id: str, doc_type: Optional[str]) -> Optional[float]:
         """
         Fetch TotalAmt for a single QBO transaction by ID.
-        doc_type determines the entity type: 'credit_memo' → VendorCredit,
-        'mastercard' → Purchase, anything else → Bill.
-        Returns None if the entity is not found or has no TotalAmt.
+        Uses doc_type as a hint but falls back through all entity types if the
+        first attempt returns a 400/404 (e.g. doc_type is NULL but entity is a VendorCredit).
+        Returns None only if all three types fail.
         """
         if doc_type == "credit_memo":
-            path, key = f"vendorcredit/{entity_id}", "VendorCredit"
+            candidates = [("vendorcredit", "VendorCredit"), ("bill", "Bill"), ("purchase", "Purchase")]
         elif doc_type == "mastercard":
-            path, key = f"purchase/{entity_id}", "Purchase"
+            candidates = [("purchase", "Purchase"), ("bill", "Bill"), ("vendorcredit", "VendorCredit")]
         else:
-            path, key = f"bill/{entity_id}", "Bill"
-        try:
-            result = await self._get(path)
-            return result.get(key, {}).get("TotalAmt")
-        except Exception:
-            return None
+            candidates = [("bill", "Bill"), ("vendorcredit", "VendorCredit"), ("purchase", "Purchase")]
+
+        for path_prefix, key in candidates:
+            try:
+                result = await self._get(f"{path_prefix}/{entity_id}")
+                amount = result.get(key, {}).get("TotalAmt")
+                if amount is not None:
+                    return amount
+            except Exception:
+                continue
+        return None
 
     async def close(self):
         await self._http.aclose()
