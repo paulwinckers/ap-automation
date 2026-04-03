@@ -322,6 +322,12 @@ class Database:
         return [r["vendor_name"] for r in rows]
 
     async def update_vendor_rule(self, vendor_id: int, updates: dict) -> None:
+        # D1 stores booleans as JSON true/false which doesn't match integer comparisons.
+        # Convert is_employee and active to int explicitly.
+        if "is_employee" in updates and isinstance(updates["is_employee"], bool):
+            updates["is_employee"] = int(updates["is_employee"])
+        if "active" in updates and isinstance(updates["active"], bool):
+            updates["active"] = int(updates["active"])
         fields = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [vendor_id]
         await self._x(
