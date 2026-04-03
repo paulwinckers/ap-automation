@@ -54,8 +54,9 @@ Rules:
 
 def _normalize_invoice_number(raw: str) -> str:
     """
-    Strip common prefixes from vendor invoice numbers for comparison.
+    Strip common prefixes and leading zeros from vendor invoice numbers for comparison.
     "INV #620024" → "620024"
+    "0620024"     → "620024"  (Amrize-style leading zero)
     "INV-620024"  → "620024"
     "#620024"     → "620024"
     "620024"      → "620024"
@@ -65,7 +66,10 @@ def _normalize_invoice_number(raw: str) -> str:
     normalized = raw.strip()
     # Remove common prefixes: INV #, INV#, INV-, #
     normalized = re.sub(r'^(INV\s*#?\s*|INV-|#)', '', normalized, flags=re.IGNORECASE)
-    return normalized.strip()
+    normalized = normalized.strip()
+    # Strip leading zeros so "0620024" matches "620024"
+    normalized = normalized.lstrip('0') or normalized  # keep at least one char if all zeros
+    return normalized
 
 
 def _diff_statement_vs_qbo(
