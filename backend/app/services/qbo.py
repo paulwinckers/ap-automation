@@ -395,6 +395,20 @@ class QBOClient:
             if "deleted" not in v.get("DisplayName", "").lower():
                 return v
 
+        # 4. First-significant-word fallback — handles cases where statement name and QBO name
+        #    share a key word but differ in the rest (e.g. "LORDCO PARTS LTD" vs "Lordco Auto Parts")
+        words = [w for w in like_base.split() if len(w) >= 5]
+        if words:
+            first_word = words[0].replace("&", "&amp;").replace("'", "\\'")
+            result = await self._get(
+                "query",
+                {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{first_word}%' MAXRESULTS 10"},
+            )
+            for v in result.get("QueryResponse", {}).get("Vendor", []):
+                if "deleted" not in v.get("DisplayName", "").lower():
+                    logger.info(f"First-word vendor match: '{vendor_name}' → '{v['DisplayName']}' (word: '{first_word}')")
+                    return v
+
         return None
 
     async def find_or_create_vendor(self, vendor_name: str) -> dict:
