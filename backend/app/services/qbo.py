@@ -386,17 +386,10 @@ class QBOClient:
             if "deleted" not in v.get("DisplayName", "").lower():
                 return v
 
-        # 3. Partial match (inactive, non-deleted) — prevents duplicates when vendor was deactivated
-        result = await self._get(
-            "query",
-            {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{like_term}%' AND Active = false MAXRESULTS 5"},
-        )
-        for v in result.get("QueryResponse", {}).get("Vendor", []):
-            if "deleted" not in v.get("DisplayName", "").lower():
-                return v
-
-        # 4. First-significant-word fallback — handles cases where statement name and QBO name
-        #    share a key word but differ in the rest (e.g. "LORDCO PARTS LTD" vs "Lordco Auto Parts")
+        # 3. First-significant-word fallback on ACTIVE vendors — handles cases where statement
+        #    name and QBO name share a key word but differ in the rest
+        #    (e.g. "LORDCO PARTS LTD" vs "Lordco Auto Parts").
+        #    Done BEFORE the inactive search so active accounts are always preferred.
         words = [w for w in like_base.split() if len(w) >= 5]
         if words:
             first_word = words[0].replace("&", "&amp;").replace("'", "\\'")
@@ -408,6 +401,16 @@ class QBOClient:
                 if "deleted" not in v.get("DisplayName", "").lower():
                     logger.info(f"First-word vendor match: '{vendor_name}' → '{v['DisplayName']}' (word: '{first_word}')")
                     return v
+
+        # 4. Partial match (inactive, non-deleted) — last resort to prevent creating duplicates
+        #    when a vendor was deactivated. Not used for reconciliation (active preferred above).
+        result = await self._get(
+            "query",
+            {"query": f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{like_term}%' AND Active = false MAXRESULTS 5"},
+        )
+        for v in result.get("QueryResponse", {}).get("Vendor", []):
+            if "deleted" not in v.get("DisplayName", "").lower():
+                return v
 
         return None
 
