@@ -25,6 +25,7 @@ from app.models.invoice import Invoice, InvoiceStatus, LineItem, TaxLine
 from app.services.aspire import AspireClient
 from app.services.extractor import InvoiceExtractor
 from app.services.qbo import QBOClient
+from app.services.r2 import upload_invoice_pdf, get_file_bytes
 from app.services.routing import RoutingOutcome, route_invoice
 
 logger = logging.getLogger(__name__)
@@ -227,6 +228,14 @@ async def upload_invoice(
         "total":  extraction.total_amount,
         "po":     extraction.po_number,
     })
+
+    # Store file to R2 so retry can re-attach it to QBO
+    try:
+        r2_key = await upload_invoice_pdf(pdf_bytes, invoice_id, file.filename or "receipt.jpg")
+        if r2_key:
+            await db.save_invoice_r2_key(invoice_id, r2_key)
+    except Exception as e:
+        logger.warning(f"R2 upload failed for field invoice {invoice_id} — attachment may be missing on retry: {e}")
 
     invoice = Invoice(
         id             = invoice_id,
@@ -583,6 +592,11 @@ async def retry_invoice(invoice_id: int, db: Database = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Only error, queued, or pending invoices can be retried")
 
     raw = json.loads(row.get("intake_raw") or "{}")
+
+    # Fetch file from R2 so the attachment is included on retry
+    r2_key = row.get("pdf_r2_key")
+    file_bytes = await get_file_bytes(r2_key) if r2_key else None
+
     invoice = Invoice(
         id                 = invoice_id,
         status             = InvoiceStatus.ERROR,
@@ -599,6 +613,7 @@ async def retry_invoice(invoice_id: int, db: Database = Depends(get_db)):
         pdf_filename       = row["pdf_filename"],
         intake_source      = row["intake_source"],
         doc_type           = row.get("doc_type"),
+        file_bytes         = file_bytes,
         line_items         = [LineItem(**li) for li in raw.get("line_items", [])],
         tax_lines          = [TaxLine(**tl) for tl in raw.get("tax_lines", [])],
     )

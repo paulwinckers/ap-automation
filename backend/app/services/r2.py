@@ -111,6 +111,24 @@ async def upload_invoice_pdf(
     return key
 
 
+async def get_file_bytes(key: str) -> Optional[bytes]:
+    """Download a file from R2 and return its bytes. Returns None if unavailable."""
+    if not _r2_available() or not key:
+        return None
+
+    def _download():
+        client = _make_client()
+        resp = client.get_object(Bucket=settings.R2_BUCKET_NAME, Key=key)
+        return resp["Body"].read()
+
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(None, _download)
+    except Exception as e:
+        logger.warning(f"R2 download failed for {key}: {e}")
+        return None
+
+
 async def get_presigned_url(key: str, expires_in: int = 3600) -> Optional[str]:
     """
     Generate a presigned URL for a statement PDF.
