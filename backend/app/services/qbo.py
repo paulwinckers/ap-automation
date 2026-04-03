@@ -17,6 +17,7 @@ Flow:
   4. Refresh token expires every 100 days — rotate on each use.
 """
 
+import asyncio
 import logging
 import time
 from datetime import date, datetime
@@ -136,7 +137,7 @@ class QBOClient:
         if tid:
             logger.debug(f"QBO intuit_tid: {tid}")
 
-    async def _get(self, path: str, params: dict = None) -> dict:
+    async def _get(self, path: str, params: dict = None, _retry: int = 0) -> dict:
         token = await self._ensure_token()
         url = f"{self.base_url}/v3/company/{self.realm_id}/{path.lstrip('/')}"
         resp = await self._http.get(
@@ -148,10 +149,15 @@ class QBOClient:
             },
         )
         self._log_intuit_tid(resp)
+        if resp.status_code == 429 and _retry < 4:
+            wait = int(resp.headers.get("Retry-After", 10 * (2 ** _retry)))
+            logger.warning(f"QBO rate limit (429) — waiting {wait}s before retry {_retry + 1}/4")
+            await asyncio.sleep(wait)
+            return await self._get(path, params, _retry + 1)
         resp.raise_for_status()
         return resp.json()
 
-    async def _post(self, path: str, body: dict) -> dict:
+    async def _post(self, path: str, body: dict, _retry: int = 0) -> dict:
         token = await self._ensure_token()
         url = f"{self.base_url}/v3/company/{self.realm_id}/{path.lstrip('/')}"
         resp = await self._http.post(
@@ -165,6 +171,11 @@ class QBOClient:
             },
         )
         self._log_intuit_tid(resp)
+        if resp.status_code == 429 and _retry < 4:
+            wait = int(resp.headers.get("Retry-After", 10 * (2 ** _retry)))
+            logger.warning(f"QBO rate limit (429) on POST — waiting {wait}s before retry {_retry + 1}/4")
+            await asyncio.sleep(wait)
+            return await self._post(path, body, _retry + 1)
         resp.raise_for_status()
         return resp.json()
 
