@@ -531,7 +531,7 @@ class Database:
         return await self._q(
             """SELECT id, status, destination, vendor_name,
                       invoice_number, total_amount, tax_amount, subtotal,
-                      gl_account, gl_name,
+                      gl_account, gl_name, qbo_amount,
                       qbo_bill_id, aspire_receipt_id,
                       received_at, posted_at, error_message,
                       intake_source, archived, forwarded_to, pdf_r2_key
@@ -547,7 +547,7 @@ class Database:
         return await self._q(
             """SELECT id, status, destination, vendor_name,
                       invoice_number, total_amount, tax_amount, subtotal,
-                      gl_account, gl_name,
+                      gl_account, gl_name, qbo_amount,
                       qbo_bill_id, aspire_receipt_id,
                       received_at, posted_at, error_message,
                       intake_source, archived, forwarded_to, pdf_r2_key
