@@ -424,7 +424,7 @@ class Database:
             """SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) as queued,
-                SUM(CASE WHEN status='posted' THEN 1 ELSE 0 END) as posted,
+                SUM(CASE WHEN status='posted' AND date(received_at)=date('now') THEN 1 ELSE 0 END) as posted,
                 SUM(CASE WHEN status='error'  THEN 1 ELSE 0 END) as errors,
                 SUM(CASE WHEN destination='aspire' AND status='posted' THEN 1 ELSE 0 END) as aspire,
                 SUM(CASE WHEN destination='qbo'    AND status='posted' THEN 1 ELSE 0 END) as qbo,
