@@ -39,6 +39,11 @@ interface Statement {
   intake_source: string;
 }
 
+interface QboLink {
+  qbo_vendor_id: string;
+  qbo_vendor_name: string;
+}
+
 interface DiffRow {
   invoice_number: string;
   date?: string;
@@ -97,6 +102,11 @@ export default function Reconcile() {
   const [refreshing, setRefreshing]     = useState<number | null>(null);
   const [closing, setClosing]           = useState(false);
   const [expandedDiff, setExpandedDiff] = useState<number | null>(null);
+  const [links, setLinks]               = useState<Record<string, QboLink | null>>({});
+  const [linkingFor, setLinkingFor]     = useState<string | null>(null); // statement_name being linked
+  const [vendorSearch, setVendorSearch] = useState('');
+  const [vendorResults, setVendorResults] = useState<{id: string; name: string}[]>([]);
+  const [searchingVendors, setSearchingVendors] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { loadPeriods(); }, []);
@@ -127,10 +137,56 @@ export default function Reconcile() {
       return current;
     });
     await loadPeriods();
+    const stmts = data.statements || [];
+    await loadLinks(stmts);
     // Auto-load diffs for all statements
-    for (const stmt of (data.statements || [])) {
+    for (const stmt of stmts) {
       loadDiff(stmt.id);
     }
+  }
+
+  async function loadLinks(stmts: Statement[]) {
+    const entries = await Promise.all(
+      stmts.map(async s => {
+        const res = await fetch(`${API}/reconcile/vendor-links/${encodeURIComponent(s.vendor_name)}`);
+        const data = await res.json();
+        return [s.vendor_name, data?.qbo_vendor_id ? data : null] as [string, QboLink | null];
+      })
+    );
+    setLinks(Object.fromEntries(entries));
+  }
+
+  async function searchQboVendors(q: string) {
+    setVendorSearch(q);
+    if (q.length < 2) { setVendorResults([]); return; }
+    setSearchingVendors(true);
+    try {
+      const res = await fetch(`${API}/reconcile/qbo-vendors/search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      setVendorResults(data.vendors || []);
+    } finally {
+      setSearchingVendors(false);
+    }
+  }
+
+  async function saveLink(statementName: string, vendor: {id: string; name: string}) {
+    await fetch(`${API}/reconcile/vendor-links/${encodeURIComponent(statementName)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qbo_vendor_id: vendor.id, qbo_vendor_name: vendor.name }),
+    });
+    setLinks(prev => ({ ...prev, [statementName]: { qbo_vendor_id: vendor.id, qbo_vendor_name: vendor.name } }));
+    setLinkingFor(null);
+    setVendorSearch('');
+    setVendorResults([]);
+    // Refresh the diff for this statement
+    const stmt = statements.find(s => s.vendor_name === statementName);
+    if (stmt) loadDiff(stmt.id);
+  }
+
+  async function removeLink(statementName: string) {
+    await fetch(`${API}/reconcile/vendor-links/${encodeURIComponent(statementName)}`, { method: 'DELETE' });
+    setLinks(prev => ({ ...prev, [statementName]: null }));
   }
 
   async function loadDiff(statementId: number) {
@@ -372,6 +428,25 @@ export default function Reconcile() {
                 )}
                 {isLoading && <span style={{ fontSize: 12, color: '#94a3b8' }}>Loading…</span>}
 
+                {/* QBO vendor link badge */}
+                <div style={{ fontSize: 11 }} onClick={e => e.stopPropagation()}>
+                  {links[stmt.vendor_name] ? (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4,
+                      background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8,
+                      padding: '2px 8px', color: '#15803d', whiteSpace: 'nowrap' }}>
+                      🔗 {links[stmt.vendor_name]!.qbo_vendor_name}
+                      <button onClick={() => removeLink(stmt.vendor_name)} title="Remove link"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 0, fontSize: 11 }}>✕</button>
+                    </span>
+                  ) : (
+                    <button onClick={() => { setLinkingFor(stmt.vendor_name); setVendorSearch(''); setVendorResults([]); }}
+                      style={{ padding: '2px 8px', fontSize: 11, border: '1px dashed #cbd5e1',
+                        borderRadius: 8, background: '#f8fafc', cursor: 'pointer', color: '#64748b' }}>
+                      🔗 Link QBO vendor
+                    </button>
+                  )}
+                </div>
+
                 {/* Actions */}
                 <div style={{ display: 'flex', gap: 8 }} onClick={e => e.stopPropagation()}>
                   {periodStatus === 'open' && (
@@ -479,6 +554,62 @@ export default function Reconcile() {
           body { background: white; }
         }
       `}</style>
+
+      {/* QBO vendor link modal */}
+      {linkingFor && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }} onClick={() => setLinkingFor(null)}>
+          <div style={{
+            background: '#fff', borderRadius: 12, padding: 24, width: 420, maxWidth: '90vw',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>Link QBO Vendor</div>
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 16 }}>
+              Statement: <strong>{linkingFor}</strong>
+            </div>
+            <input
+              autoFocus
+              placeholder="Search QBO vendor name…"
+              value={vendorSearch}
+              onChange={e => searchQboVendors(e.target.value)}
+              style={{
+                width: '100%', padding: '8px 12px', fontSize: 14, borderRadius: 8,
+                border: '1.5px solid #e2e8f0', outline: 'none', boxSizing: 'border-box',
+              }}
+            />
+            {searchingVendors && (
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8 }}>Searching…</div>
+            )}
+            {vendorResults.length > 0 && (
+              <div style={{ marginTop: 8, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
+                {vendorResults.map(v => (
+                  <div key={v.id}
+                    onClick={() => saveLink(linkingFor, v)}
+                    style={{
+                      padding: '10px 14px', cursor: 'pointer', fontSize: 14,
+                      borderBottom: '1px solid #f1f5f9',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#f0fdf4')}
+                    onMouseLeave={e => (e.currentTarget.style.background = '')}
+                  >
+                    {v.name}
+                  </div>
+                ))}
+              </div>
+            )}
+            {vendorSearch.length >= 2 && !searchingVendors && vendorResults.length === 0 && (
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8 }}>No QBO vendors found</div>
+            )}
+            <button onClick={() => setLinkingFor(null)} style={{
+              marginTop: 16, width: '100%', padding: '8px', fontSize: 13,
+              border: '1px solid #e2e8f0', borderRadius: 8, cursor: 'pointer',
+              background: '#f8fafc', color: '#64748b',
+            }}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

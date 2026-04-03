@@ -277,8 +277,12 @@ async def get_statement_diff(statement_id: int, db: Database = Depends(get_db)):
             period = stmt_date[:7]
             from_date, to_date = _period_date_range(period)
 
-        diff_result = await svc.reconcile(extraction, from_date, to_date)
-        return {"source": "live", "data": diff_result}
+        # Check for a saved vendor QBO link — bypasses fuzzy name matching
+        link = await db.get_vendor_qbo_link(stmt["vendor_name"])
+        qbo_vendor_id = link["qbo_vendor_id"] if link else None
+
+        diff_result = await svc.reconcile(extraction, from_date, to_date, qbo_vendor_id=qbo_vendor_id)
+        return {"source": "live", "data": diff_result, "qbo_link": link}
 
     finally:
         await db.close()
@@ -313,5 +317,62 @@ async def get_statement_pdf_url(statement_id: int, db: Database = Depends(get_db
         if not url:
             raise HTTPException(status_code=503, detail="R2 storage not configured")
         return {"url": url, "filename": stmt.get("pdf_filename") or "statement.pdf"}
+    finally:
+        await db.close()
+
+
+# ── Vendor QBO link management ────────────────────────────────────────────────
+
+@router.get("/qbo-vendors/search")
+async def search_qbo_vendors(q: str = ""):
+    """Search active QBO vendors by name fragment. Used by the link UI."""
+    if not q or len(q) < 2:
+        return {"vendors": []}
+    from app.services.qbo import QBOClient
+    qbo = QBOClient()
+    try:
+        vendors = await qbo.search_vendors(q)
+        return {"vendors": [{"id": v["Id"], "name": v["DisplayName"]} for v in vendors]}
+    finally:
+        await qbo.close()
+
+
+@router.get("/vendor-links/{statement_name}")
+async def get_vendor_link(statement_name: str, db: Database = Depends(get_db)):
+    """Get the QBO vendor link for a statement vendor name."""
+    await db.connect()
+    try:
+        link = await db.get_vendor_qbo_link(statement_name)
+        return link or {}
+    finally:
+        await db.close()
+
+
+@router.put("/vendor-links/{statement_name}")
+async def save_vendor_link(
+    statement_name: str,
+    body: dict,
+    db: Database = Depends(get_db),
+):
+    """Save or update a vendor QBO link."""
+    qbo_vendor_id   = body.get("qbo_vendor_id")
+    qbo_vendor_name = body.get("qbo_vendor_name")
+    if not qbo_vendor_id or not qbo_vendor_name:
+        raise HTTPException(status_code=400, detail="qbo_vendor_id and qbo_vendor_name required")
+    await db.connect()
+    try:
+        await db.save_vendor_qbo_link(statement_name, qbo_vendor_id, qbo_vendor_name)
+        return {"statement_name": statement_name, "qbo_vendor_id": qbo_vendor_id, "qbo_vendor_name": qbo_vendor_name}
+    finally:
+        await db.close()
+
+
+@router.delete("/vendor-links/{statement_name}")
+async def delete_vendor_link(statement_name: str, db: Database = Depends(get_db)):
+    """Remove a vendor QBO link (revert to fuzzy matching)."""
+    await db.connect()
+    try:
+        await db.delete_vendor_qbo_link(statement_name)
+        return {"deleted": statement_name}
     finally:
         await db.close()

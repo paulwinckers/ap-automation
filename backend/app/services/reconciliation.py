@@ -220,16 +220,18 @@ class ReconciliationService:
         statement: dict,
         from_date: str,
         to_date: str,
+        qbo_vendor_id: str = None,
     ) -> dict:
         """
         Compare extracted statement against QBO bills for the vendor.
-        from_date / to_date: YYYY-MM-DD range to query QBO.
+        qbo_vendor_id: if provided, skips fuzzy name lookup and uses this ID directly.
         """
         vendor_name = statement.get("vendor_name", "")
-        logger.info(f"Reconciling statement for {vendor_name} ({from_date} to {to_date})")
+        logger.info(f"Reconciling statement for {vendor_name} ({from_date} to {to_date})"
+                    + (f" [linked to QBO vendor {qbo_vendor_id}]" if qbo_vendor_id else ""))
 
         try:
-            qbo_bills = await self.qbo.get_vendor_bills(vendor_name, from_date, to_date)
+            qbo_bills = await self.qbo.get_vendor_bills(vendor_name, from_date, to_date, vendor_id=qbo_vendor_id)
         except Exception as e:
             logger.error(f"QBO bill query failed for {vendor_name}: {e}")
             qbo_bills = []

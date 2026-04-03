@@ -826,11 +826,21 @@ class QBOClient:
 
     # ── Vendor statement reconciliation (future) ──────────────────────────────
 
+    async def search_vendors(self, q: str) -> list[dict]:
+        """Search active QBO vendors by name fragment. Used for vendor linking UI."""
+        escaped = q.replace("&", "&amp;").replace("'", "\\'")
+        result = await self._get(
+            "query",
+            {"query": f"SELECT Id, DisplayName, Active FROM Vendor WHERE DisplayName LIKE '%{escaped}%' AND Active = true MAXRESULTS 20"},
+        )
+        return result.get("QueryResponse", {}).get("Vendor", [])
+
     async def get_vendor_bills(
         self,
         vendor_name: str,
         from_date: str,
         to_date: str,
+        vendor_id: str = None,
     ) -> list[dict]:
         """
         Fetch all bills for a vendor.
@@ -843,11 +853,12 @@ class QBOClient:
 
         from_date / to_date: retained in signature for API compatibility but unused.
         """
-        vendor = await self.find_vendor(vendor_name)
-        if not vendor:
-            return []
+        if not vendor_id:
+            vendor = await self.find_vendor(vendor_name)
+            if not vendor:
+                return []
+            vendor_id = vendor["Id"]
 
-        vendor_id = vendor["Id"]
         result = await self._get(
             "query",
             {

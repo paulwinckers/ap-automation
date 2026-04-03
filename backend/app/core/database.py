@@ -698,6 +698,31 @@ class Database:
         await self._x("DELETE FROM statement_lines WHERE statement_id = ?", [statement_id])
         await self._x("DELETE FROM vendor_statements WHERE id = ?", [statement_id])
 
+    # ── Vendor QBO links ──────────────────────────────────────────────────────
+
+    async def get_vendor_qbo_link(self, statement_name: str) -> Optional[dict]:
+        rows = await self._q(
+            "SELECT * FROM vendor_qbo_links WHERE LOWER(statement_name) = LOWER(?)",
+            [statement_name],
+        )
+        return rows[0] if rows else None
+
+    async def save_vendor_qbo_link(self, statement_name: str, qbo_vendor_id: str, qbo_vendor_name: str) -> None:
+        await self._x(
+            """INSERT INTO vendor_qbo_links (statement_name, qbo_vendor_id, qbo_vendor_name)
+               VALUES (?, ?, ?)
+               ON CONFLICT(statement_name) DO UPDATE SET
+                 qbo_vendor_id = excluded.qbo_vendor_id,
+                 qbo_vendor_name = excluded.qbo_vendor_name""",
+            [statement_name, qbo_vendor_id, qbo_vendor_name],
+        )
+
+    async def delete_vendor_qbo_link(self, statement_name: str) -> None:
+        await self._x(
+            "DELETE FROM vendor_qbo_links WHERE LOWER(statement_name) = LOWER(?)",
+            [statement_name],
+        )
+
     async def cleanup_sibling_errors(
         self, current_invoice_id: int, vendor_name: str, invoice_number: Optional[str]
     ) -> int:

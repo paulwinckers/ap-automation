@@ -190,3 +190,13 @@ ALTER TABLE invoices ADD COLUMN forwarded_to TEXT;
 
 -- Migration: actual amount confirmed by QBO on posting (vs extracted total_amount)
 ALTER TABLE invoices ADD COLUMN qbo_amount REAL;
+
+-- ── Vendor QBO links — permanent mapping from statement vendor name → QBO vendor ──
+-- Bypasses fuzzy name matching so the right QBO account is always used.
+CREATE TABLE IF NOT EXISTS vendor_qbo_links (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    statement_name  TEXT NOT NULL UNIQUE,   -- as extracted from the statement PDF (case-insensitive key)
+    qbo_vendor_id   TEXT NOT NULL,
+    qbo_vendor_name TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
