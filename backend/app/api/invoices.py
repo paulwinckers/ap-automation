@@ -378,18 +378,30 @@ async def get_invoice(invoice_id: int, db: Database = Depends(get_db)):
 
 @router.get("/{invoice_id}/pdf")
 async def get_invoice_pdf_url(invoice_id: int, db: Database = Depends(get_db)):
-    """Return a short-lived presigned R2 URL for the invoice PDF."""
+    """Return a short-lived URL for the invoice PDF.
+    Tries R2 first; falls back to QBO's TempDownloadUri if no R2 key stored."""
     from app.services.r2 import get_presigned_url
     invoice = await db.get_invoice(invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
+
+    # ── Try R2 first ──────────────────────────────────────────────────────────
     r2_key = invoice.get("pdf_r2_key")
-    if not r2_key:
-        raise HTTPException(status_code=404, detail="No PDF stored for this invoice")
-    url = await get_presigned_url(r2_key, expires_in=900)  # 15-minute link
-    if not url:
-        raise HTTPException(status_code=503, detail="R2 storage unavailable")
-    return {"url": url}
+    if r2_key:
+        url = await get_presigned_url(r2_key, expires_in=900)
+        if url:
+            return {"url": url}
+
+    # ── Fall back to QBO attachment ───────────────────────────────────────────
+    qbo_bill_id = invoice.get("qbo_bill_id")
+    if qbo_bill_id:
+        qbo = QBOClient()
+        url = await qbo.get_attachment_url(qbo_bill_id, invoice.get("doc_type"))
+        await qbo.close()
+        if url:
+            return {"url": url}
+
+    raise HTTPException(status_code=404, detail="No PDF available for this invoice")
 
 
 @router.post("/{invoice_id}/override")

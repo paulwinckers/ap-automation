@@ -831,6 +831,32 @@ class QBOClient:
                 continue
         return None
 
+    async def get_attachment_url(self, entity_id: str, doc_type: Optional[str]) -> Optional[str]:
+        """
+        Return the TempDownloadUri for the first attachment on a QBO transaction.
+        QBO's TempDownloadUri is valid for a short window (~30 minutes).
+        Returns None if no attachment found.
+        """
+        if doc_type == "credit_memo":
+            entity_type = "VendorCredit"
+        elif doc_type in ("mastercard", "mc_purchase"):
+            entity_type = "Purchase"
+        else:
+            entity_type = "Bill"
+
+        escaped_id = entity_id.replace("'", "\\'")
+        try:
+            result = await self._get(
+                "query",
+                {"query": f"SELECT * FROM Attachable WHERE AttachableRef.EntityRef.Type = '{entity_type}' AND AttachableRef.EntityRef.value = '{escaped_id}' MAXRESULTS 1"},
+            )
+            attachables = result.get("QueryResponse", {}).get("Attachable", [])
+            if attachables:
+                return attachables[0].get("TempDownloadUri")
+        except Exception as e:
+            logger.warning(f"Could not fetch QBO attachment for {entity_type} {entity_id}: {e}")
+        return None
+
     async def close(self):
         await self._http.aclose()
 

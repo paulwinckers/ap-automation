@@ -705,8 +705,8 @@ export default function APDashboard() {
                       </button>
                     )}
 
-                    {/* PDF viewer button — only shown when PDF is stored in R2 */}
-                    {e.pdf_r2_key && (
+                    {/* PDF viewer button — shown when PDF is in R2 or attached in QBO */}
+                    {(e.pdf_r2_key || e.qbo_bill_id) && (
                       <button
                         onClick={() => openPdf(e.id)}
                         title="View invoice PDF"
