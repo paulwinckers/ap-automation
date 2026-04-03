@@ -29,6 +29,7 @@ interface FeedEntry {
   archived: number | null;
   forwarded_to: string | null;
   pdf_r2_key: string | null;
+  doc_type: string | null;
 }
 
 interface Counts {
@@ -578,6 +579,10 @@ export default function APDashboard() {
             </thead>
             <tbody>
               {filteredEntries.map(e => {
+                const isCreditMemo = e.doc_type === 'credit_memo';
+                // Credit memos display as negative regardless of how Claude extracted them
+                const signed = (n: number | null | undefined) =>
+                  n == null ? n : isCreditMemo ? -Math.abs(n) : n;
                 const amountMismatch =
                   e.qbo_amount != null &&
                   e.total_amount != null &&
@@ -601,8 +606,8 @@ export default function APDashboard() {
                   <td style={{ ...styles.td, fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>
                     {e.invoice_number || '—'}
                   </td>
-                  <td style={{ ...styles.td, fontWeight: 600, textAlign: 'right' }}>
-                    {fmt(e.total_amount)}
+                  <td style={{ ...styles.td, fontWeight: 600, textAlign: 'right', color: isCreditMemo ? '#dc2626' : undefined }}>
+                    {fmt(signed(e.total_amount))}
                   </td>
                   <td style={{
                     ...styles.td, textAlign: 'right',
@@ -612,7 +617,7 @@ export default function APDashboard() {
                   }}>
                     {e.qbo_amount != null ? (
                       <>
-                        {fmt(e.qbo_amount)}
+                        {fmt(signed(e.qbo_amount))}
                         {amountMismatch && (
                           <>
                             <span title="Does not match invoice amount"> ⚠</span>
