@@ -309,6 +309,27 @@ async def get_statement_diff(statement_id: int, db: Database = Depends(get_db)):
         await svc.close()
 
 
+@router.post("/statements/{statement_id}/move")
+async def move_statement(statement_id: int, body: dict, db: Database = Depends(get_db)):
+    """Move a statement to a different period (e.g. Apr 1 statement → March)."""
+    target_period = body.get("period")
+    if not target_period:
+        raise HTTPException(status_code=400, detail="period required")
+    await db.connect()
+    try:
+        stmt = await db.get_statement(statement_id)
+        if not stmt:
+            raise HTTPException(status_code=404, detail="Statement not found")
+        label = _period_label(target_period)
+        period_row = await db.get_or_create_period(target_period, label)
+        if period_row.get("status") == "closed":
+            raise HTTPException(status_code=400, detail=f"Period {target_period} is closed")
+        await db.move_statement_to_period(statement_id, period_row["id"])
+        return {"statement_id": statement_id, "moved_to": target_period}
+    finally:
+        await db.close()
+
+
 @router.delete("/statements/{statement_id}")
 async def delete_statement(statement_id: int, db: Database = Depends(get_db)):
     await db.connect()

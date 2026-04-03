@@ -700,6 +700,12 @@ class Database:
             [json.dumps(snapshot), statement_id],
         )
 
+    async def move_statement_to_period(self, statement_id: int, period_id: int) -> None:
+        await self._x(
+            "UPDATE vendor_statements SET period_id = ?, qbo_snapshot = NULL WHERE id = ?",
+            [period_id, statement_id],
+        )
+
     async def delete_statement(self, statement_id: int) -> None:
         await self._x("DELETE FROM statement_lines WHERE statement_id = ?", [statement_id])
         await self._x("DELETE FROM vendor_statements WHERE id = ?", [statement_id])

@@ -85,6 +85,11 @@ function currentPeriod(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function prevPeriod(period: string): string {
+  const [y, m] = period.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+}
+
 function fmt(n: number | null | undefined, currency = 'CAD'): string {
   if (n == null) return '—';
   return `$${Math.abs(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
@@ -474,6 +479,21 @@ export default function Reconcile() {
                           padding: '3px 10px', fontSize: 11, border: '1px solid #e2e8f0',
                           borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
                         }}>↺</button>
+                      )}
+                      {periodStatus === 'open' && (
+                        <button onClick={async () => {
+                          const prev = prevPeriod(activePeriod);
+                          if (!confirm(`Move ${stmt.vendor_name} to ${prev}?`)) return;
+                          await fetch(`${API}/reconcile/statements/${stmt.id}/move`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ period: prev }),
+                          });
+                          await loadStatements(activePeriod);
+                        }} style={{
+                          padding: '3px 10px', fontSize: 11, border: '1px solid #e2e8f0',
+                          borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
+                        }} title="Move to previous month">← Prev</button>
                       )}
                       {periodStatus === 'open' && (
                         <button onClick={() => handleDelete(stmt.id, stmt.vendor_name)} style={{
