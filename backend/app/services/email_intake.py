@@ -343,14 +343,11 @@ class EmailIntakeService:
         subject_lower = subject.lower()
         sender = email.get("from", {}).get("emailAddress", {}).get("address", "").lower()
 
-        # Never process our own outgoing invoices replied to by customers,
-        # quotes/estimates, or employment/HR documents
-        skip_phrases = [
-            "from darios landscape",
-            "from dario's landscape",
-            "darios landscape services",
-        ]
-        if any(p in subject_lower for p in skip_phrases):
+        # Skip outgoing Darios invoices only when replied to BY a customer (RE:).
+        # Forwards (Fw:/Fwd:/RV:/TR:) sent into accounting should be processed —
+        # they may carry supplier invoices as attachments.
+        is_reply = subject_lower.startswith("re:")
+        if is_reply and any(p in subject_lower for p in ("darios landscape", "dario's landscape")):
             return "skip"
 
         # Skip quotes/estimates — not payable invoices
