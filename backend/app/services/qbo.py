@@ -708,9 +708,16 @@ class QBOClient:
             f"Posting QBO purchase (MC) — vendor: {invoice.vendor_name}, "
             f"amount: {invoice.total_amount} CAD, GL: {gl_account}"
         )
+        logger.debug(f"QBO purchase payload: {purchase_body}")
 
         try:
             result = await self._post("purchase", purchase_body)
+        except httpx.HTTPStatusError as e:
+            error_body = e.response.text
+            logger.error(f"QBO purchase POST failed — status {e.response.status_code}")
+            logger.error(f"QBO error response: {error_body}")
+            logger.error(f"QBO purchase payload: {purchase_body}")
+            raise
         except Exception as e:
             logger.error(f"QBO purchase POST failed: {e}")
             raise
@@ -727,7 +734,7 @@ class QBOClient:
         # ── Attach original receipt file ──────────────────────────────────────
         if file_bytes and filename:
             try:
-                await self._attach_file_to_bill(purchase_id, file_bytes, filename)
+                await self._attach_file(purchase_id, "Purchase", file_bytes, filename)
                 logger.info(f"Attached '{filename}' to QBO purchase {purchase_id}")
             except Exception as e:
                 logger.warning(f"Could not attach file to QBO purchase {purchase_id}: {e}")

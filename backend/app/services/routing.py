@@ -290,22 +290,23 @@ async def _route_to_qbo_purchase(
     """Post a MasterCard receipt to QBO as a Purchase (CreditCardCharge)."""
     gl_name = await _resolve_gl_name(gl_account, gl_name, qbo)
     try:
-        purchase_id = await qbo.post_purchase(
+        purchase_id, qbo_amount = await qbo.post_purchase(
             invoice,
             gl_account,
             employee_name=employee_name,
             file_bytes=invoice.file_bytes,
             filename=invoice.pdf_filename,
         )
-        await db.mark_posted_qbo(invoice.id, purchase_id, gl_account, gl_name=gl_name)
+        await db.mark_posted_qbo(invoice.id, purchase_id, gl_account, gl_name=gl_name, qbo_amount=qbo_amount)
         await db.audit(invoice.id, "posted", "system", {
             "destination": "qbo",
             "bill_id": purchase_id,
             "gl_account": gl_account,
             "gl_name": gl_name,
+            "qbo_amount": qbo_amount,
             "type": "purchase",
         })
-        logger.info(f"Invoice {invoice.id} posted to QBO as purchase — id: {purchase_id}, GL {gl_account} ({gl_name})")
+        logger.info(f"Invoice {invoice.id} posted to QBO as purchase — id: {purchase_id}, TotalAmt: {qbo_amount}, GL {gl_account} ({gl_name})")
 
         # Send confirmation email to the employee who made the purchase
         if employee_name:
