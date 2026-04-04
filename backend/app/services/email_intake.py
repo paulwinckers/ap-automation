@@ -1131,18 +1131,23 @@ class EmailIntakeService:
                 "destination": "QBO (MasterCard)",
                 "invoice_id": invoice_id,
             })
-            try:
-                await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
-            except Exception as e:
-                logger.warning(f"Could not mark receipt email as read: {e}")
-            await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, PROCESSED_FOLDER)
+            dest_folder = PROCESSED_FOLDER
         else:
-            logger.warning(f"Receipt {invoice_id} could not be auto-posted — outcome: {outcome}")
+            logger.warning(f"Receipt {invoice_id} could not be auto-posted — outcome: {outcome}. Marking as read and moving to exception folder.")
             self._failed.append({
                 "vendor": extraction.vendor_name,
                 "amount": extraction.total_amount,
                 "error": f"Receipt posting failed — outcome: {outcome}",
             })
+            dest_folder = PROCESSED_FOLDER  # move regardless so it doesn't loop
+
+        # Always mark as read — invoice is already saved to DB so it won't be lost.
+        # If posting failed, the user can retry from the AP queue.
+        try:
+            await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+        except Exception as e:
+            logger.warning(f"Could not mark receipt email as read: {e}")
+        await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, dest_folder)
 
     async def _handle_unknown_vendor(self, message_id: str, extraction, invoice_id: int):
         suggested = self._guess_type(extraction.vendor_name)
