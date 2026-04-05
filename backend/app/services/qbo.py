@@ -466,7 +466,22 @@ class QBOClient:
             if acct.get("AcctNum") == account_code:
                 return acct
 
-        # Last resort: name contains the code (all account types)
+        # Broad fallback: search ALL active account types (Asset, Liability, etc.)
+        # Needed for GL codes outside the 6000s — e.g. 1xxx asset accounts, 2xxx liability accounts.
+        # QBO returns up to 1000 records per query; split into two calls to stay within limits.
+        for acct_type_filter in [
+            "AccountType IN ('Other Current Asset', 'Fixed Asset', 'Bank')",
+            "AccountType IN ('Other Current Liability', 'Long Term Liability', 'Other Asset')",
+        ]:
+            broad_result = await self._get(
+                "query",
+                {"query": f"SELECT Id, Name, AcctNum, AccountType, AccountSubType FROM Account WHERE Active = true AND {acct_type_filter} MAXRESULTS 200"},
+            )
+            for acct in broad_result.get("QueryResponse", {}).get("Account", []):
+                if acct.get("AcctNum") == account_code:
+                    return acct
+
+        # Last resort: name contains the code (all already-fetched account types)
         code_lower = account_code.lower()
         for acct in all_accounts + cc_accounts:
             if code_lower in (acct.get("Name") or "").lower():
