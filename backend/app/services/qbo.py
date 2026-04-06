@@ -298,8 +298,9 @@ class QBOClient:
         rate_refs: list[str] = []
         if tax_code_id:
             rate_refs = await self._get_purchase_tax_rate_refs(tax_code_id)
-            # TaxExcluded requires TaxCodeRef on each line item too
-            line["AccountBasedExpenseLineDetail"]["TaxCodeRef"] = {"value": tax_code_id}
+            # Do NOT set TaxCodeRef on the line when using explicit TxnTaxDetail —
+            # QBO Canada will try to validate the manual amount against the rate and
+            # throw error 6000 when they don't match exactly.
 
         # ── TxnTaxDetail: explicit extracted amounts, not recalculated ────────
         txn_tax_detail = None
