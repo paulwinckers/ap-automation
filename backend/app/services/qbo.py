@@ -247,14 +247,15 @@ class QBOClient:
         account_ref: dict,
     ) -> tuple[list, Optional[dict], str]:
         """
-        Build a single expense line (subtotal) + explicit TxnTaxDetail.
+        Build a single expense line + resolve tax code for QBO Canada.
 
         Returns (lines, txn_tax_detail, global_tax_calculation).
 
-        Always posts one line = subtotal so QBO never recalculates per-line taxes.
-        Description summarises the extracted line items.
-        Tax amounts come directly from extraction (PercentBased=false).
-        TaxRateRef is included (required by QBO Canada) so taxes hit the correct accounts.
+        Strategy: set TaxCodeRef on the line and let QBO calculate tax from its
+        own rate tables (TaxExcluded).  Never send explicit TxnTaxDetail —
+        QBO Canada error 6000 fires whenever manual amounts don't match the
+        stored rate to the cent.  Standard CA rates (5% GST, 7% PST) produce
+        the same amounts as the invoice anyway.
         """
         # ── Description: summarise extracted line items ───────────────────────
         if invoice.line_items:
@@ -271,7 +272,7 @@ class QBOClient:
         # ── Line amount: subtotal (pre-tax) ───────────────────────────────────
         line_amount = invoice.subtotal if invoice.subtotal else invoice.total_amount
 
-        line = {
+        line: dict = {
             "Amount": line_amount,
             "DetailType": "AccountBasedExpenseLineDetail",
             "Description": description,
@@ -281,7 +282,7 @@ class QBOClient:
             },
         }
 
-        # ── Resolve TaxRateRefs (required by QBO Canada even with PercentBased=false) ──
+        # ── Resolve tax code (QBO Canada requires TaxCodeRef on every line) ──
         has_gst = any(
             "gst" in (tl.tax_name or "").lower() or "cra" in (tl.tax_name or "").lower()
             for tl in (invoice.tax_lines or [])
@@ -295,55 +296,16 @@ class QBOClient:
             has_pst = True
 
         tax_code_id = await self._resolve_tax_code(has_gst, has_pst)
-        rate_refs: list[str] = []
         if tax_code_id:
-            rate_refs = await self._get_purchase_tax_rate_refs(tax_code_id)
-            # Do NOT set TaxCodeRef on the line when using explicit TxnTaxDetail —
-            # QBO Canada will try to validate the manual amount against the rate and
-            # throw error 6000 when they don't match exactly.
+            line["AccountBasedExpenseLineDetail"]["TaxCodeRef"] = {"value": tax_code_id}
+            global_tax_calc = "TaxExcluded"
+        else:
+            global_tax_calc = "NotApplicable"
 
-        # ── TxnTaxDetail: explicit extracted amounts, not recalculated ────────
-        txn_tax_detail = None
-        if invoice.tax_lines:
-            tax_lines_payload = []
-            total_tax = 0.0
-            for i, tl in enumerate(invoice.tax_lines):
-                if not tl.tax_amount:
-                    continue
-                total_tax += tl.tax_amount
-                tl_detail: dict = {
-                    "PercentBased": False,
-                    "NetAmountTaxable": line_amount,
-                }
-                if i < len(rate_refs):
-                    tl_detail["TaxRateRef"] = {"value": rate_refs[i]}
-                elif rate_refs:
-                    tl_detail["TaxRateRef"] = {"value": rate_refs[0]}
-                tax_lines_payload.append({
-                    "Amount": tl.tax_amount,
-                    "DetailType": "TaxLineDetail",
-                    "TaxLineDetail": tl_detail,
-                })
-            if tax_lines_payload:
-                txn_tax_detail = {
-                    "TotalTax": round(total_tax, 2),
-                    "TaxLine": tax_lines_payload,
-                }
-        elif invoice.tax_amount and invoice.tax_amount > 0:
-            tl_detail = {
-                "PercentBased": False,
-                "NetAmountTaxable": line_amount,
-            }
-            if rate_refs:
-                tl_detail["TaxRateRef"] = {"value": rate_refs[0]}
-            txn_tax_detail = {
-                "TotalTax": round(invoice.tax_amount, 2),
-                "TaxLine": [{"Amount": invoice.tax_amount, "DetailType": "TaxLineDetail",
-                              "TaxLineDetail": tl_detail}],
-            }
-
-        global_tax_calc = "TaxExcluded" if txn_tax_detail else "NotApplicable"
-        return [line], txn_tax_detail, global_tax_calc
+        # TxnTaxDetail is intentionally omitted — QBO Canada calculates tax
+        # from TaxCodeRef automatically; sending explicit amounts triggers
+        # error 6000 when they don't match the stored rate exactly.
+        return [line], None, global_tax_calc
 
     # ── Vendor lookup ─────────────────────────────────────────────────────────
 
