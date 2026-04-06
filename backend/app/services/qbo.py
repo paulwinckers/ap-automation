@@ -828,15 +828,16 @@ class QBOClient:
         vendor_id: str = None,
     ) -> list[dict]:
         """
-        Fetch all bills for a vendor.
+        Fetch all bills for a vendor up to and including to_date.
         Used for vendor statement reconciliation.
 
-        Date range is intentionally NOT applied — vendor statements show all
-        outstanding invoices regardless of age (Jan/Feb bills appear on a March
-        statement). We fetch all bills and let the diff engine match by invoice
-        number.
+        Fetches ALL bills (paid and unpaid) with TxnDate <= to_date so that
+        invoices paid after the statement date are still included in the diff.
+        The diff engine compares TotalAmt (original billed amount), not Balance
+        (current outstanding), so payment status doesn't affect matching.
 
-        from_date / to_date: retained in signature for API compatibility but unused.
+        from_date: unused — vendor statements carry invoices of any age.
+        to_date:   used as the statement date cutoff (bills after this are excluded).
         """
         if not vendor_id:
             vendor = await self.find_vendor(vendor_name)
@@ -850,7 +851,7 @@ class QBOClient:
                 "query": (
                     f"SELECT * FROM Bill "
                     f"WHERE VendorRef = '{vendor_id}' "
-                    f"AND Balance > '0' "
+                    f"AND TxnDate <= '{to_date}' "
                     f"MAXRESULTS 200"
                 )
             },

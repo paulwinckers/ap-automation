@@ -107,7 +107,10 @@ def _diff_statement_vs_qbo(
         stmt_amount = stmt_line.get("amount", 0)
         if num in qbo_map:
             qbo_bill = qbo_map[num]
-            qbo_amount = float(qbo_bill.get("Balance") or 0)
+            # Compare against TotalAmt (original billed amount), not Balance
+            # (current outstanding).  A bill paid after the statement date should
+            # still match — the vendor billed correctly, we just paid it already.
+            qbo_amount = float(qbo_bill.get("TotalAmt") or 0)
             # Allow $0.01 rounding tolerance
             if abs(stmt_amount - qbo_amount) <= 0.01:
                 matched.append({
@@ -245,7 +248,14 @@ class ReconciliationService:
             qbo_bills=qbo_bills,
         )
 
-        qbo_total_balance = round(sum(float(b.get("Balance") or 0) for b in qbo_bills), 2)
+        # Sum TotalAmt of bills that still have an outstanding balance — this is
+        # QBO's equivalent of the vendor's closing balance as of statement date.
+        # Bills paid after the statement date will have Balance = 0 and are
+        # excluded here (they appear as "already paid" in the diff).
+        qbo_total_balance = round(
+            sum(float(b.get("TotalAmt") or 0) for b in qbo_bills if float(b.get("Balance") or 0) > 0),
+            2,
+        )
 
         return {
             "vendor_name": vendor_name,
