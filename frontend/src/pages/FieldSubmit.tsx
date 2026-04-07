@@ -41,7 +41,8 @@ export default function FieldSubmit() {
   const [description, setDescription] = useState('');  // replaces notes + glDescription
   const [resolvedGL, setResolvedGL]   = useState<{account: string; name: string} | null>(null);
   const [extractResult, setExtractResult] = useState<QuickExtractResult | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileRef    = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
 
   const needsDescription = costType === 'overhead' || docType === 'mastercard';
 
@@ -99,7 +100,8 @@ export default function FieldSubmit() {
   const retake = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(null); setPreviewUrl(null); setExtractResult(null);
-    if (fileRef.current) fileRef.current.value = '';
+    if (fileRef.current)    fileRef.current.value    = '';
+    if (galleryRef.current) galleryRef.current.value = '';
   };
 
   // Resolve GL silently in background when user finishes typing description
@@ -229,11 +231,21 @@ export default function FieldSubmit() {
           <div style={S.card}>
             <div style={S.ctitle}>Take a photo or upload</div>
             {!file ? (
-              <div style={S.uparea} onClick={()=>fileRef.current?.click()}>
+              <div style={{display:'flex', gap:12}}>
+                {/* Camera — opens device camera directly */}
                 <input ref={fileRef} type="file" accept="image/*,application/pdf" capture="environment" onChange={handleFile} style={{display:'none'}}/>
-                <span style={{fontSize:40,display:'block',marginBottom:8}}>📷</span>
-                <div style={S.uptitle}>Tap to take photo</div>
-                <div style={S.upsub}>or upload from gallery · PDF or image</div>
+                <div style={{...S.uparea, flex:1}} onClick={()=>fileRef.current?.click()}>
+                  <span style={{fontSize:36,display:'block',marginBottom:6}}>📷</span>
+                  <div style={S.uptitle}>Take Photo</div>
+                  <div style={S.upsub}>Open camera</div>
+                </div>
+                {/* Gallery — opens photo library / file picker */}
+                <input ref={galleryRef} type="file" accept="image/*,application/pdf" onChange={handleFile} style={{display:'none'}}/>
+                <div style={{...S.uparea, flex:1}} onClick={()=>galleryRef.current?.click()}>
+                  <span style={{fontSize:36,display:'block',marginBottom:6}}>🖼️</span>
+                  <div style={S.uptitle}>Gallery</div>
+                  <div style={S.upsub}>Choose from library</div>
+                </div>
               </div>
             ) : (
               <div style={S.updone}>
