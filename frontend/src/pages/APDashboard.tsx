@@ -30,6 +30,8 @@ interface FeedEntry {
   forwarded_to: string | null;
   pdf_r2_key: string | null;
   doc_type: string | null;
+  po_number: string | null;
+  po_amount: number | null;
 }
 
 interface Counts {
@@ -568,6 +570,7 @@ export default function APDashboard() {
                 <th style={styles.th}>Received</th>
                 <th style={styles.th}>Vendor</th>
                 <th style={styles.th}>Invoice #</th>
+                <th style={styles.th}>PO</th>
                 <th style={styles.th}>Amount</th>
                 <th style={styles.th}>QBO Total</th>
                 <th style={styles.th}>Tax</th>
@@ -605,6 +608,18 @@ export default function APDashboard() {
                   </td>
                   <td style={{ ...styles.td, fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>
                     {e.invoice_number || '—'}
+                  </td>
+                  <td style={{ ...styles.td, fontSize: 12, textAlign: 'right' }}>
+                    {e.po_number
+                      ? <>
+                          <div style={{ color: '#64748b', fontFamily: 'monospace' }}>{e.po_number}</div>
+                          {e.po_amount != null
+                            ? <div style={{ fontWeight: 600, color: '#0f172a' }}>{fmt(e.po_amount)}</div>
+                            : <div style={{ color: '#94a3b8' }}>—</div>
+                          }
+                        </>
+                      : <span style={{ color: '#94a3b8' }}>—</span>
+                    }
                   </td>
                   <td style={{ ...styles.td, fontWeight: 600, textAlign: 'right', color: isCreditMemo ? '#dc2626' : undefined }}>
                     {fmt(signed(e.total_amount))}

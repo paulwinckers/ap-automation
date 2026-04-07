@@ -536,15 +536,19 @@ class Database:
     async def get_invoice_feed(self, limit: int = 100) -> list[dict]:
         """Return recent active (non-archived) invoices for the AP live feed, newest first."""
         return await self._q(
-            """SELECT id, status, destination, vendor_name,
-                      invoice_number, total_amount, tax_amount, subtotal,
-                      gl_account, gl_name, qbo_amount,
-                      qbo_bill_id, aspire_receipt_id,
-                      received_at, posted_at, error_message,
-                      intake_source, archived, forwarded_to, pdf_r2_key, doc_type
-               FROM invoices
-               WHERE (archived IS NULL OR archived = 0)
-               ORDER BY received_at DESC
+            """SELECT i.id, i.status, i.destination, i.vendor_name,
+                      i.invoice_number, i.total_amount, i.tax_amount, i.subtotal,
+                      i.gl_account, i.gl_name, i.qbo_amount,
+                      i.qbo_bill_id, i.aspire_receipt_id,
+                      i.received_at, i.posted_at, i.error_message,
+                      i.intake_source, i.archived, i.forwarded_to, i.pdf_r2_key, i.doc_type,
+                      COALESCE(i.po_number_override, i.po_number) AS po_number,
+                      CAST(json_extract(pc.aspire_data, '$.WonDollars') AS REAL) AS po_amount
+               FROM invoices i
+               LEFT JOIN po_cache pc
+                 ON pc.po_number = COALESCE(i.po_number_override, i.po_number)
+               WHERE (i.archived IS NULL OR i.archived = 0)
+               ORDER BY i.received_at DESC
                LIMIT ?""",
             [limit],
         )
@@ -552,15 +556,19 @@ class Database:
     async def get_archived_feed(self, limit: int = 200) -> list[dict]:
         """Return archived invoices, newest first."""
         return await self._q(
-            """SELECT id, status, destination, vendor_name,
-                      invoice_number, total_amount, tax_amount, subtotal,
-                      gl_account, gl_name, qbo_amount,
-                      qbo_bill_id, aspire_receipt_id,
-                      received_at, posted_at, error_message,
-                      intake_source, archived, forwarded_to, pdf_r2_key, doc_type
-               FROM invoices
-               WHERE archived = 1
-               ORDER BY received_at DESC
+            """SELECT i.id, i.status, i.destination, i.vendor_name,
+                      i.invoice_number, i.total_amount, i.tax_amount, i.subtotal,
+                      i.gl_account, i.gl_name, i.qbo_amount,
+                      i.qbo_bill_id, i.aspire_receipt_id,
+                      i.received_at, i.posted_at, i.error_message,
+                      i.intake_source, i.archived, i.forwarded_to, i.pdf_r2_key, i.doc_type,
+                      COALESCE(i.po_number_override, i.po_number) AS po_number,
+                      CAST(json_extract(pc.aspire_data, '$.WonDollars') AS REAL) AS po_amount
+               FROM invoices i
+               LEFT JOIN po_cache pc
+                 ON pc.po_number = COALESCE(i.po_number_override, i.po_number)
+               WHERE i.archived = 1
+               ORDER BY i.received_at DESC
                LIMIT ?""",
             [limit],
         )
