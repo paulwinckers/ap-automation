@@ -144,7 +144,9 @@ def _diff_statement_vs_qbo(
             in_qbo_not_stmt.append({
                 "invoice_number": num,
                 "qbo_amount": float(qbo_bill.get("TotalAmt") or 0),
-                "qbo_balance": float(qbo_bill.get("Balance") or 0),
+                # Use as-of-date balance (injected by get_vendor_bills) so that
+                # bills paid after the statement date show their full balance, not 0.
+                "qbo_balance": float(qbo_bill.get("_balance_as_of_date") or qbo_bill.get("Balance") or 0),
                 "qbo_date": qbo_bill.get("TxnDate"),
                 "qbo_bill_id": qbo_bill.get("Id"),
                 "qbo_doc_number": qbo_bill.get("DocNumber"),
@@ -248,12 +250,11 @@ class ReconciliationService:
             qbo_bills=qbo_bills,
         )
 
-        # Sum TotalAmt of bills that still have an outstanding balance — this is
-        # QBO's equivalent of the vendor's closing balance as of statement date.
-        # Bills paid after the statement date will have Balance = 0 and are
-        # excluded here (they appear as "already paid" in the diff).
+        # Sum as-of-date balances. get_vendor_bills already filtered to only
+        # bills that were open as of to_date and annotated each with
+        # _balance_as_of_date, so we just sum them directly.
         qbo_total_balance = round(
-            sum(float(b.get("TotalAmt") or 0) for b in qbo_bills if float(b.get("Balance") or 0) > 0),
+            sum(float(b.get("_balance_as_of_date") or b.get("TotalAmt") or 0) for b in qbo_bills),
             2,
         )
 

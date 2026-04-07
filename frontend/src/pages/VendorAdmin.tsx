@@ -510,8 +510,8 @@ function VendorAdminInner() {
               {!form.is_employee && (form.type === 'job_cost' || form.type === 'mixed') && (
                 <div style={S.field}>
                   <label style={S.label}>Forward invoices to</label>
-                  <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-                    {['keeland@darios.ca', 'paul@darios.ca'].map(addr => (
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                    {['keeland@darios.ca', 'paul@darios.ca', 'eduardo@darios.ca'].map(addr => (
                       <button
                         key={addr}
                         type="button"
@@ -534,9 +534,9 @@ function VendorAdminInner() {
                     type="email"
                     value={form.forward_to}
                     onChange={e => setForm(f => ({ ...f, forward_to: e.target.value }))}
-                    placeholder="keeland@darios.ca or paul@darios.ca"
+                    placeholder="keeland@darios.ca, paul@darios.ca or eduardo@darios.ca"
                   />
-                  <div style={S.hint}>Invoice PDF will be emailed here when received. Shows in the AP log as "📤 Sent to Keeland / Paul".</div>
+                  <div style={S.hint}>Invoice PDF will be emailed here when received. Shows in the AP log as "📤 Sent to Keeland / Paul / Eduardo".</div>
                 </div>
               )}
 

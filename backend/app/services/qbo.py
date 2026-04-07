@@ -828,16 +828,18 @@ class QBOClient:
         vendor_id: str = None,
     ) -> list[dict]:
         """
-        Fetch all bills for a vendor up to and including to_date.
-        Used for vendor statement reconciliation.
+        Fetch bills for a vendor that were OPEN as of to_date.
+        Used for vendor statement reconciliation — moment-in-time snapshot.
 
-        Fetches ALL bills (paid and unpaid) with TxnDate <= to_date so that
-        invoices paid after the statement date are still included in the diff.
-        The diff engine compares TotalAmt (original billed amount), not Balance
-        (current outstanding), so payment status doesn't affect matching.
+        A bill is "open as of to_date" if:
+          TxnDate <= to_date  (it existed by the statement date)
+          AND (TotalAmt - payments_received_on_or_before_to_date) > 0
 
-        from_date: unused — vendor statements carry invoices of any age.
-        to_date:   used as the statement date cutoff (bills after this are excluded).
+        Bills paid AFTER to_date are treated as unpaid for reconciliation purposes.
+        Bills fully paid ON OR BEFORE to_date are excluded (they were closed by then).
+
+        Each returned bill has an extra key `_balance_as_of_date` with the
+        as-of-date outstanding balance for use in the diff engine.
         """
         if not vendor_id:
             vendor = await self.find_vendor(vendor_name)
@@ -845,6 +847,7 @@ class QBOClient:
                 return []
             vendor_id = vendor["Id"]
 
+        # Fetch all bills with TxnDate <= to_date
         result = await self._get(
             "query",
             {
@@ -856,7 +859,49 @@ class QBOClient:
                 )
             },
         )
-        return result.get("QueryResponse", {}).get("Bill", [])
+        all_bills = result.get("QueryResponse", {}).get("Bill", [])
+        if not all_bills:
+            return []
+
+        # Fetch BillPayments made ON OR BEFORE to_date so we know what was
+        # already paid by the statement date.
+        pay_result = await self._get(
+            "query",
+            {
+                "query": (
+                    f"SELECT * FROM BillPayment "
+                    f"WHERE VendorRef = '{vendor_id}' "
+                    f"AND TxnDate <= '{to_date}' "
+                    f"MAXRESULTS 200"
+                )
+            },
+        )
+        payments = pay_result.get("QueryResponse", {}).get("BillPayment", [])
+
+        # Build map: bill_id → total amount paid on or before to_date
+        paid_by_date: dict[str, float] = {}
+        for pmt in payments:
+            for line in pmt.get("Line", []):
+                for linked in line.get("LinkedTxn", []):
+                    if linked.get("TxnType") == "Bill":
+                        bill_id = linked.get("TxnId")
+                        if bill_id:
+                            paid_by_date[bill_id] = (
+                                paid_by_date.get(bill_id, 0.0)
+                                + float(line.get("Amount") or 0)
+                            )
+
+        # Keep only bills that had an outstanding balance as of to_date
+        open_bills = []
+        for bill in all_bills:
+            total = float(bill.get("TotalAmt") or 0)
+            paid = paid_by_date.get(bill["Id"], 0.0)
+            balance_as_of_date = round(total - paid, 2)
+            if balance_as_of_date > 0.01:
+                bill["_balance_as_of_date"] = balance_as_of_date
+                open_bills.append(bill)
+
+        return open_bills
 
     async def get_transaction_amount(self, entity_id: str, doc_type: Optional[str]) -> Optional[float]:
         """
