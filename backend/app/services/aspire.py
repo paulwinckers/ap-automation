@@ -893,21 +893,30 @@ class AspireClient:
             try:
                 opp_result = await self._get("Opportunities", {
                     "$filter": f"({or_filter})",
-                    "$select": "OpportunityID,OpportunityName,PropertyName",
+                    "$select": "OpportunityID,OpportunityName,PropertyName,ServiceAddressLine1,ServiceCity,ServiceState,BillingAddressLine1,BillingCity,BillingState",
                     "$top": "50",
                 })
                 for opp in self._extract_list(opp_result):
+                    # Prefer service address; fall back to billing address
+                    addr_parts = [
+                        opp.get("ServiceAddressLine1") or opp.get("BillingAddressLine1") or "",
+                        opp.get("ServiceCity") or opp.get("BillingCity") or "",
+                        opp.get("ServiceState") or opp.get("BillingState") or "",
+                    ]
+                    address = ", ".join(p for p in addr_parts if p)
                     opp_map[opp.get("OpportunityID")] = {
                         "name":     opp.get("OpportunityName") or "",
                         "property": opp.get("PropertyName") or "",
+                        "address":  address,
                     }
             except Exception as e:
                 logger.warning(f"Opportunity name enrichment failed: {e}")
 
         for t in tickets:
             info = opp_map.get(t.get("OpportunityID"), {})
-            t["OpportunityName"] = info.get("name", "")
-            t["PropertyName"]    = info.get("property", "")
+            t["OpportunityName"]  = info.get("name", "")
+            t["PropertyName"]     = info.get("property", "")
+            t["PropertyAddress"]  = info.get("address", "")
             # Resolve route name: prefer Routes lookup, fall back to crew leader name
             crew_id = t.get("CrewLeaderContactID")
             t["_RouteName"] = (

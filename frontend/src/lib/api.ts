@@ -308,6 +308,7 @@ export interface ScheduledWorkTicket {
   OpportunityID: number;
   OpportunityName: string | null;
   PropertyName: string | null;
+  PropertyAddress: string | null;
   WorkTicketStatusName: string | null;
   WorkTicketType: string | null;
   ScheduledDate: string | null;

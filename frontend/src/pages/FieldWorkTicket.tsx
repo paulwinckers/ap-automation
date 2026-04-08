@@ -190,7 +190,7 @@ export default function FieldWorkTicket() {
             <span style={S.chip}>{selectedTicket._RouteName || 'Route'}</span>
           )}
         </div>
-        <div style={S.hsub}>Complete Work Ticket</div>
+        <div style={S.hsub}>Work Ticket Update</div>
       </div>
 
       {/* Progress */}
@@ -278,9 +278,13 @@ export default function FieldWorkTicket() {
                           </div>
                           <div style={{fontSize:11, color:'#6b7280'}}>
                             {t.OpportunityName || `Job #${t.OpportunityID}`}
-                            {t.PropertyName ? ` · ${t.PropertyName}` : ''}
                             {t.ScheduledDate ? ` · ${fmtDate(t.ScheduledDate)}` : ''}
                           </div>
+                          {(t.PropertyAddress || t.PropertyName) && (
+                            <div style={{fontSize:11, color:'#9ca3af', marginTop:1}}>
+                              {t.PropertyAddress || t.PropertyName}
+                            </div>
+                          )}
                         </div>
                         <span style={{
                           fontSize:10, fontWeight:600, borderRadius:6, padding:'2px 8px',
@@ -360,7 +364,7 @@ export default function FieldWorkTicket() {
         {/* ── Step 3: Notes & name ── */}
         {step === 3 && (
           <div style={S.card}>
-            <div style={S.ctitle}>Completion details</div>
+            <div style={S.ctitle}>Update details</div>
 
             <div style={{marginBottom:16}}>
               <div style={S.flabel}>Your name</div>
@@ -385,7 +389,7 @@ export default function FieldWorkTicket() {
             </div>
 
             <div>
-              <div style={S.flabel}>Completion notes</div>
+              <div style={S.flabel}>Notes</div>
               <textarea
                 style={{...S.input, minHeight:110, resize:'vertical'}}
                 placeholder="Describe what was completed, any issues, materials used, etc."
@@ -422,13 +426,13 @@ export default function FieldWorkTicket() {
         {step === 5 && successInfo && (
           <div style={S.success}>
             <span style={{fontSize:64, display:'block', marginBottom:16}}>✅</span>
-            <div style={S.stitle}>Ticket completed!</div>
+            <div style={S.stitle}>Ticket updated!</div>
             <div style={S.ssub}>
-              <strong>{successInfo.ticket}</strong> has been logged as complete
-              {successInfo.files > 0 ? ` with ${successInfo.files} file${successInfo.files !== 1 ? 's' : ''}` : ''}.
+              <strong>{successInfo.ticket}</strong> has been updated
+              {successInfo.files > 0 ? ` with ${successInfo.files} file${successInfo.files !== 1 ? 's' : ''} attached` : ''}.
             </div>
             <div style={{fontSize:12, color:'#6b7280', marginTop:8}}>
-              Your notes and media are now visible in Aspire on the work ticket.
+              Your notes and photos have been saved.
             </div>
           </div>
         )}
@@ -438,12 +442,12 @@ export default function FieldWorkTicket() {
       {/* Bottom bar */}
       <div style={S.bar}>
         {step === 5 ? (
-          <button style={S.bsuccess} onClick={reset}>Complete another ticket</button>
+          <button style={S.bsuccess} onClick={reset}>Update another ticket</button>
         ) : step === 1 ? null
         : step === 4 ? (
           <>
             <button style={{...S.bprimary, opacity: submitting ? .4 : 1}} disabled={submitting} onClick={handleSubmit}>
-              {submitting ? 'Submitting...' : 'Submit completion'}
+              {submitting ? 'Submitting...' : 'Submit update'}
             </button>
             <button style={S.bback} onClick={back}>← Back</button>
           </>
