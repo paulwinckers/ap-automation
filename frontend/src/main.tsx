@@ -8,8 +8,9 @@ import FieldSubmit    from './pages/FieldSubmit';
 import APDashboard    from './pages/APDashboard';
 import VendorAdmin    from './pages/VendorAdmin';
 import Reconcile      from './pages/Reconcile';
-import SalesDashboard from './pages/SalesDashboard';
-import OpsDashboard   from './pages/OpsDashboard';
+import SalesDashboard        from './pages/SalesDashboard';
+import OpsDashboard          from './pages/OpsDashboard';
+import ConstructionDashboard from './pages/ConstructionDashboard';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -32,14 +33,15 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/ap/vendors"   element={<Office><VendorAdmin /></Office>} />
         <Route path="/ap/reconcile" element={<Office><Reconcile /></Office>} />
 
-        {/* Dashboards — iframe embeds for now */}
-        <Route path="/dashboards/sales" element={<Office><SalesDashboard /></Office>} />
-        <Route path="/dashboards/ops"   element={<Office><OpsDashboard /></Office>} />
+        {/* Dashboards — iframe embeds + native React */}
+        <Route path="/dashboards/sales"         element={<Office><SalesDashboard /></Office>} />
+        <Route path="/dashboards/ops"           element={<Office><OpsDashboard /></Office>} />
+        <Route path="/dashboards/construction"  element={<Office><ConstructionDashboard /></Office>} />
 
         {/* Legacy URL redirects */}
         <Route path="/vendors"      element={<Navigate to="/ap/vendors"   replace />} />
         <Route path="/reconcile"    element={<Navigate to="/ap/reconcile" replace />} />
-        <Route path="/construction" element={<Navigate to="/dashboards/sales" replace />} />
+        <Route path="/construction" element={<Navigate to="/dashboards/construction" replace />} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />

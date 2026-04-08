@@ -20,8 +20,9 @@ const NAV = [
   {
     section: 'Dashboards',
     items: [
-      { label: 'Sales',      path: '/dashboards/sales', icon: '📊' },
-      { label: 'Operations', path: '/dashboards/ops',   icon: '⚙️' },
+      { label: 'Sales',         path: '/dashboards/sales',         icon: '📊' },
+      { label: 'Operations',    path: '/dashboards/ops',           icon: '⚙️' },
+      { label: 'Construction',  path: '/dashboards/construction',  icon: '🏗️' },
     ],
   },
 ];
