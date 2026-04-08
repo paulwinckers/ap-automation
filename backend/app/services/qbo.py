@@ -794,7 +794,31 @@ class QBOClient:
         try:
             result = await self._post("vendorcredit", credit_body)
         except httpx.HTTPStatusError as e:
-            logger.error(f"QBO vendor credit POST failed — status {e.response.status_code}: {e.response.text}")
+            body = e.response.text
+            logger.error(f"QBO vendor credit POST failed — status {e.response.status_code}: {body}")
+
+            # Recover from duplicate DocNumber — the credit already exists in QBO
+            # (posted in a previous attempt that crashed before we saved the ID).
+            # Error code 6140, detail contains "TxnId=XXXXXX"
+            import json as _json, re as _re
+            try:
+                fault = _json.loads(body)
+                errors = fault.get("Fault", {}).get("Error", [])
+                if any(err.get("code") == "6140" for err in errors):
+                    detail = " ".join(err.get("Detail", "") for err in errors)
+                    m = _re.search(r"TxnId=(\d+)", detail)
+                    if m:
+                        existing_id = m.group(1)
+                        logger.warning(
+                            f"VendorCredit DocNumber={invoice.invoice_number} already exists "
+                            f"in QBO as TxnId={existing_id} — recovering existing record"
+                        )
+                        # Fetch the existing credit to get TotalAmt
+                        existing = await self._get(f"vendorcredit/{existing_id}", {})
+                        existing_credit = existing.get("VendorCredit", {})
+                        return existing_id, existing_credit.get("TotalAmt")
+            except Exception:
+                pass  # fall through to re-raise original
             raise
 
         credit = result.get("VendorCredit", {})
