@@ -42,6 +42,7 @@ class VendorCreateRequest(BaseModel):
 
 
 class VendorUpdateRequest(BaseModel):
+    vendor_name:        Optional[str] = None
     type:               Optional[VendorType] = None
     default_gl_account: Optional[str] = None
     default_gl_name:    Optional[str] = None
