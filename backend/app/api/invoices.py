@@ -183,6 +183,7 @@ async def upload_invoice(
 
     pdf_bytes = await file.read()
     returning = is_return == "true"
+    original_doc_type = doc_type  # preserve before overriding — needed for employee routing below
     logger.info(f"Invoice received — {file.filename} ({len(pdf_bytes)} bytes), doc_type={doc_type}, is_return={returning}")
 
     # Returns (any doc type) use credit memo extraction (negative amounts) and route as vendor credit
@@ -211,12 +212,13 @@ async def upload_invoice(
 
     # Employee expense: route under the employee's vendor rule (GL account)
     # MasterCard: route under the merchant name — employee is just the purchaser
-    is_expense = doc_type == "expense" and employee_name
+    # Use original_doc_type so returns (which set doc_type='credit_memo') still route correctly.
+    is_expense = original_doc_type == "expense" and employee_name
     routing_vendor = employee_name if is_expense else extraction.vendor_name
     if is_expense:
-        logger.info(f"Employee expense — routing under '{employee_name}' instead of '{extraction.vendor_name}'")
-    if doc_type == "mastercard" and employee_name:
-        logger.info(f"MasterCard purchase by '{employee_name}' at '{extraction.vendor_name}'")
+        logger.info(f"Employee expense return — routing under '{employee_name}' instead of '{extraction.vendor_name}'" if returning else f"Employee expense — routing under '{employee_name}' instead of '{extraction.vendor_name}'")
+    if original_doc_type == "mastercard" and employee_name:
+        logger.info(f"MasterCard {'return' if returning else 'purchase'} by '{employee_name}' at '{extraction.vendor_name}'")
 
     invoice_id = await db.create_invoice(
         vendor_name    = routing_vendor,
