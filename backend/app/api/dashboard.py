@@ -236,6 +236,73 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
     }
 
 
+@router.get("/aspire/discover")
+async def aspire_discover():
+    """
+    Probe Aspire write API surface — attachments, opportunity fields, work ticket fields.
+    Returns enough to know what's required to POST photos and create opportunities.
+    """
+    result = {}
+
+    # 1. Fetch one real WorkTicket with ALL fields so we know the schema
+    try:
+        wt = await _aspire._get("WorkTickets", {"$top": "1"})
+        tickets = _aspire._extract_list(wt)
+        if tickets:
+            result["work_ticket_fields"] = list(tickets[0].keys())
+            result["work_ticket_sample"] = tickets[0]
+            result["work_ticket_id"] = tickets[0].get("WorkTicketID") or tickets[0].get("Id")
+    except Exception as e:
+        result["work_ticket_error"] = str(e)
+
+    # 2. Try GET /WorkTicketNotes — see if there's a notes/comments entity
+    try:
+        wtn = await _aspire._get("WorkTicketNotes", {"$top": "1"})
+        result["work_ticket_notes"] = _aspire._extract_list(wtn)[:1]
+    except Exception as e:
+        result["work_ticket_notes_error"] = str(e)
+
+    # 3. Try GET /Attachments — see if there's a top-level attachments entity
+    try:
+        att = await _aspire._get("Attachments", {"$top": "1"})
+        result["attachments"] = _aspire._extract_list(att)[:1]
+    except Exception as e:
+        result["attachments_error"] = str(e)
+
+    # 4. Fetch one Opportunity with ALL fields to know what's required for POST
+    try:
+        opp = await _aspire._get("Opportunities", {"$top": "1"})
+        opps = _aspire._extract_list(opp)
+        if opps:
+            result["opportunity_fields"] = list(opps[0].keys())
+            result["opportunity_sample"] = opps[0]
+    except Exception as e:
+        result["opportunity_error"] = str(e)
+
+    # 5. Try GET /Properties — needed for opportunity creation
+    try:
+        props = await _aspire._get("Properties", {"$top": "3"})
+        result["properties_sample"] = _aspire._extract_list(props)[:3]
+    except Exception as e:
+        result["properties_error"] = str(e)
+
+    # 6. Try GET /Contacts — needed for opportunity creation
+    try:
+        contacts = await _aspire._get("Contacts", {"$top": "3"})
+        result["contacts_sample"] = _aspire._extract_list(contacts)[:3]
+    except Exception as e:
+        result["contacts_error"] = str(e)
+
+    # 7. Try GET /Divisions — needed for routing new opportunities
+    try:
+        divs = await _aspire._get("Divisions", {"$top": "10"})
+        result["divisions"] = _aspire._extract_list(divs)
+    except Exception as e:
+        result["divisions_error"] = str(e)
+
+    return result
+
+
 @router.get("/construction/{opportunity_id}/tickets")
 async def get_job_tickets(opportunity_id: int):
     """Returns work tickets for a single Construction job."""
