@@ -62,6 +62,19 @@ function compressImage(f: File): Promise<File> {
   });
 }
 
+function defaultDates() {
+  const now = new Date();
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  // Due: 2 weeks from today
+  const due = new Date(now); due.setDate(due.getDate() + 14);
+  // Start: 1st of next month
+  const start = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  // End: last day of 3rd calendar month (counting current as 1st)
+  // e.g. April → end of June = new Date(year, 6, 0)
+  const end = new Date(now.getFullYear(), now.getMonth() + 3, 0);
+  return { due: fmt(due), start: fmt(start), end: fmt(end) };
+}
+
 export default function FieldOpportunity() {
   const [step, setStep]             = useState<Step>(1);
 
@@ -77,9 +90,10 @@ export default function FieldOpportunity() {
   const [oppName, setOppName]           = useState('');
   const [divisionId, setDivisionId]     = useState<number | null>(null);
   const [estimatedValue, setEstimatedValue] = useState('');
-  const [dueDate, setDueDate]           = useState('');
-  const [startDate, setStartDate]       = useState('');
-  const [endDate, setEndDate]           = useState('');
+  const { due: defaultDue, start: defaultStart, end: defaultEnd } = defaultDates();
+  const [dueDate, setDueDate]           = useState(defaultDue);
+  const [startDate, setStartDate]       = useState(defaultStart);
+  const [endDate, setEndDate]           = useState(defaultEnd);
   const [leadSources, setLeadSources]   = useState<AspirePicklistItem[]>([]);
   const [salesTypes, setSalesTypes]     = useState<AspirePicklistItem[]>([]);
   const [leadSourceId, setLeadSourceId] = useState<number | null>(null);
@@ -96,10 +110,14 @@ export default function FieldOpportunity() {
   const [submitterName, setSubmitterName] = useState(
     () => localStorage.getItem('field_employee') || ''
   );
-  const [employees, setEmployees] = useState<AspireEmployee[]>([]);
+  const [employees, setEmployees]       = useState<AspireEmployee[]>([]);
+  const [empLoading, setEmpLoading]     = useState(true);
 
   useEffect(() => {
-    getAspireEmployees().then(emps => { if (emps.length > 0) setEmployees(emps); }).catch(() => {});
+    getAspireEmployees()
+      .then(emps => { setEmployees(emps); })
+      .catch(() => {})
+      .finally(() => setEmpLoading(false));
     getLeadSources().then(items => { if (items.length > 0) setLeadSources(items); }).catch(() => {});
     getSalesTypes().then(items  => { if (items.length > 0) setSalesTypes(items);  }).catch(() => {});
   }, []);
@@ -205,10 +223,11 @@ export default function FieldOpportunity() {
 
   const reset = () => {
     previews.forEach(p => URL.revokeObjectURL(p));
+    const { due, start, end } = defaultDates();
     setStep(1); setPropQuery(''); setPropResults(null); setSelectedProp(null);
     setManualPropName(''); setUseManual(false);
     setOppName(''); setDivisionId(null); setEstimatedValue('');
-    setDueDate(''); setStartDate(''); setEndDate('');
+    setDueDate(due); setStartDate(start); setEndDate(end);
     setLeadSourceId(null); setSalesTypeId(null); setSalesperson(null);
     setPhotos([]); setPreviews([]);
     setNotes(''); setSubmitError(null); setSuccessInfo(null);
@@ -428,9 +447,11 @@ export default function FieldOpportunity() {
               </div>
             )}
 
-            {employees.length > 0 && (
-              <div>
-                <div style={S.flabel}>Salesperson</div>
+            <div>
+              <div style={S.flabel}>Salesperson</div>
+              {empLoading ? (
+                <input style={S.input} placeholder="Loading..." disabled/>
+              ) : employees.length > 0 ? (
                 <select
                   style={S.sel}
                   value={salesperson?.ContactID ?? ''}
@@ -444,11 +465,18 @@ export default function FieldOpportunity() {
                     <option key={emp.ContactID} value={emp.ContactID}>{emp.FullName}</option>
                   ))}
                 </select>
-                <div style={{fontSize:11, color:'#9ca3af', marginTop:4}}>
-                  They'll receive an email when this opportunity is created.
-                </div>
+              ) : (
+                <input
+                  style={S.input}
+                  placeholder="Salesperson name"
+                  value={salesperson?.FullName ?? ''}
+                  onChange={e => setSalesperson(e.target.value ? { ContactID: 0, FullName: e.target.value } : null)}
+                />
+              )}
+              <div style={{fontSize:11, color:'#9ca3af', marginTop:4}}>
+                They'll receive an email when this opportunity is created.
               </div>
-            )}
+            </div>
           </div>
         )}
 
@@ -515,7 +543,9 @@ export default function FieldOpportunity() {
                     Not you?
                   </button>
                 </div>
-              ) : (
+              ) : empLoading ? (
+                <input style={S.input} placeholder="Loading employees..." disabled/>
+              ) : employees.length > 0 ? (
                 <select
                   style={S.sel}
                   value={submitterName}
@@ -529,6 +559,16 @@ export default function FieldOpportunity() {
                     <option key={emp.ContactID} value={emp.FullName}>{emp.FullName}</option>
                   ))}
                 </select>
+              ) : (
+                <input
+                  style={S.input}
+                  placeholder="Your name"
+                  value={submitterName}
+                  onChange={e => {
+                    setSubmitterName(e.target.value);
+                    if (e.target.value) localStorage.setItem('field_employee', e.target.value);
+                  }}
+                />
               )}
             </div>
 

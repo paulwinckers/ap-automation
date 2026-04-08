@@ -63,6 +63,36 @@ async def probe_work_ticket_fields():
     return await _aspire.probe_work_ticket_fields()
 
 
+@router.get("/work-tickets/recent")
+async def get_recent_tickets():
+    """
+    Debug: return the 10 most recent work tickets (no date filter).
+    Use this to verify ScheduledStartDate values and filter format.
+    """
+    _check_credentials()
+    result = await _aspire._get("WorkTickets", {
+        "$select": "WorkTicketID,WorkTicketNumber,ScheduledStartDate,CrewLeaderName,WorkTicketStatusName",
+        "$orderby": "ScheduledStartDate desc",
+        "$top": "10",
+    })
+    tickets = _aspire._extract_list(result)
+
+    # Also probe Routes endpoint
+    try:
+        routes_result = await _aspire._get("Routes", {"$top": "5"})
+        routes_sample = _aspire._extract_list(routes_result)
+        routes_fields = list(routes_sample[0].keys()) if routes_sample else []
+    except Exception as e:
+        routes_sample = []
+        routes_fields = [f"ERROR: {e}"]
+
+    return {
+        "recent_tickets": tickets,
+        "routes_fields": routes_fields,
+        "routes_sample": routes_sample[:2],
+    }
+
+
 # ── Scheduled work tickets ───────────────────────────────────────────────────
 
 @router.get("/work-tickets/scheduled")
