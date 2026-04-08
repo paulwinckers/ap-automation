@@ -984,15 +984,17 @@ class AspireClient:
         Falls back to PUT if PATCH returns 405 Method Not Allowed.
         """
         body = {"Notes": notes}
+        # OData v4 single-entity key syntax: WorkTickets(123)
+        path = f"WorkTickets({ticket_id})"
         try:
-            return await self._patch(f"WorkTickets/{ticket_id}", body)
+            return await self._patch(path, body)
         except Exception as patch_err:
             status = getattr(getattr(patch_err, "response", None), "status_code", None)
-            if status == 405:
+            if status in (404, 405):
                 logger.info(
-                    f"PATCH not allowed for WorkTickets/{ticket_id} — trying PUT"
+                    f"PATCH returned {status} for {path} — trying PUT"
                 )
-                return await self._put(f"WorkTickets/{ticket_id}", body)
+                return await self._put(path, body)
             raise
 
     async def create_opportunity(self, body: dict) -> dict:
