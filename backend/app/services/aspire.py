@@ -808,22 +808,21 @@ class AspireClient:
         from datetime import date as _date, timedelta
         today = _date.today()
 
-        # Aspire stores datetimes as e.g. "2026-04-08T00:00:00Z"
-        # Use ge/lt with full datetime strings to avoid type mismatch
+        # Aspire OData date filter: plain YYYY-MM-DD, no quotes, no timezone suffix
+        # e.g. Date(ScheduledStartDate) eq 2026-04-08   OR
+        #      ScheduledStartDate ge 2026-03-25 and ScheduledStartDate lt 2026-04-08
         if date_range == "past":
-            since = (today - timedelta(days=14)).strftime("%Y-%m-%dT00:00:00Z")
-            until = today.strftime("%Y-%m-%dT00:00:00Z")
-            filter_str = f"ScheduledStartDate ge '{since}' and ScheduledStartDate lt '{until}'"
+            since = (today - timedelta(days=14)).strftime("%Y-%m-%d")
+            until = today.strftime("%Y-%m-%d")
+            filter_str = f"ScheduledStartDate ge {since} and ScheduledStartDate lt {until}"
             orderby = "ScheduledStartDate desc"
         elif date_range == "upcoming":
-            start = (today + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
-            end   = (today + timedelta(days=30)).strftime("%Y-%m-%dT00:00:00Z")
-            filter_str = f"ScheduledStartDate ge '{start}' and ScheduledStartDate le '{end}'"
+            tomorrow = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+            end      = (today + timedelta(days=30)).strftime("%Y-%m-%d")
+            filter_str = f"ScheduledStartDate ge {tomorrow} and ScheduledStartDate le {end}"
             orderby = "ScheduledStartDate asc"
         else:  # today
-            day_start = today.strftime("%Y-%m-%dT00:00:00Z")
-            day_end   = (today + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
-            filter_str = f"ScheduledStartDate ge '{day_start}' and ScheduledStartDate lt '{day_end}'"
+            filter_str = f"Date(ScheduledStartDate) eq {today.strftime('%Y-%m-%d')}"
             orderby = "ScheduledStartDate asc"
 
         select_fields = ",".join([
