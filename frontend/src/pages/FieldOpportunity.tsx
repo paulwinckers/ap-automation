@@ -106,7 +106,7 @@ export default function FieldOpportunity() {
   // Submission
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [successInfo, setSuccessInfo] = useState<{ name: string; id: string | number; photos: number } | null>(null);
+  const [successInfo, setSuccessInfo] = useState<{ name: string; id: string | number; number: number | null; photos: number } | null>(null);
 
   const cameraRef  = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
@@ -185,7 +185,7 @@ export default function FieldOpportunity() {
         salesTypeName:  selectedSalesType?.name,
       });
       localStorage.setItem('field_employee', submitterName.trim());
-      setSuccessInfo({ name: res.opportunity_name, id: res.opportunity_id, photos: res.photos_uploaded });
+      setSuccessInfo({ name: res.opportunity_name, id: res.opportunity_id, number: res.opportunity_number ?? null, photos: res.photos_uploaded });
       setStep(7);
     } catch (e: unknown) {
       setSubmitError((e as Error).message);
@@ -538,6 +538,11 @@ export default function FieldOpportunity() {
           <div style={S.success}>
             <span style={{fontSize:64, display:'block', marginBottom:16}}>✅</span>
             <div style={S.stitle}>Opportunity created!</div>
+            {successInfo.number && (
+              <div style={{background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:10, padding:'10px 16px', marginBottom:14, fontSize:18, fontWeight:700, color:'#1d4ed8', letterSpacing:'.02em'}}>
+                Opp #{successInfo.number}
+              </div>
+            )}
             <div style={S.ssub}>
               <strong>{successInfo.name}</strong> has been added to Aspire.
               {successInfo.photos > 0 ? ` ${successInfo.photos} photo${successInfo.photos !== 1 ? 's' : ''} attached.` : ''}

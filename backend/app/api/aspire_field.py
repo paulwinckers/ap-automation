@@ -286,21 +286,34 @@ async def create_opportunity(
             detail=f"Failed to create opportunity in Aspire: {e}",
         )
 
-    opp_id = (
-        result.get("OpportunityID")
-        or result.get("Id")
-        or result.get("id")
-        or "unknown"
-    )
+    logger.info(f"Aspire create_opportunity response: {result}")
+
+    # Aspire may return a plain integer (the OpportunityID) or a full object
+    if isinstance(result, (int, float)):
+        opp_id     = int(result)
+        opp_number = None
+    else:
+        opp_id = (
+            result.get("OpportunityID")
+            or result.get("Id")
+            or result.get("id")
+            or "unknown"
+        )
+        opp_number = (
+            result.get("OpportunityNumber")
+            or result.get("opportunityNumber")
+        )
+
     logger.info(
-        f"New opportunity created: ID={opp_id} '{opportunity_name}' "
+        f"New opportunity created: ID={opp_id} #={opp_number} '{opportunity_name}' "
         f"by {submitter_name}, {len(photo_urls)} photo(s)"
     )
 
     return {
-        "success":          True,
-        "opportunity_id":   opp_id,
-        "opportunity_name": opportunity_name,
-        "photos_uploaded":  len(photo_urls),
-        "submitter":        submitter_name,
+        "success":              True,
+        "opportunity_id":       opp_id,
+        "opportunity_number":   opp_number,
+        "opportunity_name":     opportunity_name,
+        "photos_uploaded":      len(photo_urls),
+        "submitter":            submitter_name,
     }

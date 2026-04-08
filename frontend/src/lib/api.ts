@@ -373,6 +373,7 @@ export async function getSalesTypes(): Promise<AspirePicklistItem[]> {
 export interface CreateOpportunityResponse {
   success: boolean;
   opportunity_id: string | number;
+  opportunity_number: number | null;
   opportunity_name: string;
   photos_uploaded: number;
   submitter: string;
