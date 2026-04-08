@@ -66,30 +66,43 @@ async def probe_work_ticket_fields():
 @router.get("/work-tickets/recent")
 async def get_recent_tickets():
     """
-    Debug: return the 10 most recent work tickets (no date filter).
-    Use this to verify ScheduledStartDate values and filter format.
+    Debug: fetch tickets for this week (full fields, no $select) to identify
+    what route/crew fields are populated on open tickets.
     """
     _check_credentials()
+    from datetime import date, timedelta
+    today = date.today()
+    week_start = (today - timedelta(days=today.weekday())).strftime("%Y-%m-%dT00:00:00Z")
+    week_end   = (today + timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
+
+    # Fetch this week's tickets with ALL fields (no $select)
     result = await _aspire._get("WorkTickets", {
-        "$select": "WorkTicketID,WorkTicketNumber,ScheduledStartDate,CrewLeaderName,WorkTicketStatusName",
-        "$orderby": "ScheduledStartDate desc",
+        "$filter": f"ScheduledStartDate ge '{week_start}' and ScheduledStartDate lt '{week_end}'",
+        "$orderby": "ScheduledStartDate asc",
         "$top": "10",
     })
     tickets = _aspire._extract_list(result)
 
-    # Also probe Routes endpoint
-    try:
-        routes_result = await _aspire._get("Routes", {"$top": "5"})
-        routes_sample = _aspire._extract_list(routes_result)
-        routes_fields = list(routes_sample[0].keys()) if routes_sample else []
-    except Exception as e:
-        routes_sample = []
-        routes_fields = [f"ERROR: {e}"]
+    # Show which fields are non-null on these tickets
+    if tickets:
+        sample = tickets[0]
+        populated = {k: v for k, v in sample.items() if v is not None and v != "" and v != []}
+        all_fields = list(sample.keys())
+    else:
+        populated = {}
+        all_fields = []
 
     return {
-        "recent_tickets": tickets,
-        "routes_fields": routes_fields,
-        "routes_sample": routes_sample[:2],
+        "week": f"{week_start} to {week_end}",
+        "ticket_count": len(tickets),
+        "all_fields_on_first_ticket": all_fields,
+        "populated_fields_on_first_ticket": populated,
+        "tickets_summary": [
+            {k: t.get(k) for k in ["WorkTicketID","WorkTicketNumber","ScheduledStartDate",
+                                     "WorkTicketStatusName","CrewLeaderName","CrewLeaderContactID",
+                                     "RouteSupervisorContactID","OpportunityID"]}
+            for t in tickets
+        ],
     }
 
 
