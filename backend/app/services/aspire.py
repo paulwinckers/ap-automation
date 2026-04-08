@@ -771,27 +771,59 @@ class AspireClient:
         except Exception as e:
             return {"error": str(e)}
 
+    async def _get_crew_leader_route_map(self) -> dict[int, str]:
+        """
+        Fetch all Routes from Aspire and return a map of
+        CrewLeaderContactID -> RouteName.
+        Falls back to empty dict if the endpoint is unavailable.
+        """
+        try:
+            result = await self._get("Routes", {
+                "$select": "RouteID,RouteName,CrewLeaderContactID",
+                "$top": "200",
+            })
+            route_map: dict[int, str] = {}
+            for r in self._extract_list(result):
+                crew_id = r.get("CrewLeaderContactID")
+                name    = r.get("RouteName") or ""
+                if crew_id and name:
+                    route_map[int(crew_id)] = name
+            logger.info(f"Loaded {len(route_map)} routes from Aspire")
+            return route_map
+        except Exception as e:
+            logger.warning(f"Routes endpoint unavailable, will group by crew leader: {e}")
+            return {}
+
     async def get_scheduled_work_tickets(self, date_range: str = "today") -> list[dict]:
         """
         Fetch work tickets filtered by ScheduledStartDate.
         date_range: 'today' | 'past' (last 14 days) | 'upcoming' (next 30 days)
-        Enriches each ticket with OpportunityName + PropertyName via a secondary lookup.
-        Groups by CrewLeaderName (the Aspire field confirmed via probe).
+
+        Uses full ISO-8601 datetime strings in the filter (Aspire stores
+        ScheduledStartDate as datetime, not plain date).
+
+        Enriches each ticket with OpportunityName + PropertyName, and groups
+        by RouteName (fetched from /Routes via CrewLeaderContactID).
         """
         from datetime import date as _date, timedelta
         today = _date.today()
-        today_str = today.isoformat()
 
+        # Aspire stores datetimes as e.g. "2026-04-08T00:00:00Z"
+        # Use ge/lt with full datetime strings to avoid type mismatch
         if date_range == "past":
-            since = (today - timedelta(days=14)).isoformat()
-            filter_str = f"ScheduledStartDate ge '{since}' and ScheduledStartDate lt '{today_str}'"
+            since = (today - timedelta(days=14)).strftime("%Y-%m-%dT00:00:00Z")
+            until = today.strftime("%Y-%m-%dT00:00:00Z")
+            filter_str = f"ScheduledStartDate ge '{since}' and ScheduledStartDate lt '{until}'"
             orderby = "ScheduledStartDate desc"
         elif date_range == "upcoming":
-            until = (today + timedelta(days=30)).isoformat()
-            filter_str = f"ScheduledStartDate gt '{today_str}' and ScheduledStartDate le '{until}'"
+            start = (today + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+            end   = (today + timedelta(days=30)).strftime("%Y-%m-%dT00:00:00Z")
+            filter_str = f"ScheduledStartDate ge '{start}' and ScheduledStartDate le '{end}'"
             orderby = "ScheduledStartDate asc"
         else:  # today
-            filter_str = f"ScheduledStartDate eq '{today_str}'"
+            day_start = today.strftime("%Y-%m-%dT00:00:00Z")
+            day_end   = (today + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+            filter_str = f"ScheduledStartDate ge '{day_start}' and ScheduledStartDate lt '{day_end}'"
             orderby = "ScheduledStartDate asc"
 
         select_fields = ",".join([
@@ -802,25 +834,32 @@ class AspireClient:
             "CrewLeaderContactID", "CrewLeaderName",
         ])
 
+        # Fetch tickets and route map concurrently
+        import asyncio
         try:
-            result = await self._get("WorkTickets", {
-                "$filter": filter_str,
-                "$select": select_fields,
-                "$orderby": orderby,
-                "$top": "200",
-            })
-            tickets = self._extract_list(result)
+            tickets_result, route_map = await asyncio.gather(
+                self._get("WorkTickets", {
+                    "$filter": filter_str,
+                    "$select": select_fields,
+                    "$orderby": orderby,
+                    "$top": "200",
+                }),
+                self._get_crew_leader_route_map(),
+            )
+            tickets = self._extract_list(tickets_result)
         except Exception as e:
             logger.error(f"Scheduled work tickets fetch failed: {e}")
             return []
 
         if not tickets:
+            logger.info(f"No work tickets found for range={date_range}, filter: {filter_str}")
             return []
+
+        logger.info(f"Fetched {len(tickets)} work tickets for range={date_range}")
 
         # Enrich with OpportunityName + PropertyName
         opp_ids = list({t.get("OpportunityID") for t in tickets if t.get("OpportunityID")})
         opp_map: dict = {}
-        # Batch in chunks of 15 (OData URL length limit)
         for chunk_start in range(0, len(opp_ids), 15):
             chunk = opp_ids[chunk_start:chunk_start + 15]
             or_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
@@ -842,8 +881,13 @@ class AspireClient:
             info = opp_map.get(t.get("OpportunityID"), {})
             t["OpportunityName"] = info.get("name", "")
             t["PropertyName"]    = info.get("property", "")
-            # Use CrewLeaderName as the group/route key
-            t["_RouteName"] = t.get("CrewLeaderName") or "Unassigned"
+            # Resolve route name: prefer Routes lookup, fall back to crew leader name
+            crew_id = t.get("CrewLeaderContactID")
+            t["_RouteName"] = (
+                (route_map.get(int(crew_id)) if crew_id else None)
+                or t.get("CrewLeaderName")
+                or "Unassigned"
+            )
             # Normalise field names for frontend compatibility
             t["ScheduledDate"]       = t.get("ScheduledStartDate")
             t["ActualLaborHours"]    = t.get("HoursAct")
