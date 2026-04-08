@@ -732,16 +732,24 @@ class AspireClient:
         suffixes in the last name, e.g. "(expenses)".
         """
         try:
+            # Fetch without $filter first so we can see what ContactType values exist
             result = await self._get("Contacts", {
-                "$filter": "ContactType eq 'Employee'",
                 "$select": "ContactID,FirstName,LastName,ContactType,IsActive,Email,EmailAddress,PrimaryEmail",
                 "$top": "500",
                 "$orderby": "LastName asc",
             })
             contacts = self._extract_list(result)
+            # Log distinct ContactType values to diagnose filtering
+            types_seen = {c.get("ContactType") for c in contacts}
+            logger.info(f"Contacts fetch: {len(contacts)} total, ContactType values seen: {types_seen}")
             out = []
             for c in contacts:
                 if c.get("IsActive") is False:
+                    continue
+                # Only include contacts whose ContactType indicates they are employees.
+                # Log ContactType for first few to help diagnose if list is still wrong.
+                ct = c.get("ContactType")
+                if ct not in ("Employee", "employee", 1, "1"):
                     continue
                 first = (c.get("FirstName") or "").strip()
                 last  = (c.get("LastName") or "").strip()
