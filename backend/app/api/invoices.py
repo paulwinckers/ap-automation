@@ -233,6 +233,7 @@ async def upload_invoice(
         pdf_filename   = file.filename,
         intake_source  = "upload",
         intake_raw     = extraction.model_dump(),
+        doc_type       = doc_type,   # persist so retry keeps credit_memo routing
     )
 
     await db.audit(invoice_id, "extracted", "claude", {
@@ -621,6 +622,13 @@ async def retry_invoice(invoice_id: int, db: Database = Depends(get_db)):
     r2_key = row.get("pdf_r2_key")
     file_bytes = await get_file_bytes(r2_key) if r2_key else None
 
+    # Restore doc_type from DB; if missing, infer credit_memo from negative total
+    # (handles entries saved before doc_type was persisted)
+    doc_type = row.get("doc_type")
+    if not doc_type and row.get("total_amount") is not None and float(row.get("total_amount") or 0) < 0:
+        doc_type = "credit_memo"
+        logger.info(f"Inferred doc_type=credit_memo from negative total_amount for invoice {invoice_id}")
+
     invoice = Invoice(
         id                 = invoice_id,
         status             = InvoiceStatus.ERROR,
@@ -636,7 +644,7 @@ async def retry_invoice(invoice_id: int, db: Database = Depends(get_db)):
         po_number_override = row["po_number_override"],
         pdf_filename       = row["pdf_filename"],
         intake_source      = row["intake_source"],
-        doc_type           = row.get("doc_type"),
+        doc_type           = doc_type,
         file_bytes         = file_bytes,
         line_items         = [LineItem(**li) for li in raw.get("line_items", [])],
         tax_lines          = [TaxLine(**tl) for tl in raw.get("tax_lines", [])],

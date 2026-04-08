@@ -414,20 +414,27 @@ async def _route_to_qbo_vendor_credit(
 ) -> RoutingOutcome:
     """
     Post a credit memo / store return as a QBO Vendor Credit.
-    GL is resolved from the vendor rule (same account as the original purchase).
-    Falls back to MASTERCARD_FALLBACK_GL if the vendor isn't in vendor_rules.
+    GL priority: (1) user-confirmed GL from step 3, (2) vendor rule default, (3) fallback 6999.
     """
-    vendor_rule = await db.get_vendor_rule_by_name(invoice.vendor_name)
-    if vendor_rule and vendor_rule.default_gl_account:
-        gl_account = vendor_rule.default_gl_account
-        gl_name    = vendor_rule.default_gl_name
+    # 1. User explicitly confirmed a GL in the field app (step 3 overhead selection)
+    if invoice.gl_account:
+        gl_account = invoice.gl_account
+        gl_name    = None  # resolved below via _resolve_gl_name
+        logger.info(f"Using user-confirmed GL '{gl_account}' for vendor credit — invoice {invoice.id}")
     else:
-        gl_account = MASTERCARD_FALLBACK_GL  # general overhead catch-all
-        gl_name    = "General Overhead"
-        logger.info(
-            f"No vendor rule for '{invoice.vendor_name}' — "
-            f"posting credit to fallback GL {gl_account}"
-        )
+        # 2. Look up vendor rule default GL
+        vendor_rule = await db.get_vendor_rule_by_name(invoice.vendor_name)
+        if vendor_rule and vendor_rule.default_gl_account:
+            gl_account = vendor_rule.default_gl_account
+            gl_name    = vendor_rule.default_gl_name
+        else:
+            # 3. Fall back to general overhead catch-all
+            gl_account = MASTERCARD_FALLBACK_GL
+            gl_name    = "General Overhead"
+            logger.info(
+                f"No vendor rule for '{invoice.vendor_name}' — "
+                f"posting credit to fallback GL {gl_account}"
+            )
 
     gl_name = await _resolve_gl_name(gl_account, gl_name, qbo)
 
