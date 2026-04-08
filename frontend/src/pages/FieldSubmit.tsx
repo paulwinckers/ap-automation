@@ -149,8 +149,6 @@ export default function FieldSubmit() {
 
   const next = () => {
     if (step === 4) { handleSubmit(); return; }
-    // Returns skip step 3 (no job/overhead question — vendor rule handles GL)
-    if (step === 2 && isReturn) { setStep(4); return; }
     setStep(s => (s + 1) as Step);
   };
 
