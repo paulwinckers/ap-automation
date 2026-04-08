@@ -46,7 +46,7 @@ TOKEN_URL  = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 
 SCREENING_PROMPT = """Look at this email and reply with ONLY one word.
 
-CREDIT_MEMO — vendor credit notes, credit memos, or refund notices where money is owed TO us (negative amount, return, credit)
+CREDIT_MEMO — vendor credit notes, credit memos, refund notices, or store return receipts where money is owed TO us or being refunded (negative amount, return, credit, refund, items returned)
 STATEMENT   — vendor account statements showing a list of invoices, payments, and the total balance owed over a period (monthly statement, account statement)
 INVOICE  — vendor bills or invoices with a PDF attachment, or emails where payment is still due
 RECEIPT  — online purchase confirmations or subscription renewal receipts with no PDF, from vendors like GoDaddy, Adobe, Microsoft, Intuit, Google, AWS, QuickBooks — payment already charged to a credit card
@@ -384,9 +384,13 @@ class EmailIntakeService:
             return "skip"
 
         # Fast-path: credit memo keywords → credit_memo
+        # Covers both formal credit notes AND store return receipts / refund emails.
         credit_memo_keywords = [
             "credit memo", "credit note", "credit memorandum",
             "vendor credit", "return credit", "credit adjustment",
+            "refund confirmation", "refund receipt", "your refund",
+            "return confirmation", "return processed", "refund processed",
+            "store return", "purchase return", "items returned",
         ]
         if any(k in subject_lower for k in credit_memo_keywords):
             return "credit_memo"

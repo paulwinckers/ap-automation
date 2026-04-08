@@ -65,12 +65,10 @@ async def route_invoice(
     """
     logger.info(f"Routing invoice {invoice.id} — vendor: {invoice.vendor_name}")
 
-    # ── Credit memos are handled by email_intake._process_credit_memo_email ──
-    # They should never reach the general router, but guard against it.
+    # ── Credit memos — post as QBO Vendor Credit using vendor rule GL ──────────
+    # Covers both email-received credit notes and field-uploaded store returns.
     if invoice.doc_type == "credit_memo":
-        logger.warning(f"Credit memo {invoice.id} reached general router — queuing for review")
-        await _queue(invoice, db, reason="credit_memo_unexpected")
-        return RoutingOutcome.QUEUED
+        return await _route_to_qbo_vendor_credit(invoice, db, qbo)
 
     # ── GL override from frontend confirmation step ───────────────────────────
     # If the user confirmed (or corrected) a GL account before submitting, use it
@@ -407,6 +405,57 @@ async def _notify_queued(invoice: Invoice, vendor_rule, reason: str) -> None:
             await graph.close()
     except Exception as e:
         logger.warning(f"Queue notification failed (non-fatal): {e}")
+
+
+async def _route_to_qbo_vendor_credit(
+    invoice: Invoice,
+    db: Database,
+    qbo: QBOClient,
+) -> RoutingOutcome:
+    """
+    Post a credit memo / store return as a QBO Vendor Credit.
+    GL is resolved from the vendor rule (same account as the original purchase).
+    Falls back to MASTERCARD_FALLBACK_GL if the vendor isn't in vendor_rules.
+    """
+    vendor_rule = await db.get_vendor_rule_by_name(invoice.vendor_name)
+    if vendor_rule and vendor_rule.default_gl_account:
+        gl_account = vendor_rule.default_gl_account
+        gl_name    = vendor_rule.default_gl_name
+    else:
+        gl_account = MASTERCARD_FALLBACK_GL  # general overhead catch-all
+        gl_name    = "General Overhead"
+        logger.info(
+            f"No vendor rule for '{invoice.vendor_name}' — "
+            f"posting credit to fallback GL {gl_account}"
+        )
+
+    gl_name = await _resolve_gl_name(gl_account, gl_name, qbo)
+
+    try:
+        credit_id, qbo_amount = await qbo.post_vendor_credit(
+            invoice,
+            gl_account,
+            file_bytes=invoice.file_bytes,
+            filename=invoice.pdf_filename,
+        )
+        await db.mark_posted_qbo(invoice.id, credit_id, gl_account, gl_name=gl_name, qbo_amount=qbo_amount)
+        await db.audit(invoice.id, "posted", "system", {
+            "destination": "qbo_vendor_credit",
+            "credit_id":   credit_id,
+            "gl_account":  gl_account,
+            "gl_name":     gl_name,
+            "qbo_amount":  qbo_amount,
+        })
+        logger.info(
+            f"Credit memo {invoice.id} posted to QBO vendor credit — "
+            f"id {credit_id}, GL {gl_account} ({gl_name}), TotalAmt: {qbo_amount}"
+        )
+        return RoutingOutcome.POSTED_QBO
+
+    except Exception as e:
+        logger.error(f"QBO vendor credit post failed for invoice {invoice.id}: {e}")
+        await db.mark_error(invoice.id, str(e))
+        return RoutingOutcome.ERROR
 
 
 async def _queue(

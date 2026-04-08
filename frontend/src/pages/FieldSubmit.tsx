@@ -20,7 +20,7 @@ import {
   type QuickExtractResult,
 } from '../lib/api';
 
-type DocType = 'vendor' | 'mastercard' | 'expense' | null;
+type DocType = 'vendor' | 'mastercard' | 'expense' | 'return' | null;
 type CostType = 'job' | 'overhead';
 type Step = 1 | 2 | 3 | 4 | 5;
 
@@ -147,6 +147,8 @@ export default function FieldSubmit() {
 
   const next = () => {
     if (step === 4) { handleSubmit(); return; }
+    // Store returns skip step 3 (no job/overhead question — vendor rule handles GL)
+    if (step === 2 && docType === 'return') { setStep(4); return; }
     setStep(s => (s + 1) as Step);
   };
 
@@ -196,6 +198,7 @@ export default function FieldSubmit() {
                 {t:'vendor',    icon:'🧾', label:'On Account',  sub:'Bill from supplier'},
                 {t:'mastercard',icon:'💳', label:'MC Receipt',  sub:'Company card purchase'},
                 {t:'expense',   icon:'🧑', label:'My Expense',  sub:'Personal card / cash'},
+                {t:'return',    icon:'↩️', label:'Store Return', sub:'Returned items / refund'},
               ] as {t:DocType,icon:string,label:string,sub:string}[]).map(o => (
                 <button key={o.t} style={{...S.dt,...(docType===o.t?S.dtsel:{})}} onClick={()=>setDocType(o.t)}>
                   <span style={{fontSize:28,display:'block',marginBottom:6}}>{o.icon}</span>
@@ -311,7 +314,7 @@ export default function FieldSubmit() {
           <div style={S.card}>
             <div style={S.ctitle}>Review before submitting</div>
             {previewUrl && <img src={previewUrl} alt="Receipt" style={{...S.preview,marginBottom:12}}/>}
-            <RR label="Type" value={{vendor:'Vendor Invoice',mastercard:'MasterCard Receipt',expense:'Employee Expense'}[docType!]||'—'}/>
+            <RR label="Type" value={{vendor:'Vendor Invoice',mastercard:'MasterCard Receipt',expense:'Employee Expense',return:'Store Return / Refund'}[docType!]||'—'}/>
             {(docType==='expense'||docType==='mastercard')&&employee && <RR label={docType==='mastercard'?'Purchased by':'Employee'} value={employee}/>}
             <RR label="Document" value={file?.name||'—'} color="#059669"/>
             <RR label="Coding" value={costType==='overhead'?'Overhead':'Job cost'} color={costType==='overhead'?'#d97706':'#059669'}/>

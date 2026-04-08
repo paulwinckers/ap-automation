@@ -181,12 +181,20 @@ async def upload_invoice(
         raise HTTPException(status_code=400, detail="Only PDF or image files are accepted")
 
     pdf_bytes = await file.read()
-    logger.info(f"Invoice received — {file.filename} ({len(pdf_bytes)} bytes)")
+    logger.info(f"Invoice received — {file.filename} ({len(pdf_bytes)} bytes), doc_type={doc_type}")
 
-    try:
-        extraction = await _extractor.extract_from_pdf_bytes(pdf_bytes, file.filename or "")
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Extraction failed: {e}")
+    # Store returns use credit memo extraction (negative amounts) and route as vendor credit
+    if doc_type == "return":
+        doc_type = "credit_memo"
+        try:
+            extraction = await _extractor.extract_credit_memo(pdf_bytes, file.filename or "")
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Return receipt extraction failed: {e}")
+    else:
+        try:
+            extraction = await _extractor.extract_from_pdf_bytes(pdf_bytes, file.filename or "")
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Extraction failed: {e}")
 
     # Duplicate check — reject if this invoice number was already processed
     if extraction.invoice_number and extraction.vendor_name:
