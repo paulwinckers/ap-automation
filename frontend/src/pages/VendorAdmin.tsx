@@ -420,10 +420,9 @@ function VendorAdminInner() {
                   value={form.vendor_name}
                   onChange={e => setForm(f => ({ ...f, vendor_name: e.target.value }))}
                   placeholder="e.g. Telus Business"
-                  disabled={editingId !== null}
                 />
                 {editingId !== null && (
-                  <div style={S.hint}>Name cannot be changed after creation.</div>
+                  <div style={S.hint}>Update to match exactly how the vendor name appears on invoices.</div>
                 )}
               </div>
 
