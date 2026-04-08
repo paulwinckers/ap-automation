@@ -535,7 +535,9 @@ class Database:
         )
 
     async def get_invoice_feed(self, limit: int = 100) -> list[dict]:
-        """Return recent active (non-archived) invoices for the AP live feed, newest first."""
+        """Return recent active (non-archived) invoices for the AP live feed.
+        Action-required items (queued/error/pending) always sort to the top so
+        they are never pushed off the page by newer posted records."""
         return await self._q(
             """SELECT i.id, i.status, i.destination, i.vendor_name,
                       i.invoice_number, i.total_amount, i.tax_amount, i.subtotal,
@@ -549,7 +551,9 @@ class Database:
                LEFT JOIN po_cache pc
                  ON pc.po_number = COALESCE(i.po_number_override, i.po_number)
                WHERE (i.archived IS NULL OR i.archived = 0)
-               ORDER BY i.received_at DESC
+               ORDER BY
+                 CASE WHEN i.status IN ('queued', 'error', 'pending') THEN 0 ELSE 1 END,
+                 i.received_at DESC
                LIMIT ?""",
             [limit],
         )
