@@ -726,30 +726,46 @@ class AspireClient:
 
     async def get_aspire_employees(self) -> list[dict]:
         """
-        Fetch employees from Aspire Contacts (ContactType = Employee).
-        Returns list of {ContactID, FullName, Email} dicts sorted by last name.
-        Filters out vendor/expense accounts which Aspire stores with parenthesised
-        suffixes in the last name, e.g. "(expenses)".
+        Build an employee list from unique SalesRep and OperationsManager names
+        on recent Opportunities (Contacts endpoint is 403 for this account).
+        Returns list of {ContactID, FullName, Email} dicts sorted by name.
         """
         try:
-            # Fetch without $filter first so we can see what ContactType values exist
+            result = await self._get("Opportunities", {
+                "$select": "SalesRepContactName,OperationsManagerContactName",
+                "$top": "500",
+                "$orderby": "WonDate desc",
+            })
+            opps = self._extract_list(result)
+            names: set[str] = set()
+            for o in opps:
+                for field in ("SalesRepContactName", "OperationsManagerContactName"):
+                    val = (o.get(field) or "").strip()
+                    if val:
+                        names.add(val)
+            out = [
+                {"ContactID": 0, "FullName": name, "Email": ""}
+                for name in sorted(names)
+            ]
+            logger.info(f"Employee list built from Opportunities: {len(out)} unique names")
+            return out
+        except Exception as e:
+            logger.warning(f"Aspire employees fetch failed: {e}")
+            return []
+
+    async def _get_aspire_employees_contacts(self) -> list[dict]:
+        """Original Contacts-based fetch — kept for reference (403 on this account)."""
+        try:
             result = await self._get("Contacts", {
+                "$filter": "ContactType eq 'Employee'",
                 "$select": "ContactID,FirstName,LastName,ContactType,IsActive,Email,EmailAddress,PrimaryEmail",
                 "$top": "500",
                 "$orderby": "LastName asc",
             })
             contacts = self._extract_list(result)
-            # Log distinct ContactType values to diagnose filtering
-            types_seen = {c.get("ContactType") for c in contacts}
-            logger.info(f"Contacts fetch: {len(contacts)} total, ContactType values seen: {types_seen}")
             out = []
             for c in contacts:
                 if c.get("IsActive") is False:
-                    continue
-                # Only include contacts whose ContactType indicates they are employees.
-                # Log ContactType for first few to help diagnose if list is still wrong.
-                ct = c.get("ContactType")
-                if ct not in ("Employee", "employee", 1, "1"):
                     continue
                 first = (c.get("FirstName") or "").strip()
                 last  = (c.get("LastName") or "").strip()
