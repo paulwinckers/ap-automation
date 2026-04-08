@@ -727,12 +727,12 @@ class AspireClient:
     async def get_aspire_employees(self) -> list[dict]:
         """
         Fetch employees from Aspire Contacts (ContactType = Employee).
-        Returns list of {ContactID, FullName} dicts sorted by last name.
+        Returns list of {ContactID, FullName, Email} dicts sorted by last name.
         """
         try:
             result = await self._get("Contacts", {
                 "$filter": "ContactType eq 'Employee'",
-                "$select": "ContactID,FirstName,LastName,ContactType,IsActive",
+                "$select": "ContactID,FirstName,LastName,ContactType,IsActive,Email,EmailAddress,PrimaryEmail",
                 "$top": "200",
                 "$orderby": "LastName asc",
             })
@@ -744,7 +744,17 @@ class AspireClient:
                 first = (c.get("FirstName") or "").strip()
                 last  = (c.get("LastName") or "").strip()
                 full  = f"{first} {last}".strip() or f"Contact {c.get('ContactID')}"
-                out.append({"ContactID": c.get("ContactID"), "FullName": full})
+                email = (
+                    c.get("Email")
+                    or c.get("EmailAddress")
+                    or c.get("PrimaryEmail")
+                    or ""
+                )
+                out.append({
+                    "ContactID": c.get("ContactID"),
+                    "FullName":  full,
+                    "Email":     email,
+                })
             return out
         except Exception as e:
             logger.warning(f"Aspire employees fetch failed: {e}")

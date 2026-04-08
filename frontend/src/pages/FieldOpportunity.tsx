@@ -18,12 +18,11 @@ import {
   createFieldOpportunity,
   getLeadSources,
   getSalesTypes,
-  listEmployees,
+  getAspireEmployees,
   type FieldPropertyResult,
   type AspirePicklistItem,
+  type AspireEmployee,
 } from '../lib/api';
-
-const FALLBACK_EMPLOYEES = ['Marcus Torres','Jake Willms','Devon Hicks','Priya Sandhu','Cole Beaumont'];
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -90,14 +89,17 @@ export default function FieldOpportunity() {
   const [photos, setPhotos]         = useState<File[]>([]);
   const [previews, setPreviews]     = useState<string[]>([]);
 
+  // Salesperson (Step 2)
+  const [salesperson, setSalesperson] = useState<AspireEmployee | null>(null);
+
   // Step 4 — notes + name
   const [submitterName, setSubmitterName] = useState(
     () => localStorage.getItem('field_employee') || ''
   );
-  const [employees, setEmployees] = useState<string[]>(FALLBACK_EMPLOYEES);
+  const [employees, setEmployees] = useState<AspireEmployee[]>([]);
 
   useEffect(() => {
-    listEmployees().then(names => { if (names.length > 0) setEmployees(names); }).catch(() => {});
+    getAspireEmployees().then(emps => { if (emps.length > 0) setEmployees(emps); }).catch(() => {});
     getLeadSources().then(items => { if (items.length > 0) setLeadSources(items); }).catch(() => {});
     getSalesTypes().then(items  => { if (items.length > 0) setSalesTypes(items);  }).catch(() => {});
   }, []);
@@ -187,6 +189,9 @@ export default function FieldOpportunity() {
         leadSourceName: selectedLeadSource?.name,
         salesTypeId:    salesTypeId    ?? undefined,
         salesTypeName:  selectedSalesType?.name,
+        salespersonId:    salesperson?.ContactID,
+        salespersonName:  salesperson?.FullName,
+        salespersonEmail: salesperson?.Email,
       });
       localStorage.setItem('field_employee', submitterName.trim());
       setSuccessInfo({ name: res.opportunity_name, id: res.opportunity_id, number: res.opportunity_number ?? null, photos: res.photos_uploaded });
@@ -204,7 +209,7 @@ export default function FieldOpportunity() {
     setManualPropName(''); setUseManual(false);
     setOppName(''); setDivisionId(null); setEstimatedValue('');
     setDueDate(''); setStartDate(''); setEndDate('');
-    setLeadSourceId(null); setSalesTypeId(null);
+    setLeadSourceId(null); setSalesTypeId(null); setSalesperson(null);
     setPhotos([]); setPreviews([]);
     setNotes(''); setSubmitError(null); setSuccessInfo(null);
   };
@@ -410,7 +415,7 @@ export default function FieldOpportunity() {
             )}
 
             {salesTypes.length > 0 && (
-              <div>
+              <div style={{marginBottom:16}}>
                 <div style={S.flabel}>Sales type</div>
                 <select
                   style={S.sel}
@@ -420,6 +425,28 @@ export default function FieldOpportunity() {
                   <option value="">Select sales type...</option>
                   {salesTypes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
+              </div>
+            )}
+
+            {employees.length > 0 && (
+              <div>
+                <div style={S.flabel}>Salesperson</div>
+                <select
+                  style={S.sel}
+                  value={salesperson?.ContactID ?? ''}
+                  onChange={e => {
+                    const emp = employees.find(x => x.ContactID === Number(e.target.value));
+                    setSalesperson(emp ?? null);
+                  }}
+                >
+                  <option value="">Select salesperson...</option>
+                  {employees.map(emp => (
+                    <option key={emp.ContactID} value={emp.ContactID}>{emp.FullName}</option>
+                  ))}
+                </select>
+                <div style={{fontSize:11, color:'#9ca3af', marginTop:4}}>
+                  They'll receive an email when this opportunity is created.
+                </div>
               </div>
             )}
           </div>
@@ -498,7 +525,9 @@ export default function FieldOpportunity() {
                   }}
                 >
                   <option value="">Select your name...</option>
-                  {employees.map(emp => <option key={emp}>{emp}</option>)}
+                  {employees.map(emp => (
+                    <option key={emp.ContactID} value={emp.FullName}>{emp.FullName}</option>
+                  ))}
                 </select>
               )}
             </div>
@@ -528,6 +557,7 @@ export default function FieldOpportunity() {
             {dueDate   && <RR label="Due date"   value={dueDate}/>}
             {leadSourceId  && <RR label="Lead source" value={leadSources.find(l => l.id === leadSourceId)?.name ?? ''}/>}
             {salesTypeId   && <RR label="Sales type"  value={salesTypes.find(s => s.id === salesTypeId)?.name  ?? ''}/>}
+            {salesperson   && <RR label="Salesperson" value={salesperson.FullName}/>}
             <RR label="Photos"    value={`${photos.length} photo${photos.length !== 1 ? 's' : ''}`} color={photos.length > 0 ? '#059669' : '#6b7280'}/>
             <RR label="Created by" value={submitterName}/>
             {notes && (

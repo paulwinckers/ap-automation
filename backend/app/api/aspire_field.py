@@ -242,21 +242,24 @@ DIVISION_MAP = {
 
 @router.post("/opportunity")
 async def create_opportunity(
-    submitter_name:    str               = Form(...),
-    opportunity_name:  str               = Form(...),
-    division_id:       int               = Form(...),
-    estimated_value:   float             = Form(default=0.0),
-    notes:             str               = Form(default=""),
-    property_id:       Optional[int]     = Form(default=None),
-    property_name_fyi: Optional[str]     = Form(default=None),
-    due_date:          Optional[str]     = Form(default=None),
-    start_date:        Optional[str]     = Form(default=None),
-    end_date:          Optional[str]     = Form(default=None),
-    lead_source_id:    Optional[int]     = Form(default=None),
-    lead_source_name:  Optional[str]     = Form(default=None),
-    sales_type_id:     Optional[int]     = Form(default=None),
-    sales_type_name:   Optional[str]     = Form(default=None),
-    photos:            List[UploadFile]  = File(default=[]),
+    submitter_name:       str               = Form(...),
+    opportunity_name:     str               = Form(...),
+    division_id:          int               = Form(...),
+    estimated_value:      float             = Form(default=0.0),
+    notes:                str               = Form(default=""),
+    property_id:          Optional[int]     = Form(default=None),
+    property_name_fyi:    Optional[str]     = Form(default=None),
+    due_date:             Optional[str]     = Form(default=None),
+    start_date:           Optional[str]     = Form(default=None),
+    end_date:             Optional[str]     = Form(default=None),
+    lead_source_id:       Optional[int]     = Form(default=None),
+    lead_source_name:     Optional[str]     = Form(default=None),
+    sales_type_id:        Optional[int]     = Form(default=None),
+    sales_type_name:      Optional[str]     = Form(default=None),
+    salesperson_id:       Optional[int]     = Form(default=None),
+    salesperson_name:     Optional[str]     = Form(default=None),
+    salesperson_email:    Optional[str]     = Form(default=None),
+    photos:               List[UploadFile]  = File(default=[]),
 ):
     """
     Create a new Aspire Opportunity.
@@ -340,6 +343,8 @@ async def create_opportunity(
         body["LeadSourceID"] = lead_source_id
     if sales_type_id:
         body["SalesTypeID"] = sales_type_id
+    if salesperson_id:
+        body["SalesRepContactID"] = salesperson_id
 
     try:
         result = await _aspire.create_opportunity(body)
@@ -372,6 +377,50 @@ async def create_opportunity(
         f"New opportunity created: ID={opp_id} #={opp_number} '{opportunity_name}' "
         f"by {submitter_name}, {len(photo_urls)} photo(s)"
     )
+
+    # ── Notify salesperson by email ────────────────────────────────────────────
+    if salesperson_email and salesperson_name:
+        try:
+            from app.services.email_intake import GraphClient
+            from app.core.config import settings as _s
+            graph = GraphClient()
+            opp_num_str = f" #{opp_number}" if opp_number else ""
+            est_str = f"${estimated_value:,.0f}" if estimated_value else "—"
+            prop_str = property_name_fyi or (
+                f"Property ID {property_id}" if property_id else "—"
+            )
+            div_str  = DIVISION_MAP.get(division_id, str(division_id))
+            date_str = date.today().strftime("%B %d, %Y")
+            note_html = notes.replace("\n", "<br>") if notes else "<em>None</em>"
+            await graph.send_email(
+                mailbox=_s.MS_AP_INBOX,
+                to_addresses=[salesperson_email],
+                subject=f"New opportunity assigned to you{opp_num_str} — {opportunity_name}",
+                body_html=f"""
+<html><body style="font-family:Arial,sans-serif;color:#1a1d23;max-width:600px">
+<div style="background:#1e3a2f;padding:20px 24px;border-radius:8px 8px 0 0">
+  <h2 style="color:#fff;margin:0;font-size:18px">🌿 New Opportunity — {opportunity_name}</h2>
+</div>
+<div style="background:#fff;border:1px solid #e2e6ed;border-top:none;padding:24px;border-radius:0 0 8px 8px">
+  <p style="margin:0 0 16px;color:#374151">
+    A new opportunity has been created in Aspire and assigned to you.
+  </p>
+  <table style="width:100%;border-collapse:collapse;font-size:14px">
+    <tr><td style="padding:8px 0;color:#6b7280;width:140px;vertical-align:top">Opportunity</td><td style="padding:8px 0;font-weight:600">{opportunity_name}{opp_num_str}</td></tr>
+    <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top">Property</td><td style="padding:8px 0">{prop_str}</td></tr>
+    <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top">Division</td><td style="padding:8px 0">{div_str}</td></tr>
+    <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top">Estimate</td><td style="padding:8px 0">{est_str}</td></tr>
+    <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top">Submitted by</td><td style="padding:8px 0">{submitter_name}</td></tr>
+    <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top">Date</td><td style="padding:8px 0">{date_str}</td></tr>
+    <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top">Notes</td><td style="padding:8px 0">{note_html}</td></tr>
+    <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top">Photos</td><td style="padding:8px 0">{len(photo_urls)} uploaded</td></tr>
+  </table>
+</div>
+</body></html>""",
+            )
+            logger.info(f"Salesperson notification sent to {salesperson_email}")
+        except Exception as e:
+            logger.warning(f"Failed to send salesperson notification: {e}")
 
     return {
         "success":              True,

@@ -332,6 +332,7 @@ export async function getScheduledTickets(range: TicketRange): Promise<{ routes:
 export interface AspireEmployee {
   ContactID: number;
   FullName: string;
+  Email?: string;
 }
 
 export async function getAspireEmployees(): Promise<AspireEmployee[]> {
@@ -434,6 +435,9 @@ export interface FieldOpportunityPayload {
   leadSourceName?: string;
   salesTypeId?: number;
   salesTypeName?: string;
+  salespersonId?: number;
+  salespersonName?: string;
+  salespersonEmail?: string;
 }
 
 export async function createFieldOpportunity(p: FieldOpportunityPayload): Promise<CreateOpportunityResponse> {
@@ -450,8 +454,11 @@ export async function createFieldOpportunity(p: FieldOpportunityPayload): Promis
   if (p.endDate)         form.append('end_date',          p.endDate);
   if (p.leadSourceId)    form.append('lead_source_id',    String(p.leadSourceId));
   if (p.leadSourceName)  form.append('lead_source_name',  p.leadSourceName);
-  if (p.salesTypeId)     form.append('sales_type_id',     String(p.salesTypeId));
-  if (p.salesTypeName)   form.append('sales_type_name',   p.salesTypeName);
+  if (p.salesTypeId)      form.append('sales_type_id',      String(p.salesTypeId));
+  if (p.salesTypeName)    form.append('sales_type_name',    p.salesTypeName);
+  if (p.salespersonId)    form.append('salesperson_id',     String(p.salespersonId));
+  if (p.salespersonName)  form.append('salesperson_name',   p.salespersonName);
+  if (p.salespersonEmail) form.append('salesperson_email',  p.salespersonEmail);
   for (const photo of p.photos) form.append('photos', photo);
   return request<CreateOpportunityResponse>('POST', '/aspire/field/opportunity', form, true);
 }
