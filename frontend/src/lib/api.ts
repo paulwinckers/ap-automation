@@ -56,15 +56,17 @@ export async function uploadInvoice(
   employee?: string,
   notes?: string,
   glAccount?: string,
+  isReturn?: boolean,
 ): Promise<UploadResponse> {
   const form = new FormData();
   form.append('file', file);
   form.append('doc_type', docType);
   form.append('cost_type', costType);
-  if (poNumber) form.append('po_number_hint', poNumber);
-  if (employee) form.append('employee_name', employee);
-  if (notes) form.append('notes', notes);
+  if (poNumber)  form.append('po_number_hint', poNumber);
+  if (employee)  form.append('employee_name', employee);
+  if (notes)     form.append('notes', notes);
   if (glAccount) form.append('gl_account', glAccount);
+  if (isReturn)  form.append('is_return', 'true');
   return request<UploadResponse>('POST', '/invoices/upload', form, true);
 }
 

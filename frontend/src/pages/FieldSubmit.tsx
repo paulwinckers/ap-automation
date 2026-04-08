@@ -20,7 +20,7 @@ import {
   type QuickExtractResult,
 } from '../lib/api';
 
-type DocType = 'vendor' | 'mastercard' | 'expense' | 'return' | null;
+type DocType = 'vendor' | 'mastercard' | 'expense' | null;
 type CostType = 'job' | 'overhead';
 type Step = 1 | 2 | 3 | 4 | 5;
 
@@ -32,6 +32,7 @@ export default function FieldSubmit() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [referenceId, setReferenceId] = useState<string | null>(null);
   const [docType, setDocType]     = useState<DocType>(null);
+  const [isReturn, setIsReturn]   = useState(false);
   const [employee, setEmployee]   = useState(() => localStorage.getItem('field_employee') || '');
   const [employees, setEmployees] = useState<string[]>(FALLBACK_EMPLOYEES);
   const [file, setFile]           = useState<File | null>(null);
@@ -135,6 +136,7 @@ export default function FieldSubmit() {
         (docType === 'expense' || docType === 'mastercard') ? employee : undefined,
         description || undefined,
         gl?.account,
+        isReturn,
       );
       setReferenceId(`AP-${res.invoice_id}-${Date.now().toString(36).toUpperCase()}`);
       setStep(5);
@@ -147,8 +149,8 @@ export default function FieldSubmit() {
 
   const next = () => {
     if (step === 4) { handleSubmit(); return; }
-    // Store returns skip step 3 (no job/overhead question — vendor rule handles GL)
-    if (step === 2 && docType === 'return') { setStep(4); return; }
+    // Returns skip step 3 (no job/overhead question — vendor rule handles GL)
+    if (step === 2 && isReturn) { setStep(4); return; }
     setStep(s => (s + 1) as Step);
   };
 
@@ -156,7 +158,7 @@ export default function FieldSubmit() {
 
   const reset = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setStep(1); setDocType(null); setEmployee(''); setFile(null); setPreviewUrl(null);
+    setStep(1); setDocType(null); setIsReturn(false); setEmployee(''); setFile(null); setPreviewUrl(null);
     setCostType('job'); setPo('');
     setDescription(''); setResolvedGL(null); setExtractResult(null);
     setReferenceId(null); setSubmitError(null);
@@ -193,12 +195,31 @@ export default function FieldSubmit() {
         {step === 1 && <>
           <div style={S.card}>
             <div style={S.ctitle}>What are you submitting?</div>
+
+            {/* Charge / Return toggle */}
+            <div style={{ display:'flex', gap:8, marginBottom:16 }}>
+              {([
+                { val: false, label: '💳 Charge / Purchase' },
+                { val: true,  label: '↩️ Return / Refund'   },
+              ] as {val:boolean,label:string}[]).map(o => (
+                <button
+                  key={String(o.val)}
+                  onClick={() => setIsReturn(o.val)}
+                  style={{
+                    flex:1, padding:'10px 8px', borderRadius:10, fontSize:13, fontWeight:600,
+                    cursor:'pointer', border: isReturn === o.val ? '2px solid #2563eb' : '2px solid #e5e7eb',
+                    background: isReturn === o.val ? '#eff6ff' : '#f9fafb',
+                    color: isReturn === o.val ? '#1d4ed8' : '#6b7280',
+                  }}
+                >{o.label}</button>
+              ))}
+            </div>
+
             <div style={S.docgrid}>
               {([
-                {t:'vendor',    icon:'🧾', label:'On Account',  sub:'Bill from supplier'},
-                {t:'mastercard',icon:'💳', label:'MC Receipt',  sub:'Company card purchase'},
+                {t:'vendor',    icon:'🧾', label:'On Account',  sub:'Supplier / vendor'},
+                {t:'mastercard',icon:'💳', label:'MC Receipt',  sub:'Company card'},
                 {t:'expense',   icon:'🧑', label:'My Expense',  sub:'Personal card / cash'},
-                {t:'return',    icon:'↩️', label:'Store Return', sub:'Returned items / refund'},
               ] as {t:DocType,icon:string,label:string,sub:string}[]).map(o => (
                 <button key={o.t} style={{...S.dt,...(docType===o.t?S.dtsel:{})}} onClick={()=>setDocType(o.t)}>
                   <span style={{fontSize:28,display:'block',marginBottom:6}}>{o.icon}</span>
@@ -314,7 +335,10 @@ export default function FieldSubmit() {
           <div style={S.card}>
             <div style={S.ctitle}>Review before submitting</div>
             {previewUrl && <img src={previewUrl} alt="Receipt" style={{...S.preview,marginBottom:12}}/>}
-            <RR label="Type" value={{vendor:'Vendor Invoice',mastercard:'MasterCard Receipt',expense:'Employee Expense',return:'Store Return / Refund'}[docType!]||'—'}/>
+            <RR label="Type" value={
+              (isReturn ? 'Return / Refund — ' : '') +
+              ({vendor:'On Account',mastercard:'MasterCard',expense:'Employee Expense'}[docType!]||'—')
+            }/>
             {(docType==='expense'||docType==='mastercard')&&employee && <RR label={docType==='mastercard'?'Purchased by':'Employee'} value={employee}/>}
             <RR label="Document" value={file?.name||'—'} color="#059669"/>
             <RR label="Coding" value={costType==='overhead'?'Overhead':'Job cost'} color={costType==='overhead'?'#d97706':'#059669'}/>

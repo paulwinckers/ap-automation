@@ -170,6 +170,7 @@ async def upload_invoice(
     po_number_hint: Optional[str]   = Form(None),
     gl_account:     Optional[str]   = Form(None),   # user-confirmed GL from frontend
     notes:          Optional[str]   = Form(None),
+    is_return:      Optional[str]   = Form(None),   # 'true' when field crew submits a return/refund
     db:             Database        = Depends(get_db),
 ):
     """Upload a PDF or image, extract with Claude, store and route."""
@@ -181,10 +182,11 @@ async def upload_invoice(
         raise HTTPException(status_code=400, detail="Only PDF or image files are accepted")
 
     pdf_bytes = await file.read()
-    logger.info(f"Invoice received — {file.filename} ({len(pdf_bytes)} bytes), doc_type={doc_type}")
+    returning = is_return == "true"
+    logger.info(f"Invoice received — {file.filename} ({len(pdf_bytes)} bytes), doc_type={doc_type}, is_return={returning}")
 
-    # Store returns use credit memo extraction (negative amounts) and route as vendor credit
-    if doc_type == "return":
+    # Returns (any doc type) use credit memo extraction (negative amounts) and route as vendor credit
+    if returning:
         doc_type = "credit_memo"
         try:
             extraction = await _extractor.extract_credit_memo(pdf_bytes, file.filename or "")
