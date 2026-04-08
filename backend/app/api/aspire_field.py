@@ -66,43 +66,33 @@ async def probe_work_ticket_fields():
 @router.get("/work-tickets/recent")
 async def get_recent_tickets():
     """
-    Debug: fetch tickets for this week (full fields, no $select) to identify
-    what route/crew fields are populated on open tickets.
+    Debug: fetch this week's tickets with targeted $select to find route fields.
     """
     _check_credentials()
     from datetime import date, timedelta
     today = date.today()
     week_start = (today - timedelta(days=today.weekday())).strftime("%Y-%m-%dT00:00:00Z")
-    week_end   = (today + timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
+    week_end   = (today + timedelta(days=8)).strftime("%Y-%m-%dT00:00:00Z")
 
-    # Fetch this week's tickets with ALL fields (no $select)
     result = await _aspire._get("WorkTickets", {
         "$filter": f"ScheduledStartDate ge '{week_start}' and ScheduledStartDate lt '{week_end}'",
+        "$select": ",".join([
+            "WorkTicketID", "WorkTicketNumber", "OpportunityID",
+            "ScheduledStartDate", "WorkTicketStatusName",
+            "CrewLeaderContactID", "CrewLeaderName",
+            "RouteSupervisorContactID",
+            "BranchID", "BranchName",
+            "OperationsManagerContactID",
+        ]),
         "$orderby": "ScheduledStartDate asc",
-        "$top": "10",
+        "$top": "20",
     })
     tickets = _aspire._extract_list(result)
-
-    # Show which fields are non-null on these tickets
-    if tickets:
-        sample = tickets[0]
-        populated = {k: v for k, v in sample.items() if v is not None and v != "" and v != []}
-        all_fields = list(sample.keys())
-    else:
-        populated = {}
-        all_fields = []
 
     return {
         "week": f"{week_start} to {week_end}",
         "ticket_count": len(tickets),
-        "all_fields_on_first_ticket": all_fields,
-        "populated_fields_on_first_ticket": populated,
-        "tickets_summary": [
-            {k: t.get(k) for k in ["WorkTicketID","WorkTicketNumber","ScheduledStartDate",
-                                     "WorkTicketStatusName","CrewLeaderName","CrewLeaderContactID",
-                                     "RouteSupervisorContactID","OpportunityID"]}
-            for t in tickets
-        ],
+        "tickets": tickets,
     }
 
 
