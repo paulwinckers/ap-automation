@@ -71,11 +71,11 @@ async def get_recent_tickets():
     _check_credentials()
     from datetime import date, timedelta
     today = date.today()
-    week_start = (today - timedelta(days=today.weekday())).strftime("%Y-%m-%dT00:00:00Z")
-    week_end   = (today + timedelta(days=8)).strftime("%Y-%m-%dT00:00:00Z")
+    week_start = (today - timedelta(days=today.weekday())).strftime("%Y-%m-%d")
+    week_end   = (today + timedelta(days=8)).strftime("%Y-%m-%d")
 
     result = await _aspire._get("WorkTickets", {
-        "$filter": f"ScheduledStartDate ge '{week_start}' and ScheduledStartDate lt '{week_end}'",
+        "$filter": f"ScheduledStartDate ge {week_start} and ScheduledStartDate lt {week_end}",
         "$select": ",".join([
             "WorkTicketID", "WorkTicketNumber", "OpportunityID",
             "ScheduledStartDate", "WorkTicketStatusName",
