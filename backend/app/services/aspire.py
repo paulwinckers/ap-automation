@@ -728,12 +728,14 @@ class AspireClient:
         """
         Fetch employees from Aspire Contacts (ContactType = Employee).
         Returns list of {ContactID, FullName, Email} dicts sorted by last name.
+        Filters out vendor/expense accounts which Aspire stores with parenthesised
+        suffixes in the last name, e.g. "(expenses)".
         """
         try:
             result = await self._get("Contacts", {
                 "$filter": "ContactType eq 'Employee'",
                 "$select": "ContactID,FirstName,LastName,ContactType,IsActive,Email,EmailAddress,PrimaryEmail",
-                "$top": "200",
+                "$top": "500",
                 "$orderby": "LastName asc",
             })
             contacts = self._extract_list(result)
@@ -743,7 +745,14 @@ class AspireClient:
                     continue
                 first = (c.get("FirstName") or "").strip()
                 last  = (c.get("LastName") or "").strip()
-                full  = f"{first} {last}".strip() or f"Contact {c.get('ContactID')}"
+                # Skip vendor/expense accounts — Aspire stores them with a
+                # parenthesised qualifier in the last name, e.g. "(expenses)"
+                if "(" in first or "(" in last:
+                    continue
+                # Require at least a non-empty first or last name
+                if not first and not last:
+                    continue
+                full  = f"{first} {last}".strip()
                 email = (
                     c.get("Email")
                     or c.get("EmailAddress")
