@@ -743,13 +743,12 @@ class AspireClient:
             for c in contacts:
                 if c.get("IsActive") is False:
                     continue
+                # Filter server-side in case Aspire ignores the OData $filter
+                contact_type = (c.get("ContactType") or c.get("ContactTypeName") or "").strip()
+                if contact_type and contact_type.lower() != "employee":
+                    continue
                 first = (c.get("FirstName") or "").strip()
                 last  = (c.get("LastName") or "").strip()
-                # Skip vendor/expense accounts — Aspire stores them with a
-                # parenthesised qualifier in the last name, e.g. "(expenses)"
-                if "(" in first or "(" in last:
-                    continue
-                # Require at least a non-empty first or last name
                 if not first and not last:
                     continue
                 full  = f"{first} {last}".strip()
