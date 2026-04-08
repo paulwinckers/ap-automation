@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     MS_CLIENT_SECRET:    str = ""
     MS_AP_INBOX:         str = ""   # e.g. ap@darios.ca
 
+    # Fallback forward-to email for job-cost invoices when vendor rule has none set
+    AP_FORWARD_EMAIL:    str = ""   # e.g. keeland@darios.ca
+
     # App
     DEBUG:               bool = False
     LOG_LEVEL:           str = "INFO"

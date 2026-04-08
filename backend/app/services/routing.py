@@ -134,7 +134,7 @@ async def route_invoice(
             reason = "mixed_vendor_no_po"
         await _queue(invoice, db, reason=reason)
         # Notify the assigned contact (e.g. Keeland) so they can enter it in Aspire
-        await _notify_queued(invoice, vendor_rule, reason)
+        await _notify_queued(invoice, vendor_rule, reason, db)
         return RoutingOutcome.QUEUED
 
 
@@ -330,12 +330,15 @@ async def _route_to_qbo_purchase(
         return RoutingOutcome.ERROR
 
 
-async def _notify_queued(invoice: Invoice, vendor_rule, reason: str) -> None:
+async def _notify_queued(invoice: Invoice, vendor_rule, reason: str, db: Optional[Database] = None) -> None:
     """
     Email the vendor's assigned contact when a job-cost invoice queues for Aspire.
+    Falls back to settings.AP_FORWARD_EMAIL if the vendor rule has no forward_to.
+    Also marks forwarded_to on the invoice so the dashboard badge updates.
     Silently swallows failures so a missed email never blocks the queue write.
     """
-    if not vendor_rule or not vendor_rule.forward_to:
+    forward_to = (vendor_rule.forward_to if vendor_rule else None) or getattr(settings, "AP_FORWARD_EMAIL", None)
+    if not forward_to:
         return
     try:
         from app.services.email_intake import GraphClient
@@ -355,7 +358,7 @@ async def _notify_queued(invoice: Invoice, vendor_rule, reason: str) -> None:
         try:
             await graph.send_email(
                 mailbox=settings.MS_AP_INBOX,
-                to_addresses=[vendor_rule.forward_to],
+                to_addresses=[forward_to],
                 subject=f"Invoice queued for review — {invoice.vendor_name or 'Unknown vendor'} {amount}",
                 body_html=f"""
 <html><body style="font-family:Arial,sans-serif;color:#1a1d23;max-width:600px">
@@ -400,7 +403,10 @@ async def _notify_queued(invoice: Invoice, vendor_rule, reason: str) -> None:
                 attachment_bytes=invoice.file_bytes,
                 attachment_filename=invoice.pdf_filename or f"invoice_{invoice.id}.pdf",
             )
-            logger.info(f"Queue notification sent to {vendor_rule.forward_to} for invoice {invoice.id}")
+            logger.info(f"Queue notification sent to {forward_to} for invoice {invoice.id}")
+            # Mark the invoice as forwarded so the dashboard badge updates
+            if db:
+                await db.mark_forwarded(invoice.id, forward_to)
         finally:
             await graph.close()
     except Exception as e:
