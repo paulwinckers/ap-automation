@@ -3,29 +3,30 @@
  * Accessible at /field/work-ticket
  *
  * Flow:
- *   1. Select your name → see today's scheduled tickets automatically
- *      Toggle: Past 2 weeks | Today | Upcoming
- *   2. Tap a ticket to select it
- *   3. Add photos & videos (up to 10)
- *   4. Add completion notes + confirm name
- *   5. Review & submit
- *   6. Success
+ *   1. Today's routes shown as cards (Past / Today / Upcoming toggle)
+ *      Tap a route → see its tickets
+ *      Tap a ticket → select it
+ *   2. Add photos & videos
+ *   3. Add completion notes + your name (from Aspire employees)
+ *   4. Review & submit
+ *   5. Success
  */
 
 import { useState, useRef, useEffect } from 'react';
 import {
   getScheduledTickets,
+  getAspireEmployees,
   completeWorkTicket,
-  listEmployees,
   type ScheduledWorkTicket,
+  type TicketRoute,
   type TicketRange,
+  type AspireEmployee,
 } from '../lib/api';
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
-const MAX_PHOTOS = 10;
-const MAX_PX     = 1600;
-const FALLBACK_EMPLOYEES = ['Marcus Torres','Jake Willms','Devon Hicks','Priya Sandhu','Cole Beaumont'];
+const MAX_FILES = 10;
+const MAX_PX    = 1600;
 
 function compressImage(f: File): Promise<File> {
   return new Promise(resolve => {
@@ -54,57 +55,69 @@ function compressImage(f: File): Promise<File> {
 
 function fmtDate(d: string | null) {
   if (!d) return '';
-  return d.slice(0, 10); // YYYY-MM-DD
+  return d.slice(0, 10);
+}
+
+function statusColor(s: string | null) {
+  const l = (s || '').toLowerCase();
+  if (l.includes('complete')) return '#059669';
+  if (l.includes('progress') || l.includes('active')) return '#2563eb';
+  if (l.includes('not started')) return '#6b7280';
+  return '#d97706';
 }
 
 export default function FieldWorkTicket() {
   const [step, setStep]               = useState<Step>(1);
 
-  // Employee
-  const [submitterName, setSubmitterName] = useState(() => localStorage.getItem('field_employee') || '');
-  const [employees, setEmployees]         = useState<string[]>(FALLBACK_EMPLOYEES);
-
-  // Ticket list
+  // Route / ticket list
   const [range, setRange]             = useState<TicketRange>('today');
-  const [tickets, setTickets]         = useState<ScheduledWorkTicket[] | null>(null);
+  const [routes, setRoutes]           = useState<TicketRoute[] | null>(null);
   const [loading, setLoading]         = useState(false);
   const [loadError, setLoadError]     = useState<string | null>(null);
+  const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
   const [selectedTicket, setSelectedTicket] = useState<ScheduledWorkTicket | null>(null);
+
+  // Employees (Aspire Contacts)
+  const [employees, setEmployees]     = useState<AspireEmployee[]>([]);
+  const [submitterName, setSubmitterName] = useState(() => localStorage.getItem('field_employee') || '');
 
   // Media
   const [photos, setPhotos]           = useState<File[]>([]);
   const [previews, setPreviews]       = useState<string[]>([]);
 
-  // Comment
+  // Notes
   const [comment, setComment]         = useState('');
 
   // Submission
   const [submitting, setSubmitting]   = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [successInfo, setSuccessInfo] = useState<{ ticket: string; photos: number } | null>(null);
+  const [successInfo, setSuccessInfo] = useState<{ ticket: string; files: number } | null>(null);
 
   const cameraRef  = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
-  // Load employees on mount
+  // Load Aspire employees once
   useEffect(() => {
-    listEmployees().then(names => { if (names.length > 0) setEmployees(names); }).catch(() => {});
+    getAspireEmployees().then(emps => { if (emps.length > 0) setEmployees(emps); }).catch(() => {});
   }, []);
 
-  // Load tickets whenever name is set or range changes
+  // Load routes when range changes
   useEffect(() => {
-    if (!submitterName) { setTickets(null); return; }
-    setLoading(true); setLoadError(null); setTickets(null);
+    setLoading(true); setLoadError(null); setRoutes(null); setExpandedRoute(null);
     getScheduledTickets(range)
-      .then(res => setTickets(res.tickets))
+      .then(res => {
+        setRoutes(res.routes);
+        // Auto-expand if only one route
+        if (res.routes.length === 1) setExpandedRoute(res.routes[0].route_name);
+      })
       .catch(e => setLoadError((e as Error).message))
       .finally(() => setLoading(false));
-  }, [submitterName, range]);
+  }, [range]);
 
-  // Photos
+  // Media handlers
   const handleFiles = async (files: FileList | null) => {
     if (!files) return;
-    const remaining = MAX_PHOTOS - photos.length;
+    const remaining = MAX_FILES - photos.length;
     const toAdd = Array.from(files).slice(0, remaining);
     const processed = await Promise.all(
       toAdd.map(f => f.type.startsWith('video/') ? Promise.resolve(f) : compressImage(f))
@@ -122,7 +135,6 @@ export default function FieldWorkTicket() {
 
   const selectTicket = (t: ScheduledWorkTicket) => {
     setSelectedTicket(t);
-    // Clear media from previous selection
     previews.forEach(p => URL.revokeObjectURL(p));
     setPhotos([]); setPreviews([]);
     setStep(2);
@@ -142,7 +154,7 @@ export default function FieldWorkTicket() {
       localStorage.setItem('field_employee', submitterName.trim());
       setSuccessInfo({
         ticket: selectedTicket.WorkTicketTitle || `Ticket #${selectedTicket.WorkTicketID}`,
-        photos: res.photos_uploaded,
+        files:  res.photos_uploaded,
       });
       setStep(5);
     } catch (e: unknown) {
@@ -163,16 +175,7 @@ export default function FieldWorkTicket() {
   const canContinue = () => {
     if (step === 2) return true;
     if (step === 3) return submitterName.trim().length > 0 && comment.trim().length >= 3;
-    if (step === 4) return !submitting;
-    return false;
-  };
-
-  const statusColor = (s: string | null) => {
-    const lower = (s || '').toLowerCase();
-    if (lower.includes('complete')) return '#059669';
-    if (lower.includes('progress') || lower.includes('active')) return '#2563eb';
-    if (lower.includes('not started')) return '#6b7280';
-    return '#d97706';
+    return true;
   };
 
   const stepLabels = ['Select ticket', 'Add media', 'Notes & name', 'Review'];
@@ -183,7 +186,9 @@ export default function FieldWorkTicket() {
       <div style={S.header}>
         <div style={S.headerTop}>
           <img src="/darios-logo.png" alt="Dario's" style={{ height: 30, filter: 'brightness(0) invert(1)' }} />
-          <span style={S.chip}>{submitterName || 'Field crew'}</span>
+          {step > 1 && selectedTicket && (
+            <span style={S.chip}>{selectedTicket._RouteName || 'Route'}</span>
+          )}
         </div>
         <div style={S.hsub}>Complete Work Ticket</div>
       </div>
@@ -202,113 +207,94 @@ export default function FieldWorkTicket() {
 
       <div style={S.content}>
 
-        {/* ── Step 1: Select ticket ── */}
+        {/* ── Step 1: Routes & tickets ── */}
         {step === 1 && (
           <>
-            {/* Employee selector */}
-            <div style={S.card}>
-              <div style={S.ctitle}>Who are you?</div>
-              {submitterName ? (
-                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'6px 0'}}>
-                  <span style={{fontSize:15, fontWeight:600, color:'#1a1d23'}}>{submitterName}</span>
-                  <button style={{fontSize:12, color:'#6b7280', background:'none', border:'none', cursor:'pointer', fontFamily:'inherit'}}
-                    onClick={() => { setSubmitterName(''); localStorage.removeItem('field_employee'); setTickets(null); }}>
-                    Not you?
-                  </button>
-                </div>
-              ) : (
-                <select
-                  style={S.sel}
-                  value={submitterName}
-                  onChange={e => {
-                    const v = e.target.value;
-                    setSubmitterName(v);
-                    if (v) localStorage.setItem('field_employee', v);
-                  }}
-                >
-                  <option value="">Select your name...</option>
-                  {employees.map(emp => <option key={emp}>{emp}</option>)}
-                </select>
-              )}
+            {/* Range toggle */}
+            <div style={S.rangeBar}>
+              {(['past', 'today', 'upcoming'] as TicketRange[]).map(r => (
+                <button key={r} style={{...S.rangeBtn, ...(range === r ? S.rangeBtnActive : {})}}
+                  onClick={() => setRange(r)}>
+                  {r === 'past' ? '← Past 2 wks' : r === 'today' ? 'Today' : 'Upcoming →'}
+                </button>
+              ))}
             </div>
 
-            {/* Range toggle */}
-            {submitterName && (
-              <>
-                <div style={S.rangeBar}>
-                  {(['past', 'today', 'upcoming'] as TicketRange[]).map(r => (
-                    <button
-                      key={r}
-                      style={{...S.rangeBtn, ...(range === r ? S.rangeBtnActive : {})}}
-                      onClick={() => setRange(r)}
-                    >
-                      {r === 'past' ? '← Past 2 wks' : r === 'today' ? 'Today' : 'Upcoming →'}
-                    </button>
-                  ))}
-                </div>
-
-                {loading && (
-                  <div style={{...S.card, color:'#6b7280', fontSize:13, textAlign:'center'}}>
-                    Loading tickets...
-                  </div>
-                )}
-
-                {loadError && (
-                  <div style={{...S.card, color:'#dc2626', fontSize:13}}>
-                    Could not load tickets: {loadError}
-                  </div>
-                )}
-
-                {tickets && tickets.length === 0 && (
-                  <div style={{...S.card, color:'#6b7280', fontSize:14, textAlign:'center', padding:'24px 16px'}}>
-                    {range === 'today'
-                      ? 'No tickets scheduled for today.'
-                      : range === 'past'
-                      ? 'No tickets in the last 2 weeks.'
-                      : 'No upcoming tickets in the next 30 days.'}
-                  </div>
-                )}
-
-                {tickets && tickets.map(t => (
-                  <button
-                    key={t.WorkTicketID}
-                    style={{
-                      ...S.ticketCard,
-                      border: selectedTicket?.WorkTicketID === t.WorkTicketID
-                        ? '2px solid #2563eb' : '1.5px solid #e2e6ed',
-                      background: selectedTicket?.WorkTicketID === t.WorkTicketID ? '#eff6ff' : '#fff',
-                    }}
-                    onClick={() => selectTicket(t)}
-                  >
-                    {/* Date badge + status */}
-                    <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6}}>
-                      <span style={{fontSize:11, color:'#6b7280', fontWeight:500}}>
-                        {fmtDate(t.ScheduledDate) || '—'}
-                      </span>
-                      <span style={{
-                        fontSize:10, fontWeight:600, borderRadius:6,
-                        padding:'2px 8px', letterSpacing:'.02em',
-                        background: statusColor(t.WorkTicketStatusName) + '18',
-                        color: statusColor(t.WorkTicketStatusName),
-                      }}>
-                        {t.WorkTicketStatusName || 'Unknown'}
-                      </span>
-                    </div>
-
-                    {/* Ticket title */}
-                    <div style={{fontSize:14, fontWeight:600, color:'#1a1d23', marginBottom:2, textAlign:'left'}}>
-                      {t.WorkTicketTitle || `Ticket #${t.WorkTicketID}`}
-                    </div>
-
-                    {/* Job + property */}
-                    <div style={{fontSize:12, color:'#6b7280', textAlign:'left'}}>
-                      {t.OpportunityName || `Job #${t.OpportunityID}`}
-                      {t.PropertyName ? ` · ${t.PropertyName}` : ''}
-                    </div>
-                  </button>
-                ))}
-              </>
+            {loading && (
+              <div style={{...S.card, color:'#6b7280', fontSize:13, textAlign:'center', padding:'24px 16px'}}>
+                Loading routes...
+              </div>
             )}
+
+            {loadError && (
+              <div style={{...S.card, color:'#dc2626', fontSize:13}}>
+                Could not load tickets: {loadError}
+              </div>
+            )}
+
+            {routes && routes.length === 0 && (
+              <div style={{...S.card, color:'#6b7280', fontSize:14, textAlign:'center', padding:'24px 16px'}}>
+                {range === 'today' ? 'No tickets scheduled for today.'
+                  : range === 'past' ? 'No tickets in the last 2 weeks.'
+                  : 'No upcoming tickets in the next 30 days.'}
+              </div>
+            )}
+
+            {routes && routes.map(route => (
+              <div key={route.route_name} style={S.routeCard}>
+                {/* Route header — tap to expand */}
+                <button
+                  style={S.routeHeader}
+                  onClick={() => setExpandedRoute(v => v === route.route_name ? null : route.route_name)}
+                >
+                  <div style={{display:'flex', alignItems:'center', gap:10}}>
+                    <span style={{fontSize:18}}>🚛</span>
+                    <div style={{textAlign:'left'}}>
+                      <div style={{fontSize:15, fontWeight:700, color:'#1a1d23'}}>{route.route_name}</div>
+                      <div style={{fontSize:12, color:'#6b7280', marginTop:1}}>
+                        {route.ticket_count} ticket{route.ticket_count !== 1 ? 's' : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <span style={{fontSize:18, color:'#6b7280', transform: expandedRoute === route.route_name ? 'rotate(90deg)' : 'none', transition:'transform .2s'}}>›</span>
+                </button>
+
+                {/* Tickets within this route */}
+                {expandedRoute === route.route_name && (
+                  <div style={{borderTop:'1px solid #e2e6ed', padding:'8px 0 4px'}}>
+                    {route.tickets.map(t => (
+                      <button
+                        key={t.WorkTicketID}
+                        style={{
+                          ...S.ticketRow,
+                          background: selectedTicket?.WorkTicketID === t.WorkTicketID ? '#eff6ff' : 'transparent',
+                          borderLeft: selectedTicket?.WorkTicketID === t.WorkTicketID ? '3px solid #2563eb' : '3px solid transparent',
+                        }}
+                        onClick={() => selectTicket(t)}
+                      >
+                        <div style={{flex:1, textAlign:'left'}}>
+                          <div style={{fontSize:13, fontWeight:600, color:'#1a1d23', marginBottom:2}}>
+                            {t.WorkTicketTitle || `Ticket #${t.WorkTicketID}`}
+                          </div>
+                          <div style={{fontSize:11, color:'#6b7280'}}>
+                            {t.OpportunityName || `Job #${t.OpportunityID}`}
+                            {t.PropertyName ? ` · ${t.PropertyName}` : ''}
+                            {t.ScheduledDate ? ` · ${fmtDate(t.ScheduledDate)}` : ''}
+                          </div>
+                        </div>
+                        <span style={{
+                          fontSize:10, fontWeight:600, borderRadius:6, padding:'2px 8px',
+                          background: statusColor(t.WorkTicketStatusName) + '18',
+                          color: statusColor(t.WorkTicketStatusName), flexShrink:0, marginLeft:8,
+                        }}>
+                          {t.WorkTicketStatusName || '—'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
           </>
         )}
 
@@ -325,12 +311,12 @@ export default function FieldWorkTicket() {
             </div>
 
             <div style={S.card}>
-              <div style={S.ctitle}>Add photos & videos ({photos.length}/{MAX_PHOTOS})</div>
+              <div style={S.ctitle}>Add photos & videos ({photos.length}/{MAX_FILES})</div>
 
               <input ref={cameraRef}  type="file" accept="image/*,video/*" capture="environment" multiple onChange={e => handleFiles(e.target.files)} style={{display:'none'}}/>
               <input ref={galleryRef} type="file" accept="image/*,video/*" multiple onChange={e => handleFiles(e.target.files)} style={{display:'none'}}/>
 
-              {photos.length < MAX_PHOTOS && (
+              {photos.length < MAX_FILES && (
                 <div style={{display:'flex', gap:10, marginBottom:12}}>
                   <div style={{...S.uparea, flex:1}} onClick={() => cameraRef.current?.click()}>
                     <span style={{fontSize:30}}>📷</span>
@@ -381,17 +367,20 @@ export default function FieldWorkTicket() {
               {submitterName ? (
                 <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 0'}}>
                   <span style={{fontSize:15, fontWeight:600, color:'#1a1d23'}}>{submitterName}</span>
-                  <button style={{fontSize:12, color:'#6b7280', background:'none', border:'none', cursor:'pointer', fontFamily:'inherit'}}
+                  <button style={{fontSize:12,color:'#6b7280',background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}}
                     onClick={() => { setSubmitterName(''); localStorage.removeItem('field_employee'); }}>
                     Not you?
                   </button>
                 </div>
-              ) : (
+              ) : employees.length > 0 ? (
                 <select style={S.sel} value={submitterName}
                   onChange={e => { setSubmitterName(e.target.value); if (e.target.value) localStorage.setItem('field_employee', e.target.value); }}>
                   <option value="">Select your name...</option>
-                  {employees.map(emp => <option key={emp}>{emp}</option>)}
+                  {employees.map(e => <option key={e.ContactID} value={e.FullName}>{e.FullName}</option>)}
                 </select>
+              ) : (
+                <input style={S.input} placeholder="Your name" value={submitterName}
+                  onChange={e => setSubmitterName(e.target.value)} autoFocus/>
               )}
             </div>
 
@@ -402,7 +391,6 @@ export default function FieldWorkTicket() {
                 placeholder="Describe what was completed, any issues, materials used, etc."
                 value={comment}
                 onChange={e => setComment(e.target.value)}
-                autoFocus
               />
             </div>
           </div>
@@ -412,9 +400,10 @@ export default function FieldWorkTicket() {
         {step === 4 && selectedTicket && (
           <div style={S.card}>
             <div style={S.ctitle}>Review before submitting</div>
+            <RR label="Route"  value={selectedTicket._RouteName || '—'}/>
             <RR label="Ticket" value={selectedTicket.WorkTicketTitle || `#${selectedTicket.WorkTicketID}`}/>
             <RR label="Job"    value={selectedTicket.OpportunityName || `#${selectedTicket.OpportunityID}`}/>
-            <RR label="Date"   value={fmtDate(selectedTicket.ScheduledDate) || '—'}/>
+            {selectedTicket.ScheduledDate && <RR label="Date" value={fmtDate(selectedTicket.ScheduledDate)}/>}
             <RR label="Media"  value={`${photos.length} file${photos.length !== 1 ? 's' : ''}`} color={photos.length > 0 ? '#059669' : '#6b7280'}/>
             <RR label="Crew"   value={submitterName}/>
             <div style={{paddingTop:10, fontSize:13, color:'#1a1d23', lineHeight:1.6, whiteSpace:'pre-wrap'}}>
@@ -436,7 +425,7 @@ export default function FieldWorkTicket() {
             <div style={S.stitle}>Ticket completed!</div>
             <div style={S.ssub}>
               <strong>{successInfo.ticket}</strong> has been logged as complete
-              {successInfo.photos > 0 ? ` with ${successInfo.photos} file${successInfo.photos !== 1 ? 's' : ''}` : ''}.
+              {successInfo.files > 0 ? ` with ${successInfo.files} file${successInfo.files !== 1 ? 's' : ''}` : ''}.
             </div>
             <div style={{fontSize:12, color:'#6b7280', marginTop:8}}>
               Your notes and media are now visible in Aspire on the work ticket.
@@ -450,14 +439,15 @@ export default function FieldWorkTicket() {
       <div style={S.bar}>
         {step === 5 ? (
           <button style={S.bsuccess} onClick={reset}>Complete another ticket</button>
-        ) : step === 4 ? (
+        ) : step === 1 ? null
+        : step === 4 ? (
           <>
             <button style={{...S.bprimary, opacity: submitting ? .4 : 1}} disabled={submitting} onClick={handleSubmit}>
               {submitting ? 'Submitting...' : 'Submit completion'}
             </button>
             <button style={S.bback} onClick={back}>← Back</button>
           </>
-        ) : step === 1 ? null : (
+        ) : (
           <>
             <button style={{...S.bprimary, opacity: canContinue() ? 1 : .4}} disabled={!canContinue()}
               onClick={() => setStep(s => (s + 1) as Step)}>
@@ -495,9 +485,11 @@ const S: Record<string, React.CSSProperties> = {
   ctitle:{fontSize:13,fontWeight:600,color:'#6b7280',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:12},
   sel:{width:'100%',padding:12,border:'1.5px solid #e2e6ed',borderRadius:8,fontSize:14,color:'#1a1d23',background:'#fff',outline:'none',fontFamily:'inherit'},
   rangeBar:{display:'flex',gap:6,marginBottom:12},
-  rangeBtn:{flex:1,padding:'10px 4px',borderRadius:10,fontSize:12,fontWeight:600,cursor:'pointer',border:'1.5px solid #e2e6ed',background:'#fff',color:'#6b7280',fontFamily:'inherit',transition:'all .15s'},
+  rangeBtn:{flex:1,padding:'10px 4px',borderRadius:10,fontSize:12,fontWeight:600,cursor:'pointer',border:'1.5px solid #e2e6ed',background:'#fff',color:'#6b7280',fontFamily:'inherit'},
   rangeBtnActive:{background:'#2563eb',color:'#fff',borderColor:'#2563eb'},
-  ticketCard:{width:'100%',textAlign:'left',padding:'14px 16px',marginBottom:10,borderRadius:12,cursor:'pointer',fontFamily:'inherit',transition:'all .15s',display:'block'},
+  routeCard:{background:'#fff',border:'1.5px solid #e2e6ed',borderRadius:12,marginBottom:10,overflow:'hidden'},
+  routeHeader:{width:'100%',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 16px',background:'transparent',border:'none',cursor:'pointer',fontFamily:'inherit'},
+  ticketRow:{width:'100%',display:'flex',alignItems:'center',padding:'10px 16px',background:'transparent',border:'none',cursor:'pointer',fontFamily:'inherit',borderBottom:'1px solid #f1f5f9'},
   flabel:{fontSize:12,fontWeight:600,color:'#6b7280',marginBottom:6,textTransform:'uppercase',letterSpacing:'.04em'},
   input:{width:'100%',padding:'12px 14px',border:'1.5px solid #e2e6ed',borderRadius:8,fontSize:15,color:'#1a1d23',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'},
   uparea:{border:'2px dashed #e2e6ed',borderRadius:10,padding:'20px 12px',textAlign:'center',cursor:'pointer',background:'#f4f6f9'},

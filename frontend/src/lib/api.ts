@@ -314,12 +314,31 @@ export interface ScheduledWorkTicket {
   CompleteDate: string | null;
   ActualLaborHours: number | null;
   EstimatedLaborHours: number | null;
+  _RouteName: string | null;
+}
+
+export interface TicketRoute {
+  route_name: string;
+  ticket_count: number;
+  tickets: ScheduledWorkTicket[];
 }
 
 export type TicketRange = 'past' | 'today' | 'upcoming';
 
-export async function getScheduledTickets(range: TicketRange): Promise<{ tickets: ScheduledWorkTicket[]; count: number }> {
+export async function getScheduledTickets(range: TicketRange): Promise<{ routes: TicketRoute[]; total_tickets: number }> {
   return request('GET', `/aspire/field/work-tickets/scheduled?range=${range}`);
+}
+
+export interface AspireEmployee {
+  ContactID: number;
+  FullName: string;
+}
+
+export async function getAspireEmployees(): Promise<AspireEmployee[]> {
+  try {
+    const res = await request<{ employees: AspireEmployee[] }>('GET', '/aspire/field/employees');
+    return res.employees;
+  } catch { return []; }
 }
 
 export async function searchFieldOpportunities(q: string): Promise<{ opportunities: FieldOpportunity[] }> {

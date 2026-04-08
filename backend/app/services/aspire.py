@@ -724,6 +724,43 @@ class AspireClient:
 
     # ── Field write operations ────────────────────────────────────────────────
 
+    async def get_aspire_employees(self) -> list[dict]:
+        """
+        Fetch employees from Aspire Contacts (ContactType = Employee).
+        Returns list of {ContactID, FullName} dicts sorted by last name.
+        """
+        try:
+            result = await self._get("Contacts", {
+                "$filter": "ContactType eq 'Employee'",
+                "$select": "ContactID,FirstName,LastName,ContactType,IsActive",
+                "$top": "200",
+                "$orderby": "LastName asc",
+            })
+            contacts = self._extract_list(result)
+            out = []
+            for c in contacts:
+                if c.get("IsActive") is False:
+                    continue
+                first = (c.get("FirstName") or "").strip()
+                last  = (c.get("LastName") or "").strip()
+                full  = f"{first} {last}".strip() or f"Contact {c.get('ContactID')}"
+                out.append({"ContactID": c.get("ContactID"), "FullName": full})
+            return out
+        except Exception as e:
+            logger.warning(f"Aspire employees fetch failed: {e}")
+            return []
+
+    async def probe_work_ticket_fields(self) -> dict:
+        """Return all fields present on a sample WorkTicket — used to discover the route field name."""
+        try:
+            result = await self._get("WorkTickets", {"$top": "1"})
+            tickets = self._extract_list(result)
+            if tickets:
+                return {"fields": sorted(tickets[0].keys()), "sample": tickets[0]}
+            return {"fields": [], "sample": {}}
+        except Exception as e:
+            return {"error": str(e)}
+
     async def get_scheduled_work_tickets(self, date_range: str = "today") -> list[dict]:
         """
         Fetch work tickets filtered by ScheduledDate.
@@ -746,11 +783,18 @@ class AspireClient:
             filter_str = f"ScheduledDate eq '{today_str}'"
             orderby = "ScheduledDate asc"
 
+        # Include every plausible route/crew field — we'll pick whichever is populated
         select_fields = ",".join([
             "WorkTicketID", "WorkTicketTitle", "OpportunityID",
             "WorkTicketStatusName", "WorkTicketType",
             "ScheduledDate", "CompleteDate",
             "ActualLaborHours", "EstimatedLaborHours",
+            # Route / crew assignment candidates
+            "RouteName", "RouteID",
+            "CrewName", "CrewID",
+            "ScheduledCrewName", "ScheduledCrewID",
+            "ForemenName", "ForemanName",
+            "AssignedContactName", "AssignedContactID",
         ])
 
         try:
@@ -793,6 +837,16 @@ class AspireClient:
             info = opp_map.get(t.get("OpportunityID"), {})
             t["OpportunityName"] = info.get("name", "")
             t["PropertyName"]    = info.get("property", "")
+            # Normalise route name — try each candidate field in priority order
+            t["_RouteName"] = (
+                t.get("RouteName")
+                or t.get("CrewName")
+                or t.get("ScheduledCrewName")
+                or t.get("ForemenName")
+                or t.get("ForemanName")
+                or t.get("AssignedContactName")
+                or "Unassigned"
+            )
 
         return tickets
 

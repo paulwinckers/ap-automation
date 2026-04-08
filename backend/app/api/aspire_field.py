@@ -41,17 +41,55 @@ def _check_credentials():
         raise HTTPException(status_code=503, detail="Aspire credentials not configured")
 
 
+# ── Employees (Aspire Contacts) ──────────────────────────────────────────────
+
+@router.get("/employees")
+async def get_employees():
+    """Return Aspire employees (ContactType = Employee) for submitter name selection."""
+    _check_credentials()
+    employees = await _aspire.get_aspire_employees()
+    return {"employees": employees}
+
+
+# ── Work ticket field probe ───────────────────────────────────────────────────
+
+@router.get("/work-tickets/probe")
+async def probe_work_ticket_fields():
+    """
+    Return all fields present on a sample WorkTicket.
+    Use this to identify the correct route / crew field name.
+    """
+    _check_credentials()
+    return await _aspire.probe_work_ticket_fields()
+
+
 # ── Scheduled work tickets ───────────────────────────────────────────────────
 
 @router.get("/work-tickets/scheduled")
 async def get_scheduled_tickets(range: str = Query(default="today", pattern="^(today|past|upcoming)$")):
     """
-    Return work tickets grouped by scheduled date.
+    Return work tickets grouped by route.
     range: today | past (last 14 days) | upcoming (next 30 days)
+    Each route contains a list of tickets with OpportunityName and PropertyName.
     """
     _check_credentials()
     tickets = await _aspire.get_scheduled_work_tickets(range)
-    return {"tickets": tickets, "range": range, "count": len(tickets)}
+
+    # Group by _RouteName
+    from collections import defaultdict
+    groups: dict = defaultdict(list)
+    for t in tickets:
+        groups[t.get("_RouteName", "Unassigned")].append(t)
+
+    routes = [
+        {
+            "route_name":   name,
+            "ticket_count": len(tix),
+            "tickets":      tix,
+        }
+        for name, tix in sorted(groups.items())
+    ]
+    return {"routes": routes, "range": range, "total_tickets": len(tickets)}
 
 
 # ── Work ticket search ────────────────────────────────────────────────────────
