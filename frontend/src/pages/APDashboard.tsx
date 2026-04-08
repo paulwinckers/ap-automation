@@ -586,10 +586,12 @@ export default function APDashboard() {
                 // Credit memos display as negative regardless of how Claude extracted them
                 const signed = (n: number | null | undefined) =>
                   n == null ? n : isCreditMemo ? -Math.abs(n) : n;
+                // Compare absolute values — credit memos have negative total_amount
+                // but QBO VendorCredit TotalAmt is positive; both represent the same amount.
                 const amountMismatch =
                   e.qbo_amount != null &&
                   e.total_amount != null &&
-                  Math.abs(e.qbo_amount - e.total_amount) > 0.01;
+                  Math.abs(Math.abs(e.qbo_amount) - Math.abs(e.total_amount)) > 0.01;
                 const rowBg = amountMismatch
                   ? '#fff3cd'
                   : e.status === 'error' ? '#fff5f5'
