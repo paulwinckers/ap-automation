@@ -18,6 +18,14 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from app.core.config import settings
 from app.services.aspire import AspireClient
 from app.services import r2
+from app.core.database import Database
+
+_db = Database()
+
+async def _get_db() -> Database:
+    if _db._db is None:
+        await _db.connect()
+    return _db
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +49,26 @@ def _check_credentials():
         raise HTTPException(status_code=503, detail="Aspire credentials not configured")
 
 
-# ── Employees (Aspire Contacts) ──────────────────────────────────────────────
+# ── Employees ────────────────────────────────────────────────────────────────
 
 @router.get("/employees")
 async def get_employees():
-    """Return Aspire employees (ContactType = Employee) for submitter name selection."""
+    """
+    Return employees for submitter/salesperson selection.
+    Tries Aspire Contacts first; falls back to internal vendor employee list
+    (vendors flagged is_employee=True) if Aspire returns 403.
+    """
     _check_credentials()
     employees = await _aspire.get_aspire_employees()
+    if not employees:
+        # Aspire Contacts is 403 — fall back to internal DB employee list
+        db = await _get_db()
+        names: list[str] = await db.get_employees()
+        employees = [
+            {"ContactID": 0, "FullName": name, "Email": ""}
+            for name in sorted(names)
+        ]
+        logger.info(f"Aspire Contacts unavailable — returning {len(employees)} DB employees")
     return {"employees": employees}
 
 
