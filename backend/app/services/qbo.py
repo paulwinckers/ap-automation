@@ -723,9 +723,10 @@ class QBOClient:
 
     async def post_vendor_credit(self, invoice: Invoice, gl_account: str, file_bytes: bytes = None, filename: str = None) -> str:
         """
-        Create a VendorCredit in QBO for a vendor credit memo.
-        gl_account: GL to credit (default 5105 — job cost)
-        Returns the QBO VendorCredit Id.
+        Create a VendorCredit in QBO for a vendor credit memo / store return.
+        Uses TaxInclusive with the full absolute total so QBO back-calculates
+        tax — avoids rate-mismatch 400 errors from negative extracted amounts.
+        Returns (credit_id, qbo_amount).
         """
         vendor = await self.find_or_create_vendor(invoice.vendor_name)
         vendor_ref = {"value": vendor["Id"], "name": vendor["DisplayName"]}
@@ -735,27 +736,53 @@ class QBOClient:
             raise ValueError(f"GL account '{gl_account}' not found in QBO chart of accounts.")
         account_ref = {"value": account["Id"], "name": account["Name"]}
 
-        # Build single expense line + explicit tax detail
-        # _build_line_and_taxes uses subtotal; abs() ensures positive amounts for VendorCredit
-        lines, txn_tax_detail, global_tax_calc = await self._build_line_and_taxes(invoice, account_ref)
-        for line in lines:
-            line["Amount"] = abs(line["Amount"])
+        # Use the full absolute total as the line amount with TaxInclusive so QBO
+        # back-calculates the tax split.  This avoids 400 errors from negative
+        # extracted tax amounts or rate-mismatch issues on the credit side.
+        total_abs = abs(invoice.total_amount or invoice.subtotal or 0)
+
+        # Build description from line items (same logic as _build_line_and_taxes)
+        if invoice.line_items:
+            parts = [li.description for li in invoice.line_items if li.description]
+            summary = "; ".join(parts[:5])
+            if len(invoice.line_items) > 5:
+                summary += f" (+{len(invoice.line_items) - 5} more)"
+            inv_ref = f"Invoice {invoice.invoice_number}" if invoice.invoice_number else invoice.vendor_name
+            description = f"{inv_ref} — {summary}"
+        else:
+            description = f"Invoice {invoice.invoice_number}" if invoice.invoice_number else invoice.vendor_name
+
+        # Resolve tax code (same pattern as _build_line_and_taxes)
+        has_tax = bool(invoice.tax_amount and invoice.tax_amount != 0)
+        tax_code_id = await self._resolve_tax_code(has_tax, has_tax) if has_tax else None
+
+        line: dict = {
+            "Amount": total_abs,
+            "DetailType": "AccountBasedExpenseLineDetail",
+            "Description": description,
+            "AccountBasedExpenseLineDetail": {
+                "AccountRef": account_ref,
+                "BillableStatus": "NotBillable",
+            },
+        }
+        if tax_code_id:
+            line["AccountBasedExpenseLineDetail"]["TaxCodeRef"] = {"value": tax_code_id}
+            global_tax_calc = "TaxInclusive"
+        else:
+            global_tax_calc = "NotApplicable"
 
         credit_body = {
             "VendorRef": vendor_ref,
             "CurrencyRef": {"value": "CAD"},
             "TxnDate": _to_qbo_date(invoice.invoice_date),
             "PrivateNote": (
-                f"Auto-posted by AP Automation | Credit memo | "
-                f"Source: {invoice.intake_source or 'email'} | "
-                f"PDF: {invoice.pdf_filename or 'n/a'} | "
-                f"Keeland notified for Aspire action"
+                f"Auto-posted by AP Automation | Credit memo / return | "
+                f"Source: {invoice.intake_source or 'field'} | "
+                f"PDF: {invoice.pdf_filename or 'n/a'}"
             ),
-            "Line": lines,
+            "Line": [line],
             "GlobalTaxCalculation": global_tax_calc,
         }
-        if txn_tax_detail:
-            credit_body["TxnTaxDetail"] = txn_tax_detail
         if invoice.invoice_number:
             credit_body["DocNumber"] = invoice.invoice_number
 
