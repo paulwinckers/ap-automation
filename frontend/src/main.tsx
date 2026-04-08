@@ -5,6 +5,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import AppShell       from './components/AppShell';
 import Landing        from './pages/Landing';
 import FieldSubmit    from './pages/FieldSubmit';
+import FieldWorkTicket  from './pages/FieldWorkTicket';
+import FieldOpportunity from './pages/FieldOpportunity';
 import APDashboard    from './pages/APDashboard';
 import VendorAdmin    from './pages/VendorAdmin';
 import Reconcile      from './pages/Reconcile';
@@ -26,7 +28,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/"    element={<Landing />} />
 
         {/* Field crew — no shell, phone-optimised */}
-        <Route path="/field" element={<FieldSubmit />} />
+        <Route path="/field"             element={<FieldSubmit />} />
+        <Route path="/field/work-ticket" element={<FieldWorkTicket />} />
+        <Route path="/field/opportunity" element={<FieldOpportunity />} />
 
         {/* Office / AP — wrapped in sidebar shell */}
         <Route path="/ap"           element={<Office><APDashboard /></Office>} />

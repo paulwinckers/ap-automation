@@ -35,30 +35,40 @@ export default function Landing() {
       {/* Entry points */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, width: '100%', maxWidth: 360 }}>
 
-        {/* Field crew */}
-        <Link to="/field" style={{ textDecoration: 'none' }}>
-          <div style={{
-            background: '#14532d',
-            border: '1px solid #16a34a',
-            borderRadius: 14,
-            padding: '22px 24px',
-            cursor: 'pointer',
-            transition: 'opacity 0.15s',
-          }}
-            onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
-            onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span style={{ fontSize: 28 }}>📱</span>
-              <div>
-                <div style={{ color: '#fff', fontWeight: 700, fontSize: 17 }}>Field Staff</div>
-                <div style={{ color: '#86efac', fontSize: 13, marginTop: 2 }}>
-                  Submit receipts &amp; expenses
-                </div>
-              </div>
+        {/* Field crew — section header */}
+        <div style={{
+          background: '#14532d',
+          border: '1px solid #16a34a',
+          borderRadius: 14,
+          overflow: 'hidden',
+        }}>
+          <div style={{ padding: '16px 20px 10px', borderBottom: '1px solid #16a34a' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 22 }}>📱</span>
+              <div style={{ color: '#fff', fontWeight: 700, fontSize: 16 }}>Field Staff</div>
             </div>
           </div>
-        </Link>
+          {([
+            { to: '/field',             icon: '🧾', label: 'Submit Receipt',         sub: 'Invoices, MC & expenses' },
+            { to: '/field/work-ticket', icon: '✅', label: 'Complete Work Ticket',   sub: 'Photos + completion notes' },
+            { to: '/field/opportunity', icon: '➕', label: 'New Opportunity',         sub: 'Create a job in Aspire' },
+          ] as { to: string; icon: string; label: string; sub: string }[]).map(item => (
+            <Link key={item.to} to={item.to} style={{ textDecoration: 'none' }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 20px', cursor: 'pointer', transition: 'background 0.15s' }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+              >
+                <span style={{ fontSize: 22, flexShrink: 0 }}>{item.icon}</span>
+                <div>
+                  <div style={{ color: '#fff', fontWeight: 600, fontSize: 15 }}>{item.label}</div>
+                  <div style={{ color: '#86efac', fontSize: 12, marginTop: 1 }}>{item.sub}</div>
+                </div>
+                <span style={{ marginLeft: 'auto', color: '#4ade80', fontSize: 14 }}>›</span>
+              </div>
+            </Link>
+          ))}
+        </div>
 
         {/* Office / AP */}
         <Link to="/ap" style={{ textDecoration: 'none' }}>

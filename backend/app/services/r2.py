@@ -129,6 +129,63 @@ async def get_file_bytes(key: str) -> Optional[bytes]:
         return None
 
 
+async def upload_field_photo(
+    file_bytes: bytes,
+    filename: str,
+    submitter: str,
+    entity_type: str,
+    entity_id: str,
+    expires_in: int = 7 * 24 * 3600,
+) -> Optional[tuple]:
+    """
+    Upload a field photo (work-ticket or opportunity) to R2.
+    Returns (key, presigned_url) or None if R2 is not configured.
+    entity_type: 'work-ticket' or 'opportunity'
+    URLs are valid for 7 days by default.
+    """
+    if not _r2_available():
+        logger.info("R2 not configured — skipping field photo storage")
+        return None
+
+    import uuid
+    from datetime import date as _date
+
+    date_str = _date.today().strftime("%Y-%m-%d")
+    safe_submitter = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in submitter).strip() or "crew"
+    safe_filename = "".join(c if c.isalnum() or c in (".", "-", "_") else "_" for c in (filename or "photo.jpg"))
+    uid = uuid.uuid4().hex[:8]
+    key = f"field-photos/{entity_type}/{entity_id}/{date_str}/{safe_submitter}/{uid}_{safe_filename}"
+
+    name_lower = (filename or "").lower()
+    if name_lower.endswith(".pdf"):
+        content_type = "application/pdf"
+    elif name_lower.endswith(".png"):
+        content_type = "image/png"
+    elif name_lower.endswith(".webp"):
+        content_type = "image/webp"
+    else:
+        content_type = "image/jpeg"
+
+    def _upload():
+        client = _make_client()
+        client.put_object(
+            Bucket=settings.R2_BUCKET_NAME,
+            Key=key,
+            Body=file_bytes,
+            ContentType=content_type,
+        )
+        return client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.R2_BUCKET_NAME, "Key": key},
+            ExpiresIn=expires_in,
+        )
+
+    loop = asyncio.get_event_loop()
+    url = await loop.run_in_executor(None, _upload)
+    logger.info(f"Field photo uploaded to R2: {key}")
+    return key, url
+
+
 async def get_presigned_url(key: str, expires_in: int = 3600) -> Optional[str]:
     """
     Generate a presigned URL for a statement PDF.

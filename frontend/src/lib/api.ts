@@ -274,3 +274,105 @@ export async function getConstructionDashboard(year = 2026): Promise<Constructio
 export async function getJobTickets(opportunityId: number): Promise<{ opportunity_id: number; tickets: WorkTicket[] }> {
   return request('GET', `/dashboard/construction/${opportunityId}/tickets`);
 }
+
+// ── Aspire Field Operations ───────────────────────────────────────────────────
+
+export interface FieldOpportunity {
+  OpportunityID: number;
+  OpportunityName: string | null;
+  OpportunityNumber: number | null;
+  OpportunityStatusName: string | null;
+  JobStatusName: string | null;
+  PropertyName: string | null;
+  PropertyID: number | null;
+  BillingContactID: number | null;
+  DivisionName: string | null;
+  StartDate: string | null;
+  EndDate: string | null;
+}
+
+export interface FieldWorkTicket {
+  WorkTicketID: number;
+  OpportunityID: number;
+  WorkTicketTitle: string | null;
+  WorkTicketStatusName: string | null;
+  WorkTicketType: string | null;
+  ScheduledDate: string | null;
+  CompleteDate: string | null;
+  ActualLaborHours: number | null;
+}
+
+export async function searchFieldOpportunities(q: string): Promise<{ opportunities: FieldOpportunity[] }> {
+  return request('GET', `/aspire/field/opportunities/search?q=${encodeURIComponent(q)}`);
+}
+
+export async function getOpportunityWorkTickets(opportunityId: number): Promise<{ opportunity_id: number; tickets: FieldWorkTicket[] }> {
+  return request('GET', `/aspire/field/opportunities/${opportunityId}/work-tickets`);
+}
+
+export interface CompleteTicketResponse {
+  success: boolean;
+  ticket_id: number;
+  photos_uploaded: number;
+  submitter: string;
+}
+
+export async function completeWorkTicket(
+  ticketId: number,
+  submitterName: string,
+  comment: string,
+  photos: File[],
+): Promise<CompleteTicketResponse> {
+  const form = new FormData();
+  form.append('submitter_name', submitterName);
+  form.append('comment', comment);
+  for (const photo of photos) {
+    form.append('photos', photo);
+  }
+  return request<CompleteTicketResponse>('POST', `/aspire/field/work-ticket/${ticketId}/complete`, form, true);
+}
+
+export interface FieldPropertyResult {
+  OpportunityID: number;
+  OpportunityName: string | null;
+  PropertyName: string | null;
+  PropertyID: number | null;
+  BillingContactID: number | null;
+  DivisionName: string | null;
+}
+
+export async function searchFieldProperties(q: string): Promise<{ properties: FieldPropertyResult[] }> {
+  return request('GET', `/aspire/field/properties/search?q=${encodeURIComponent(q)}`);
+}
+
+export interface CreateOpportunityResponse {
+  success: boolean;
+  opportunity_id: string | number;
+  opportunity_name: string;
+  photos_uploaded: number;
+  submitter: string;
+}
+
+export async function createFieldOpportunity(
+  submitterName: string,
+  opportunityName: string,
+  divisionId: number,
+  estimatedValue: number,
+  notes: string,
+  photos: File[],
+  propertyId?: number,
+  propertyNameFyi?: string,
+): Promise<CreateOpportunityResponse> {
+  const form = new FormData();
+  form.append('submitter_name', submitterName);
+  form.append('opportunity_name', opportunityName);
+  form.append('division_id', String(divisionId));
+  form.append('estimated_value', String(estimatedValue));
+  form.append('notes', notes);
+  if (propertyId) form.append('property_id', String(propertyId));
+  if (propertyNameFyi) form.append('property_name_fyi', propertyNameFyi);
+  for (const photo of photos) {
+    form.append('photos', photo);
+  }
+  return request<CreateOpportunityResponse>('POST', '/aspire/field/opportunity', form, true);
+}

@@ -22,6 +22,7 @@ from app.api import invoices, vendors, health
 from app.api.vendor_import import router as vendor_import_router
 from app.api.reconcile import router as reconcile_router
 from app.api.dashboard import router as dashboard_router
+from app.api.aspire_field import router as aspire_field_router
 from app.core.config import settings
 from app.core.database import Database
 from app.services.qbo import qbo_auth_router
@@ -110,10 +111,17 @@ app.add_middleware(
 
 @app.middleware("http")
 async def limit_upload_size(request: Request, call_next):
-    if request.method == "POST" and "/upload" in str(request.url):
+    if request.method == "POST":
+        url = str(request.url)
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > 20 * 1024 * 1024:
-            return JSONResponse(status_code=413, content={"detail": "File too large — maximum 20MB"})
+        if content_length:
+            size = int(content_length)
+            # Field photo uploads: up to 10 × 15 MB
+            if "/aspire/field/" in url and size > 150 * 1024 * 1024:
+                return JSONResponse(status_code=413, content={"detail": "Upload too large — maximum 150MB total"})
+            # Regular invoice uploads: 20 MB
+            elif "/upload" in url and size > 20 * 1024 * 1024:
+                return JSONResponse(status_code=413, content={"detail": "File too large — maximum 20MB"})
     return await call_next(request)
 
 app.include_router(health.router)
@@ -122,4 +130,5 @@ app.include_router(vendors.router,  prefix="/vendors",  tags=["vendors"])
 app.include_router(vendor_import_router, prefix="/vendors", tags=["vendors"])
 app.include_router(reconcile_router)
 app.include_router(dashboard_router)
+app.include_router(aspire_field_router)
 app.include_router(qbo_auth_router)

@@ -90,6 +90,45 @@ class AspireClient:
             return result
         return result.get("value", [])
 
+    async def _patch(self, path: str, body: dict) -> dict:
+        """PATCH (partial update) an Aspire resource."""
+        token = await self._get_token()
+        resp = await self._http.patch(
+            f"{self.base_url}/{path.lstrip('/')}",
+            json=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        if not resp.is_success:
+            logger.error(
+                f"Aspire PATCH {path} failed {resp.status_code}: {resp.text[:500]}"
+            )
+        resp.raise_for_status()
+        # 204 No Content is a valid success response
+        return resp.json() if resp.content else {}
+
+    async def _put(self, path: str, body: dict) -> dict:
+        """PUT (full replace) an Aspire resource."""
+        token = await self._get_token()
+        resp = await self._http.put(
+            f"{self.base_url}/{path.lstrip('/')}",
+            json=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        if not resp.is_success:
+            logger.error(
+                f"Aspire PUT {path} failed {resp.status_code}: {resp.text[:500]}"
+            )
+        resp.raise_for_status()
+        return resp.json() if resp.content else {}
+
     async def _post(self, path: str, body: dict) -> dict:
         token = await self._get_token()
         resp = await self._http.post(
@@ -682,6 +721,94 @@ class AspireClient:
         except Exception as e:
             logger.warning(f"WorkTickets fetch failed for OpportunityID={opportunity_id}: {e}")
             return []
+
+    # ── Field write operations ────────────────────────────────────────────────
+
+    async def search_opportunities_field(
+        self, query: str, limit: int = 15
+    ) -> list[dict]:
+        """
+        Search Won opportunities by name for field crew selection.
+        Returns enough fields to identify a job and find its work tickets.
+        """
+        escaped = query.replace("'", "''")
+        select_fields = ",".join([
+            "OpportunityID", "OpportunityName", "OpportunityNumber",
+            "OpportunityStatusName", "JobStatusName",
+            "PropertyName", "DivisionName",
+            "PropertyID", "BillingContactID",
+            "StartDate", "EndDate",
+        ])
+        try:
+            result = await self._get("Opportunities", {
+                "$filter": f"contains(OpportunityName, '{escaped}')",
+                "$select": select_fields,
+                "$top": str(limit),
+            })
+            opps = self._extract_list(result)
+            # Include only active Won jobs for work ticket completion
+            return [
+                o for o in opps
+                if (o.get("OpportunityStatusName") or "").lower() == "won"
+            ]
+        except Exception as e:
+            logger.warning(f"Field opportunity search failed: {e}")
+            return []
+
+    async def search_all_opportunities_field(
+        self, query: str, limit: int = 15
+    ) -> list[dict]:
+        """
+        Search all opportunities (any status) by name — for new opportunity creation
+        flow where we need to find an existing PropertyID.
+        """
+        escaped = query.replace("'", "''")
+        select_fields = ",".join([
+            "OpportunityID", "OpportunityName", "PropertyName",
+            "PropertyID", "BillingContactID", "DivisionName",
+        ])
+        try:
+            result = await self._get("Opportunities", {
+                "$filter": f"contains(PropertyName, '{escaped}')",
+                "$select": select_fields,
+                "$top": str(limit),
+            })
+            opps = self._extract_list(result)
+            # Deduplicate by PropertyID
+            seen: set = set()
+            unique = []
+            for o in opps:
+                pid = o.get("PropertyID")
+                if pid and pid not in seen:
+                    seen.add(pid)
+                    unique.append(o)
+            return unique
+        except Exception as e:
+            logger.warning(f"Property search failed: {e}")
+            return []
+
+    async def patch_work_ticket_notes(
+        self, ticket_id: int, notes: str
+    ) -> dict:
+        """
+        Patch the Notes field on a WorkTicket.
+        Falls back to PUT if PATCH returns 405 Method Not Allowed.
+        """
+        body = {"Notes": notes}
+        try:
+            return await self._patch(f"WorkTickets/{ticket_id}", body)
+        except Exception as patch_err:
+            status = getattr(getattr(patch_err, "response", None), "status_code", None)
+            if status == 405:
+                logger.info(
+                    f"PATCH not allowed for WorkTickets/{ticket_id} — trying PUT"
+                )
+                return await self._put(f"WorkTickets/{ticket_id}", body)
+            raise
+
+    async def create_opportunity(self, body: dict) -> dict:
+        """POST a new Opportunity to Aspire."""
+        return await self._post("Opportunities", body)
 
     async def close(self):
         await self._http.aclose()

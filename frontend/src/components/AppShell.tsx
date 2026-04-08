@@ -89,17 +89,27 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           ))}
         </div>
 
-        {/* Footer — link back to field app */}
-        <div style={{ padding: '12px 16px', borderTop: '1px solid #1e293b' }}>
-          <Link
-            to="/field"
-            style={{
-              color: '#475569', fontSize: 12, textDecoration: 'none',
-              display: 'flex', alignItems: 'center', gap: 6,
-            }}
-          >
-            <span>📱</span> Field App
-          </Link>
+        {/* Footer — field app links */}
+        <div style={{ padding: '10px 16px 14px', borderTop: '1px solid #1e293b' }}>
+          <div style={{ color: '#334155', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 6 }}>
+            Field Staff
+          </div>
+          {([
+            { to: '/field',             icon: '🧾', label: 'Submit Receipt' },
+            { to: '/field/work-ticket', icon: '✅', label: 'Complete Ticket' },
+            { to: '/field/opportunity', icon: '➕', label: 'New Opportunity' },
+          ] as { to: string; icon: string; label: string }[]).map(item => (
+            <Link
+              key={item.to}
+              to={item.to}
+              style={{
+                color: '#475569', fontSize: 12, textDecoration: 'none',
+                display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0',
+              }}
+            >
+              <span style={{ fontSize: 13 }}>{item.icon}</span> {item.label}
+            </Link>
+          ))}
         </div>
       </nav>
 
