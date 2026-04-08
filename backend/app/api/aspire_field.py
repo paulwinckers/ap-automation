@@ -25,8 +25,15 @@ router = APIRouter(prefix="/aspire/field", tags=["aspire-field"])
 
 _aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)
 
-MAX_PHOTOS    = 10
-MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB per photo
+MAX_FILES     = 10
+MAX_PHOTO_SIZE = 15  * 1024 * 1024   # 15 MB per photo/image
+MAX_VIDEO_SIZE = 200 * 1024 * 1024   # 200 MB per video clip
+
+VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".webm", ".mkv"}
+
+def _is_video(filename: str) -> bool:
+    import os
+    return os.path.splitext((filename or "").lower())[1] in VIDEO_EXTS
 
 
 def _check_credentials():
@@ -76,19 +83,22 @@ async def complete_work_ticket(
     """
     _check_credentials()
 
-    if len(photos) > MAX_PHOTOS:
+    if len(photos) > MAX_FILES:
         raise HTTPException(
-            status_code=400, detail=f"Maximum {MAX_PHOTOS} photos allowed"
+            status_code=400, detail=f"Maximum {MAX_FILES} files allowed"
         )
 
     # ── Upload photos to R2 ────────────────────────────────────────────────────
     photo_urls: list[str] = []
     for i, photo in enumerate(photos):
         raw = await photo.read()
-        if len(raw) > MAX_FILE_SIZE:
+        is_vid   = _is_video(photo.filename or "")
+        max_size = MAX_VIDEO_SIZE if is_vid else MAX_PHOTO_SIZE
+        if len(raw) > max_size:
+            label = "200 MB per video" if is_vid else "15 MB per photo"
             raise HTTPException(
                 status_code=413,
-                detail=f"Photo {i+1} is too large (max 15 MB per photo)",
+                detail=f"File {i+1} is too large (max {label})",
             )
         result = await r2.upload_field_photo(
             file_bytes=raw,
@@ -206,9 +216,9 @@ async def create_opportunity(
     """
     _check_credentials()
 
-    if len(photos) > MAX_PHOTOS:
+    if len(photos) > MAX_FILES:
         raise HTTPException(
-            status_code=400, detail=f"Maximum {MAX_PHOTOS} photos allowed"
+            status_code=400, detail=f"Maximum {MAX_FILES} files allowed"
         )
 
     if division_id not in DIVISION_MAP:
@@ -224,10 +234,13 @@ async def create_opportunity(
     photo_urls: list[str] = []
     for i, photo in enumerate(photos):
         raw = await photo.read()
-        if len(raw) > MAX_FILE_SIZE:
+        is_vid   = _is_video(photo.filename or "")
+        max_size = MAX_VIDEO_SIZE if is_vid else MAX_PHOTO_SIZE
+        if len(raw) > max_size:
+            label = "200 MB per video" if is_vid else "15 MB per photo"
             raise HTTPException(
                 status_code=413,
-                detail=f"Photo {i+1} is too large (max 15 MB per photo)",
+                detail=f"File {i+1} is too large (max {label})",
             )
         result = await r2.upload_field_photo(
             file_bytes=raw,

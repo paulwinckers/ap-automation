@@ -163,6 +163,16 @@ async def upload_field_photo(
         content_type = "image/png"
     elif name_lower.endswith(".webp"):
         content_type = "image/webp"
+    elif name_lower.endswith(".mp4") or name_lower.endswith(".m4v"):
+        content_type = "video/mp4"
+    elif name_lower.endswith(".mov"):
+        content_type = "video/quicktime"
+    elif name_lower.endswith(".avi"):
+        content_type = "video/x-msvideo"
+    elif name_lower.endswith(".webm"):
+        content_type = "video/webm"
+    elif name_lower.endswith(".mkv"):
+        content_type = "video/x-matroska"
     else:
         content_type = "image/jpeg"
 

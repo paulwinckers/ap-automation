@@ -116,9 +116,9 @@ async def limit_upload_size(request: Request, call_next):
         content_length = request.headers.get("content-length")
         if content_length:
             size = int(content_length)
-            # Field photo uploads: up to 10 × 15 MB
-            if "/aspire/field/" in url and size > 150 * 1024 * 1024:
-                return JSONResponse(status_code=413, content={"detail": "Upload too large — maximum 150MB total"})
+            # Field media uploads: photos + videos (up to ~500 MB per submission)
+            if "/aspire/field/" in url and size > 500 * 1024 * 1024:
+                return JSONResponse(status_code=413, content={"detail": "Upload too large — maximum 500MB total"})
             # Regular invoice uploads: 20 MB
             elif "/upload" in url and size > 20 * 1024 * 1024:
                 return JSONResponse(status_code=413, content={"detail": "File too large — maximum 20MB"})

@@ -128,9 +128,14 @@ export default function FieldWorkTicket() {
     if (!files) return;
     const remaining = MAX_PHOTOS - photos.length;
     const toAdd = Array.from(files).slice(0, remaining);
-    const compressed = await Promise.all(toAdd.map(compressImage));
-    const newPreviews = compressed.map(f => f.type.startsWith('image/') ? URL.createObjectURL(f) : '');
-    setPhotos(p => [...p, ...compressed]);
+    // Compress images; skip compression for videos
+    const processed = await Promise.all(
+      toAdd.map(f => f.type.startsWith('video/') ? Promise.resolve(f) : compressImage(f))
+    );
+    const newPreviews = processed.map(f =>
+      f.type.startsWith('image/') ? URL.createObjectURL(f) : ''
+    );
+    setPhotos(p => [...p, ...processed]);
     setPreviews(p => [...p, ...newPreviews]);
   };
 
@@ -290,21 +295,23 @@ export default function FieldWorkTicket() {
         {/* Step 2 — Photos */}
         {step === 2 && (
           <div style={S.card}>
-            <div style={S.ctitle}>Add completion photos ({photos.length}/{MAX_PHOTOS})</div>
+            <div style={S.ctitle}>Add photos & videos ({photos.length}/{MAX_PHOTOS})</div>
 
             {/* Camera / gallery buttons */}
-            <input ref={cameraRef}  type="file" accept="image/*" capture="environment" multiple onChange={e => handleFiles(e.target.files)} style={{display:'none'}}/>
-            <input ref={galleryRef} type="file" accept="image/*" multiple onChange={e => handleFiles(e.target.files)} style={{display:'none'}}/>
+            <input ref={cameraRef}  type="file" accept="image/*,video/*" capture="environment" multiple onChange={e => handleFiles(e.target.files)} style={{display:'none'}}/>
+            <input ref={galleryRef} type="file" accept="image/*,video/*" multiple onChange={e => handleFiles(e.target.files)} style={{display:'none'}}/>
 
             {photos.length < MAX_PHOTOS && (
               <div style={{display:'flex', gap:10, marginBottom:12}}>
                 <div style={{...S.uparea, flex:1}} onClick={() => cameraRef.current?.click()}>
                   <span style={{fontSize:30}}>📷</span>
                   <div style={S.uptitle}>Camera</div>
+                  <div style={{fontSize:11, color:'#6b7280', marginTop:2}}>Photo or video</div>
                 </div>
                 <div style={{...S.uparea, flex:1}} onClick={() => galleryRef.current?.click()}>
                   <span style={{fontSize:30}}>🖼️</span>
-                  <div style={S.uptitle}>Gallery</div>
+                  <div style={S.uptitle}>Library</div>
+                  <div style={{fontSize:11, color:'#6b7280', marginTop:2}}>Photo or video</div>
                 </div>
               </div>
             )}
@@ -314,9 +321,14 @@ export default function FieldWorkTicket() {
               <div style={S.photoGrid}>
                 {photos.map((f, i) => (
                   <div key={i} style={S.photoThumb}>
-                    {previews[i]
-                      ? <img src={previews[i]} alt={f.name} style={S.thumbImg}/>
-                      : <div style={{fontSize:24, textAlign:'center'}}>📄</div>
+                    {f.type.startsWith('video/')
+                      ? <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',gap:2}}>
+                          <span style={{fontSize:28}}>🎥</span>
+                          <div style={{fontSize:9,color:'#6b7280',textAlign:'center',padding:'0 4px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'100%'}}>{f.name}</div>
+                        </div>
+                      : previews[i]
+                        ? <img src={previews[i]} alt={f.name} style={S.thumbImg}/>
+                        : <div style={{fontSize:24, textAlign:'center'}}>📄</div>
                     }
                     <button style={S.removeBtn} onClick={() => removePhoto(i)}>✕</button>
                   </div>
@@ -325,7 +337,7 @@ export default function FieldWorkTicket() {
             )}
 
             {photos.length === 0 && (
-              <div style={S.tip}>Photos are optional but help document the completed work.</div>
+              <div style={S.tip}>Photos and short video clips welcome. Videos up to 200 MB — keep clips under 30 seconds for faster uploads.</div>
             )}
           </div>
         )}
