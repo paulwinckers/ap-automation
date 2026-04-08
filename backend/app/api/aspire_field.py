@@ -41,6 +41,19 @@ def _check_credentials():
         raise HTTPException(status_code=503, detail="Aspire credentials not configured")
 
 
+# ── Scheduled work tickets ───────────────────────────────────────────────────
+
+@router.get("/work-tickets/scheduled")
+async def get_scheduled_tickets(range: str = Query(default="today", pattern="^(today|past|upcoming)$")):
+    """
+    Return work tickets grouped by scheduled date.
+    range: today | past (last 14 days) | upcoming (next 30 days)
+    """
+    _check_credentials()
+    tickets = await _aspire.get_scheduled_work_tickets(range)
+    return {"tickets": tickets, "range": range, "count": len(tickets)}
+
+
 # ── Work ticket search ────────────────────────────────────────────────────────
 
 @router.get("/opportunities/search")

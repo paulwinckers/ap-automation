@@ -302,6 +302,26 @@ export interface FieldWorkTicket {
   ActualLaborHours: number | null;
 }
 
+export interface ScheduledWorkTicket {
+  WorkTicketID: number;
+  WorkTicketTitle: string | null;
+  OpportunityID: number;
+  OpportunityName: string | null;
+  PropertyName: string | null;
+  WorkTicketStatusName: string | null;
+  WorkTicketType: string | null;
+  ScheduledDate: string | null;
+  CompleteDate: string | null;
+  ActualLaborHours: number | null;
+  EstimatedLaborHours: number | null;
+}
+
+export type TicketRange = 'past' | 'today' | 'upcoming';
+
+export async function getScheduledTickets(range: TicketRange): Promise<{ tickets: ScheduledWorkTicket[]; count: number }> {
+  return request('GET', `/aspire/field/work-tickets/scheduled?range=${range}`);
+}
+
 export async function searchFieldOpportunities(q: string): Promise<{ opportunities: FieldOpportunity[] }> {
   return request('GET', `/aspire/field/opportunities/search?q=${encodeURIComponent(q)}`);
 }

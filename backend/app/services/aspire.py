@@ -724,6 +724,78 @@ class AspireClient:
 
     # ── Field write operations ────────────────────────────────────────────────
 
+    async def get_scheduled_work_tickets(self, date_range: str = "today") -> list[dict]:
+        """
+        Fetch work tickets filtered by ScheduledDate.
+        date_range: 'today' | 'past' (last 14 days) | 'upcoming' (next 30 days)
+        Enriches each ticket with OpportunityName + PropertyName via a secondary lookup.
+        """
+        from datetime import date as _date, timedelta
+        today = _date.today()
+        today_str = today.isoformat()
+
+        if date_range == "past":
+            since = (today - timedelta(days=14)).isoformat()
+            filter_str = f"ScheduledDate ge '{since}' and ScheduledDate lt '{today_str}'"
+            orderby = "ScheduledDate desc"
+        elif date_range == "upcoming":
+            until = (today + timedelta(days=30)).isoformat()
+            filter_str = f"ScheduledDate gt '{today_str}' and ScheduledDate le '{until}'"
+            orderby = "ScheduledDate asc"
+        else:  # today
+            filter_str = f"ScheduledDate eq '{today_str}'"
+            orderby = "ScheduledDate asc"
+
+        select_fields = ",".join([
+            "WorkTicketID", "WorkTicketTitle", "OpportunityID",
+            "WorkTicketStatusName", "WorkTicketType",
+            "ScheduledDate", "CompleteDate",
+            "ActualLaborHours", "EstimatedLaborHours",
+        ])
+
+        try:
+            result = await self._get("WorkTickets", {
+                "$filter": filter_str,
+                "$select": select_fields,
+                "$orderby": orderby,
+                "$top": "200",
+            })
+            tickets = self._extract_list(result)
+        except Exception as e:
+            logger.error(f"Scheduled work tickets fetch failed: {e}")
+            return []
+
+        if not tickets:
+            return []
+
+        # Enrich with OpportunityName + PropertyName
+        opp_ids = list({t.get("OpportunityID") for t in tickets if t.get("OpportunityID")})
+        opp_map: dict = {}
+        # Batch in chunks of 15 (OData URL length limit)
+        for chunk_start in range(0, len(opp_ids), 15):
+            chunk = opp_ids[chunk_start:chunk_start + 15]
+            or_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
+            try:
+                opp_result = await self._get("Opportunities", {
+                    "$filter": f"({or_filter})",
+                    "$select": "OpportunityID,OpportunityName,PropertyName",
+                    "$top": "50",
+                })
+                for opp in self._extract_list(opp_result):
+                    opp_map[opp.get("OpportunityID")] = {
+                        "name":     opp.get("OpportunityName") or "",
+                        "property": opp.get("PropertyName") or "",
+                    }
+            except Exception as e:
+                logger.warning(f"Opportunity name enrichment failed: {e}")
+
+        for t in tickets:
+            info = opp_map.get(t.get("OpportunityID"), {})
+            t["OpportunityName"] = info.get("name", "")
+            t["PropertyName"]    = info.get("property", "")
+
+        return tickets
+
     async def get_lead_sources(self) -> list[dict]:
         """Fetch all lead sources from Aspire."""
         try:

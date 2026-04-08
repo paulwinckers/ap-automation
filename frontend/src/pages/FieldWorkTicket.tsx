@@ -3,32 +3,30 @@
  * Accessible at /field/work-ticket
  *
  * Flow:
- *   1. Search for a job by name
- *   2. Select the job → see its work tickets → pick one
- *   3. Add up to 10 photos (compressed)
- *   4. Add completion comment + your name
+ *   1. Select your name → see today's scheduled tickets automatically
+ *      Toggle: Past 2 weeks | Today | Upcoming
+ *   2. Tap a ticket to select it
+ *   3. Add photos & videos (up to 10)
+ *   4. Add completion notes + confirm name
  *   5. Review & submit
  *   6. Success
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
-  searchFieldOpportunities,
-  getOpportunityWorkTickets,
+  getScheduledTickets,
   completeWorkTicket,
   listEmployees,
-  type FieldOpportunity,
-  type FieldWorkTicket,
+  type ScheduledWorkTicket,
+  type TicketRange,
 } from '../lib/api';
 
-const FALLBACK_EMPLOYEES = ['Marcus Torres','Jake Willms','Devon Hicks','Priya Sandhu','Cole Beaumont'];
-
-type Step = 1 | 2 | 3 | 4 | 5 | 6;
+type Step = 1 | 2 | 3 | 4 | 5;
 
 const MAX_PHOTOS = 10;
 const MAX_PX     = 1600;
+const FALLBACK_EMPLOYEES = ['Marcus Torres','Jake Willms','Devon Hicks','Priya Sandhu','Cole Beaumont'];
 
-// ── Image compression (same as FieldSubmit) ───────────────────────────────────
 function compressImage(f: File): Promise<File> {
   return new Promise(resolve => {
     if (f.type === 'application/pdf' || f.size < 1.5 * 1024 * 1024) { resolve(f); return; }
@@ -54,87 +52,64 @@ function compressImage(f: File): Promise<File> {
   });
 }
 
+function fmtDate(d: string | null) {
+  if (!d) return '';
+  return d.slice(0, 10); // YYYY-MM-DD
+}
+
 export default function FieldWorkTicket() {
   const [step, setStep]               = useState<Step>(1);
-  const [query, setQuery]             = useState('');
-  const [searching, setSearching]     = useState(false);
-  const [searchResults, setSearchResults] = useState<FieldOpportunity[] | null>(null);
-  const [selectedJob, setSelectedJob] = useState<FieldOpportunity | null>(null);
-  const [tickets, setTickets]         = useState<FieldWorkTicket[]>([]);
-  const [loadingTickets, setLoadingTickets] = useState(false);
-  const [selectedTicket, setSelectedTicket] = useState<FieldWorkTicket | null>(null);
+
+  // Employee
+  const [submitterName, setSubmitterName] = useState(() => localStorage.getItem('field_employee') || '');
+  const [employees, setEmployees]         = useState<string[]>(FALLBACK_EMPLOYEES);
+
+  // Ticket list
+  const [range, setRange]             = useState<TicketRange>('today');
+  const [tickets, setTickets]         = useState<ScheduledWorkTicket[] | null>(null);
+  const [loading, setLoading]         = useState(false);
+  const [loadError, setLoadError]     = useState<string | null>(null);
+  const [selectedTicket, setSelectedTicket] = useState<ScheduledWorkTicket | null>(null);
+
+  // Media
   const [photos, setPhotos]           = useState<File[]>([]);
   const [previews, setPreviews]       = useState<string[]>([]);
-  const [submitterName, setSubmitterName] = useState(
-    () => localStorage.getItem('field_employee') || ''
-  );
-  const [employees, setEmployees]       = useState<string[]>(FALLBACK_EMPLOYEES);
-  const [comment, setComment]           = useState('');
 
-  useEffect(() => {
-    listEmployees().then(names => { if (names.length > 0) setEmployees(names); }).catch(() => {});
-  }, []);
+  // Comment
+  const [comment, setComment]         = useState('');
+
+  // Submission
   const [submitting, setSubmitting]   = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successInfo, setSuccessInfo] = useState<{ ticket: string; photos: number } | null>(null);
 
   const cameraRef  = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
-  const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Search ─────────────────────────────────────────────────────────────────
-  const handleQueryChange = (val: string) => {
-    setQuery(val);
-    setSearchResults(null);
-    if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    if (val.trim().length < 2) return;
-    searchTimeout.current = setTimeout(async () => {
-      setSearching(true);
-      try {
-        const res = await searchFieldOpportunities(val.trim());
-        setSearchResults(res.opportunities);
-      } catch {
-        setSearchResults([]);
-      } finally {
-        setSearching(false);
-      }
-    }, 500);
-  };
-
-  const selectJob = useCallback(async (job: FieldOpportunity) => {
-    setSelectedJob(job);
-    setSelectedTicket(null);
-    setLoadingTickets(true);
-    try {
-      const res = await getOpportunityWorkTickets(job.OpportunityID);
-      setTickets(res.tickets);
-    } catch {
-      setTickets([]);
-    } finally {
-      setLoadingTickets(false);
-    }
+  // Load employees on mount
+  useEffect(() => {
+    listEmployees().then(names => { if (names.length > 0) setEmployees(names); }).catch(() => {});
   }, []);
 
-  const selectTicket = (t: FieldWorkTicket) => {
-    setSelectedTicket(t);
-    setStep(2); // move to photos
-    // clear any prior photos
-    previews.forEach(p => URL.revokeObjectURL(p));
-    setPhotos([]); setPreviews([]);
-  };
+  // Load tickets whenever name is set or range changes
+  useEffect(() => {
+    if (!submitterName) { setTickets(null); return; }
+    setLoading(true); setLoadError(null); setTickets(null);
+    getScheduledTickets(range)
+      .then(res => setTickets(res.tickets))
+      .catch(e => setLoadError((e as Error).message))
+      .finally(() => setLoading(false));
+  }, [submitterName, range]);
 
-  // ── Photos ─────────────────────────────────────────────────────────────────
+  // Photos
   const handleFiles = async (files: FileList | null) => {
     if (!files) return;
     const remaining = MAX_PHOTOS - photos.length;
     const toAdd = Array.from(files).slice(0, remaining);
-    // Compress images; skip compression for videos
     const processed = await Promise.all(
       toAdd.map(f => f.type.startsWith('video/') ? Promise.resolve(f) : compressImage(f))
     );
-    const newPreviews = processed.map(f =>
-      f.type.startsWith('image/') ? URL.createObjectURL(f) : ''
-    );
+    const newPreviews = processed.map(f => f.type.startsWith('image/') ? URL.createObjectURL(f) : '');
     setPhotos(p => [...p, ...processed]);
     setPreviews(p => [...p, ...newPreviews]);
   };
@@ -145,7 +120,15 @@ export default function FieldWorkTicket() {
     setPreviews(p => p.filter((_, i) => i !== idx));
   };
 
-  // ── Submit ─────────────────────────────────────────────────────────────────
+  const selectTicket = (t: ScheduledWorkTicket) => {
+    setSelectedTicket(t);
+    // Clear media from previous selection
+    previews.forEach(p => URL.revokeObjectURL(p));
+    setPhotos([]); setPreviews([]);
+    setStep(2);
+  };
+
+  // Submit
   const handleSubmit = async () => {
     if (!selectedTicket || !submitterName.trim() || !comment.trim()) return;
     setSubmitting(true); setSubmitError(null);
@@ -161,7 +144,7 @@ export default function FieldWorkTicket() {
         ticket: selectedTicket.WorkTicketTitle || `Ticket #${selectedTicket.WorkTicketID}`,
         photos: res.photos_uploaded,
       });
-      setStep(6);
+      setStep(5);
     } catch (e: unknown) {
       setSubmitError((e as Error).message);
     } finally {
@@ -171,27 +154,28 @@ export default function FieldWorkTicket() {
 
   const reset = () => {
     previews.forEach(p => URL.revokeObjectURL(p));
-    setStep(1); setQuery(''); setSearchResults(null); setSelectedJob(null);
-    setTickets([]); setSelectedTicket(null); setPhotos([]); setPreviews([]);
+    setStep(1); setSelectedTicket(null); setPhotos([]); setPreviews([]);
     setComment(''); setSubmitError(null); setSuccessInfo(null);
   };
 
-  const stepLabels = ['Find job', 'Add photos', 'Add comment', 'Review'];
-  const showProgress = step < 6;
+  const back = () => setStep(s => (s - 1) as Step);
 
   const canContinue = () => {
-    if (step === 1) return !!selectedTicket;
-    if (step === 2) return true; // photos optional but encouraged
+    if (step === 2) return true;
     if (step === 3) return submitterName.trim().length > 0 && comment.trim().length >= 3;
     if (step === 4) return !submitting;
     return false;
   };
 
-  const next = () => {
-    if (step === 5) { handleSubmit(); return; }
-    setStep(s => (s + 1) as Step);
+  const statusColor = (s: string | null) => {
+    const lower = (s || '').toLowerCase();
+    if (lower.includes('complete')) return '#059669';
+    if (lower.includes('progress') || lower.includes('active')) return '#2563eb';
+    if (lower.includes('not started')) return '#6b7280';
+    return '#d97706';
   };
-  const back = () => setStep(s => (s - 1) as Step);
+
+  const stepLabels = ['Select ticket', 'Add media', 'Notes & name', 'Review'];
 
   return (
     <div style={S.phone}>
@@ -205,144 +189,189 @@ export default function FieldWorkTicket() {
       </div>
 
       {/* Progress */}
-      {showProgress && (
+      {step < 5 && (
         <div style={S.progress}>
           <div style={S.psteps}>
-            {[1,2,3,4].map((i) => (
+            {[1,2,3,4].map(i => (
               <div key={i} style={{...S.pstep, background: step > i ? '#2563eb' : step === i ? 'rgba(37,99,235,.45)' : '#e2e6ed'}}/>
             ))}
           </div>
-          <div style={S.plabel}>{stepLabels[Math.min(step, 4) - 1]}</div>
+          <div style={S.plabel}>{stepLabels[step - 1]}</div>
         </div>
       )}
 
       <div style={S.content}>
 
-        {/* Step 1 — Find job & ticket */}
+        {/* ── Step 1: Select ticket ── */}
         {step === 1 && (
           <>
+            {/* Employee selector */}
             <div style={S.card}>
-              <div style={S.ctitle}>Search for your job</div>
-              <input
-                style={S.search}
-                placeholder="Type job name (e.g. Smith Residence)"
-                value={query}
-                onChange={e => handleQueryChange(e.target.value)}
-                autoFocus
-              />
-              {searching && <div style={S.hint}>Searching...</div>}
+              <div style={S.ctitle}>Who are you?</div>
+              {submitterName ? (
+                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'6px 0'}}>
+                  <span style={{fontSize:15, fontWeight:600, color:'#1a1d23'}}>{submitterName}</span>
+                  <button style={{fontSize:12, color:'#6b7280', background:'none', border:'none', cursor:'pointer', fontFamily:'inherit'}}
+                    onClick={() => { setSubmitterName(''); localStorage.removeItem('field_employee'); setTickets(null); }}>
+                    Not you?
+                  </button>
+                </div>
+              ) : (
+                <select
+                  style={S.sel}
+                  value={submitterName}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setSubmitterName(v);
+                    if (v) localStorage.setItem('field_employee', v);
+                  }}
+                >
+                  <option value="">Select your name...</option>
+                  {employees.map(emp => <option key={emp}>{emp}</option>)}
+                </select>
+              )}
             </div>
 
-            {searchResults && searchResults.length === 0 && (
-              <div style={{...S.card, color:'#6b7280', fontSize:14}}>
-                No active jobs found for "{query}". Try a different name.
-              </div>
-            )}
-
-            {searchResults && searchResults.map(job => (
-              <div
-                key={job.OpportunityID}
-                style={{
-                  ...S.card, cursor:'pointer',
-                  border: selectedJob?.OpportunityID === job.OpportunityID
-                    ? '2px solid #2563eb' : '1.5px solid #e2e6ed',
-                  background: selectedJob?.OpportunityID === job.OpportunityID ? '#eff6ff' : '#fff',
-                }}
-                onClick={() => selectJob(job)}
-              >
-                <div style={{fontWeight:600, fontSize:15, color:'#1a1d23', marginBottom:4}}>
-                  {job.OpportunityName}
+            {/* Range toggle */}
+            {submitterName && (
+              <>
+                <div style={S.rangeBar}>
+                  {(['past', 'today', 'upcoming'] as TicketRange[]).map(r => (
+                    <button
+                      key={r}
+                      style={{...S.rangeBtn, ...(range === r ? S.rangeBtnActive : {})}}
+                      onClick={() => setRange(r)}
+                    >
+                      {r === 'past' ? '← Past 2 wks' : r === 'today' ? 'Today' : 'Upcoming →'}
+                    </button>
+                  ))}
                 </div>
-                <div style={{fontSize:12, color:'#6b7280'}}>
-                  {job.PropertyName || 'No property'} · {job.DivisionName || ''}
-                </div>
-              </div>
-            ))}
 
-            {selectedJob && (
-              <div style={S.card}>
-                <div style={S.ctitle}>Select work ticket</div>
-                {loadingTickets && <div style={S.hint}>Loading tickets...</div>}
-                {!loadingTickets && tickets.length === 0 && (
-                  <div style={{fontSize:13, color:'#6b7280'}}>No work tickets found for this job.</div>
+                {loading && (
+                  <div style={{...S.card, color:'#6b7280', fontSize:13, textAlign:'center'}}>
+                    Loading tickets...
+                  </div>
                 )}
-                {tickets.map(t => (
+
+                {loadError && (
+                  <div style={{...S.card, color:'#dc2626', fontSize:13}}>
+                    Could not load tickets: {loadError}
+                  </div>
+                )}
+
+                {tickets && tickets.length === 0 && (
+                  <div style={{...S.card, color:'#6b7280', fontSize:14, textAlign:'center', padding:'24px 16px'}}>
+                    {range === 'today'
+                      ? 'No tickets scheduled for today.'
+                      : range === 'past'
+                      ? 'No tickets in the last 2 weeks.'
+                      : 'No upcoming tickets in the next 30 days.'}
+                  </div>
+                )}
+
+                {tickets && tickets.map(t => (
                   <button
                     key={t.WorkTicketID}
                     style={{
-                      width:'100%', textAlign:'left', padding:'12px 14px',
-                      marginBottom:8, borderRadius:10, cursor:'pointer', fontFamily:'inherit',
+                      ...S.ticketCard,
                       border: selectedTicket?.WorkTicketID === t.WorkTicketID
                         ? '2px solid #2563eb' : '1.5px solid #e2e6ed',
-                      background: selectedTicket?.WorkTicketID === t.WorkTicketID ? '#eff6ff' : '#f9fafb',
+                      background: selectedTicket?.WorkTicketID === t.WorkTicketID ? '#eff6ff' : '#fff',
                     }}
                     onClick={() => selectTicket(t)}
                   >
-                    <div style={{fontWeight:600, fontSize:14, color:'#1a1d23', marginBottom:2}}>
+                    {/* Date badge + status */}
+                    <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6}}>
+                      <span style={{fontSize:11, color:'#6b7280', fontWeight:500}}>
+                        {fmtDate(t.ScheduledDate) || '—'}
+                      </span>
+                      <span style={{
+                        fontSize:10, fontWeight:600, borderRadius:6,
+                        padding:'2px 8px', letterSpacing:'.02em',
+                        background: statusColor(t.WorkTicketStatusName) + '18',
+                        color: statusColor(t.WorkTicketStatusName),
+                      }}>
+                        {t.WorkTicketStatusName || 'Unknown'}
+                      </span>
+                    </div>
+
+                    {/* Ticket title */}
+                    <div style={{fontSize:14, fontWeight:600, color:'#1a1d23', marginBottom:2, textAlign:'left'}}>
                       {t.WorkTicketTitle || `Ticket #${t.WorkTicketID}`}
                     </div>
-                    <div style={{fontSize:11, color:'#6b7280'}}>
-                      Status: {t.WorkTicketStatusName || '—'}
-                      {t.ScheduledDate ? ` · Scheduled: ${t.ScheduledDate.slice(0,10)}` : ''}
+
+                    {/* Job + property */}
+                    <div style={{fontSize:12, color:'#6b7280', textAlign:'left'}}>
+                      {t.OpportunityName || `Job #${t.OpportunityID}`}
+                      {t.PropertyName ? ` · ${t.PropertyName}` : ''}
                     </div>
                   </button>
                 ))}
-              </div>
+              </>
             )}
           </>
         )}
 
-        {/* Step 2 — Photos */}
-        {step === 2 && (
-          <div style={S.card}>
-            <div style={S.ctitle}>Add photos & videos ({photos.length}/{MAX_PHOTOS})</div>
-
-            {/* Camera / gallery buttons */}
-            <input ref={cameraRef}  type="file" accept="image/*,video/*" capture="environment" multiple onChange={e => handleFiles(e.target.files)} style={{display:'none'}}/>
-            <input ref={galleryRef} type="file" accept="image/*,video/*" multiple onChange={e => handleFiles(e.target.files)} style={{display:'none'}}/>
-
-            {photos.length < MAX_PHOTOS && (
-              <div style={{display:'flex', gap:10, marginBottom:12}}>
-                <div style={{...S.uparea, flex:1}} onClick={() => cameraRef.current?.click()}>
-                  <span style={{fontSize:30}}>📷</span>
-                  <div style={S.uptitle}>Camera</div>
-                  <div style={{fontSize:11, color:'#6b7280', marginTop:2}}>Photo or video</div>
-                </div>
-                <div style={{...S.uparea, flex:1}} onClick={() => galleryRef.current?.click()}>
-                  <span style={{fontSize:30}}>🖼️</span>
-                  <div style={S.uptitle}>Library</div>
-                  <div style={{fontSize:11, color:'#6b7280', marginTop:2}}>Photo or video</div>
-                </div>
+        {/* ── Step 2: Media ── */}
+        {step === 2 && selectedTicket && (
+          <>
+            <div style={{...S.card, background:'#eff6ff', border:'1.5px solid #bfdbfe'}}>
+              <div style={{fontSize:13, fontWeight:600, color:'#1d4ed8', marginBottom:2}}>
+                {selectedTicket.WorkTicketTitle || `Ticket #${selectedTicket.WorkTicketID}`}
               </div>
-            )}
+              <div style={{fontSize:11, color:'#3b82f6'}}>
+                {selectedTicket.OpportunityName}{selectedTicket.PropertyName ? ` · ${selectedTicket.PropertyName}` : ''}
+              </div>
+            </div>
 
-            {/* Photo grid */}
-            {photos.length > 0 && (
-              <div style={S.photoGrid}>
-                {photos.map((f, i) => (
-                  <div key={i} style={S.photoThumb}>
-                    {f.type.startsWith('video/')
-                      ? <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',gap:2}}>
-                          <span style={{fontSize:28}}>🎥</span>
-                          <div style={{fontSize:9,color:'#6b7280',textAlign:'center',padding:'0 4px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'100%'}}>{f.name}</div>
-                        </div>
-                      : previews[i]
-                        ? <img src={previews[i]} alt={f.name} style={S.thumbImg}/>
-                        : <div style={{fontSize:24, textAlign:'center'}}>📄</div>
-                    }
-                    <button style={S.removeBtn} onClick={() => removePhoto(i)}>✕</button>
+            <div style={S.card}>
+              <div style={S.ctitle}>Add photos & videos ({photos.length}/{MAX_PHOTOS})</div>
+
+              <input ref={cameraRef}  type="file" accept="image/*,video/*" capture="environment" multiple onChange={e => handleFiles(e.target.files)} style={{display:'none'}}/>
+              <input ref={galleryRef} type="file" accept="image/*,video/*" multiple onChange={e => handleFiles(e.target.files)} style={{display:'none'}}/>
+
+              {photos.length < MAX_PHOTOS && (
+                <div style={{display:'flex', gap:10, marginBottom:12}}>
+                  <div style={{...S.uparea, flex:1}} onClick={() => cameraRef.current?.click()}>
+                    <span style={{fontSize:30}}>📷</span>
+                    <div style={S.uptitle}>Camera</div>
+                    <div style={{fontSize:11, color:'#6b7280', marginTop:2}}>Photo or video</div>
                   </div>
-                ))}
-              </div>
-            )}
+                  <div style={{...S.uparea, flex:1}} onClick={() => galleryRef.current?.click()}>
+                    <span style={{fontSize:30}}>🖼️</span>
+                    <div style={S.uptitle}>Library</div>
+                    <div style={{fontSize:11, color:'#6b7280', marginTop:2}}>Photo or video</div>
+                  </div>
+                </div>
+              )}
 
-            {photos.length === 0 && (
-              <div style={S.tip}>Photos and short video clips welcome. Videos up to 200 MB — keep clips under 30 seconds for faster uploads.</div>
-            )}
-          </div>
+              {photos.length > 0 && (
+                <div style={S.photoGrid}>
+                  {photos.map((f, i) => (
+                    <div key={i} style={S.photoThumb}>
+                      {f.type.startsWith('video/')
+                        ? <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',gap:2}}>
+                            <span style={{fontSize:28}}>🎥</span>
+                            <div style={{fontSize:9,color:'#6b7280',textAlign:'center',padding:'0 4px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'100%'}}>{f.name}</div>
+                          </div>
+                        : previews[i]
+                          ? <img src={previews[i]} alt={f.name} style={S.thumbImg}/>
+                          : <div style={{fontSize:24,textAlign:'center'}}>📄</div>
+                      }
+                      <button style={S.removeBtn} onClick={() => removePhoto(i)}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {photos.length === 0 && (
+                <div style={S.tip}>Photos and short video clips welcome. Videos up to 200 MB.</div>
+              )}
+            </div>
+          </>
         )}
 
-        {/* Step 3 — Comment & name */}
+        {/* ── Step 3: Notes & name ── */}
         {step === 3 && (
           <div style={S.card}>
             <div style={S.ctitle}>Completion details</div>
@@ -358,14 +387,8 @@ export default function FieldWorkTicket() {
                   </button>
                 </div>
               ) : (
-                <select
-                  style={S.sel}
-                  value={submitterName}
-                  onChange={e => {
-                    setSubmitterName(e.target.value);
-                    if (e.target.value) localStorage.setItem('field_employee', e.target.value);
-                  }}
-                >
+                <select style={S.sel} value={submitterName}
+                  onChange={e => { setSubmitterName(e.target.value); if (e.target.value) localStorage.setItem('field_employee', e.target.value); }}>
                   <option value="">Select your name...</option>
                   {employees.map(emp => <option key={emp}>{emp}</option>)}
                 </select>
@@ -375,22 +398,24 @@ export default function FieldWorkTicket() {
             <div>
               <div style={S.flabel}>Completion notes</div>
               <textarea
-                style={{...S.input, minHeight:100, resize:'vertical'}}
+                style={{...S.input, minHeight:110, resize:'vertical'}}
                 placeholder="Describe what was completed, any issues, materials used, etc."
                 value={comment}
                 onChange={e => setComment(e.target.value)}
+                autoFocus
               />
             </div>
           </div>
         )}
 
-        {/* Step 4 — Review */}
+        {/* ── Step 4: Review ── */}
         {step === 4 && selectedTicket && (
           <div style={S.card}>
             <div style={S.ctitle}>Review before submitting</div>
-            <RR label="Job"    value={selectedJob?.OpportunityName || '—'}/>
             <RR label="Ticket" value={selectedTicket.WorkTicketTitle || `#${selectedTicket.WorkTicketID}`}/>
-            <RR label="Photos" value={`${photos.length} photo${photos.length !== 1 ? 's' : ''}`} color={photos.length > 0 ? '#059669' : '#6b7280'}/>
+            <RR label="Job"    value={selectedTicket.OpportunityName || `#${selectedTicket.OpportunityID}`}/>
+            <RR label="Date"   value={fmtDate(selectedTicket.ScheduledDate) || '—'}/>
+            <RR label="Media"  value={`${photos.length} file${photos.length !== 1 ? 's' : ''}`} color={photos.length > 0 ? '#059669' : '#6b7280'}/>
             <RR label="Crew"   value={submitterName}/>
             <div style={{paddingTop:10, fontSize:13, color:'#1a1d23', lineHeight:1.6, whiteSpace:'pre-wrap'}}>
               <span style={{fontSize:12, color:'#6b7280', fontWeight:500, display:'block', marginBottom:4, textTransform:'uppercase', letterSpacing:'.04em'}}>Notes</span>
@@ -404,52 +429,38 @@ export default function FieldWorkTicket() {
           </div>
         )}
 
-        {/* Step 6 — Success */}
-        {step === 6 && successInfo && (
+        {/* ── Step 5: Success ── */}
+        {step === 5 && successInfo && (
           <div style={S.success}>
             <span style={{fontSize:64, display:'block', marginBottom:16}}>✅</span>
-            <div style={S.stitle}>Work ticket updated!</div>
+            <div style={S.stitle}>Ticket completed!</div>
             <div style={S.ssub}>
               <strong>{successInfo.ticket}</strong> has been logged as complete
-              {successInfo.photos > 0 ? ` with ${successInfo.photos} photo${successInfo.photos !== 1 ? 's' : ''}` : ''}.
+              {successInfo.photos > 0 ? ` with ${successInfo.photos} file${successInfo.photos !== 1 ? 's' : ''}` : ''}.
             </div>
             <div style={{fontSize:12, color:'#6b7280', marginTop:8}}>
-              Photos and your notes are now visible in Aspire on the work ticket.
+              Your notes and media are now visible in Aspire on the work ticket.
             </div>
           </div>
         )}
+
       </div>
 
       {/* Bottom bar */}
       <div style={S.bar}>
-        {step === 6 ? (
+        {step === 5 ? (
           <button style={S.bsuccess} onClick={reset}>Complete another ticket</button>
-        ) : step === 1 ? (
-          <button
-            style={{...S.bprimary, opacity: canContinue() ? 1 : .4}}
-            disabled={!canContinue()}
-            onClick={() => selectedTicket && setStep(2)}
-          >
-            Continue
-          </button>
         ) : step === 4 ? (
           <>
-            <button
-              style={{...S.bprimary, opacity: submitting ? .4 : 1}}
-              disabled={submitting}
-              onClick={handleSubmit}
-            >
+            <button style={{...S.bprimary, opacity: submitting ? .4 : 1}} disabled={submitting} onClick={handleSubmit}>
               {submitting ? 'Submitting...' : 'Submit completion'}
             </button>
             <button style={S.bback} onClick={back}>← Back</button>
           </>
-        ) : (
+        ) : step === 1 ? null : (
           <>
-            <button
-              style={{...S.bprimary, opacity: canContinue() ? 1 : .4}}
-              disabled={!canContinue()}
-              onClick={next}
-            >
+            <button style={{...S.bprimary, opacity: canContinue() ? 1 : .4}} disabled={!canContinue()}
+              onClick={() => setStep(s => (s + 1) as Step)}>
               Continue
             </button>
             <button style={S.bback} onClick={back}>← Back</button>
@@ -482,8 +493,13 @@ const S: Record<string, React.CSSProperties> = {
   content:{flex:1,padding:'16px 20px',overflowY:'auto'},
   card:{background:'#fff',border:'1.5px solid #e2e6ed',borderRadius:12,padding:16,marginBottom:12},
   ctitle:{fontSize:13,fontWeight:600,color:'#6b7280',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:12},
-  search:{width:'100%',padding:'12px 14px',border:'1.5px solid #e2e6ed',borderRadius:8,fontSize:16,color:'#1a1d23',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'},
-  hint:{fontSize:12,color:'#6b7280',padding:'6px 0'},
+  sel:{width:'100%',padding:12,border:'1.5px solid #e2e6ed',borderRadius:8,fontSize:14,color:'#1a1d23',background:'#fff',outline:'none',fontFamily:'inherit'},
+  rangeBar:{display:'flex',gap:6,marginBottom:12},
+  rangeBtn:{flex:1,padding:'10px 4px',borderRadius:10,fontSize:12,fontWeight:600,cursor:'pointer',border:'1.5px solid #e2e6ed',background:'#fff',color:'#6b7280',fontFamily:'inherit',transition:'all .15s'},
+  rangeBtnActive:{background:'#2563eb',color:'#fff',borderColor:'#2563eb'},
+  ticketCard:{width:'100%',textAlign:'left',padding:'14px 16px',marginBottom:10,borderRadius:12,cursor:'pointer',fontFamily:'inherit',transition:'all .15s',display:'block'},
+  flabel:{fontSize:12,fontWeight:600,color:'#6b7280',marginBottom:6,textTransform:'uppercase',letterSpacing:'.04em'},
+  input:{width:'100%',padding:'12px 14px',border:'1.5px solid #e2e6ed',borderRadius:8,fontSize:15,color:'#1a1d23',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'},
   uparea:{border:'2px dashed #e2e6ed',borderRadius:10,padding:'20px 12px',textAlign:'center',cursor:'pointer',background:'#f4f6f9'},
   uptitle:{fontSize:13,fontWeight:600,color:'#1a1d23',marginTop:4},
   photoGrid:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginTop:8},
@@ -491,9 +507,6 @@ const S: Record<string, React.CSSProperties> = {
   thumbImg:{width:'100%',height:'100%',objectFit:'cover',display:'block'},
   removeBtn:{position:'absolute',top:4,right:4,width:22,height:22,borderRadius:11,background:'rgba(0,0,0,.55)',color:'#fff',border:'none',cursor:'pointer',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1},
   tip:{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:10,padding:12,fontSize:12,color:'#92400e',lineHeight:1.6},
-  flabel:{fontSize:12,fontWeight:600,color:'#6b7280',marginBottom:6,textTransform:'uppercase',letterSpacing:'.04em'},
-  sel:{width:'100%',padding:12,border:'1.5px solid #e2e6ed',borderRadius:8,fontSize:14,color:'#1a1d23',background:'#fff',outline:'none',fontFamily:'inherit'},
-  input:{width:'100%',padding:'12px 14px',border:'1.5px solid #e2e6ed',borderRadius:8,fontSize:15,color:'#1a1d23',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'},
   success:{textAlign:'center',padding:'40px 20px'},
   stitle:{fontSize:22,fontWeight:600,marginBottom:8},
   ssub:{fontSize:14,color:'#6b7280',lineHeight:1.6,marginBottom:8},
