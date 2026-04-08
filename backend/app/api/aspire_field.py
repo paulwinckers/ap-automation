@@ -214,13 +214,17 @@ async def complete_work_ticket(
     notes_text = "\n".join(lines)
 
     # ── Patch Aspire WorkTicket ────────────────────────────────────────────────
+    aspire_updated = False
     try:
         await _aspire.patch_work_ticket_notes(ticket_id, notes_text)
+        aspire_updated = True
     except Exception as e:
-        logger.error(f"WorkTicket PATCH failed for ticket {ticket_id}: {e}")
-        raise HTTPException(
-            status_code=502,
-            detail=f"Photos saved to cloud storage but failed to update Aspire: {e}",
+        # Aspire OData may be read-only for WorkTickets (404 on PATCH/PUT).
+        # Photos are already in R2 — treat this as a soft failure so the
+        # field crew submission still succeeds.
+        logger.warning(
+            f"Could not write notes to Aspire WorkTicket {ticket_id} "
+            f"(photos saved to R2): {e}"
         )
 
     return {
@@ -228,6 +232,7 @@ async def complete_work_ticket(
         "ticket_id":       ticket_id,
         "photos_uploaded": len(photo_urls),
         "submitter":       submitter_name,
+        "aspire_updated":  aspire_updated,
     }
 
 
