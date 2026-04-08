@@ -773,9 +773,10 @@ class AspireClient:
 
     async def get_scheduled_work_tickets(self, date_range: str = "today") -> list[dict]:
         """
-        Fetch work tickets filtered by ScheduledDate.
+        Fetch work tickets filtered by ScheduledStartDate.
         date_range: 'today' | 'past' (last 14 days) | 'upcoming' (next 30 days)
         Enriches each ticket with OpportunityName + PropertyName via a secondary lookup.
+        Groups by CrewLeaderName (the Aspire field confirmed via probe).
         """
         from datetime import date as _date, timedelta
         today = _date.today()
@@ -783,28 +784,22 @@ class AspireClient:
 
         if date_range == "past":
             since = (today - timedelta(days=14)).isoformat()
-            filter_str = f"ScheduledDate ge '{since}' and ScheduledDate lt '{today_str}'"
-            orderby = "ScheduledDate desc"
+            filter_str = f"ScheduledStartDate ge '{since}' and ScheduledStartDate lt '{today_str}'"
+            orderby = "ScheduledStartDate desc"
         elif date_range == "upcoming":
             until = (today + timedelta(days=30)).isoformat()
-            filter_str = f"ScheduledDate gt '{today_str}' and ScheduledDate le '{until}'"
-            orderby = "ScheduledDate asc"
+            filter_str = f"ScheduledStartDate gt '{today_str}' and ScheduledStartDate le '{until}'"
+            orderby = "ScheduledStartDate asc"
         else:  # today
-            filter_str = f"ScheduledDate eq '{today_str}'"
-            orderby = "ScheduledDate asc"
+            filter_str = f"ScheduledStartDate eq '{today_str}'"
+            orderby = "ScheduledStartDate asc"
 
-        # Include every plausible route/crew field — we'll pick whichever is populated
         select_fields = ",".join([
-            "WorkTicketID", "WorkTicketTitle", "OpportunityID",
-            "WorkTicketStatusName", "WorkTicketType",
-            "ScheduledDate", "CompleteDate",
-            "ActualLaborHours", "EstimatedLaborHours",
-            # Route / crew assignment candidates
-            "RouteName", "RouteID",
-            "CrewName", "CrewID",
-            "ScheduledCrewName", "ScheduledCrewID",
-            "ForemenName", "ForemanName",
-            "AssignedContactName", "AssignedContactID",
+            "WorkTicketID", "WorkTicketNumber", "OpportunityID",
+            "WorkTicketStatusName",
+            "ScheduledStartDate", "CompleteDate",
+            "HoursAct", "HoursEst",
+            "CrewLeaderContactID", "CrewLeaderName",
         ])
 
         try:
@@ -847,16 +842,13 @@ class AspireClient:
             info = opp_map.get(t.get("OpportunityID"), {})
             t["OpportunityName"] = info.get("name", "")
             t["PropertyName"]    = info.get("property", "")
-            # Normalise route name — try each candidate field in priority order
-            t["_RouteName"] = (
-                t.get("RouteName")
-                or t.get("CrewName")
-                or t.get("ScheduledCrewName")
-                or t.get("ForemenName")
-                or t.get("ForemanName")
-                or t.get("AssignedContactName")
-                or "Unassigned"
-            )
+            # Use CrewLeaderName as the group/route key
+            t["_RouteName"] = t.get("CrewLeaderName") or "Unassigned"
+            # Normalise field names for frontend compatibility
+            t["ScheduledDate"]       = t.get("ScheduledStartDate")
+            t["ActualLaborHours"]    = t.get("HoursAct")
+            t["EstimatedLaborHours"] = t.get("HoursEst")
+            t["WorkTicketTitle"]     = f"Ticket #{t.get('WorkTicketNumber') or t.get('WorkTicketID')}"
 
         return tickets
 
