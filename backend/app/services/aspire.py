@@ -743,10 +743,6 @@ class AspireClient:
             for c in contacts:
                 if c.get("IsActive") is False:
                     continue
-                # Filter server-side in case Aspire ignores the OData $filter
-                contact_type = (c.get("ContactType") or c.get("ContactTypeName") or "").strip()
-                if contact_type and contact_type.lower() != "employee":
-                    continue
                 first = (c.get("FirstName") or "").strip()
                 last  = (c.get("LastName") or "").strip()
                 if not first and not last:
