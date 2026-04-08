@@ -724,6 +724,24 @@ class AspireClient:
 
     # ── Field write operations ────────────────────────────────────────────────
 
+    async def get_lead_sources(self) -> list[dict]:
+        """Fetch all lead sources from Aspire."""
+        try:
+            result = await self._get("LeadSources", {"$orderby": "LeadSourceName"})
+            return self._extract_list(result)
+        except Exception as e:
+            logger.warning(f"LeadSources fetch failed: {e}")
+            return []
+
+    async def get_sales_types(self) -> list[dict]:
+        """Fetch all sales types from Aspire."""
+        try:
+            result = await self._get("SalesTypes", {"$orderby": "SalesTypeName"})
+            return self._extract_list(result)
+        except Exception as e:
+            logger.warning(f"SalesTypes fetch failed: {e}")
+            return []
+
     async def search_opportunities_field(
         self, query: str, limit: int = 15
     ) -> list[dict]:

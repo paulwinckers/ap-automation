@@ -16,8 +16,11 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   searchFieldProperties,
   createFieldOpportunity,
+  getLeadSources,
+  getSalesTypes,
   listEmployees,
   type FieldPropertyResult,
+  type AspirePicklistItem,
 } from '../lib/api';
 
 const FALLBACK_EMPLOYEES = ['Marcus Torres','Jake Willms','Devon Hicks','Priya Sandhu','Cole Beaumont'];
@@ -72,9 +75,16 @@ export default function FieldOpportunity() {
   const [useManual, setUseManual]   = useState(false);
 
   // Step 2 — opportunity details
-  const [oppName, setOppName]       = useState('');
-  const [divisionId, setDivisionId] = useState<number | null>(null);
+  const [oppName, setOppName]           = useState('');
+  const [divisionId, setDivisionId]     = useState<number | null>(null);
   const [estimatedValue, setEstimatedValue] = useState('');
+  const [dueDate, setDueDate]           = useState('');
+  const [startDate, setStartDate]       = useState('');
+  const [endDate, setEndDate]           = useState('');
+  const [leadSources, setLeadSources]   = useState<AspirePicklistItem[]>([]);
+  const [salesTypes, setSalesTypes]     = useState<AspirePicklistItem[]>([]);
+  const [leadSourceId, setLeadSourceId] = useState<number | null>(null);
+  const [salesTypeId, setSalesTypeId]   = useState<number | null>(null);
 
   // Step 3 — photos
   const [photos, setPhotos]         = useState<File[]>([]);
@@ -88,6 +98,8 @@ export default function FieldOpportunity() {
 
   useEffect(() => {
     listEmployees().then(names => { if (names.length > 0) setEmployees(names); }).catch(() => {});
+    getLeadSources().then(items => { if (items.length > 0) setLeadSources(items); }).catch(() => {});
+    getSalesTypes().then(items  => { if (items.length > 0) setSalesTypes(items);  }).catch(() => {});
   }, []);
   const [notes, setNotes]           = useState('');
 
@@ -151,17 +163,27 @@ export default function FieldOpportunity() {
     const propertyId  = selectedProp?.PropertyID ?? undefined;
     const propertyFyi = selectedProp?.PropertyName ?? (useManual ? manualPropName : undefined);
 
+    const selectedLeadSource = leadSources.find(l => l.id === leadSourceId);
+    const selectedSalesType  = salesTypes.find(s => s.id === salesTypeId);
+
     try {
-      const res = await createFieldOpportunity(
-        submitterName.trim(),
-        oppName.trim(),
+      const res = await createFieldOpportunity({
+        submitterName:  submitterName.trim(),
+        opportunityName: oppName.trim(),
         divisionId,
-        parseFloat(estimatedValue) || 0,
-        notes.trim(),
+        estimatedValue: parseFloat(estimatedValue) || 0,
+        notes:          notes.trim(),
         photos,
         propertyId,
-        propertyFyi,
-      );
+        propertyNameFyi: propertyFyi,
+        dueDate:        dueDate   || undefined,
+        startDate:      startDate || undefined,
+        endDate:        endDate   || undefined,
+        leadSourceId:   leadSourceId   ?? undefined,
+        leadSourceName: selectedLeadSource?.name,
+        salesTypeId:    salesTypeId    ?? undefined,
+        salesTypeName:  selectedSalesType?.name,
+      });
       localStorage.setItem('field_employee', submitterName.trim());
       setSuccessInfo({ name: res.opportunity_name, id: res.opportunity_id, photos: res.photos_uploaded });
       setStep(7);
@@ -177,6 +199,8 @@ export default function FieldOpportunity() {
     setStep(1); setPropQuery(''); setPropResults(null); setSelectedProp(null);
     setManualPropName(''); setUseManual(false);
     setOppName(''); setDivisionId(null); setEstimatedValue('');
+    setDueDate(''); setStartDate(''); setEndDate('');
+    setLeadSourceId(null); setSalesTypeId(null);
     setPhotos([]); setPreviews([]);
     setNotes(''); setSubmitError(null); setSuccessInfo(null);
   };
@@ -335,7 +359,7 @@ export default function FieldOpportunity() {
               </div>
             </div>
 
-            <div>
+            <div style={{marginBottom:16}}>
               <div style={S.flabel}>Estimated value ($)</div>
               <input
                 style={S.input}
@@ -348,6 +372,52 @@ export default function FieldOpportunity() {
               />
               <div style={{fontSize:11, color:'#9ca3af', marginTop:4}}>Optional — best estimate is fine</div>
             </div>
+
+            {/* Dates */}
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16}}>
+              <div>
+                <div style={S.flabel}>Start date</div>
+                <input style={S.input} type="date" value={startDate} onChange={e => setStartDate(e.target.value)}/>
+              </div>
+              <div>
+                <div style={S.flabel}>End date</div>
+                <input style={S.input} type="date" value={endDate} onChange={e => setEndDate(e.target.value)}/>
+              </div>
+            </div>
+
+            <div style={{marginBottom:16}}>
+              <div style={S.flabel}>Due date</div>
+              <input style={S.input} type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}/>
+              <div style={{fontSize:11, color:'#9ca3af', marginTop:4}}>Client's requested completion date</div>
+            </div>
+
+            {leadSources.length > 0 && (
+              <div style={{marginBottom:16}}>
+                <div style={S.flabel}>Lead source</div>
+                <select
+                  style={S.sel}
+                  value={leadSourceId ?? ''}
+                  onChange={e => setLeadSourceId(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">Select lead source...</option>
+                  {leadSources.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+              </div>
+            )}
+
+            {salesTypes.length > 0 && (
+              <div>
+                <div style={S.flabel}>Sales type</div>
+                <select
+                  style={S.sel}
+                  value={salesTypeId ?? ''}
+                  onChange={e => setSalesTypeId(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">Select sales type...</option>
+                  {salesTypes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
           </div>
         )}
 
@@ -442,6 +512,11 @@ export default function FieldOpportunity() {
             <RR label="Job name"  value={oppName}/>
             <RR label="Division"  value={selectedDivision ? `${selectedDivision.icon} ${selectedDivision.name}` : '—'}/>
             {estimatedValue && <RR label="Estimate" value={`$${parseFloat(estimatedValue).toLocaleString()}`}/>}
+            {startDate && <RR label="Start date" value={startDate}/>}
+            {endDate   && <RR label="End date"   value={endDate}/>}
+            {dueDate   && <RR label="Due date"   value={dueDate}/>}
+            {leadSourceId  && <RR label="Lead source" value={leadSources.find(l => l.id === leadSourceId)?.name ?? ''}/>}
+            {salesTypeId   && <RR label="Sales type"  value={salesTypes.find(s => s.id === salesTypeId)?.name  ?? ''}/>}
             <RR label="Photos"    value={`${photos.length} photo${photos.length !== 1 ? 's' : ''}`} color={photos.length > 0 ? '#059669' : '#6b7280'}/>
             <RR label="Created by" value={submitterName}/>
             {notes && (

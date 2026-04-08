@@ -345,6 +345,31 @@ export async function searchFieldProperties(q: string): Promise<{ properties: Fi
   return request('GET', `/aspire/field/properties/search?q=${encodeURIComponent(q)}`);
 }
 
+export interface AspirePicklistItem {
+  id: number;
+  name: string;
+}
+
+export async function getLeadSources(): Promise<AspirePicklistItem[]> {
+  try {
+    const res = await request<{ lead_sources: Record<string, unknown>[] }>('GET', '/aspire/field/lead-sources');
+    return res.lead_sources.map(s => ({
+      id:   (s.LeadSourceID ?? s.Id ?? s.id) as number,
+      name: (s.LeadSourceName ?? s.Name ?? s.name ?? '') as string,
+    })).filter(s => s.name);
+  } catch { return []; }
+}
+
+export async function getSalesTypes(): Promise<AspirePicklistItem[]> {
+  try {
+    const res = await request<{ sales_types: Record<string, unknown>[] }>('GET', '/aspire/field/sales-types');
+    return res.sales_types.map(s => ({
+      id:   (s.SalesTypeID ?? s.Id ?? s.id) as number,
+      name: (s.SalesTypeName ?? s.Name ?? s.name ?? '') as string,
+    })).filter(s => s.name);
+  } catch { return []; }
+}
+
 export interface CreateOpportunityResponse {
   success: boolean;
   opportunity_id: string | number;
@@ -353,26 +378,40 @@ export interface CreateOpportunityResponse {
   submitter: string;
 }
 
-export async function createFieldOpportunity(
-  submitterName: string,
-  opportunityName: string,
-  divisionId: number,
-  estimatedValue: number,
-  notes: string,
-  photos: File[],
-  propertyId?: number,
-  propertyNameFyi?: string,
-): Promise<CreateOpportunityResponse> {
+export interface FieldOpportunityPayload {
+  submitterName: string;
+  opportunityName: string;
+  divisionId: number;
+  estimatedValue: number;
+  notes: string;
+  photos: File[];
+  propertyId?: number;
+  propertyNameFyi?: string;
+  dueDate?: string;
+  startDate?: string;
+  endDate?: string;
+  leadSourceId?: number;
+  leadSourceName?: string;
+  salesTypeId?: number;
+  salesTypeName?: string;
+}
+
+export async function createFieldOpportunity(p: FieldOpportunityPayload): Promise<CreateOpportunityResponse> {
   const form = new FormData();
-  form.append('submitter_name', submitterName);
-  form.append('opportunity_name', opportunityName);
-  form.append('division_id', String(divisionId));
-  form.append('estimated_value', String(estimatedValue));
-  form.append('notes', notes);
-  if (propertyId) form.append('property_id', String(propertyId));
-  if (propertyNameFyi) form.append('property_name_fyi', propertyNameFyi);
-  for (const photo of photos) {
-    form.append('photos', photo);
-  }
+  form.append('submitter_name', p.submitterName);
+  form.append('opportunity_name', p.opportunityName);
+  form.append('division_id', String(p.divisionId));
+  form.append('estimated_value', String(p.estimatedValue));
+  form.append('notes', p.notes);
+  if (p.propertyId)      form.append('property_id',      String(p.propertyId));
+  if (p.propertyNameFyi) form.append('property_name_fyi', p.propertyNameFyi);
+  if (p.dueDate)         form.append('due_date',          p.dueDate);
+  if (p.startDate)       form.append('start_date',        p.startDate);
+  if (p.endDate)         form.append('end_date',          p.endDate);
+  if (p.leadSourceId)    form.append('lead_source_id',    String(p.leadSourceId));
+  if (p.leadSourceName)  form.append('lead_source_name',  p.leadSourceName);
+  if (p.salesTypeId)     form.append('sales_type_id',     String(p.salesTypeId));
+  if (p.salesTypeName)   form.append('sales_type_name',   p.salesTypeName);
+  for (const photo of p.photos) form.append('photos', photo);
   return request<CreateOpportunityResponse>('POST', '/aspire/field/opportunity', form, true);
 }

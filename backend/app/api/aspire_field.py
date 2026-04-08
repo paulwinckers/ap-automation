@@ -137,6 +137,24 @@ async def complete_work_ticket(
     }
 
 
+# ── Lead sources & sales types ───────────────────────────────────────────────
+
+@router.get("/lead-sources")
+async def get_lead_sources():
+    """Return all Aspire lead sources for the opportunity creation form."""
+    _check_credentials()
+    sources = await _aspire.get_lead_sources()
+    return {"lead_sources": sources}
+
+
+@router.get("/sales-types")
+async def get_sales_types():
+    """Return all Aspire sales types for the opportunity creation form."""
+    _check_credentials()
+    types = await _aspire.get_sales_types()
+    return {"sales_types": types}
+
+
 # ── Property search (for new opportunity flow) ────────────────────────────────
 
 @router.get("/properties/search")
@@ -170,6 +188,13 @@ async def create_opportunity(
     notes:             str               = Form(default=""),
     property_id:       Optional[int]     = Form(default=None),
     property_name_fyi: Optional[str]     = Form(default=None),
+    due_date:          Optional[str]     = Form(default=None),
+    start_date:        Optional[str]     = Form(default=None),
+    end_date:          Optional[str]     = Form(default=None),
+    lead_source_id:    Optional[int]     = Form(default=None),
+    lead_source_name:  Optional[str]     = Form(default=None),
+    sales_type_id:     Optional[int]     = Form(default=None),
+    sales_type_name:   Optional[str]     = Form(default=None),
     photos:            List[UploadFile]  = File(default=[]),
 ):
     """
@@ -241,6 +266,16 @@ async def create_opportunity(
     }
     if property_id:
         body["PropertyID"] = property_id
+    if due_date:
+        body["DueDate"] = due_date
+    if start_date:
+        body["StartDate"] = start_date
+    if end_date:
+        body["EndDate"] = end_date
+    if lead_source_id:
+        body["LeadSourceID"] = lead_source_id
+    if sales_type_id:
+        body["SalesTypeID"] = sales_type_id
 
     try:
         result = await _aspire.create_opportunity(body)
