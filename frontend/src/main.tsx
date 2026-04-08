@@ -1,24 +1,50 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import FieldSubmit from './pages/FieldSubmit';
-import VendorAdmin from './pages/VendorAdmin';
-import APDashboard from './pages/APDashboard';
-import Reconcile from './pages/Reconcile';
-import ConstructionDashboard from './pages/ConstructionDashboard';
+
+import AppShell       from './components/AppShell';
+import Landing        from './pages/Landing';
+import FieldSubmit    from './pages/FieldSubmit';
+import APDashboard    from './pages/APDashboard';
+import VendorAdmin    from './pages/VendorAdmin';
+import Reconcile      from './pages/Reconcile';
+import SalesDashboard from './pages/SalesDashboard';
+import OpsDashboard   from './pages/OpsDashboard';
+
+/** Wrap a page in the office sidebar shell */
+function Office({ children }: { children: React.ReactNode }) {
+  return <AppShell>{children}</AppShell>;
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
       <Routes>
-        <Route path="/field"        element={<FieldSubmit />} />
-        <Route path="/vendors"      element={<VendorAdmin />} />
-        <Route path="/ap"           element={<APDashboard />} />
-        <Route path="/reconcile"    element={<Reconcile />} />
-        <Route path="/construction" element={<ConstructionDashboard />} />
-        <Route path="*" element={<Navigate to="/field" replace />} />
+
+        {/* Landing */}
+        <Route path="/"    element={<Landing />} />
+
+        {/* Field crew — no shell, phone-optimised */}
+        <Route path="/field" element={<FieldSubmit />} />
+
+        {/* Office / AP — wrapped in sidebar shell */}
+        <Route path="/ap"           element={<Office><APDashboard /></Office>} />
+        <Route path="/ap/vendors"   element={<Office><VendorAdmin /></Office>} />
+        <Route path="/ap/reconcile" element={<Office><Reconcile /></Office>} />
+
+        {/* Dashboards — iframe embeds for now */}
+        <Route path="/dashboards/sales" element={<Office><SalesDashboard /></Office>} />
+        <Route path="/dashboards/ops"   element={<Office><OpsDashboard /></Office>} />
+
+        {/* Legacy URL redirects */}
+        <Route path="/vendors"      element={<Navigate to="/ap/vendors"   replace />} />
+        <Route path="/reconcile"    element={<Navigate to="/ap/reconcile" replace />} />
+        <Route path="/construction" element={<Navigate to="/dashboards/sales" replace />} />
+
+        {/* Catch-all */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+
       </Routes>
     </BrowserRouter>
   </React.StrictMode>
 );
-
