@@ -434,12 +434,12 @@ class Database:
         rows = await self._q(
             """SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) as queued,
+                SUM(CASE WHEN status='queued' AND (forwarded_to IS NULL OR forwarded_to='') THEN 1 ELSE 0 END) as queued,
                 SUM(CASE WHEN status='posted' AND date(received_at)=date('now') THEN 1 ELSE 0 END) as posted,
                 SUM(CASE WHEN status='error'  THEN 1 ELSE 0 END) as errors,
                 SUM(CASE WHEN destination='aspire' AND status='posted' THEN 1 ELSE 0 END) as aspire,
                 SUM(CASE WHEN destination='qbo'    AND status='posted' THEN 1 ELSE 0 END) as qbo,
-                SUM(CASE WHEN status='queued' THEN total_amount ELSE 0 END) as queued_value,
+                SUM(CASE WHEN status='queued' AND (forwarded_to IS NULL OR forwarded_to='') THEN total_amount ELSE 0 END) as queued_value,
                 SUM(CASE WHEN status='posted' AND date(received_at)=date('now') THEN total_amount ELSE 0 END) as posted_today_value
                FROM invoices
                WHERE (archived IS NULL OR archived = 0)"""

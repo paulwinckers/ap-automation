@@ -282,6 +282,7 @@ export default function APDashboard() {
   const filteredEntries = entries.filter(e => {
     // Status / destination filter
     if (statusFilter === 'forwarded') { if (!e.forwarded_to) return false; }
+    else if (statusFilter === 'queued')  { if (e.status !== 'queued' || !!e.forwarded_to) return false; }
     else if (statusFilter === 'qbo')    { if (e.destination !== 'qbo')    return false; }
     else if (statusFilter === 'aspire') { if (e.destination !== 'aspire') return false; }
     else if (statusFilter !== 'all' && e.status !== statusFilter)     return false;
