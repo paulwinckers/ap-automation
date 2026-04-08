@@ -11,14 +11,17 @@
  *   6. Success
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   searchFieldOpportunities,
   getOpportunityWorkTickets,
   completeWorkTicket,
+  listEmployees,
   type FieldOpportunity,
   type FieldWorkTicket,
 } from '../lib/api';
+
+const FALLBACK_EMPLOYEES = ['Marcus Torres','Jake Willms','Devon Hicks','Priya Sandhu','Cole Beaumont'];
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6;
 
@@ -65,7 +68,12 @@ export default function FieldWorkTicket() {
   const [submitterName, setSubmitterName] = useState(
     () => localStorage.getItem('field_employee') || ''
   );
-  const [comment, setComment]         = useState('');
+  const [employees, setEmployees]       = useState<string[]>(FALLBACK_EMPLOYEES);
+  const [comment, setComment]           = useState('');
+
+  useEffect(() => {
+    listEmployees().then(names => { if (names.length > 0) setEmployees(names); }).catch(() => {});
+  }, []);
   const [submitting, setSubmitting]   = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successInfo, setSuccessInfo] = useState<{ ticket: string; photos: number } | null>(null);
@@ -338,13 +346,17 @@ export default function FieldWorkTicket() {
                   </button>
                 </div>
               ) : (
-                <input
-                  style={S.input}
-                  placeholder="First and last name"
+                <select
+                  style={S.sel}
                   value={submitterName}
-                  onChange={e => setSubmitterName(e.target.value)}
-                  autoFocus
-                />
+                  onChange={e => {
+                    setSubmitterName(e.target.value);
+                    if (e.target.value) localStorage.setItem('field_employee', e.target.value);
+                  }}
+                >
+                  <option value="">Select your name...</option>
+                  {employees.map(emp => <option key={emp}>{emp}</option>)}
+                </select>
               )}
             </div>
 
@@ -468,6 +480,7 @@ const S: Record<string, React.CSSProperties> = {
   removeBtn:{position:'absolute',top:4,right:4,width:22,height:22,borderRadius:11,background:'rgba(0,0,0,.55)',color:'#fff',border:'none',cursor:'pointer',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1},
   tip:{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:10,padding:12,fontSize:12,color:'#92400e',lineHeight:1.6},
   flabel:{fontSize:12,fontWeight:600,color:'#6b7280',marginBottom:6,textTransform:'uppercase',letterSpacing:'.04em'},
+  sel:{width:'100%',padding:12,border:'1.5px solid #e2e6ed',borderRadius:8,fontSize:14,color:'#1a1d23',background:'#fff',outline:'none',fontFamily:'inherit'},
   input:{width:'100%',padding:'12px 14px',border:'1.5px solid #e2e6ed',borderRadius:8,fontSize:15,color:'#1a1d23',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'},
   success:{textAlign:'center',padding:'40px 20px'},
   stitle:{fontSize:22,fontWeight:600,marginBottom:8},

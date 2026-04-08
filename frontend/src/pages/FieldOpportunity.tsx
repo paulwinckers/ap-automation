@@ -12,12 +12,15 @@
  *   7. Success
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   searchFieldProperties,
   createFieldOpportunity,
+  listEmployees,
   type FieldPropertyResult,
 } from '../lib/api';
+
+const FALLBACK_EMPLOYEES = ['Marcus Torres','Jake Willms','Devon Hicks','Priya Sandhu','Cole Beaumont'];
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -81,6 +84,11 @@ export default function FieldOpportunity() {
   const [submitterName, setSubmitterName] = useState(
     () => localStorage.getItem('field_employee') || ''
   );
+  const [employees, setEmployees] = useState<string[]>(FALLBACK_EMPLOYEES);
+
+  useEffect(() => {
+    listEmployees().then(names => { if (names.length > 0) setEmployees(names); }).catch(() => {});
+  }, []);
   const [notes, setNotes]           = useState('');
 
   // Submission
@@ -400,13 +408,17 @@ export default function FieldOpportunity() {
                   </button>
                 </div>
               ) : (
-                <input
-                  style={S.input}
-                  placeholder="First and last name"
+                <select
+                  style={S.sel}
                   value={submitterName}
-                  onChange={e => setSubmitterName(e.target.value)}
-                  autoFocus
-                />
+                  onChange={e => {
+                    setSubmitterName(e.target.value);
+                    if (e.target.value) localStorage.setItem('field_employee', e.target.value);
+                  }}
+                >
+                  <option value="">Select your name...</option>
+                  {employees.map(emp => <option key={emp}>{emp}</option>)}
+                </select>
               )}
             </div>
 
@@ -537,6 +549,7 @@ const S: Record<string, React.CSSProperties> = {
   thumbImg:{width:'100%',height:'100%',objectFit:'cover',display:'block'},
   removeBtn:{position:'absolute',top:4,right:4,width:22,height:22,borderRadius:11,background:'rgba(0,0,0,.55)',color:'#fff',border:'none',cursor:'pointer',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1},
   tip:{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:10,padding:12,fontSize:12,color:'#92400e',lineHeight:1.6},
+  sel:{width:'100%',padding:12,border:'1.5px solid #e2e6ed',borderRadius:8,fontSize:14,color:'#1a1d23',background:'#fff',outline:'none',fontFamily:'inherit'},
   secondaryBtn:{width:'100%',padding:12,background:'#f4f6f9',border:'1.5px solid #e2e6ed',borderRadius:8,fontSize:14,color:'#374151',fontWeight:500,cursor:'pointer',fontFamily:'inherit'},
   success:{textAlign:'center',padding:'40px 20px'},
   stitle:{fontSize:22,fontWeight:600,marginBottom:8},
