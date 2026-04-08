@@ -375,6 +375,7 @@ class Database:
                WHERE LOWER(vendor_name) = LOWER(?)
                AND invoice_number = ?
                AND status IN ('posted', 'queued', 'pending')
+               AND (archived IS NULL OR archived = 0)
                ORDER BY received_at DESC
                LIMIT 1""",
             [vendor_name, invoice_number],
