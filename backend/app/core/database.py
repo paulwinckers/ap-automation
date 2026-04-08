@@ -247,34 +247,38 @@ class Database:
                     break
 
             if not row:
-                # Strip common legal suffixes that add noise
+                # Strip common legal suffixes and possessives that add noise
                 _noise = (" inc", " inc.", " ltd", " ltd.", " llc", " corp",
-                          " co.", " co,", " company", " of canada", " canada")
-                vendor_stripped = vendor_lower
-                for n in _noise:
-                    vendor_stripped = vendor_stripped.replace(n, "")
-                vendor_stripped = vendor_stripped.strip()
+                          " co.", " co,", " company", " of canada", " canada",
+                          " trucking", " transport", " services", " solutions",
+                          " group", " enterprises", " industries")
+
+                def _normalize(s: str) -> str:
+                    """Strip possessives, apostrophes, and noise suffixes for fuzzy matching."""
+                    s = s.replace("'s", "").replace("'s", "").replace("'", "").replace("'", "")
+                    for n in _noise:
+                        s = s.replace(n, "")
+                    return s.strip()
+
+                vendor_stripped = _normalize(vendor_lower)
 
                 for r in all_rules:
                     rule_lower = r["vendor_name"].lower()
-                    rule_stripped = rule_lower
-                    for n in _noise:
-                        rule_stripped = rule_stripped.replace(n, "")
-                    rule_stripped = rule_stripped.strip()
+                    rule_stripped = _normalize(rule_lower)
 
-                    # 1. Bidirectional full-string contains
+                    # 1. Bidirectional full-string contains (raw)
                     if rule_lower in vendor_lower or vendor_lower in rule_lower:
                         row = r
                         logger.info(f"Fuzzy vendor match (contains): '{vendor_name}' → '{r['vendor_name']}'")
                         break
-                    # 2. Strip legal suffixes and try again
+                    # 2. Strip legal suffixes + possessives and try contains
                     if rule_stripped and (rule_stripped in vendor_stripped or vendor_stripped in rule_stripped):
                         row = r
                         logger.info(f"Fuzzy vendor match (stripped): '{vendor_name}' → '{r['vendor_name']}'")
                         break
-                    # 3. First significant word match (min 5 chars to avoid false positives)
-                    rule_words = [w for w in rule_stripped.split() if len(w) >= 5]
-                    vendor_words = [w for w in vendor_stripped.split() if len(w) >= 5]
+                    # 3. First significant word match (min 4 chars); normalize apostrophes
+                    rule_words = [w for w in rule_stripped.split() if len(w) >= 4]
+                    vendor_words = [w for w in vendor_stripped.split() if len(w) >= 4]
                     if rule_words and vendor_words and rule_words[0] == vendor_words[0]:
                         row = r
                         logger.info(f"Fuzzy vendor match (first word): '{vendor_name}' → '{r['vendor_name']}'")
