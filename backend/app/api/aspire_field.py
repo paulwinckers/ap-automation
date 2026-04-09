@@ -219,19 +219,42 @@ async def complete_work_ticket(
         await _aspire.patch_work_ticket_notes(ticket_id, notes_text)
         aspire_updated = True
     except Exception as e:
-        # Aspire OData may be read-only for WorkTickets (404 on PATCH/PUT).
-        # Photos are already in R2 — treat this as a soft failure so the
-        # field crew submission still succeeds.
         logger.warning(
             f"Could not write notes to Aspire WorkTicket {ticket_id} "
             f"(photos saved to R2): {e}"
         )
 
+    # ── Email notification (always send — Aspire write is unreliable) ──────────
+    try:
+        from app.services.email_intake import GraphClient
+        graph = GraphClient()
+        photo_html = "".join(
+            f'<li><a href="{url}">{url}</a></li>' for url in photo_urls
+        ) if photo_urls else "<li><em>No photos attached</em></li>"
+        body_html = f"""
+<p><strong>Work Ticket #{ticket_id} has been updated.</strong></p>
+<table cellpadding="6" style="border-collapse:collapse;font-family:sans-serif;font-size:14px">
+  <tr><td style="color:#6b7280">Ticket ID</td><td><strong>#{ticket_id}</strong></td></tr>
+  <tr><td style="color:#6b7280">Date</td><td>{date.today().strftime("%B %d, %Y")}</td></tr>
+</table>
+<p><strong>Notes:</strong><br>{comment.replace(chr(10), "<br>")}</p>
+<p><strong>Photos ({len(photo_urls)}):</strong></p>
+<ul>{photo_html}</ul>
+"""
+        await graph.send_email(
+            mailbox=settings.MS_AP_INBOX,
+            to_addresses=[settings.MS_AP_INBOX],
+            subject=f"Work Ticket #{ticket_id} — Field Update",
+            body_html=body_html,
+        )
+        logger.info(f"Work ticket update email sent for ticket {ticket_id}")
+    except Exception as e:
+        logger.warning(f"Could not send work ticket update email: {e}")
+
     return {
         "success":         True,
         "ticket_id":       ticket_id,
         "photos_uploaded": len(photo_urls),
-        "submitter":       submitter_name,
         "aspire_updated":  aspire_updated,
     }
 
