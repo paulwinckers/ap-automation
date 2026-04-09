@@ -384,6 +384,14 @@ async def create_opportunity(
             raise HTTPException(status_code=413, detail=f"File {i+1} is too large (max {label})")
         photo_data.append((photo.filename or f"photo_{i+1}.jpg", raw))
 
+    # ── Build estimator notes text ────────────────────────────────────────────
+    note_lines = [f"Submitted by: {submitter_name}", f"Date: {date.today().isoformat()}"]
+    if property_name_fyi:
+        note_lines.append(f"Property: {property_name_fyi}")
+    if notes:
+        note_lines.append(f"\n{notes}")
+    notes_text = "\n".join(note_lines)
+
     # ── POST to Aspire ─────────────────────────────────────────────────────────
     def _as_dt(d: Optional[str]) -> Optional[str]:
         """Convert YYYY-MM-DD to ISO datetime string required by Aspire POST."""
@@ -399,6 +407,7 @@ async def create_opportunity(
         "OpportunityStatusID": 9,               # "New"
         "OpportunityType":    opportunity_type,  # "Contract" or "Work Order"
         "SalesRepID":         salesperson_id,    # correct write field per API doc
+        "EstimatorNotes":     notes_text,        # field name TBC from probe
     }
     if property_id:
         body["PropertyID"] = property_id
