@@ -400,6 +400,8 @@ async def create_opportunity(
     if salesperson_id:
         body["SalesRepContactID"] = salesperson_id
 
+    logger.info(f"Opportunity POST body: {body}")
+
     try:
         result = await _aspire.create_opportunity(body)
     except Exception as e:
