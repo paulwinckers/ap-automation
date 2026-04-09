@@ -134,7 +134,7 @@ export default function FieldWorkTicket() {
 
   // Submit
   const handleSubmit = async () => {
-    if (!selectedTicket || !submitterName.trim() || !comment.trim()) return;
+    if (!selectedTicket || !comment.trim()) return;
     setSubmitting(true); setSubmitError(null);
     try {
       const res = await completeWorkTicket(
