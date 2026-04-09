@@ -764,39 +764,36 @@ class AspireClient:
                 logger.info(f"Contacts endpoint unavailable ({e}), falling back to Opportunities")
                 return False
 
-        async def _fetch_opps() -> None:
+        async def _fetch_opps(skip: int = 0) -> int:
+            """Fetch one page of Opportunities for SalesRep/OpsManager names."""
             try:
                 result = await self._get("Opportunities", {
                     "$select": (
                         "SalesRepContactID,SalesRepContactName,"
                         "OperationsManagerContactID,OperationsManagerContactName"
                     ),
-                    "$top": "5000",
+                    "$top":     "1000",
+                    "$skip":    str(skip),
+                    "$orderby": "OpportunityID asc",
                 })
-                for o in self._extract_list(result):
+                items = self._extract_list(result)
+                for o in items:
                     _add(o.get("SalesRepContactName"),          o.get("SalesRepContactID"))
                     _add(o.get("OperationsManagerContactName"), o.get("OperationsManagerContactID"))
-                logger.info(f"Employees: {len(people)} unique names from Opportunities")
+                return len(items)
             except Exception as e:
-                logger.warning(f"Aspire Opportunities employee fetch failed: {e}")
-
-        async def _fetch_tickets() -> None:
-            try:
-                result = await self._get("WorkTickets", {
-                    "$select": "CrewLeaderContactID,CrewLeaderName",
-                    "$top": "2000",
-                    "$orderby": "ScheduledStartDate desc",
-                })
-                before = len(people)
-                for t in self._extract_list(result):
-                    _add(t.get("CrewLeaderName"), t.get("CrewLeaderContactID"))
-                logger.info(f"Employees: +{len(people)-before} from WorkTickets crew leaders")
-            except Exception as e:
-                logger.info(f"WorkTickets crew leader fetch skipped: {e}")
+                logger.warning(f"Aspire Opportunities employee fetch (skip={skip}) failed: {e}")
+                return 0
 
         contacts_ok = await _fetch_contacts()
         if not contacts_ok:
-            await asyncio.gather(_fetch_opps(), _fetch_tickets())
+            # Paginate through all Opportunities to get maximum employee coverage
+            skip = 0
+            while True:
+                count = await _fetch_opps(skip)
+                if count < 1000:
+                    break
+                skip += 1000
 
         out = [
             {"ContactID": cid, "FullName": name, "Email": ""}
