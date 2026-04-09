@@ -742,6 +742,28 @@ class AspireClient:
             if name not in people or (cid and not people[name]):
                 people[name] = cid
 
+        async def _fetch_contacts() -> bool:
+            """Try Contacts endpoint without type filter — may work without ContactType filter."""
+            try:
+                result = await self._get("Contacts", {
+                    "$select": "ContactID,FirstName,LastName,IsActive",
+                    "$filter": "IsActive eq true",
+                    "$top": "1000",
+                    "$orderby": "LastName asc",
+                })
+                contacts = self._extract_list(result)
+                before = len(people)
+                for c in contacts:
+                    first = (c.get("FirstName") or "").strip()
+                    last  = (c.get("LastName")  or "").strip()
+                    name  = f"{first} {last}".strip()
+                    _add(name, c.get("ContactID"))
+                logger.info(f"Employees: {len(people)-before} from Contacts endpoint")
+                return True
+            except Exception as e:
+                logger.info(f"Contacts endpoint unavailable ({e}), falling back to Opportunities")
+                return False
+
         async def _fetch_opps() -> None:
             try:
                 result = await self._get("Opportunities", {
@@ -772,7 +794,9 @@ class AspireClient:
             except Exception as e:
                 logger.info(f"WorkTickets crew leader fetch skipped: {e}")
 
-        await asyncio.gather(_fetch_opps(), _fetch_tickets())
+        contacts_ok = await _fetch_contacts()
+        if not contacts_ok:
+            await asyncio.gather(_fetch_opps(), _fetch_tickets())
 
         out = [
             {"ContactID": cid, "FullName": name, "Email": ""}

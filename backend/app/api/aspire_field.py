@@ -399,6 +399,7 @@ async def create_opportunity(
         body["SalesTypeID"] = sales_type_id
     if salesperson_id:
         body["SalesRepContactID"] = salesperson_id
+        body["SalesRepID"] = salesperson_id  # Aspire write API may use this alias
 
     logger.info(f"Opportunity POST body: {body}")
 
