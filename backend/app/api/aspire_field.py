@@ -246,9 +246,11 @@ async def complete_work_ticket(
         fname = photo.filename or f"photo_{i+1}.jpg"
         photo_data.append((fname, raw))
 
-    # ── Upload photos directly to Aspire ───────────────────────────────────────
+    # ── Upload photos: try Aspire direct, fall back to R2 ────────────────────
     photos_uploaded = 0
+    photo_urls: list[str] = []
     for fname, raw in photo_data:
+        # Try Aspire attachment first
         try:
             await _aspire.upload_aspire_attachment(
                 object_id=ticket_id,
@@ -258,17 +260,31 @@ async def complete_work_ticket(
                 expose_to_crew=True,
             )
             photos_uploaded += 1
-            logger.info(f"WorkTicket {ticket_id}: uploaded {fname} to Aspire")
+            logger.info(f"WorkTicket {ticket_id}: uploaded {fname} to Aspire directly")
+            continue
         except Exception as e:
-            logger.warning(f"WorkTicket {ticket_id}: Aspire attachment failed for {fname}: {e}")
+            logger.info(f"WorkTicket {ticket_id}: Aspire attachment 403, falling back to R2 for {fname}")
 
-    logger.info(f"WorkTicket {ticket_id}: {photos_uploaded}/{len(photo_data)} photos uploaded, comment='{comment[:60]}'")
+        # R2 fallback
+        result = await r2.upload_field_photo(
+            file_bytes=raw,
+            filename=fname,
+            submitter=submitter_name or "field",
+            entity_type="work-ticket",
+            entity_id=str(ticket_id),
+        )
+        if result:
+            _key, url = result
+            photo_urls.append(url)
+            photos_uploaded += 1
+
+    logger.info(f"WorkTicket {ticket_id}: {photos_uploaded}/{len(photo_data)} photos saved, comment='{comment[:60]}'")
 
     return {
         "success":         True,
         "ticket_id":       ticket_id,
         "photos_uploaded": photos_uploaded,
-        "aspire_updated":  photos_uploaded > 0,
+        "aspire_updated":  False,
     }
 
 
@@ -426,10 +442,12 @@ async def create_opportunity(
             or result.get("opportunityNumber")
         )
 
-    # ── Upload photos directly to Aspire ──────────────────────────────────────
+    # ── Upload photos: try Aspire direct, fall back to R2 ────────────────────
     photos_uploaded = 0
-    if isinstance(opp_id, int) and opp_id > 0:
-        for fname, raw in photo_data:
+    for fname, raw in photo_data:
+        # Try Aspire attachment first
+        aspire_ok = False
+        if isinstance(opp_id, int) and opp_id > 0:
             try:
                 await _aspire.upload_aspire_attachment(
                     object_id=opp_id,
@@ -439,11 +457,21 @@ async def create_opportunity(
                     expose_to_crew=True,
                 )
                 photos_uploaded += 1
-                logger.info(f"Opportunity {opp_id}: uploaded {fname} to Aspire")
-            except Exception as e:
-                logger.warning(f"Opportunity {opp_id}: Aspire attachment failed for {fname}: {e}")
-    else:
-        logger.warning(f"Cannot upload photos — invalid opp_id: {opp_id}")
+                aspire_ok = True
+                logger.info(f"Opportunity {opp_id}: uploaded {fname} to Aspire directly")
+            except Exception:
+                logger.info(f"Opportunity {opp_id}: Aspire attachment 403, falling back to R2 for {fname}")
+
+        if not aspire_ok:
+            result = await r2.upload_field_photo(
+                file_bytes=raw,
+                filename=fname,
+                submitter=submitter_name,
+                entity_type="opportunity",
+                entity_id=str(opp_id),
+            )
+            if result:
+                photos_uploaded += 1
 
     logger.info(
         f"New opportunity created: ID={opp_id} #={opp_number} '{opportunity_name}' "
