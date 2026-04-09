@@ -73,6 +73,32 @@ async def probe_opportunity_fields():
     }
 
 
+@router.get("/issues/probe")
+async def probe_issues():
+    """
+    Probe the Aspire Issues endpoint — check if it exists, what fields it has,
+    and whether issues can be linked to opportunities.
+    Hit: GET /aspire/field/issues/probe
+    """
+    _check_credentials()
+    results = {}
+
+    # Try GET Issues
+    for endpoint in ["Issues", "Issue", "ServiceIssues", "WorkOrders"]:
+        try:
+            result = await _aspire._get(endpoint, {"$top": "1"})
+            items = _aspire._extract_list(result)
+            results[endpoint] = {
+                "status": "OK",
+                "count": len(items),
+                "fields": sorted(items[0].keys()) if items else [],
+            }
+        except Exception as e:
+            results[endpoint] = {"status": f"FAIL: {str(e)[:100]}"}
+
+    return results
+
+
 @router.get("/opportunities/notes-probe")
 async def probe_notes_field(opp_id: int):
     """
