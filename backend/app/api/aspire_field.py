@@ -512,13 +512,22 @@ async def create_opportunity(
             or result.get("opportunityNumber")
         )
 
-    # ── PATCH EstimatorNotes (not writable on POST) ────────────────────────────
-    if isinstance(opp_id, int) and opp_id > 0 and notes_text:
+    # ── Create linked Issue with submission notes ──────────────────────────────
+    if isinstance(opp_id, int) and opp_id > 0:
         try:
-            await _aspire.patch_opportunity(opp_id, {"EstimatorNotes": notes_text})
-            logger.info(f"Opportunity {opp_id}: EstimatorNotes patched")
+            issue_body: dict = {
+                "Subject":      f"Field submission — {opportunity_name}",
+                "Notes":        notes_text,
+                "AssignedTo":   salesperson_name or submitter_name,
+                "OpportunityID": opp_id,
+                "PublicComment": False,
+            }
+            if property_id:
+                issue_body["PropertyID"] = property_id
+            await _aspire.create_issue(issue_body)
+            logger.info(f"Opportunity {opp_id}: Issue created with submission notes")
         except Exception as e:
-            logger.warning(f"Opportunity {opp_id}: EstimatorNotes PATCH failed: {e}")
+            logger.warning(f"Opportunity {opp_id}: Issue creation failed: {e}")
 
     # ── Upload photos: try Aspire direct, fall back to R2 ────────────────────
     photos_uploaded = 0

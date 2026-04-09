@@ -1098,12 +1098,15 @@ class AspireClient:
         return await self._post("Opportunities", body)
 
     async def patch_opportunity(self, opp_id: int, body: dict) -> dict:
-        """PATCH an existing Opportunity (e.g. to set EstimatorNotes after creation)."""
-        # Try OData key syntax first, fall back to slash format
+        """PATCH an existing Opportunity."""
         try:
             return await self._patch(f"Opportunities({opp_id})", body)
         except Exception:
             return await self._patch(f"Opportunities/{opp_id}", body)
+
+    async def create_issue(self, body: dict) -> dict:
+        """POST a new Issue to Aspire (links to Opportunity or WorkTicket)."""
+        return await self._post("Issues", body)
 
     async def upload_aspire_attachment(
         self,
