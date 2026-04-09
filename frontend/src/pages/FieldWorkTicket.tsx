@@ -15,12 +15,10 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   getScheduledTickets,
-  getAspireEmployees,
   completeWorkTicket,
   type ScheduledWorkTicket,
   type TicketRoute,
   type TicketRange,
-  type AspireEmployee,
 } from '../lib/api';
 
 type Step = 1 | 2 | 3 | 4 | 5;
@@ -77,9 +75,7 @@ export default function FieldWorkTicket() {
   const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
   const [selectedTicket, setSelectedTicket] = useState<ScheduledWorkTicket | null>(null);
 
-  // Employees (Aspire Contacts)
-  const [employees, setEmployees]     = useState<AspireEmployee[]>([]);
-  const [submitterName, setSubmitterName] = useState(() => localStorage.getItem('field_employee') || '');
+  const [submitterName] = useState('');
 
   // Media
   const [photos, setPhotos]           = useState<File[]>([]);
@@ -96,10 +92,6 @@ export default function FieldWorkTicket() {
   const cameraRef  = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
-  // Load Aspire employees once
-  useEffect(() => {
-    getAspireEmployees().then(emps => { if (emps.length > 0) setEmployees(emps); }).catch(() => {});
-  }, []);
 
   // Load routes when range changes
   useEffect(() => {
@@ -174,11 +166,11 @@ export default function FieldWorkTicket() {
 
   const canContinue = () => {
     if (step === 2) return true;
-    if (step === 3) return submitterName.trim().length > 0 && comment.trim().length >= 3;
+    if (step === 3) return comment.trim().length >= 3;
     return true;
   };
 
-  const stepLabels = ['Select ticket', 'Add media', 'Notes & name', 'Review'];
+  const stepLabels = ['Select ticket', 'Add media', 'Notes', 'Review'];
 
   return (
     <div style={S.phone}>
@@ -366,28 +358,6 @@ export default function FieldWorkTicket() {
           <div style={S.card}>
             <div style={S.ctitle}>Update details</div>
 
-            <div style={{marginBottom:16}}>
-              <div style={S.flabel}>Your name</div>
-              {submitterName ? (
-                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 0'}}>
-                  <span style={{fontSize:15, fontWeight:600, color:'#1a1d23'}}>{submitterName}</span>
-                  <button style={{fontSize:12,color:'#6b7280',background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}}
-                    onClick={() => { setSubmitterName(''); localStorage.removeItem('field_employee'); }}>
-                    Not you?
-                  </button>
-                </div>
-              ) : employees.length > 0 ? (
-                <select style={S.sel} value={submitterName}
-                  onChange={e => { setSubmitterName(e.target.value); if (e.target.value) localStorage.setItem('field_employee', e.target.value); }}>
-                  <option value="">Select your name...</option>
-                  {employees.map(e => <option key={e.ContactID} value={e.FullName}>{e.FullName}</option>)}
-                </select>
-              ) : (
-                <input style={S.input} placeholder="Your name" value={submitterName}
-                  onChange={e => setSubmitterName(e.target.value)} autoFocus/>
-              )}
-            </div>
-
             <div>
               <div style={S.flabel}>Notes</div>
               <textarea
@@ -409,7 +379,6 @@ export default function FieldWorkTicket() {
             <RR label="Job"    value={selectedTicket.OpportunityName || `#${selectedTicket.OpportunityID}`}/>
             {selectedTicket.ScheduledDate && <RR label="Date" value={fmtDate(selectedTicket.ScheduledDate)}/>}
             <RR label="Media"  value={`${photos.length} file${photos.length !== 1 ? 's' : ''}`} color={photos.length > 0 ? '#059669' : '#6b7280'}/>
-            <RR label="Crew"   value={submitterName}/>
             <div style={{paddingTop:10, fontSize:13, color:'#1a1d23', lineHeight:1.6, whiteSpace:'pre-wrap'}}>
               <span style={{fontSize:12, color:'#6b7280', fontWeight:500, display:'block', marginBottom:4, textTransform:'uppercase', letterSpacing:'.04em'}}>Notes</span>
               {comment}
