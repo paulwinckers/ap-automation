@@ -106,6 +106,19 @@ async def probe_notes_field(opp_id: int):
     Hit: GET /aspire/field/opportunities/notes-probe?opp_id=<any_existing_opp_id>
     """
     _check_credentials()
+    # First find which URL format works
+    url_format = None
+    for fmt in [f"Opportunities({opp_id})", f"Opportunities/{opp_id}"]:
+        try:
+            await _aspire._patch(fmt, {"EstimatorNotes": "__url_test__"})
+            url_format = fmt
+            break
+        except Exception as e:
+            pass
+
+    if not url_format:
+        return {"opp_id": opp_id, "error": "PATCH not supported on Opportunities — both URL formats returned 404/405", "results": {}}
+
     candidates = [
         "Notes", "SalesNotes", "InternalNotes", "EstimatorNotes",
         "Description", "CustomerNotes", "PrivateNotes", "OpportunityNotes",
@@ -114,12 +127,12 @@ async def probe_notes_field(opp_id: int):
     results = {}
     for field in candidates:
         try:
-            await _aspire._patch(f"Opportunities({opp_id})", {field: f"__probe_{field}__"})
+            await _aspire._patch(url_format, {field: f"__probe_{field}__"})
             results[field] = "SUCCESS"
-            logger.info(f"Notes probe: {field} WRITABLE on Opportunities PATCH")
+            logger.info(f"Notes probe: {field} WRITABLE via PATCH {url_format}")
         except Exception as e:
             results[field] = f"FAIL: {str(e)[:80]}"
-    return {"opp_id": opp_id, "results": results}
+    return {"opp_id": opp_id, "url_format": url_format, "results": results}
 
 
 @router.get("/opportunities/salesrep-probe")
