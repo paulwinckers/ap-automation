@@ -309,6 +309,7 @@ async def complete_work_ticket(
         photo_data.append((fname, raw))
 
     # ── Upload photos: try Aspire direct, fall back to R2 ────────────────────
+    ONE_YEAR = 365 * 24 * 3600
     photos_uploaded = 0
     photo_urls: list[str] = []
     for fname, raw in photo_data:
@@ -324,29 +325,54 @@ async def complete_work_ticket(
             photos_uploaded += 1
             logger.info(f"WorkTicket {ticket_id}: uploaded {fname} to Aspire directly")
             continue
-        except Exception as e:
+        except Exception:
             logger.info(f"WorkTicket {ticket_id}: Aspire attachment 403, falling back to R2 for {fname}")
 
-        # R2 fallback
+        # R2 fallback — 1-year presigned URL
         result = await r2.upload_field_photo(
             file_bytes=raw,
             filename=fname,
             submitter=submitter_name or "field",
             entity_type="work-ticket",
             entity_id=str(ticket_id),
+            expires_in=ONE_YEAR,
         )
         if result:
             _key, url = result
             photo_urls.append(url)
             photos_uploaded += 1
 
-    logger.info(f"WorkTicket {ticket_id}: {photos_uploaded}/{len(photo_data)} photos saved, comment='{comment[:60]}'")
+    # ── Create Aspire Issue linked to WorkTicket with notes + photo links ──────
+    try:
+        note_lines = [
+            f"Submitted by: {submitter_name}",
+            f"Date: {date.today().isoformat()}",
+        ]
+        if comment:
+            note_lines += ["", comment]
+        if photo_urls:
+            note_lines += [f"\nPhotos ({len(photo_urls)}):"]
+            note_lines += [f"  {i+1}. {u}" for i, u in enumerate(photo_urls)]
+        issue_notes = "\n".join(note_lines)
+
+        await _aspire.create_issue({
+            "Subject":      f"Work ticket update — #{ticket_id}",
+            "Notes":        issue_notes,
+            "AssignedTo":   submitter_name or "Field crew",
+            "WorkTicketID": ticket_id,
+            "PublicComment": False,
+        })
+        logger.info(f"WorkTicket {ticket_id}: Issue created with notes + {len(photo_urls)} photo link(s)")
+    except Exception as e:
+        logger.warning(f"WorkTicket {ticket_id}: Issue creation failed: {e}")
+
+    logger.info(f"WorkTicket {ticket_id}: {photos_uploaded}/{len(photo_data)} photos saved")
 
     return {
         "success":         True,
         "ticket_id":       ticket_id,
         "photos_uploaded": photos_uploaded,
-        "aspire_updated":  False,
+        "aspire_updated":  True,
     }
 
 
@@ -512,25 +538,31 @@ async def create_opportunity(
             or result.get("opportunityNumber")
         )
 
-    # ── Create linked Issue with submission notes ──────────────────────────────
+    # ── Create linked Issue with notes + R2 photo links ───────────────────────
     if isinstance(opp_id, int) and opp_id > 0:
         try:
+            full_notes = notes_text
+            if photo_urls:
+                full_notes += f"\n\nPhotos ({len(photo_urls)}):\n"
+                full_notes += "\n".join(f"  {i+1}. {u}" for i, u in enumerate(photo_urls))
             issue_body: dict = {
-                "Subject":      f"Field submission — {opportunity_name}",
-                "Notes":        notes_text,
-                "AssignedTo":   salesperson_name or submitter_name,
+                "Subject":       f"Field submission — {opportunity_name}",
+                "Notes":         full_notes,
+                "AssignedTo":    salesperson_name or submitter_name,
                 "OpportunityID": opp_id,
                 "PublicComment": False,
             }
             if property_id:
                 issue_body["PropertyID"] = property_id
             await _aspire.create_issue(issue_body)
-            logger.info(f"Opportunity {opp_id}: Issue created with submission notes")
+            logger.info(f"Opportunity {opp_id}: Issue created with notes + {len(photo_urls)} photo link(s)")
         except Exception as e:
             logger.warning(f"Opportunity {opp_id}: Issue creation failed: {e}")
 
     # ── Upload photos: try Aspire direct, fall back to R2 ────────────────────
+    ONE_YEAR = 365 * 24 * 3600
     photos_uploaded = 0
+    photo_urls: list[str] = []
     for fname, raw in photo_data:
         # Try Aspire attachment first
         aspire_ok = False
@@ -556,8 +588,11 @@ async def create_opportunity(
                 submitter=submitter_name,
                 entity_type="opportunity",
                 entity_id=str(opp_id),
+                expires_in=ONE_YEAR,
             )
             if result:
+                _key, url = result
+                photo_urls.append(url)
                 photos_uploaded += 1
 
     logger.info(
