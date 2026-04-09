@@ -324,6 +324,9 @@ async def create_opportunity(
             status_code=400, detail=f"Maximum {MAX_FILES} files allowed"
         )
 
+    if not salesperson_id:
+        raise HTTPException(status_code=400, detail="Salesperson is required")
+
     if division_id not in DIVISION_MAP:
         valid = ", ".join(f"{k} ({v})" for k, v in DIVISION_MAP.items())
         raise HTTPException(

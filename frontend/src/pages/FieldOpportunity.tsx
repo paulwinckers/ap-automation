@@ -240,7 +240,7 @@ export default function FieldOpportunity() {
 
   const canContinue = () => {
     if (step === 1) return !!(selectedProp || (useManual && manualPropName.trim().length > 1));
-    if (step === 2) return !!(oppName.trim() && divisionId);
+    if (step === 2) return !!(oppName.trim() && divisionId && salesperson);
     if (step === 3) return true; // photos optional
     if (step === 4) return !!(submitterName.trim());
     if (step === 5) return true;
@@ -471,7 +471,7 @@ export default function FieldOpportunity() {
             )}
 
             <div>
-              <div style={S.flabel}>Salesperson</div>
+              <div style={S.flabel}>Salesperson <span style={{color:'#dc2626'}}>*</span></div>
               {empLoading ? (
                 <input style={S.input} placeholder="Loading..." disabled/>
               ) : employees.length > 0 ? (
