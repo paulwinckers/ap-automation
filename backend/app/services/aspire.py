@@ -732,20 +732,25 @@ class AspireClient:
         """
         try:
             result = await self._get("Opportunities", {
-                "$select": "SalesRepContactName,OperationsManagerContactName",
-                "$top": "500",
+                "$select": "SalesRepContactID,SalesRepContactName,OperationsManagerContactID,OperationsManagerContactName",
+                "$top": "1000",
                 "$orderby": "WonDate desc",
             })
             opps = self._extract_list(result)
-            names: set[str] = set()
+            # Build name→ContactID map (ContactID wins over 0)
+            people: dict[str, int] = {}
             for o in opps:
-                for field in ("SalesRepContactName", "OperationsManagerContactName"):
-                    val = (o.get(field) or "").strip()
-                    if val:
-                        names.add(val)
+                for name_field, id_field in (
+                    ("SalesRepContactName", "SalesRepContactID"),
+                    ("OperationsManagerContactName", "OperationsManagerContactID"),
+                ):
+                    name = (o.get(name_field) or "").strip()
+                    cid  = o.get(id_field) or 0
+                    if name and (name not in people or cid):
+                        people[name] = cid
             out = [
-                {"ContactID": 0, "FullName": name, "Email": ""}
-                for name in sorted(names)
+                {"ContactID": cid, "FullName": name, "Email": ""}
+                for name, cid in sorted(people.items())
             ]
             logger.info(f"Employee list built from Opportunities: {len(out)} unique names")
             return out

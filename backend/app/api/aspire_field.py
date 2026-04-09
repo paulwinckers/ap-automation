@@ -51,6 +51,19 @@ async def get_employees():
     return {"employees": employees}
 
 
+# ── Opportunity probe ────────────────────────────────────────────────────────
+
+@router.get("/opportunities/probe")
+async def probe_opportunity_fields():
+    """Return all fields on a sample Opportunity — used to find Status/Type field names."""
+    _check_credentials()
+    result = await _aspire._get("Opportunities", {"$top": "1", "$orderby": "WonDate desc"})
+    opps = _aspire._extract_list(result)
+    if opps:
+        return {"fields": sorted(opps[0].keys()), "sample": opps[0]}
+    return {"fields": [], "sample": {}}
+
+
 # ── Work ticket field probe ───────────────────────────────────────────────────
 
 @router.get("/work-tickets/probe")
