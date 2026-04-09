@@ -764,8 +764,7 @@ class AspireClient:
                 logger.info(f"Contacts endpoint unavailable ({e}), falling back to Opportunities")
                 return False
 
-        async def _fetch_opps(skip: int = 0) -> int:
-            """Fetch one page of Opportunities for SalesRep/OpsManager names."""
+        async def _fetch_opps() -> None:
             try:
                 result = await self._get("Opportunities", {
                     "$select": (
@@ -773,27 +772,18 @@ class AspireClient:
                         "OperationsManagerContactID,OperationsManagerContactName"
                     ),
                     "$top":     "1000",
-                    "$skip":    str(skip),
-                    "$orderby": "OpportunityID asc",
+                    "$orderby": "WonDate desc",
                 })
-                items = self._extract_list(result)
-                for o in items:
+                for o in self._extract_list(result):
                     _add(o.get("SalesRepContactName"),          o.get("SalesRepContactID"))
                     _add(o.get("OperationsManagerContactName"), o.get("OperationsManagerContactID"))
-                return len(items)
+                logger.info(f"Employees: {len(people)} unique names from Opportunities")
             except Exception as e:
-                logger.warning(f"Aspire Opportunities employee fetch (skip={skip}) failed: {e}")
-                return 0
+                logger.warning(f"Aspire Opportunities employee fetch failed: {e}")
 
         contacts_ok = await _fetch_contacts()
         if not contacts_ok:
-            # Paginate through all Opportunities to get maximum employee coverage
-            skip = 0
-            while True:
-                count = await _fetch_opps(skip)
-                if count < 1000:
-                    break
-                skip += 1000
+            await _fetch_opps()
 
         out = [
             {"ContactID": cid, "FullName": name, "Email": ""}
