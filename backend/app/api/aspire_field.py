@@ -73,6 +73,29 @@ async def probe_opportunity_fields():
     }
 
 
+@router.get("/opportunities/notes-probe")
+async def probe_notes_field(opp_id: int):
+    """
+    Try PATCHing a real opportunity with different notes field names.
+    Hit: GET /aspire/field/opportunities/notes-probe?opp_id=<any_existing_opp_id>
+    """
+    _check_credentials()
+    candidates = [
+        "Notes", "SalesNotes", "InternalNotes", "EstimatorNotes",
+        "Description", "CustomerNotes", "PrivateNotes", "OpportunityNotes",
+        "Comments", "Memo",
+    ]
+    results = {}
+    for field in candidates:
+        try:
+            await _aspire._patch(f"Opportunities({opp_id})", {field: f"__probe_{field}__"})
+            results[field] = "SUCCESS"
+            logger.info(f"Notes probe: {field} WRITABLE on Opportunities PATCH")
+        except Exception as e:
+            results[field] = f"FAIL: {str(e)[:80]}"
+    return {"opp_id": opp_id, "results": results}
+
+
 @router.get("/opportunities/salesrep-probe")
 async def probe_salesrep_field(salesperson_id: int):
     """
