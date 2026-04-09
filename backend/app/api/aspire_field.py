@@ -370,9 +370,6 @@ async def create_opportunity(
             status_code=400, detail=f"Maximum {MAX_FILES} files allowed"
         )
 
-    if not salesperson_id:
-        raise HTTPException(status_code=400, detail="Salesperson is required")
-
     if division_id not in DIVISION_MAP:
         valid = ", ".join(f"{k} ({v})" for k, v in DIVISION_MAP.items())
         raise HTTPException(
@@ -422,30 +419,33 @@ async def create_opportunity(
     notes_text = "\n".join(lines)
 
     # ── POST to Aspire ─────────────────────────────────────────────────────────
+    def _as_dt(d: Optional[str]) -> Optional[str]:
+        """Convert YYYY-MM-DD to ISO datetime string required by Aspire POST."""
+        if not d:
+            return None
+        return d if "T" in d else f"{d}T00:00:00"
+
     body: dict = {
         "OpportunityName":    opportunity_name,
         "DivisionID":         division_id,
         "BranchID":           settings.ASPIRE_BRANCH_ID or 2,
-        "Notes":              notes_text,
         "EstimatedDollars":   estimated_value,
         "OpportunityStatusID": 9,               # "New"
         "OpportunityType":    opportunity_type,  # "Contract" or "Work Order"
+        "SalesRepID":         salesperson_id,    # correct write field per API doc
     }
     if property_id:
         body["PropertyID"] = property_id
     if due_date:
-        body["DueDate"] = due_date
+        body["BidDueDate"] = _as_dt(due_date)   # correct field name per API doc
     if start_date:
-        body["StartDate"] = start_date
+        body["StartDate"] = _as_dt(start_date)
     if end_date:
-        body["EndDate"] = end_date
+        body["EndDate"] = _as_dt(end_date)
     if lead_source_id:
         body["LeadSourceID"] = lead_source_id
     if sales_type_id:
         body["SalesTypeID"] = sales_type_id
-    if salesperson_id:
-        body["SalesRepContactID"] = salesperson_id
-        body["SalesRepID"] = salesperson_id  # Aspire write API may use this alias
 
     logger.info(f"Opportunity POST body: {body}")
 

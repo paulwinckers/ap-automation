@@ -726,13 +726,34 @@ class AspireClient:
 
     async def get_aspire_employees(self) -> list[dict]:
         """
-        Build an employee list from Opportunities (SalesRep + OpsManager) and
-        WorkTickets (CrewLeader).  Contacts endpoint is 403 for this account.
-        Returns list of {ContactID, FullName, Email} dicts sorted by name.
+        Return active employees with their ContactIDs for the salesperson dropdown.
+        Primary: Contacts endpoint filtered to Active employees.
+        Fallback: derive from Opportunities SalesRep/OpsManager names.
         """
-        import asyncio
+        # Try Contacts endpoint first (correct field is 'Active', not 'IsActive')
+        try:
+            result = await self._get("Contacts", {
+                "$select": "ContactID,FirstName,LastName,Email,Active,ContactTypeName",
+                "$filter": "Active eq true and ContactTypeName eq 'Employee'",
+                "$top":    "500",
+                "$orderby": "LastName asc",
+            })
+            contacts = self._extract_list(result)
+            out = []
+            for c in contacts:
+                cid   = c.get("ContactID")
+                first = (c.get("FirstName") or "").strip()
+                last  = (c.get("LastName")  or "").strip()
+                name  = f"{first} {last}".strip()
+                if cid and name:
+                    out.append({"ContactID": cid, "FullName": name, "Email": c.get("Email") or ""})
+            logger.info(f"Employee list from Contacts: {len(out)}")
+            return out
+        except Exception as e:
+            logger.info(f"Contacts endpoint unavailable ({e}), falling back to Opportunities")
 
-        people: dict[str, int] = {}  # name → ContactID (non-zero wins)
+        # Fallback: derive from Opportunities (SalesRep and OpsManager names)
+        people: dict[str, int] = {}  # name → ContactID
 
         def _add(name: str | None, cid: int | None) -> None:
             name = (name or "").strip()
@@ -742,53 +763,26 @@ class AspireClient:
             if name not in people or (cid and not people[name]):
                 people[name] = cid
 
-        async def _fetch_contacts() -> bool:
-            """Try Contacts endpoint without type filter — may work without ContactType filter."""
-            try:
-                result = await self._get("Contacts", {
-                    "$select": "ContactID,FirstName,LastName,IsActive",
-                    "$filter": "IsActive eq true",
-                    "$top": "1000",
-                    "$orderby": "LastName asc",
-                })
-                contacts = self._extract_list(result)
-                before = len(people)
-                for c in contacts:
-                    first = (c.get("FirstName") or "").strip()
-                    last  = (c.get("LastName")  or "").strip()
-                    name  = f"{first} {last}".strip()
-                    _add(name, c.get("ContactID"))
-                logger.info(f"Employees: {len(people)-before} from Contacts endpoint")
-                return True
-            except Exception as e:
-                logger.info(f"Contacts endpoint unavailable ({e}), falling back to Opportunities")
-                return False
-
-        async def _fetch_opps() -> None:
-            try:
-                result = await self._get("Opportunities", {
-                    "$select": (
-                        "SalesRepContactID,SalesRepContactName,"
-                        "OperationsManagerContactID,OperationsManagerContactName"
-                    ),
-                    "$top":     "1000",
-                    "$orderby": "WonDate desc",
-                })
-                for o in self._extract_list(result):
-                    _add(o.get("SalesRepContactName"),          o.get("SalesRepContactID"))
-                    _add(o.get("OperationsManagerContactName"), o.get("OperationsManagerContactID"))
-                logger.info(f"Employees: {len(people)} unique names from Opportunities")
-            except Exception as e:
-                logger.warning(f"Aspire Opportunities employee fetch failed: {e}")
-
-        contacts_ok = await _fetch_contacts()
-        if not contacts_ok:
-            await _fetch_opps()
+        try:
+            result = await self._get("Opportunities", {
+                "$select": (
+                    "SalesRepContactID,SalesRepContactName,"
+                    "OperationsManagerContactID,OperationsManagerContactName"
+                ),
+                "$top":     "1000",
+                "$orderby": "WonDate desc",
+            })
+            for o in self._extract_list(result):
+                _add(o.get("SalesRepContactName"),          o.get("SalesRepContactID"))
+                _add(o.get("OperationsManagerContactName"), o.get("OperationsManagerContactID"))
+            logger.info(f"Employee list from Opportunities fallback: {len(people)} names")
+        except Exception as e:
+            logger.warning(f"Aspire Opportunities employee fetch failed: {e}")
 
         out = [
             {"ContactID": cid, "FullName": name, "Email": ""}
             for name, cid in sorted(people.items())
-            if cid  # only include people with a real ContactID
+            if cid
         ]
         logger.info(f"Employee list final: {len(out)} with ContactIDs")
         return out
