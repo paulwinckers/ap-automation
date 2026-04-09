@@ -60,11 +60,57 @@ async def probe_opportunity_fields():
     result = await _aspire._get("Opportunities", {"$top": "1", "$orderby": "WonDate desc"})
     opps = _aspire._extract_list(result)
     statuses = await _aspire.get_opportunity_statuses()
+    sample = opps[0] if opps else {}
+    # Pull out all fields that might relate to SalesRep for write-field discovery
+    sales_fields = {k: v for k, v in sample.items() if any(
+        kw in k.lower() for kw in ("sales", "rep", "person", "assign", "owner")
+    )}
     return {
-        "fields": sorted(opps[0].keys()) if opps else [],
-        "sample": opps[0] if opps else {},
+        "fields": sorted(sample.keys()),
+        "sales_fields": sales_fields,
+        "sample": sample,
         "statuses": statuses,
     }
+
+
+@router.get("/opportunities/salesrep-probe")
+async def probe_salesrep_field(salesperson_id: int):
+    """
+    Try posting a minimal opportunity with different SalesRep field names.
+    Tells us which field name Aspire actually accepts for write.
+    Hit: GET /aspire/field/opportunities/salesrep-probe?salesperson_id=<id>
+    """
+    _check_credentials()
+    base = {
+        "OpportunityName":    "__probe_delete_me__",
+        "DivisionID":         2,
+        "BranchID":           settings.ASPIRE_BRANCH_ID or 2,
+        "OpportunityStatusID": 9,
+        "OpportunityType":    "Contract",
+        "EstimatedDollars":   0,
+    }
+    candidates = [
+        "SalesRepContactID",
+        "SalesRepID",
+        "SalesRepresentativeID",
+        "SalesPersonID",
+        "SalesPersonContactID",
+        "SalesmanID",
+        "AssignedToContactID",
+        "OwnerContactID",
+    ]
+    results = {}
+    for field in candidates:
+        body = {**base, "OpportunityName": f"__probe_{field}__", field: salesperson_id}
+        try:
+            res = await _aspire._post("Opportunities", body)
+            results[field] = f"SUCCESS — id={res}"
+            # Immediately log so we know what worked
+            logger.info(f"SalesRep probe: {field}={salesperson_id} SUCCEEDED: {res}")
+        except Exception as e:
+            err_text = str(e)[:120]
+            results[field] = f"FAIL: {err_text}"
+    return {"salesperson_id": salesperson_id, "results": results}
 
 
 # ── Work ticket field probe ───────────────────────────────────────────────────
