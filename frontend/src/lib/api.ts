@@ -439,6 +439,7 @@ export interface FieldOpportunityPayload {
   salespersonId?: number;
   salespersonName?: string;
   salespersonEmail?: string;
+  opportunityType?: string;
 }
 
 export async function createFieldOpportunity(p: FieldOpportunityPayload): Promise<CreateOpportunityResponse> {
@@ -460,6 +461,7 @@ export async function createFieldOpportunity(p: FieldOpportunityPayload): Promis
   if (p.salespersonId)    form.append('salesperson_id',     String(p.salespersonId));
   if (p.salespersonName)  form.append('salesperson_name',   p.salespersonName);
   if (p.salespersonEmail) form.append('salesperson_email',  p.salespersonEmail);
+  if (p.opportunityType)  form.append('opportunity_type',   p.opportunityType);
   for (const photo of p.photos) form.append('photos', photo);
   return request<CreateOpportunityResponse>('POST', '/aspire/field/opportunity', form, true);
 }

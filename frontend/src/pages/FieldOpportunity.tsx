@@ -98,6 +98,7 @@ export default function FieldOpportunity() {
   const [salesTypes, setSalesTypes]     = useState<AspirePicklistItem[]>([]);
   const [leadSourceId, setLeadSourceId] = useState<number | null>(null);
   const [salesTypeId, setSalesTypeId]   = useState<number | null>(null);
+  const [opportunityType, setOpportunityType] = useState<'Contract' | 'Work Order'>('Contract');
 
   // Step 3 — photos
   const [photos, setPhotos]         = useState<File[]>([]);
@@ -210,6 +211,7 @@ export default function FieldOpportunity() {
         salespersonId:    salesperson?.ContactID,
         salespersonName:  salesperson?.FullName,
         salespersonEmail: salesperson?.Email,
+        opportunityType,
       });
       localStorage.setItem('field_employee', submitterName.trim());
       setSuccessInfo({ name: res.opportunity_name, id: res.opportunity_id, number: res.opportunity_number ?? null, photos: res.photos_uploaded });
@@ -228,7 +230,7 @@ export default function FieldOpportunity() {
     setManualPropName(''); setUseManual(false);
     setOppName(''); setDivisionId(null); setEstimatedValue('');
     setDueDate(due); setStartDate(start); setEndDate(end);
-    setLeadSourceId(null); setSalesTypeId(null); setSalesperson(null);
+    setLeadSourceId(null); setSalesTypeId(null); setSalesperson(null); setOpportunityType('Contract');
     setPhotos([]); setPreviews([]);
     setNotes(''); setSubmitError(null); setSuccessInfo(null);
   };
@@ -364,6 +366,27 @@ export default function FieldOpportunity() {
                 onChange={e => setOppName(e.target.value)}
                 autoFocus
               />
+            </div>
+
+            <div style={{marginBottom:16}}>
+              <div style={S.flabel}>Opportunity type</div>
+              <div style={{display:'flex', gap:10}}>
+                {(['Contract', 'Work Order'] as const).map(t => (
+                  <button
+                    key={t}
+                    style={{
+                      flex:1, padding:'12px 8px', textAlign:'center', borderRadius:10,
+                      cursor:'pointer', fontFamily:'inherit', fontSize:14, fontWeight:600,
+                      border: opportunityType === t ? '2px solid #2563eb' : '1.5px solid #e2e6ed',
+                      background: opportunityType === t ? '#eff6ff' : '#f9fafb',
+                      color: opportunityType === t ? '#1d4ed8' : '#374151',
+                    }}
+                    onClick={() => setOpportunityType(t)}
+                  >
+                    {t === 'Contract' ? '📋 Contract' : '🔧 Work Order'}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div style={{marginBottom:16}}>
@@ -590,6 +613,7 @@ export default function FieldOpportunity() {
             <div style={S.ctitle}>Review before submitting</div>
             <RR label="Property"  value={selectedProp?.PropertyName || manualPropName || '—'}/>
             <RR label="Job name"  value={oppName}/>
+            <RR label="Type"      value={opportunityType}/>
             <RR label="Division"  value={selectedDivision ? `${selectedDivision.icon} ${selectedDivision.name}` : '—'}/>
             {estimatedValue && <RR label="Estimate" value={`$${parseFloat(estimatedValue).toLocaleString()}`}/>}
             {startDate && <RR label="Start date" value={startDate}/>}

@@ -307,6 +307,7 @@ async def create_opportunity(
     salesperson_id:       Optional[int]     = Form(default=None),
     salesperson_name:     Optional[str]     = Form(default=None),
     salesperson_email:    Optional[str]     = Form(default=None),
+    opportunity_type:     str               = Form(default="Contract"),
     photos:               List[UploadFile]  = File(default=[]),
 ):
     """
@@ -373,11 +374,13 @@ async def create_opportunity(
 
     # ── POST to Aspire ─────────────────────────────────────────────────────────
     body: dict = {
-        "OpportunityName":  opportunity_name,
-        "DivisionID":       division_id,
-        "BranchID":         settings.ASPIRE_BRANCH_ID or 2,
-        "Notes":            notes_text,
-        "EstimatedDollars": estimated_value,
+        "OpportunityName":    opportunity_name,
+        "DivisionID":         division_id,
+        "BranchID":           settings.ASPIRE_BRANCH_ID or 2,
+        "Notes":              notes_text,
+        "EstimatedDollars":   estimated_value,
+        "OpportunityStatusID": 9,               # "New"
+        "OpportunityType":    opportunity_type,  # "Contract" or "Work Order"
     }
     if property_id:
         body["PropertyID"] = property_id
