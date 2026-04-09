@@ -407,7 +407,6 @@ async def create_opportunity(
         "OpportunityStatusID": 9,               # "New"
         "OpportunityType":    opportunity_type,  # "Contract" or "Work Order"
         "SalesRepID":         salesperson_id,    # correct write field per API doc
-        "EstimatorNotes":     notes_text,        # field name TBC from probe
     }
     if property_id:
         body["PropertyID"] = property_id
@@ -450,6 +449,14 @@ async def create_opportunity(
             result.get("OpportunityNumber")
             or result.get("opportunityNumber")
         )
+
+    # ── PATCH EstimatorNotes (not writable on POST) ────────────────────────────
+    if isinstance(opp_id, int) and opp_id > 0 and notes_text:
+        try:
+            await _aspire.patch_opportunity(opp_id, {"EstimatorNotes": notes_text})
+            logger.info(f"Opportunity {opp_id}: EstimatorNotes patched")
+        except Exception as e:
+            logger.warning(f"Opportunity {opp_id}: EstimatorNotes PATCH failed: {e}")
 
     # ── Upload photos: try Aspire direct, fall back to R2 ────────────────────
     photos_uploaded = 0

@@ -1097,6 +1097,10 @@ class AspireClient:
         """POST a new Opportunity to Aspire."""
         return await self._post("Opportunities", body)
 
+    async def patch_opportunity(self, opp_id: int, body: dict) -> dict:
+        """PATCH an existing Opportunity (e.g. to set EstimatorNotes after creation)."""
+        return await self._patch(f"Opportunities({opp_id})", body)
+
     async def upload_aspire_attachment(
         self,
         object_id: int,
