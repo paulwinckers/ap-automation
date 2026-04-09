@@ -947,6 +947,15 @@ class AspireClient:
             logger.warning(f"SalesTypes fetch failed: {e}")
             return []
 
+    async def get_opportunity_statuses(self) -> list[dict]:
+        """Fetch all opportunity statuses from Aspire."""
+        try:
+            result = await self._get("OpportunityStatuses", {})
+            return self._extract_list(result)
+        except Exception as e:
+            logger.warning(f"OpportunityStatuses fetch failed: {e}")
+            return []
+
     async def search_opportunities_field(
         self, query: str, limit: int = 15
     ) -> list[dict]:

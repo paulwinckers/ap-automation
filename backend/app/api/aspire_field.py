@@ -59,9 +59,12 @@ async def probe_opportunity_fields():
     _check_credentials()
     result = await _aspire._get("Opportunities", {"$top": "1", "$orderby": "WonDate desc"})
     opps = _aspire._extract_list(result)
-    if opps:
-        return {"fields": sorted(opps[0].keys()), "sample": opps[0]}
-    return {"fields": [], "sample": {}}
+    statuses = await _aspire.get_opportunity_statuses()
+    return {
+        "fields": sorted(opps[0].keys()) if opps else [],
+        "sample": opps[0] if opps else {},
+        "statuses": statuses,
+    }
 
 
 # ── Work ticket field probe ───────────────────────────────────────────────────
