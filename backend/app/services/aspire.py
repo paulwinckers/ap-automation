@@ -726,37 +726,61 @@ class AspireClient:
 
     async def get_aspire_employees(self) -> list[dict]:
         """
-        Build an employee list from unique SalesRep and OperationsManager names
-        on recent Opportunities (Contacts endpoint is 403 for this account).
+        Build an employee list from Opportunities (SalesRep + OpsManager) and
+        WorkTickets (CrewLeader).  Contacts endpoint is 403 for this account.
         Returns list of {ContactID, FullName, Email} dicts sorted by name.
         """
-        try:
-            result = await self._get("Opportunities", {
-                "$select": "SalesRepContactID,SalesRepContactName,OperationsManagerContactID,OperationsManagerContactName",
-                "$top": "1000",
-                "$orderby": "WonDate desc",
-            })
-            opps = self._extract_list(result)
-            # Build name→ContactID map (ContactID wins over 0)
-            people: dict[str, int] = {}
-            for o in opps:
-                for name_field, id_field in (
-                    ("SalesRepContactName", "SalesRepContactID"),
-                    ("OperationsManagerContactName", "OperationsManagerContactID"),
-                ):
-                    name = (o.get(name_field) or "").strip()
-                    cid  = o.get(id_field) or 0
-                    if name and (name not in people or cid):
-                        people[name] = cid
-            out = [
-                {"ContactID": cid, "FullName": name, "Email": ""}
-                for name, cid in sorted(people.items())
-            ]
-            logger.info(f"Employee list built from Opportunities: {len(out)} unique names")
-            return out
-        except Exception as e:
-            logger.warning(f"Aspire employees fetch failed: {e}")
-            return []
+        import asyncio
+
+        people: dict[str, int] = {}  # name → ContactID (non-zero wins)
+
+        def _add(name: str | None, cid: int | None) -> None:
+            name = (name or "").strip()
+            cid  = cid or 0
+            if not name:
+                return
+            if name not in people or (cid and not people[name]):
+                people[name] = cid
+
+        async def _fetch_opps() -> None:
+            try:
+                result = await self._get("Opportunities", {
+                    "$select": (
+                        "SalesRepContactID,SalesRepContactName,"
+                        "OperationsManagerContactID,OperationsManagerContactName"
+                    ),
+                    "$top": "5000",
+                })
+                for o in self._extract_list(result):
+                    _add(o.get("SalesRepContactName"),          o.get("SalesRepContactID"))
+                    _add(o.get("OperationsManagerContactName"), o.get("OperationsManagerContactID"))
+                logger.info(f"Employees: {len(people)} unique names from Opportunities")
+            except Exception as e:
+                logger.warning(f"Aspire Opportunities employee fetch failed: {e}")
+
+        async def _fetch_tickets() -> None:
+            try:
+                result = await self._get("WorkTickets", {
+                    "$select": "CrewLeaderContactID,CrewLeaderName",
+                    "$top": "2000",
+                    "$orderby": "ScheduledStartDate desc",
+                })
+                before = len(people)
+                for t in self._extract_list(result):
+                    _add(t.get("CrewLeaderName"), t.get("CrewLeaderContactID"))
+                logger.info(f"Employees: +{len(people)-before} from WorkTickets crew leaders")
+            except Exception as e:
+                logger.info(f"WorkTickets crew leader fetch skipped: {e}")
+
+        await asyncio.gather(_fetch_opps(), _fetch_tickets())
+
+        out = [
+            {"ContactID": cid, "FullName": name, "Email": ""}
+            for name, cid in sorted(people.items())
+            if cid  # only include people with a real ContactID
+        ]
+        logger.info(f"Employee list final: {len(out)} with ContactIDs")
+        return out
 
     async def _get_aspire_employees_contacts(self) -> list[dict]:
         """Original Contacts-based fetch — kept for reference (403 on this account)."""
