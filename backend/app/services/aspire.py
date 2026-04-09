@@ -1097,5 +1097,30 @@ class AspireClient:
         """POST a new Opportunity to Aspire."""
         return await self._post("Opportunities", body)
 
+    async def upload_aspire_attachment(
+        self,
+        object_id: int,
+        object_code: str,
+        filename: str,
+        file_bytes: bytes,
+        attachment_type_id: int = 1,
+        expose_to_crew: bool = True,
+    ) -> dict:
+        """
+        Upload a file directly to Aspire via POST /Attachments.
+        FileData is base64-encoded. ObjectCode is 'WorkTicket' or 'Opportunity'.
+        """
+        import base64
+        file_data = base64.b64encode(file_bytes).decode("utf-8")
+        body = {
+            "FileName":         filename,
+            "FileData":         file_data,
+            "ObjectId":         object_id,
+            "ObjectCode":       object_code,
+            "AttachmentTypeId": attachment_type_id,
+            "ExposeToCrew":     expose_to_crew,
+        }
+        return await self._post("Attachments", body)
+
     async def close(self):
         await self._http.aclose()

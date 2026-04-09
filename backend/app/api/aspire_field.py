@@ -234,61 +234,41 @@ async def complete_work_ticket(
             status_code=400, detail=f"Maximum {MAX_FILES} files allowed"
         )
 
-    # ── Upload photos to R2 ────────────────────────────────────────────────────
-    photo_urls: list[str] = []
+    # ── Read all photo bytes (validate size first) ─────────────────────────────
+    photo_data: list[tuple[str, bytes]] = []  # (filename, bytes)
     for i, photo in enumerate(photos):
         raw = await photo.read()
         is_vid   = _is_video(photo.filename or "")
         max_size = MAX_VIDEO_SIZE if is_vid else MAX_PHOTO_SIZE
         if len(raw) > max_size:
             label = "200 MB per video" if is_vid else "15 MB per photo"
-            raise HTTPException(
-                status_code=413,
-                detail=f"File {i+1} is too large (max {label})",
-            )
-        result = await r2.upload_field_photo(
-            file_bytes=raw,
-            filename=photo.filename or f"photo_{i+1}.jpg",
-            submitter=submitter_name,
-            entity_type="work-ticket",
-            entity_id=str(ticket_id),
-        )
-        if result:
-            _key, url = result
-            photo_urls.append(url)
-        else:
-            logger.warning(
-                f"R2 not available for work ticket {ticket_id} photo {i+1} — "
-                "photo not saved"
-            )
+            raise HTTPException(status_code=413, detail=f"File {i+1} is too large (max {label})")
+        fname = photo.filename or f"photo_{i+1}.jpg"
+        photo_data.append((fname, raw))
 
-    # ── Build notes text ───────────────────────────────────────────────────────
-    lines = [
-        f"Completed by: {submitter_name}",
-        f"Date: {date.today().isoformat()}",
-        "",
-        comment,
-    ]
-    if photo_urls:
-        lines.append(f"\nPhotos ({len(photo_urls)}):")
-        for idx, url in enumerate(photo_urls, 1):
-            lines.append(f"  {idx}. {url}")
-    notes_text = "\n".join(lines)
+    # ── Upload photos directly to Aspire ───────────────────────────────────────
+    photos_uploaded = 0
+    for fname, raw in photo_data:
+        try:
+            await _aspire.upload_aspire_attachment(
+                object_id=ticket_id,
+                object_code="WorkTicket",
+                filename=fname,
+                file_bytes=raw,
+                expose_to_crew=True,
+            )
+            photos_uploaded += 1
+            logger.info(f"WorkTicket {ticket_id}: uploaded {fname} to Aspire")
+        except Exception as e:
+            logger.warning(f"WorkTicket {ticket_id}: Aspire attachment failed for {fname}: {e}")
 
-    # ── Write to Aspire WorkTicket ─────────────────────────────────────────────
-    aspire_updated = False
-    try:
-        await _aspire.patch_work_ticket_notes(ticket_id, notes_text)
-        aspire_updated = True
-        logger.info(f"WorkTicket {ticket_id} notes written to Aspire successfully")
-    except Exception as e:
-        logger.warning(f"All Aspire write attempts failed for WorkTicket {ticket_id}: {e}")
+    logger.info(f"WorkTicket {ticket_id}: {photos_uploaded}/{len(photo_data)} photos uploaded, comment='{comment[:60]}'")
 
     return {
         "success":         True,
         "ticket_id":       ticket_id,
-        "photos_uploaded": len(photo_urls),
-        "aspire_updated":  aspire_updated,
+        "photos_uploaded": photos_uploaded,
+        "aspire_updated":  photos_uploaded > 0,
     }
 
 
@@ -377,46 +357,16 @@ async def create_opportunity(
             detail=f"Invalid division_id {division_id}. Valid options: {valid}",
         )
 
-    # ── Upload photos to R2 ────────────────────────────────────────────────────
-    # Use a temporary UUID as entity_id (no opportunity ID yet)
-    temp_id = uuid.uuid4().hex[:12]
-    photo_urls: list[str] = []
+    # ── Read & validate photos upfront ────────────────────────────────────────
+    photo_data: list[tuple[str, bytes]] = []
     for i, photo in enumerate(photos):
         raw = await photo.read()
         is_vid   = _is_video(photo.filename or "")
         max_size = MAX_VIDEO_SIZE if is_vid else MAX_PHOTO_SIZE
         if len(raw) > max_size:
             label = "200 MB per video" if is_vid else "15 MB per photo"
-            raise HTTPException(
-                status_code=413,
-                detail=f"File {i+1} is too large (max {label})",
-            )
-        result = await r2.upload_field_photo(
-            file_bytes=raw,
-            filename=photo.filename or f"photo_{i+1}.jpg",
-            submitter=submitter_name,
-            entity_type="opportunity",
-            entity_id=temp_id,
-        )
-        if result:
-            _key, url = result
-            photo_urls.append(url)
-
-    # ── Build notes ────────────────────────────────────────────────────────────
-    lines = [
-        f"Created by: {submitter_name}",
-        f"Date: {date.today().isoformat()}",
-        f"Division: {DIVISION_MAP[division_id]}",
-    ]
-    if property_name_fyi:
-        lines.append(f"Property: {property_name_fyi}")
-    if notes:
-        lines.append(f"\n{notes}")
-    if photo_urls:
-        lines.append(f"\nPhotos ({len(photo_urls)}):")
-        for idx, url in enumerate(photo_urls, 1):
-            lines.append(f"  {idx}. {url}")
-    notes_text = "\n".join(lines)
+            raise HTTPException(status_code=413, detail=f"File {i+1} is too large (max {label})")
+        photo_data.append((photo.filename or f"photo_{i+1}.jpg", raw))
 
     # ── POST to Aspire ─────────────────────────────────────────────────────────
     def _as_dt(d: Optional[str]) -> Optional[str]:
@@ -476,9 +426,28 @@ async def create_opportunity(
             or result.get("opportunityNumber")
         )
 
+    # ── Upload photos directly to Aspire ──────────────────────────────────────
+    photos_uploaded = 0
+    if isinstance(opp_id, int) and opp_id > 0:
+        for fname, raw in photo_data:
+            try:
+                await _aspire.upload_aspire_attachment(
+                    object_id=opp_id,
+                    object_code="Opportunity",
+                    filename=fname,
+                    file_bytes=raw,
+                    expose_to_crew=True,
+                )
+                photos_uploaded += 1
+                logger.info(f"Opportunity {opp_id}: uploaded {fname} to Aspire")
+            except Exception as e:
+                logger.warning(f"Opportunity {opp_id}: Aspire attachment failed for {fname}: {e}")
+    else:
+        logger.warning(f"Cannot upload photos — invalid opp_id: {opp_id}")
+
     logger.info(
         f"New opportunity created: ID={opp_id} #={opp_number} '{opportunity_name}' "
-        f"by {submitter_name}, {len(photo_urls)} photo(s)"
+        f"by {submitter_name}, {photos_uploaded}/{len(photo_data)} photo(s)"
     )
 
     # ── Notify salesperson by email ────────────────────────────────────────────
@@ -516,7 +485,7 @@ async def create_opportunity(
     <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top">Submitted by</td><td style="padding:8px 0">{submitter_name}</td></tr>
     <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top">Date</td><td style="padding:8px 0">{date_str}</td></tr>
     <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top">Notes</td><td style="padding:8px 0">{note_html}</td></tr>
-    <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top">Photos</td><td style="padding:8px 0">{len(photo_urls)} uploaded</td></tr>
+    <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top">Photos</td><td style="padding:8px 0">{photos_uploaded} uploaded</td></tr>
   </table>
 </div>
 </body></html>""",
@@ -530,6 +499,6 @@ async def create_opportunity(
         "opportunity_id":       opp_id,
         "opportunity_number":   opp_number,
         "opportunity_name":     opportunity_name,
-        "photos_uploaded":      len(photo_urls),
+        "photos_uploaded":      photos_uploaded,
         "submitter":            submitter_name,
     }
