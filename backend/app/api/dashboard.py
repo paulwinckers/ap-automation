@@ -331,6 +331,7 @@ async def estimating_probe():
     try:
         raw_opps = await _aspire._get_all("Opportunities", {
             "$select": "OpportunityID,OpportunityName,PropertyName,OpportunityStatusName,OpportunityType",
+            "$filter": "OpportunityStatusName ne 'Won' and OpportunityStatusName ne 'Lost'",
             "$top": "500",
             "$orderby": "CreatedDateTime desc",
         })
@@ -392,10 +393,13 @@ async def get_estimating_dashboard():
                 "OpportunityType,SalesTypeName,SalesTypeID,"
                 "EstimatedDollars,BidDueDate,CreatedDateTime,WonDate,LostDate"
             ),
+            # Filter Won/Lost at the API level so the 500-record cap is spent
+            # entirely on active opportunities rather than closed ones.
+            "$filter": "OpportunityStatusName ne 'Won' and OpportunityStatusName ne 'Lost'",
             "$top": "500",
             "$orderby": "CreatedDateTime desc",
         })
-        logger.info(f"Estimating dashboard: fetched {len(raw_opps)} total opportunities from Aspire")
+        logger.info(f"Estimating dashboard: fetched {len(raw_opps)} active opportunities from Aspire")
     except Exception as e:
         logger.error(f"Estimating dashboard fetch failed: {e}")
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
