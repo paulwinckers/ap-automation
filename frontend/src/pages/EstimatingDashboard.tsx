@@ -183,7 +183,7 @@ function OppTable({ opps, showSalesperson = false }: { opps: EstimatingOpp[]; sh
                     border:     `1px solid ${isContract ? '#bfdbfe' : '#fde68a'}`,
                     whiteSpace: 'nowrap',
                   }}>
-                    {o.opp_type || '—'}
+                    {o.opp_type === 'Contract' ? 'Maintenance' : o.opp_type === 'Work Order' ? 'Project' : o.opp_type || '—'}
                   </span>
                 </Td>
                 {/* Division */}
@@ -525,18 +525,18 @@ export default function EstimatingDashboard() {
           </select>
         </div>
 
-        {/* Contract / Work Order toggle */}
+        {/* Type toggle */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Type:</label>
           <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #e5e7eb' }}>
-            {(['All', 'Contract', 'Work Order'] as const).map((opt, i) => (
-              <button key={opt} onClick={() => setFilterType(opt)} style={{
+            {([['All', 'All'], ['Contract', 'Maintenance'], ['Work Order', 'Project']] as const).map(([val, label], i) => (
+              <button key={val} onClick={() => setFilterType(val)} style={{
                 padding: '5px 12px', fontSize: 12, border: 'none', cursor: 'pointer',
-                fontWeight: filterType === opt ? 700 : 400,
-                background: filterType === opt ? '#2563eb' : '#fff',
-                color:      filterType === opt ? '#fff' : '#6b7280',
+                fontWeight: filterType === val ? 700 : 400,
+                background: filterType === val ? '#2563eb' : '#fff',
+                color:      filterType === val ? '#fff' : '#6b7280',
                 borderRight: i < 2 ? '1px solid #e5e7eb' : 'none',
-              }}>{opt}</button>
+              }}>{label}</button>
             ))}
           </div>
         </div>
