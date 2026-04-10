@@ -214,8 +214,8 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
 
 // ── Salesperson section ────────────────────────────────────────────────────────
 
-function SalespersonSection({ sp, filterType, filterSalesType }: {
-  sp: EstimatingSalesperson; filterType: string; filterSalesType: string;
+function SalespersonSection({ sp, filterType, filterSalesType, filterPhase }: {
+  sp: EstimatingSalesperson; filterType: string; filterSalesType: string; filterPhase: string;
 }) {
   const [open, setOpen] = useState(true);
 
@@ -223,7 +223,8 @@ function SalespersonSection({ sp, filterType, filterSalesType }: {
   const allOpps = sp.stages.flatMap(st => st.opportunities);
   const visible = allOpps.filter(o =>
     (filterType === 'All' || o.opp_type === filterType) &&
-    (filterSalesType === 'All' || o.sales_type === filterSalesType)
+    (filterSalesType === 'All' || o.sales_type === filterSalesType) &&
+    (filterPhase === 'All' || o.status === filterPhase)
   );
 
   if (visible.length === 0) return null;
@@ -287,6 +288,7 @@ export default function EstimatingDashboard() {
   const [error, setError]                       = useState<string | null>(null);
   const [filterSalesType, setFilterSalesType]   = useState('All');
   const [filterType, setFilterType]             = useState('All');
+  const [filterPhase, setFilterPhase]           = useState('All');
 
   useEffect(() => {
     setLoading(true); setError(null);
@@ -312,12 +314,13 @@ export default function EstimatingDashboard() {
     </div>
   );
 
-  const { summary, sales_types, salespeople } = data;
+  const { summary, sales_types, phases, salespeople } = data;
 
   const visibleCount = salespeople.reduce((acc, sp) =>
     acc + sp.stages.flatMap(st => st.opportunities).filter(o =>
       (filterType === 'All' || o.opp_type === filterType) &&
-      (filterSalesType === 'All' || o.sales_type === filterSalesType)
+      (filterSalesType === 'All' || o.sales_type === filterSalesType) &&
+      (filterPhase === 'All' || o.status === filterPhase)
     ).length, 0);
 
   return (
@@ -351,6 +354,18 @@ export default function EstimatingDashboard() {
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Phase:</label>
+          <select
+            value={filterPhase}
+            onChange={e => setFilterPhase(e.target.value)}
+            style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff', color: '#1f2937', cursor: 'pointer' }}
+          >
+            <option value="All">All</option>
+            {phases.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Sales Type:</label>
           <select
@@ -388,6 +403,7 @@ export default function EstimatingDashboard() {
             key={sp.name} sp={sp}
             filterType={filterType}
             filterSalesType={filterSalesType}
+            filterPhase={filterPhase}
           />
         ))}
       </div>

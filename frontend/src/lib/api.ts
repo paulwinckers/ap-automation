@@ -477,6 +477,7 @@ export interface EstimatingSalesperson {
 export interface EstimatingDashboardData {
   summary: { total: number; total_value: number; overdue: number; due_this_week: number };
   sales_types: string[];
+  phases: string[];
   salespeople: EstimatingSalesperson[];
 }
 

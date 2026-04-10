@@ -486,8 +486,9 @@ async def get_estimating_dashboard():
         "due_this_week": sum(1 for s in shaped if s["_due_this_week"]),
     }
 
-    # ── Unique sales types (sorted, blanks excluded) ──────────────────────────
+    # ── Unique sales types and phases (sorted, blanks excluded) ──────────────
     sales_types = sorted({s["sales_type"] for s in shaped if s["sales_type"]})
+    phases      = sorted({s["status"]     for s in shaped if s["status"]})
 
     # ── Group by salesperson → stage ──────────────────────────────────────────
     from collections import defaultdict
@@ -527,5 +528,6 @@ async def get_estimating_dashboard():
     return {
         "summary":     summary,
         "sales_types": sales_types,
+        "phases":      phases,
         "salespeople": salespeople,
     }
