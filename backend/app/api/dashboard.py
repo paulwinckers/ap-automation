@@ -316,3 +316,171 @@ async def get_job_tickets(opportunity_id: int):
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
     return {"opportunity_id": opportunity_id, "tickets": tickets}
+
+
+# ── Estimating Dashboard ───────────────────────────────────────────────────────
+
+@router.get("/estimating")
+async def get_estimating_dashboard():
+    """
+    Returns all open (non-Won, non-Lost) opportunities grouped by salesperson
+    then by stage (OpportunityStatusName).
+
+    Response shape:
+        {
+          "summary": { total, total_value, overdue, due_this_week },
+          "sales_types": ["Maintenance", ...],
+          "salespeople": [
+            {
+              "name": "...", "total": N, "total_value": N, "overdue": N,
+              "stages": [{ "stage": "...", "opportunities": [...] }]
+            }
+          ]
+        }
+    """
+    from datetime import datetime, timezone, timedelta
+
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(
+            status_code=503,
+            detail="Aspire credentials not configured (ASPIRE_CLIENT_ID / ASPIRE_CLIENT_SECRET)",
+        )
+
+    try:
+        result = await _aspire._get("Opportunities", {
+            "$select": (
+                "OpportunityID,OpportunityName,PropertyName,DivisionName,DivisionID,"
+                "SalesRepContactName,SalesRepContactID,"
+                "OpportunityStatusName,OpportunityStatusID,"
+                "OpportunityType,SalesTypeName,SalesTypeID,"
+                "EstimatedDollars,BidDueDate,CreatedDateTime,WonDate,LostDate"
+            ),
+            "$top": "1000",
+            "$orderby": "BidDueDate asc",
+        })
+        raw_opps = _aspire._extract_list(result)
+    except Exception as e:
+        logger.error(f"Estimating dashboard fetch failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
+
+    # ── Filter out Won / Lost ─────────────────────────────────────────────────
+    def is_active(o: dict) -> bool:
+        status = (o.get("OpportunityStatusName") or "").strip().lower()
+        return "won" not in status and "lost" not in status
+
+    opps = [o for o in raw_opps if is_active(o)]
+
+    # ── Date helpers ──────────────────────────────────────────────────────────
+    now = datetime.now(timezone.utc)
+    week_end = now + timedelta(days=7)
+
+    def parse_date(s: str | None):
+        if not s:
+            return None
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+        except Exception:
+            return None
+
+    def days_since(dt) -> int:
+        if dt is None:
+            return 0
+        return max(0, (now - dt).days)
+
+    def days_until(dt) -> int | None:
+        if dt is None:
+            return None
+        return (dt - now).days
+
+    def urgency(due_dt) -> str:
+        if due_dt is None:
+            return "no-date"
+        d = (due_dt - now).days
+        if d < 0:
+            return "overdue"
+        if d <= 7:
+            return "urgent"
+        if d <= 30:
+            return "soon"
+        return "ok"
+
+    # ── Shape each opportunity ────────────────────────────────────────────────
+    shaped = []
+    for o in opps:
+        due_dt     = parse_date(o.get("BidDueDate"))
+        created_dt = parse_date(o.get("CreatedDateTime"))
+        urg        = urgency(due_dt)
+        due_days   = days_until(due_dt)
+
+        shaped.append({
+            "id":              o.get("OpportunityID"),
+            "name":            o.get("OpportunityName") or "(no name)",
+            "property":        o.get("PropertyName") or "",
+            "division":        o.get("DivisionName") or "",
+            "opp_type":        o.get("OpportunityType") or "Unknown",
+            "sales_type":      o.get("SalesTypeName") or "",
+            "status":          o.get("OpportunityStatusName") or "",
+            "created_date":    (created_dt.date().isoformat() if created_dt else None),
+            "due_date":        (due_dt.date().isoformat()     if due_dt     else None),
+            "estimated_value": float(o.get("EstimatedDollars") or 0),
+            "days_old":        days_since(created_dt),
+            "days_until_due":  due_days,
+            "urgency":         urg,
+            "_salesperson":    (o.get("SalesRepContactName") or "Unassigned").strip(),
+            "_stage":          o.get("OpportunityStatusName") or "Unknown",
+            "_is_overdue":     urg == "overdue",
+            "_due_this_week":  due_dt is not None and now <= due_dt <= week_end,
+        })
+
+    # ── Summary stats ─────────────────────────────────────────────────────────
+    summary = {
+        "total":         len(shaped),
+        "total_value":   sum(s["estimated_value"] for s in shaped),
+        "overdue":       sum(1 for s in shaped if s["_is_overdue"]),
+        "due_this_week": sum(1 for s in shaped if s["_due_this_week"]),
+    }
+
+    # ── Unique sales types (sorted, blanks excluded) ──────────────────────────
+    sales_types = sorted({s["sales_type"] for s in shaped if s["sales_type"]})
+
+    # ── Group by salesperson → stage ──────────────────────────────────────────
+    from collections import defaultdict
+
+    by_person: dict[str, list] = defaultdict(list)
+    for s in shaped:
+        by_person[s["_salesperson"]].append(s)
+
+    def build_salesperson(name: str, opps_list: list) -> dict:
+        by_stage: dict[str, list] = defaultdict(list)
+        for o in opps_list:
+            by_stage[o["_stage"]].append(o)
+
+        # Strip internal keys before returning
+        def clean(o: dict) -> dict:
+            return {k: v for k, v in o.items() if not k.startswith("_")}
+
+        stages = [
+            {"stage": stage, "opportunities": [clean(o) for o in stage_opps]}
+            for stage, stage_opps in sorted(by_stage.items())
+        ]
+        return {
+            "name":        name,
+            "total":       len(opps_list),
+            "total_value": sum(o["estimated_value"] for o in opps_list),
+            "overdue":     sum(1 for o in opps_list if o["_is_overdue"]),
+            "stages":      stages,
+        }
+
+    # Sort alphabetically; put "Unassigned" last
+    names_sorted = sorted(
+        by_person.keys(),
+        key=lambda n: (n == "Unassigned", n.lower()),
+    )
+    salespeople = [build_salesperson(name, by_person[name]) for name in names_sorted]
+
+    return {
+        "summary":     summary,
+        "sales_types": sales_types,
+        "salespeople": salespeople,
+    }

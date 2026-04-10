@@ -442,6 +442,47 @@ export interface FieldOpportunityPayload {
   opportunityType?: string;
 }
 
+// ── Estimating Dashboard ───────────────────────────────────────────────────────
+
+export interface EstimatingOpp {
+  id: number;
+  name: string;
+  property: string;
+  division: string;
+  opp_type: string;
+  sales_type: string;
+  status: string;
+  created_date: string | null;
+  due_date: string | null;
+  estimated_value: number;
+  days_old: number;
+  days_until_due: number | null;
+  urgency: 'overdue' | 'urgent' | 'soon' | 'ok' | 'no-date';
+}
+
+export interface EstimatingStage {
+  stage: string;
+  opportunities: EstimatingOpp[];
+}
+
+export interface EstimatingSalesperson {
+  name: string;
+  total: number;
+  total_value: number;
+  overdue: number;
+  stages: EstimatingStage[];
+}
+
+export interface EstimatingDashboardData {
+  summary: { total: number; total_value: number; overdue: number; due_this_week: number };
+  sales_types: string[];
+  salespeople: EstimatingSalesperson[];
+}
+
+export async function getEstimatingDashboard(): Promise<EstimatingDashboardData> {
+  return request<EstimatingDashboardData>('GET', '/dashboard/estimating');
+}
+
 export async function createFieldOpportunity(p: FieldOpportunityPayload): Promise<CreateOpportunityResponse> {
   const form = new FormData();
   form.append('submitter_name', p.submitterName);

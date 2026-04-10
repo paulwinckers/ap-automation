@@ -23,6 +23,7 @@ const NAV = [
       { label: 'Sales',         path: '/dashboards/sales',         icon: '📊' },
       { label: 'Operations',    path: '/dashboards/ops',           icon: '⚙️' },
       { label: 'Construction',  path: '/dashboards/construction',  icon: '🏗️' },
+      { label: 'Estimating',   path: '/dashboards/estimating',   icon: '📋' },
     ],
   },
 ];
