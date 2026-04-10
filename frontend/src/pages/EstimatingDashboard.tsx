@@ -106,12 +106,14 @@ function Td({ children, align = 'left', style }: {
   );
 }
 
-// ── Opportunity table for one salesperson ─────────────────────────────────────
+// ── Opportunity table ─────────────────────────────────────────────────────────
 
-function OppTable({ opps }: { opps: EstimatingOpp[] }) {
+function OppTable({ opps, showSalesperson = false }: { opps: EstimatingOpp[]; showSalesperson?: boolean }) {
   const { sorted, sortField, sortDir, onSort } = useSorted(opps, 'property');
   const sp = { sortField, sortDir, onSort };
   const total = opps.reduce((s, o) => s + (o.estimated_value ?? 0), 0);
+  // Total columns: 11 base + 1 if salesperson shown = 12
+  const totalCols = showSalesperson ? 12 : 11;
 
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -119,11 +121,13 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
         <thead>
           <tr>
             <SortTh field="property"        align="left"   {...sp}>Property / Opportunity</SortTh>
+            {showSalesperson && <SortTh field="salesperson" align="left" {...sp}>Salesperson</SortTh>}
             <SortTh field="status"          align="left"   {...sp}>Phase</SortTh>
             <SortTh field="opp_type"        align="center" {...sp}>Type</SortTh>
             <SortTh field="division"        align="left"   {...sp}>Division</SortTh>
             <SortTh field="sales_type"      align="left"   {...sp}>Sales Type</SortTh>
             <SortTh field="estimated_value" align="right"  {...sp}>Est. Value</SortTh>
+            <SortTh field="created_date"    align="right"  {...sp}>Created</SortTh>
             <SortTh field="due_date"        align="right"  {...sp}>Bid Due</SortTh>
             <SortTh field="start_date"      align="right"  {...sp}>Start</SortTh>
             <SortTh field="end_date"        align="right"  {...sp}>End</SortTh>
@@ -151,6 +155,10 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
                     {o.opp_number ? `#${o.opp_number} – ` : ''}{o.name || '(unnamed)'}
                   </a>
                 </Td>
+                {/* Salesperson (flat view only) */}
+                {showSalesperson && (
+                  <Td><span style={{ fontSize: 11, color: '#374151' }}>{(o as unknown as Record<string,string>)['salesperson'] || '—'}</span></Td>
+                )}
                 {/* Phase */}
                 <Td>
                   <span style={{ fontSize: 11, color: '#475569' }}>{o.status}</span>
@@ -168,16 +176,16 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
                   </span>
                 </Td>
                 {/* Division */}
-                <Td>
-                  <span style={{ fontSize: 11, color: '#6b7280' }}>{o.division || '—'}</span>
-                </Td>
+                <Td><span style={{ fontSize: 11, color: '#6b7280' }}>{o.division || '—'}</span></Td>
                 {/* Sales type */}
-                <Td>
-                  <span style={{ fontSize: 11, color: '#6b7280' }}>{o.sales_type || '—'}</span>
-                </Td>
+                <Td><span style={{ fontSize: 11, color: '#6b7280' }}>{o.sales_type || '—'}</span></Td>
                 {/* Est. value */}
                 <Td align="right">
                   <span style={{ fontWeight: 700, color: '#1f2937' }}>{fmt$(o.estimated_value)}</span>
+                </Td>
+                {/* Created date */}
+                <Td align="right">
+                  <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtDate(o.created_date)}</span>
                 </Td>
                 {/* Bid due date */}
                 <Td align="right">
@@ -208,13 +216,13 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
         </tbody>
         <tfoot>
           <tr style={{ background: '#f8fafc', borderTop: '2px solid #e5e7eb' }}>
-            <td colSpan={5} style={{ padding: '6px 10px', fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
+            <td colSpan={showSalesperson ? 6 : 5} style={{ padding: '6px 10px', fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
               {opps.length} opportunit{opps.length !== 1 ? 'ies' : 'y'}
             </td>
             <td style={{ padding: '6px 10px', textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#1f2937' }}>
               {fmt$(total)}
             </td>
-            <td colSpan={4} />
+            <td colSpan={totalCols - (showSalesperson ? 7 : 6)} />
           </tr>
         </tfoot>
       </table>
@@ -299,11 +307,12 @@ export default function EstimatingDashboard() {
   const [data, setData]                           = useState<EstimatingDashboardData | null>(null);
   const [loading, setLoading]                     = useState(true);
   const [error, setError]                         = useState<string | null>(null);
-  const [filterSalesperson, setFilterSalesperson] = useState('All');
-  const [filterSalesType,   setFilterSalesType]   = useState('All');
-  const [filterType,        setFilterType]         = useState('All');
-  const [filterPhase,       setFilterPhase]        = useState('All');
-  const [filterStartYear,   setFilterStartYear]    = useState('2026');
+  const [filterSalesperson,   setFilterSalesperson]   = useState('All');
+  const [filterSalesType,     setFilterSalesType]     = useState('All');
+  const [filterType,          setFilterType]           = useState('All');
+  const [filterPhase,         setFilterPhase]          = useState('All');
+  const [filterStartYear,     setFilterStartYear]      = useState('2026');
+  const [groupBySalesperson,  setGroupBySalesperson]   = useState(true);
 
   useEffect(() => {
     setLoading(true); setError(null);
@@ -481,17 +490,49 @@ export default function EstimatingDashboard() {
           </div>
         </div>
 
+        {/* Group by salesperson toggle */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Group by:</label>
+          <button
+            onClick={() => setGroupBySalesperson(g => !g)}
+            style={{
+              padding: '5px 12px', fontSize: 12, borderRadius: 6, cursor: 'pointer',
+              border: '1px solid #e5e7eb',
+              fontWeight: groupBySalesperson ? 700 : 400,
+              background: groupBySalesperson ? '#2563eb' : '#fff',
+              color:      groupBySalesperson ? '#fff' : '#6b7280',
+            }}
+          >
+            Salesperson
+          </button>
+        </div>
+
         <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 'auto' }}>{visibleCount} showing</span>
       </div>
 
-      {/* Salesperson sections */}
+      {/* Content — grouped or flat */}
       <div style={{ padding: '16px 28px 28px' }}>
-        {visibleSalespeople.map(sp => (
-          <SalespersonSection
-            key={sp.name} sp={sp}
-            matchesFilters={matchesFilters}
-          />
-        ))}
+        {groupBySalesperson ? (
+          visibleSalespeople.map(sp => (
+            <SalespersonSection
+              key={sp.name} sp={sp}
+              matchesFilters={matchesFilters}
+            />
+          ))
+        ) : (
+          <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+            <OppTable
+              showSalesperson
+              opps={visibleSalespeople.flatMap(sp =>
+                sp.stages.flatMap(st =>
+                  st.opportunities
+                    .filter(matchesFilters)
+                    .map(o => ({ ...o, salesperson: sp.name }))
+                )
+              )}
+            />
+          </div>
+        )}
       </div>
 
     </div>
