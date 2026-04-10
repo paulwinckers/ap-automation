@@ -90,6 +90,31 @@ class AspireClient:
             return result
         return result.get("value", [])
 
+    async def _get_all(self, path: str, params: dict = None, max_pages: int = 20) -> list:
+        """
+        Fetch ALL records by following OData @odata.nextLink pagination.
+        Aspire caps $top at ~500; this iterates until no next link remains.
+        """
+        token = await self._get_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json;odata.metadata=minimal",
+        }
+        url = f"{self.base_url}/{path.lstrip('/')}"
+        all_records: list = []
+        page = 0
+
+        while url and page < max_pages:
+            resp = await self._http.get(url, params=params if page == 0 else None, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            all_records.extend(self._extract_list(data))
+            url = data.get("@odata.nextLink") if isinstance(data, dict) else None
+            page += 1
+            logger.debug(f"_get_all page {page}: {len(all_records)} records so far, next={bool(url)}")
+
+        return all_records
+
     async def _patch(self, path: str, body: dict) -> dict:
         """PATCH (partial update) an Aspire resource."""
         token = await self._get_token()

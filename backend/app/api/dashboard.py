@@ -320,6 +320,43 @@ async def get_job_tickets(opportunity_id: int):
 
 # ── Estimating Dashboard ───────────────────────────────────────────────────────
 
+@router.get("/estimating/probe")
+async def estimating_probe():
+    """
+    Diagnostic: returns raw counts at each filter stage so we can see
+    why the pipeline looks smaller than expected.
+    """
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire credentials not configured")
+    try:
+        raw_opps = await _aspire._get_all("Opportunities", {
+            "$select": "OpportunityID,OpportunityName,PropertyName,OpportunityStatusName,OpportunityType",
+            "$top": "500",
+            "$orderby": "CreatedDateTime desc",
+        })
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    total_fetched = len(raw_opps)
+    status_counts = Counter(o.get("OpportunityStatusName") or "(none)" for o in raw_opps)
+    no_property = [o for o in raw_opps if not (o.get("PropertyName") or "").strip()]
+    active = [o for o in raw_opps if (
+        "won"  not in (o.get("OpportunityStatusName") or "").lower() and
+        "lost" not in (o.get("OpportunityStatusName") or "").lower()
+    )]
+    active_with_property = [o for o in active if (o.get("PropertyName") or "").strip()]
+
+    return {
+        "total_fetched": total_fetched,
+        "status_breakdown": dict(status_counts.most_common()),
+        "no_property_count": len(no_property),
+        "no_property_sample": [{"id": o.get("OpportunityID"), "name": o.get("OpportunityName"), "status": o.get("OpportunityStatusName")} for o in no_property[:10]],
+        "active_after_won_lost_filter": len(active),
+        "active_with_property": len(active_with_property),
+        "final_pipeline_count": len(active_with_property),
+    }
+
+
 @router.get("/estimating")
 async def get_estimating_dashboard():
     """
@@ -347,7 +384,7 @@ async def get_estimating_dashboard():
         )
 
     try:
-        result = await _aspire._get("Opportunities", {
+        raw_opps = await _aspire._get_all("Opportunities", {
             "$select": (
                 "OpportunityID,OpportunityName,PropertyName,DivisionName,DivisionID,"
                 "SalesRepContactName,SalesRepContactID,"
@@ -355,10 +392,10 @@ async def get_estimating_dashboard():
                 "OpportunityType,SalesTypeName,SalesTypeID,"
                 "EstimatedDollars,BidDueDate,CreatedDateTime,WonDate,LostDate"
             ),
-            "$top": "1000",
-            "$orderby": "BidDueDate asc",
+            "$top": "500",
+            "$orderby": "CreatedDateTime desc",
         })
-        raw_opps = _aspire._extract_list(result)
+        logger.info(f"Estimating dashboard: fetched {len(raw_opps)} total opportunities from Aspire")
     except Exception as e:
         logger.error(f"Estimating dashboard fetch failed: {e}")
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
