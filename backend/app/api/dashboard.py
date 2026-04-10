@@ -320,6 +320,28 @@ async def get_job_tickets(opportunity_id: int):
 
 # ── Estimating Dashboard ───────────────────────────────────────────────────────
 
+@router.get("/estimating/fields")
+async def estimating_fields_probe():
+    """Fetch one opportunity with ALL fields so we can find the correct last-modified field name."""
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire credentials not configured")
+    try:
+        result = await _aspire._get("Opportunities", {
+            "$filter": "OpportunityStatusName ne 'Won' and OpportunityStatusName ne 'Lost'",
+            "$top": "1",
+            "$orderby": "CreatedDateTime desc",
+        })
+        opps = _aspire._extract_list(result)
+        if not opps:
+            return {"error": "No opportunities found"}
+        opp = opps[0]
+        # Return all fields so we can find the last-modified one
+        date_fields = {k: v for k, v in opp.items() if v and ("date" in k.lower() or "time" in k.lower() or "modified" in k.lower() or "updated" in k.lower() or "activity" in k.lower())}
+        return {"all_field_names": sorted(opp.keys()), "date_like_fields": date_fields}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @router.get("/estimating/probe")
 async def estimating_probe():
     """
@@ -391,7 +413,7 @@ async def get_estimating_dashboard():
                 "SalesRepContactName,SalesRepContactID,"
                 "OpportunityStatusName,OpportunityStatusID,"
                 "OpportunityType,SalesTypeName,SalesTypeID,"
-                "EstimatedDollars,BidDueDate,StartDate,CreatedDateTime,LastModifiedDateTime,WonDate,LostDate"
+                "EstimatedDollars,BidDueDate,StartDate,CreatedDateTime,WonDate,LostDate"
             ),
             # Filter Won/Lost at the API level so the 500-record cap is spent
             # entirely on active opportunities rather than closed ones.
@@ -462,7 +484,7 @@ async def get_estimating_dashboard():
         due_days   = days_until(due_dt)
 
         start_dt        = parse_date(o.get("StartDate"))
-        last_modified_dt = parse_date(o.get("LastModifiedDateTime"))
+        last_modified_dt = parse_date(o.get("LastActivityDate") or o.get("UpdatedDateTime") or o.get("ModifiedDateTime"))
         shaped.append({
             "id":                 o.get("OpportunityID"),
             "opp_number":         o.get("OpportunityNumber"),
