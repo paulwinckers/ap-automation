@@ -345,10 +345,13 @@ function StatusSection({ status, opps }: { status: string; opps: EstimatingOpp[]
 
 // ── Select style shared ───────────────────────────────────────────────────────
 
-const SELECT_STYLE: React.CSSProperties = {
-  fontSize: 12, padding: '5px 8px', borderRadius: 6,
-  border: '1px solid #e5e7eb', background: '#fff', color: '#1f2937', cursor: 'pointer',
-};
+const SELECT_STYLE = (active: boolean): React.CSSProperties => ({
+  fontSize: 12, padding: '5px 8px', borderRadius: 6, cursor: 'pointer',
+  border: `1px solid ${active ? '#2563eb' : '#e5e7eb'}`,
+  background: active ? '#2563eb' : '#fff',
+  color:      active ? '#fff'    : '#1f2937',
+  fontWeight: active ? 700       : 400,
+});
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
@@ -500,7 +503,7 @@ export default function EstimatingDashboard() {
         {/* Salesperson */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Salesperson:</label>
-          <select value={filterSalesperson} onChange={e => setFilterSalesperson(e.target.value)} style={SELECT_STYLE}>
+          <select value={filterSalesperson} onChange={e => setFilterSalesperson(e.target.value)} style={SELECT_STYLE(filterSalesperson !== 'All')}>
             <option value="All">All</option>
             {salespersonNames.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
@@ -509,7 +512,7 @@ export default function EstimatingDashboard() {
         {/* Sales Type */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Sales Type:</label>
-          <select value={filterSalesType} onChange={e => setFilterSalesType(e.target.value)} style={SELECT_STYLE}>
+          <select value={filterSalesType} onChange={e => setFilterSalesType(e.target.value)} style={SELECT_STYLE(filterSalesType !== 'All')}>
             <option value="All">All</option>
             {sales_types.map(st => <option key={st} value={st}>{st}</option>)}
           </select>
@@ -518,7 +521,7 @@ export default function EstimatingDashboard() {
         {/* Start Year */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Start Year:</label>
-          <select value={filterStartYear} onChange={e => setFilterStartYear(e.target.value)} style={SELECT_STYLE}>
+          <select value={filterStartYear} onChange={e => setFilterStartYear(e.target.value)} style={SELECT_STYLE(filterStartYear !== 'All')}>
             <option value="All">All</option>
             {['2024', '2025', '2026', '2027'].map(y => <option key={y} value={y}>{y}</option>)}
           </select>
