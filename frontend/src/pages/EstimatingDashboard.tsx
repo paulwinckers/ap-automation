@@ -29,6 +29,17 @@ function fmtDate(s: string | null): string {
   } catch { return s; }
 }
 
+const PHASE_ORDER = ['New', 'Qualified', 'In Design', 'Estimating', 'Reviewed', 'Delivered'];
+
+function phaseSort(a: string, b: string) {
+  const ai = PHASE_ORDER.indexOf(a);
+  const bi = PHASE_ORDER.indexOf(b);
+  if (ai === -1 && bi === -1) return a.localeCompare(b);
+  if (ai === -1) return 1;
+  if (bi === -1) return -1;
+  return ai - bi;
+}
+
 const URGENCY_COLOR: Record<string, string> = {
   overdue: '#dc2626',
   urgent:  '#ea580c',
@@ -294,6 +305,44 @@ function SalespersonSection({ sp, matchesFilters }: {
   );
 }
 
+// ── Status section ────────────────────────────────────────────────────────────
+
+function StatusSection({ status, opps }: { status: string; opps: EstimatingOpp[] }) {
+  const [open, setOpen] = useState(false);
+
+  if (opps.length === 0) return null;
+
+  const totalValue = opps.reduce((s, o) => s + (o.estimated_value ?? 0), 0);
+  const overdue    = opps.filter(o => o.urgency === 'overdue').length;
+
+  return (
+    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', marginBottom: 12, background: '#fff' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+          padding: '10px 14px', background: '#f8fafc',
+          border: 'none', borderBottom: open ? '1px solid #e5e7eb' : 'none',
+          cursor: 'pointer', textAlign: 'left',
+        }}
+      >
+        <span style={{ color: '#9ca3af', fontSize: 10, transform: open ? 'rotate(90deg)' : 'none', display: 'inline-block', transition: 'transform 0.15s' }}>▶</span>
+        <span style={{ fontWeight: 700, fontSize: 14, color: '#111827', flex: 1 }}>{status}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {overdue > 0 && (
+            <span style={{ background: '#fee2e2', color: '#dc2626', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10 }}>
+              {overdue} overdue
+            </span>
+          )}
+          <span style={{ fontSize: 12, color: '#6b7280' }}>{opps.length} opp{opps.length !== 1 ? 's' : ''}</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: '#1f2937', minWidth: 80, textAlign: 'right' }}>{fmt$(totalValue)}</span>
+        </div>
+      </button>
+      {open && <OppTable opps={opps} showSalesperson />}
+    </div>
+  );
+}
+
 // ── Select style shared ───────────────────────────────────────────────────────
 
 const SELECT_STYLE: React.CSSProperties = {
@@ -312,7 +361,7 @@ export default function EstimatingDashboard() {
   const [filterType,          setFilterType]           = useState('All');
   const [filterPhase,         setFilterPhase]          = useState('All');
   const [filterStartYear,     setFilterStartYear]      = useState('2026');
-  const [groupBySalesperson,  setGroupBySalesperson]   = useState(true);
+  const [groupBy, setGroupBy] = useState<'salesperson' | 'status' | 'flat'>('salesperson');
 
   useEffect(() => {
     setLoading(true); setError(null);
@@ -363,23 +412,14 @@ export default function EstimatingDashboard() {
     sp.stages.flatMap(st => st.opportunities).filter(baseMatch)
   );
 
-  // Per-phase stats for the tiles — ordered by desired workflow sequence
-  const PHASE_ORDER = ['New', 'Qualified', 'In Design', 'Estimating', 'Reviewed', 'Delivered'];
+  // Per-phase stats for the tiles — ordered by workflow sequence
   const phaseTiles = phases
     .map(phase => {
       const opps = baseOpps.filter(o => o.status === phase);
       return { phase, count: opps.length, value: opps.reduce((s, o) => s + o.estimated_value, 0) };
     })
     .filter(t => t.count > 0)
-    .sort((a, b) => {
-      const ai = PHASE_ORDER.indexOf(a.phase);
-      const bi = PHASE_ORDER.indexOf(b.phase);
-      // Known phases follow the defined order; unknown phases go to the end alphabetically
-      if (ai === -1 && bi === -1) return a.phase.localeCompare(b.phase);
-      if (ai === -1) return 1;
-      if (bi === -1) return -1;
-      return ai - bi;
-    });
+    .sort((a, b) => phaseSort(a.phase, b.phase));
 
   const allTile = {
     count: baseOpps.length,
@@ -500,44 +540,58 @@ export default function EstimatingDashboard() {
           </div>
         </div>
 
-        {/* Group by salesperson toggle */}
+        {/* Group by 3-way toggle */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Group by:</label>
-          <button
-            onClick={() => setGroupBySalesperson(g => !g)}
-            style={{
-              padding: '5px 12px', fontSize: 12, borderRadius: 6, cursor: 'pointer',
-              border: '1px solid #e5e7eb',
-              fontWeight: groupBySalesperson ? 700 : 400,
-              background: groupBySalesperson ? '#2563eb' : '#fff',
-              color:      groupBySalesperson ? '#fff' : '#6b7280',
-            }}
-          >
-            Salesperson
-          </button>
+          <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #e5e7eb' }}>
+            {([['salesperson', 'Salesperson'], ['status', 'Status'], ['flat', 'None']] as const).map(([val, label], i) => (
+              <button key={val} onClick={() => setGroupBy(val)} style={{
+                padding: '5px 12px', fontSize: 12, border: 'none', cursor: 'pointer',
+                fontWeight: groupBy === val ? 700 : 400,
+                background: groupBy === val ? '#2563eb' : '#fff',
+                color:      groupBy === val ? '#fff' : '#6b7280',
+                borderRight: i < 2 ? '1px solid #e5e7eb' : 'none',
+              }}>{label}</button>
+            ))}
+          </div>
         </div>
 
         <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 'auto' }}>{visibleCount} showing</span>
       </div>
 
-      {/* Content — grouped or flat */}
+      {/* Content — grouped by salesperson / status / flat */}
       <div style={{ padding: '16px 28px 28px' }}>
-        {groupBySalesperson ? (
+        {groupBy === 'salesperson' && (
           visibleSalespeople.map(sp => (
-            <SalespersonSection
-              key={sp.name} sp={sp}
-              matchesFilters={matchesFilters}
-            />
+            <SalespersonSection key={sp.name} sp={sp} matchesFilters={matchesFilters} />
           ))
-        ) : (
+        )}
+
+        {groupBy === 'status' && (() => {
+          // Flatten all visible opps with salesperson attached, then group by status
+          const allOpps = visibleSalespeople.flatMap(sp =>
+            sp.stages.flatMap(st =>
+              st.opportunities.filter(matchesFilters).map(o => ({ ...o, salesperson: sp.name }))
+            )
+          );
+          // Collect unique statuses in phase order
+          const statuses = [...new Set(allOpps.map(o => o.status))].sort(phaseSort);
+          return statuses.map(status => (
+            <StatusSection
+              key={status}
+              status={status}
+              opps={allOpps.filter(o => o.status === status)}
+            />
+          ));
+        })()}
+
+        {groupBy === 'flat' && (
           <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
             <OppTable
               showSalesperson
               opps={visibleSalespeople.flatMap(sp =>
                 sp.stages.flatMap(st =>
-                  st.opportunities
-                    .filter(matchesFilters)
-                    .map(o => ({ ...o, salesperson: sp.name }))
+                  st.opportunities.filter(matchesFilters).map(o => ({ ...o, salesperson: sp.name }))
                 )
               )}
             />
