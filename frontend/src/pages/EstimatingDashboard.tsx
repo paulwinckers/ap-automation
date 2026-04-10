@@ -109,7 +109,7 @@ function Td({ children, align = 'left', style }: {
 // ── Opportunity table for one salesperson ─────────────────────────────────────
 
 function OppTable({ opps }: { opps: EstimatingOpp[] }) {
-  const { sorted, sortField, sortDir, onSort } = useSorted(opps, 'due_date');
+  const { sorted, sortField, sortDir, onSort } = useSorted(opps, 'property');
   const sp = { sortField, sortDir, onSort };
   const total = opps.reduce((s, o) => s + (o.estimated_value ?? 0), 0);
 
@@ -118,7 +118,7 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
-            <SortTh field="name"            align="left"  {...sp}>Opportunity</SortTh>
+            <SortTh field="property"        align="left"  {...sp}>Property / Opportunity</SortTh>
             <SortTh field="stage"           align="left"  {...sp}>Stage</SortTh>
             <SortTh field="opp_type"        align="center" {...sp}>Type</SortTh>
             <SortTh field="division"        align="left"  {...sp}>Division</SortTh>
@@ -134,20 +134,20 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
             const isContract = o.opp_type === 'Contract';
             return (
               <tr key={o.id} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                {/* Name — links to Aspire */}
+                {/* Property (bold) then opp name as link */}
                 <Td>
+                  <div style={{ fontWeight: 700, fontSize: 12, color: '#111827', marginBottom: 2 }}>
+                    {o.property || '—'}
+                  </div>
                   <a
                     href={`https://cloud.youraspire.com/app/opportunities/details/${o.id}`}
                     target="_blank" rel="noopener noreferrer"
-                    style={{ fontWeight: 600, color: '#1e40af', fontSize: 12, textDecoration: 'none' }}
+                    style={{ fontSize: 11, color: '#2563eb', textDecoration: 'none' }}
                     onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
                     onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
                   >
                     {o.name || '(unnamed)'}
                   </a>
-                  {o.property && o.property !== o.name && (
-                    <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }}>{o.property}</div>
-                  )}
                 </Td>
                 {/* Stage */}
                 <Td>

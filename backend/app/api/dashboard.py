@@ -363,12 +363,15 @@ async def get_estimating_dashboard():
         logger.error(f"Estimating dashboard fetch failed: {e}")
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
-    # ── Filter out Won / Lost ─────────────────────────────────────────────────
+    # ── Filter out Won / Lost and opportunities with no property ─────────────
     def is_active(o: dict) -> bool:
         status = (o.get("OpportunityStatusName") or "").strip().lower()
         return "won" not in status and "lost" not in status
 
-    opps = [o for o in raw_opps if is_active(o)]
+    def has_property(o: dict) -> bool:
+        return bool((o.get("PropertyName") or "").strip())
+
+    opps = [o for o in raw_opps if is_active(o) and has_property(o)]
 
     # ── Date helpers ──────────────────────────────────────────────────────────
     now = datetime.now(timezone.utc)
