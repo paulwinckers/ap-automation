@@ -365,6 +365,7 @@ export default function EstimatingDashboard() {
   const [filterPhase,         setFilterPhase]          = useState('All');
   const [filterStartYear,     setFilterStartYear]      = useState('2026');
   const [filterDivision,      setFilterDivision]       = useState('All');
+  const [search,              setSearch]               = useState('');
   const [groupBy, setGroupBy] = useState<'salesperson' | 'status' | 'flat'>('salesperson');
 
   useEffect(() => {
@@ -408,9 +409,17 @@ export default function EstimatingDashboard() {
     (filterDivision  === 'All' || o.division   === filterDivision) &&
     (filterStartYear === 'All' || !o.start_date || o.start_date.startsWith(filterStartYear));
 
+  const searchLower = search.trim().toLowerCase();
   const matchesFilters = (o: EstimatingOpp) =>
     baseMatch(o) &&
-    (filterPhase === 'All' || o.status === filterPhase);
+    (filterPhase === 'All' || o.status === filterPhase) &&
+    (!searchLower || (
+      o.property.toLowerCase().includes(searchLower) ||
+      o.name.toLowerCase().includes(searchLower) ||
+      String(o.opp_number ?? '').includes(searchLower) ||
+      o.division.toLowerCase().includes(searchLower) ||
+      o.sales_type.toLowerCase().includes(searchLower)
+    ));
 
   // All opps matching base filters (for phase tile computation)
   const baseOpps = visibleSalespeople.flatMap(sp =>
@@ -500,6 +509,26 @@ export default function EstimatingDashboard() {
         padding: '10px 28px',
         display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap',
       }}>
+        {/* Search */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 14, color: '#9ca3af' }}>🔍</span>
+          <input
+            type="text"
+            placeholder="Search property, opp, division…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              fontSize: 12, padding: '5px 10px', borderRadius: 6,
+              border: `1px solid ${search ? '#2563eb' : '#e5e7eb'}`,
+              background: search ? '#eff6ff' : '#fff',
+              color: '#1f2937', outline: 'none', width: 220,
+            }}
+          />
+          {search && (
+            <button onClick={() => setSearch('')} style={{ fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>✕</button>
+          )}
+        </div>
+
         {/* Salesperson */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Salesperson:</label>
