@@ -412,7 +412,11 @@ async def get_estimating_dashboard():
     def has_property(o: dict) -> bool:
         return bool((o.get("PropertyName") or "").strip())
 
-    opps = [o for o in raw_opps if is_active(o) and has_property(o)]
+    def is_not_test(o: dict) -> bool:
+        prop = (o.get("PropertyName") or "").strip().lower()
+        return "dario" not in prop or "test" not in prop
+
+    opps = [o for o in raw_opps if is_active(o) and has_property(o) and is_not_test(o)]
 
     # ── Date helpers ──────────────────────────────────────────────────────────
     now = datetime.now(timezone.utc)
