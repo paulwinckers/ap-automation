@@ -329,7 +329,7 @@ export default function EstimatingDashboard() {
     </div>
   );
 
-  const { summary, sales_types, phases, salespeople } = data;
+  const { sales_types, phases, salespeople } = data;
 
   // Salesperson names for the filter dropdown
   const salespersonNames = salespeople.map(s => s.name);
@@ -339,11 +339,33 @@ export default function EstimatingDashboard() {
     ? salespeople
     : salespeople.filter(s => s.name === filterSalesperson);
 
-  const matchesFilters = (o: EstimatingOpp) =>
+  // Base filter — everything EXCEPT phase, used to compute the phase tiles
+  const baseMatch = (o: EstimatingOpp) =>
     (filterType      === 'All' || o.opp_type   === filterType) &&
     (filterSalesType === 'All' || o.sales_type === filterSalesType) &&
-    (filterPhase     === 'All' || o.status     === filterPhase) &&
     (filterStartYear === 'All' || !o.start_date || o.start_date.startsWith(filterStartYear));
+
+  const matchesFilters = (o: EstimatingOpp) =>
+    baseMatch(o) &&
+    (filterPhase === 'All' || o.status === filterPhase);
+
+  // All opps matching base filters (for phase tile computation)
+  const baseOpps = visibleSalespeople.flatMap(sp =>
+    sp.stages.flatMap(st => st.opportunities).filter(baseMatch)
+  );
+
+  // Per-phase stats for the tiles
+  const phaseTiles = phases
+    .map(phase => {
+      const opps = baseOpps.filter(o => o.status === phase);
+      return { phase, count: opps.length, value: opps.reduce((s, o) => s + o.estimated_value, 0) };
+    })
+    .filter(t => t.count > 0);
+
+  const allTile = {
+    count: baseOpps.length,
+    value: baseOpps.reduce((s, o) => s + o.estimated_value, 0),
+  };
 
   const visibleCount = visibleSalespeople.reduce((acc, sp) =>
     acc + sp.stages.flatMap(st => st.opportunities).filter(matchesFilters).length, 0);
@@ -351,31 +373,60 @@ export default function EstimatingDashboard() {
   return (
     <div style={{ background: '#f8fafc', minHeight: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
 
-      {/* Non-sticky header + summary */}
+      {/* Non-sticky header + phase tiles */}
       <div style={{ padding: '24px 28px 0' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 14 }}>
           <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.4px' }}>
             📋 Estimating Pipeline
           </h1>
           <span style={{ fontSize: 12, color: '#94a3b8' }}>open opportunities · excludes Won &amp; Lost</span>
         </div>
 
-        {/* Summary strip */}
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 0 }}>
-          {[
-            { label: 'Open',          value: summary.total,             color: '#1f2937' },
-            { label: 'Est. Value',    value: fmt$(summary.total_value), color: '#1f2937' },
-            { label: 'Overdue',       value: summary.overdue,           color: summary.overdue > 0 ? '#dc2626' : '#16a34a' },
-            { label: 'Due This Week', value: summary.due_this_week,     color: summary.due_this_week > 0 ? '#ea580c' : '#16a34a' },
-          ].map(({ label, value, color }) => (
-            <div key={label} style={{
-              background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8,
-              padding: '10px 18px', flex: '1 1 140px',
-            }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
-              <div style={{ fontSize: 22, fontWeight: 800, color }}>{value}</div>
-            </div>
-          ))}
+        {/* Dynamic phase tiles — click to filter */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 0 }}>
+          {/* "All" tile */}
+          {(() => {
+            const active = filterPhase === 'All';
+            return (
+              <button
+                key="all"
+                onClick={() => setFilterPhase('All')}
+                style={{
+                  flex: '1 1 130px', padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                  textAlign: 'left', border: `2px solid ${active ? '#2563eb' : '#e5e7eb'}`,
+                  background: active ? '#eff6ff' : '#fff',
+                  boxShadow: active ? '0 0 0 1px #2563eb22' : 'none',
+                  transition: 'all 0.12s',
+                }}
+              >
+                <div style={{ fontSize: 10, fontWeight: 700, color: active ? '#2563eb' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>All Phases</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: active ? '#1d4ed8' : '#1f2937', lineHeight: 1 }}>{allTile.count}</div>
+                <div style={{ fontSize: 11, color: active ? '#3b82f6' : '#6b7280', marginTop: 3 }}>{fmt$(allTile.value)}</div>
+              </button>
+            );
+          })()}
+
+          {/* One tile per phase */}
+          {phaseTiles.map(({ phase, count, value }) => {
+            const active = filterPhase === phase;
+            return (
+              <button
+                key={phase}
+                onClick={() => setFilterPhase(active ? 'All' : phase)}
+                style={{
+                  flex: '1 1 130px', padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                  textAlign: 'left', border: `2px solid ${active ? '#2563eb' : '#e5e7eb'}`,
+                  background: active ? '#eff6ff' : '#fff',
+                  boxShadow: active ? '0 0 0 1px #2563eb22' : 'none',
+                  transition: 'all 0.12s',
+                }}
+              >
+                <div style={{ fontSize: 10, fontWeight: 700, color: active ? '#2563eb' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{phase}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: active ? '#1d4ed8' : '#1f2937', lineHeight: 1 }}>{count}</div>
+                <div style={{ fontSize: 11, color: active ? '#3b82f6' : '#6b7280', marginTop: 3 }}>{fmt$(value)}</div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -393,15 +444,6 @@ export default function EstimatingDashboard() {
           <select value={filterSalesperson} onChange={e => setFilterSalesperson(e.target.value)} style={SELECT_STYLE}>
             <option value="All">All</option>
             {salespersonNames.map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </div>
-
-        {/* Phase */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Phase:</label>
-          <select value={filterPhase} onChange={e => setFilterPhase(e.target.value)} style={SELECT_STYLE}>
-            <option value="All">All</option>
-            {phases.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         </div>
 
