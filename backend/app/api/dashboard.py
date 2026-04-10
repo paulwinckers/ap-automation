@@ -391,7 +391,7 @@ async def get_estimating_dashboard():
                 "SalesRepContactName,SalesRepContactID,"
                 "OpportunityStatusName,OpportunityStatusID,"
                 "OpportunityType,SalesTypeName,SalesTypeID,"
-                "EstimatedDollars,BidDueDate,CreatedDateTime,WonDate,LostDate"
+                "EstimatedDollars,BidDueDate,StartDate,EndDate,CreatedDateTime,WonDate,LostDate"
             ),
             # Filter Won/Lost at the API level so the 500-record cap is spent
             # entirely on active opportunities rather than closed ones.
@@ -461,6 +461,8 @@ async def get_estimating_dashboard():
         urg        = urgency(due_dt)
         due_days   = days_until(due_dt)
 
+        start_dt = parse_date(o.get("StartDate"))
+        end_dt   = parse_date(o.get("EndDate"))
         shaped.append({
             "id":              o.get("OpportunityID"),
             "opp_number":      o.get("OpportunityNumber"),
@@ -472,6 +474,8 @@ async def get_estimating_dashboard():
             "status":          o.get("OpportunityStatusName") or "",
             "created_date":    (created_dt.date().isoformat() if created_dt else None),
             "due_date":        (due_dt.date().isoformat()     if due_dt     else None),
+            "start_date":      (start_dt.date().isoformat()   if start_dt   else None),
+            "end_date":        (end_dt.date().isoformat()      if end_dt     else None),
             "estimated_value": float(o.get("EstimatedDollars") or 0),
             "days_old":        days_since(created_dt),
             "days_until_due":  due_days,

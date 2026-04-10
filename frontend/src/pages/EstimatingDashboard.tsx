@@ -118,14 +118,16 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
-            <SortTh field="property"        align="left"  {...sp}>Property / Opportunity</SortTh>
-            <SortTh field="stage"           align="left"  {...sp}>Stage</SortTh>
+            <SortTh field="property"        align="left"   {...sp}>Property / Opportunity</SortTh>
+            <SortTh field="status"          align="left"   {...sp}>Phase</SortTh>
             <SortTh field="opp_type"        align="center" {...sp}>Type</SortTh>
-            <SortTh field="division"        align="left"  {...sp}>Division</SortTh>
-            <SortTh field="sales_type"      align="left"  {...sp}>Sales Type</SortTh>
-            <SortTh field="estimated_value" align="right" {...sp}>Est. Value</SortTh>
-            <SortTh field="due_date"        align="right" {...sp}>Due Date</SortTh>
-            <SortTh field="days_old"        align="right" {...sp}>Age</SortTh>
+            <SortTh field="division"        align="left"   {...sp}>Division</SortTh>
+            <SortTh field="sales_type"      align="left"   {...sp}>Sales Type</SortTh>
+            <SortTh field="estimated_value" align="right"  {...sp}>Est. Value</SortTh>
+            <SortTh field="due_date"        align="right"  {...sp}>Bid Due</SortTh>
+            <SortTh field="start_date"      align="right"  {...sp}>Start</SortTh>
+            <SortTh field="end_date"        align="right"  {...sp}>End</SortTh>
+            <SortTh field="days_old"        align="right"  {...sp}>Age</SortTh>
           </tr>
         </thead>
         <tbody>
@@ -134,7 +136,7 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
             const isContract = o.opp_type === 'Contract';
             return (
               <tr key={o.id} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                {/* Property (bold) then #Num - Opp Name as link */}
+                {/* Property (bold) then #Num – Opp Name as link */}
                 <Td>
                   <div style={{ fontWeight: 700, fontSize: 12, color: '#111827', marginBottom: 2 }}>
                     {o.property || '—'}
@@ -149,7 +151,7 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
                     {o.opp_number ? `#${o.opp_number} – ` : ''}{o.name || '(unnamed)'}
                   </a>
                 </Td>
-                {/* Stage */}
+                {/* Phase */}
                 <Td>
                   <span style={{ fontSize: 11, color: '#475569' }}>{o.status}</span>
                 </Td>
@@ -177,7 +179,7 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
                 <Td align="right">
                   <span style={{ fontWeight: 700, color: '#1f2937' }}>{fmt$(o.estimated_value)}</span>
                 </Td>
-                {/* Due date */}
+                {/* Bid due date */}
                 <Td align="right">
                   <span style={{ color: duColor, fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>
                     <span style={{
@@ -187,6 +189,14 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
                     {fmtDate(o.due_date)}
                   </span>
                   <div style={{ fontSize: 10, color: duColor, marginTop: 1 }}>{urgencyLabel(o)}</div>
+                </Td>
+                {/* Start date */}
+                <Td align="right">
+                  <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtDate(o.start_date)}</span>
+                </Td>
+                {/* End date */}
+                <Td align="right">
+                  <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtDate(o.end_date)}</span>
                 </Td>
                 {/* Age */}
                 <Td align="right">
@@ -204,7 +214,7 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
             <td style={{ padding: '6px 10px', textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#1f2937' }}>
               {fmt$(total)}
             </td>
-            <td colSpan={2} />
+            <td colSpan={4} />
           </tr>
         </tfoot>
       </table>
@@ -214,18 +224,14 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
 
 // ── Salesperson section ────────────────────────────────────────────────────────
 
-function SalespersonSection({ sp, filterType, filterSalesType, filterPhase }: {
-  sp: EstimatingSalesperson; filterType: string; filterSalesType: string; filterPhase: string;
+function SalespersonSection({ sp, matchesFilters }: {
+  sp: EstimatingSalesperson; matchesFilters: (o: EstimatingOpp) => boolean;
 }) {
-  const [open, setOpen] = useState(true);
+  // Collapsed by default
+  const [open, setOpen] = useState(false);
 
-  // Flatten all opps, apply filters
   const allOpps = sp.stages.flatMap(st => st.opportunities);
-  const visible = allOpps.filter(o =>
-    (filterType === 'All' || o.opp_type === filterType) &&
-    (filterSalesType === 'All' || o.sales_type === filterSalesType) &&
-    (filterPhase === 'All' || o.status === filterPhase)
-  );
+  const visible = allOpps.filter(matchesFilters);
 
   if (visible.length === 0) return null;
 
@@ -280,15 +286,24 @@ function SalespersonSection({ sp, filterType, filterSalesType, filterPhase }: {
   );
 }
 
+// ── Select style shared ───────────────────────────────────────────────────────
+
+const SELECT_STYLE: React.CSSProperties = {
+  fontSize: 12, padding: '5px 8px', borderRadius: 6,
+  border: '1px solid #e5e7eb', background: '#fff', color: '#1f2937', cursor: 'pointer',
+};
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function EstimatingDashboard() {
-  const [data, setData]                         = useState<EstimatingDashboardData | null>(null);
-  const [loading, setLoading]                   = useState(true);
-  const [error, setError]                       = useState<string | null>(null);
-  const [filterSalesType, setFilterSalesType]   = useState('All');
-  const [filterType, setFilterType]             = useState('All');
-  const [filterPhase, setFilterPhase]           = useState('All');
+  const [data, setData]                           = useState<EstimatingDashboardData | null>(null);
+  const [loading, setLoading]                     = useState(true);
+  const [error, setError]                         = useState<string | null>(null);
+  const [filterSalesperson, setFilterSalesperson] = useState('All');
+  const [filterSalesType,   setFilterSalesType]   = useState('All');
+  const [filterType,        setFilterType]         = useState('All');
+  const [filterPhase,       setFilterPhase]        = useState('All');
+  const [filterStartYear,   setFilterStartYear]    = useState('2026');
 
   useEffect(() => {
     setLoading(true); setError(null);
@@ -316,68 +331,99 @@ export default function EstimatingDashboard() {
 
   const { summary, sales_types, phases, salespeople } = data;
 
-  const visibleCount = salespeople.reduce((acc, sp) =>
-    acc + sp.stages.flatMap(st => st.opportunities).filter(o =>
-      (filterType === 'All' || o.opp_type === filterType) &&
-      (filterSalesType === 'All' || o.sales_type === filterSalesType) &&
-      (filterPhase === 'All' || o.status === filterPhase)
-    ).length, 0);
+  // Salesperson names for the filter dropdown
+  const salespersonNames = salespeople.map(s => s.name);
+
+  // Visible sections (salesperson filter applied at top level)
+  const visibleSalespeople = filterSalesperson === 'All'
+    ? salespeople
+    : salespeople.filter(s => s.name === filterSalesperson);
+
+  const matchesFilters = (o: EstimatingOpp) =>
+    (filterType      === 'All' || o.opp_type   === filterType) &&
+    (filterSalesType === 'All' || o.sales_type === filterSalesType) &&
+    (filterPhase     === 'All' || o.status     === filterPhase) &&
+    (filterStartYear === 'All' || !o.start_date || o.start_date.startsWith(filterStartYear));
+
+  const visibleCount = visibleSalespeople.reduce((acc, sp) =>
+    acc + sp.stages.flatMap(st => st.opportunities).filter(matchesFilters).length, 0);
 
   return (
-    <div style={{ padding: '24px 28px', background: '#f8fafc', minHeight: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
+    <div style={{ background: '#f8fafc', minHeight: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
 
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 18 }}>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.4px' }}>
-          📋 Estimating Pipeline
-        </h1>
-        <span style={{ fontSize: 12, color: '#94a3b8' }}>open opportunities · excludes Won &amp; Lost</span>
+      {/* Non-sticky header + summary */}
+      <div style={{ padding: '24px 28px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 18 }}>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.4px' }}>
+            📋 Estimating Pipeline
+          </h1>
+          <span style={{ fontSize: 12, color: '#94a3b8' }}>open opportunities · excludes Won &amp; Lost</span>
+        </div>
+
+        {/* Summary strip */}
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 0 }}>
+          {[
+            { label: 'Open',          value: summary.total,             color: '#1f2937' },
+            { label: 'Est. Value',    value: fmt$(summary.total_value), color: '#1f2937' },
+            { label: 'Overdue',       value: summary.overdue,           color: summary.overdue > 0 ? '#dc2626' : '#16a34a' },
+            { label: 'Due This Week', value: summary.due_this_week,     color: summary.due_this_week > 0 ? '#ea580c' : '#16a34a' },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{
+              background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8,
+              padding: '10px 18px', flex: '1 1 140px',
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color }}>{value}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Summary strip */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 18 }}>
-        {[
-          { label: 'Open',         value: summary.total,          color: '#1f2937' },
-          { label: 'Est. Value',   value: fmt$(summary.total_value), color: '#1f2937' },
-          { label: 'Overdue',      value: summary.overdue,        color: summary.overdue > 0 ? '#dc2626' : '#16a34a' },
-          { label: 'Due This Week',value: summary.due_this_week,  color: summary.due_this_week > 0 ? '#ea580c' : '#16a34a' },
-        ].map(({ label, value, color }) => (
-          <div key={label} style={{
-            background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8,
-            padding: '10px 18px', flex: '1 1 140px',
-          }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color }}>{value}</div>
-          </div>
-        ))}
-      </div>
+      {/* ── Sticky filter bar ── */}
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 20,
+        background: '#f8fafc',
+        borderBottom: '1px solid #e5e7eb',
+        padding: '10px 28px',
+        display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap',
+      }}>
+        {/* Salesperson */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Salesperson:</label>
+          <select value={filterSalesperson} onChange={e => setFilterSalesperson(e.target.value)} style={SELECT_STYLE}>
+            <option value="All">All</option>
+            {salespersonNames.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
 
-      {/* Filters */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
+        {/* Phase */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Phase:</label>
-          <select
-            value={filterPhase}
-            onChange={e => setFilterPhase(e.target.value)}
-            style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff', color: '#1f2937', cursor: 'pointer' }}
-          >
+          <select value={filterPhase} onChange={e => setFilterPhase(e.target.value)} style={SELECT_STYLE}>
             <option value="All">All</option>
             {phases.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         </div>
 
+        {/* Sales Type */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Sales Type:</label>
-          <select
-            value={filterSalesType}
-            onChange={e => setFilterSalesType(e.target.value)}
-            style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff', color: '#1f2937', cursor: 'pointer' }}
-          >
+          <select value={filterSalesType} onChange={e => setFilterSalesType(e.target.value)} style={SELECT_STYLE}>
             <option value="All">All</option>
             {sales_types.map(st => <option key={st} value={st}>{st}</option>)}
           </select>
         </div>
 
+        {/* Start Year */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Start Year:</label>
+          <select value={filterStartYear} onChange={e => setFilterStartYear(e.target.value)} style={SELECT_STYLE}>
+            <option value="All">All</option>
+            {['2024', '2025', '2026', '2027'].map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+
+        {/* Contract / Work Order toggle */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Type:</label>
           <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #e5e7eb' }}>
@@ -393,17 +439,15 @@ export default function EstimatingDashboard() {
           </div>
         </div>
 
-        <span style={{ fontSize: 11, color: '#9ca3af' }}>{visibleCount} showing</span>
+        <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 'auto' }}>{visibleCount} showing</span>
       </div>
 
       {/* Salesperson sections */}
-      <div>
-        {salespeople.map(sp => (
+      <div style={{ padding: '16px 28px 28px' }}>
+        {visibleSalespeople.map(sp => (
           <SalespersonSection
             key={sp.name} sp={sp}
-            filterType={filterType}
-            filterSalesType={filterSalesType}
-            filterPhase={filterPhase}
+            matchesFilters={matchesFilters}
           />
         ))}
       </div>

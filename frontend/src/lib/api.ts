@@ -455,6 +455,8 @@ export interface EstimatingOpp {
   status: string;
   created_date: string | null;
   due_date: string | null;
+  start_date: string | null;
+  end_date: string | null;
   estimated_value: number;
   days_old: number;
   days_until_due: number | null;
