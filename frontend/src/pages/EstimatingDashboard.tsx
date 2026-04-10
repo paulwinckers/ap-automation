@@ -134,7 +134,7 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
             const isContract = o.opp_type === 'Contract';
             return (
               <tr key={o.id} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                {/* Property (bold) then opp name as link */}
+                {/* Property (bold) then #Num - Opp Name as link */}
                 <Td>
                   <div style={{ fontWeight: 700, fontSize: 12, color: '#111827', marginBottom: 2 }}>
                     {o.property || '—'}
@@ -146,7 +146,7 @@ function OppTable({ opps }: { opps: EstimatingOpp[] }) {
                     onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
                     onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
                   >
-                    {o.name || '(unnamed)'}
+                    {o.opp_number ? `#${o.opp_number} – ` : ''}{o.name || '(unnamed)'}
                   </a>
                 </Td>
                 {/* Stage */}

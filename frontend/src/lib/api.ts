@@ -446,6 +446,7 @@ export interface FieldOpportunityPayload {
 
 export interface EstimatingOpp {
   id: number;
+  opp_number: number | null;
   name: string;
   property: string;
   division: string;

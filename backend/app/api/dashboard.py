@@ -387,7 +387,7 @@ async def get_estimating_dashboard():
     try:
         raw_opps = await _aspire._get_all("Opportunities", {
             "$select": (
-                "OpportunityID,OpportunityName,PropertyName,DivisionName,DivisionID,"
+                "OpportunityID,OpportunityNumber,OpportunityName,PropertyName,DivisionName,DivisionID,"
                 "SalesRepContactName,SalesRepContactID,"
                 "OpportunityStatusName,OpportunityStatusID,"
                 "OpportunityType,SalesTypeName,SalesTypeID,"
@@ -459,6 +459,7 @@ async def get_estimating_dashboard():
 
         shaped.append({
             "id":              o.get("OpportunityID"),
+            "opp_number":      o.get("OpportunityNumber"),
             "name":            o.get("OpportunityName") or "(no name)",
             "property":        o.get("PropertyName") or "",
             "division":        o.get("DivisionName") or "",
