@@ -415,14 +415,12 @@ export default function EstimatingDashboard() {
     sp.stages.flatMap(st => st.opportunities).filter(baseMatch)
   );
 
-  // Per-phase stats for the tiles — ordered by workflow sequence
-  const phaseTiles = phases
+  // Per-phase stats for the tiles — always show all six workflow phases, even if empty
+  const phaseTiles = PHASE_ORDER
     .map(phase => {
       const opps = baseOpps.filter(o => o.status === phase);
       return { phase, count: opps.length, value: opps.reduce((s, o) => s + o.estimated_value, 0) };
-    })
-    .filter(t => t.count > 0)
-    .sort((a, b) => phaseSort(a.phase, b.phase));
+    });
 
   const allTile = {
     count: baseOpps.length,
