@@ -456,7 +456,7 @@ export interface EstimatingOpp {
   created_date: string | null;
   due_date: string | null;
   start_date: string | null;
-  end_date: string | null;
+  last_activity_date: string | null;
   estimated_value: number;
   days_old: number;
   days_until_due: number | null;
@@ -480,6 +480,7 @@ export interface EstimatingDashboardData {
   summary: { total: number; total_value: number; overdue: number; due_this_week: number };
   sales_types: string[];
   phases: string[];
+  divisions: string[];
   salespeople: EstimatingSalesperson[];
 }
 

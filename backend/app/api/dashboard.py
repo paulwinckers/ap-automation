@@ -391,7 +391,7 @@ async def get_estimating_dashboard():
                 "SalesRepContactName,SalesRepContactID,"
                 "OpportunityStatusName,OpportunityStatusID,"
                 "OpportunityType,SalesTypeName,SalesTypeID,"
-                "EstimatedDollars,BidDueDate,StartDate,EndDate,CreatedDateTime,WonDate,LostDate"
+                "EstimatedDollars,BidDueDate,StartDate,CreatedDateTime,LastModifiedDateTime,WonDate,LostDate"
             ),
             # Filter Won/Lost at the API level so the 500-record cap is spent
             # entirely on active opportunities rather than closed ones.
@@ -461,21 +461,21 @@ async def get_estimating_dashboard():
         urg        = urgency(due_dt)
         due_days   = days_until(due_dt)
 
-        start_dt = parse_date(o.get("StartDate"))
-        end_dt   = parse_date(o.get("EndDate"))
+        start_dt        = parse_date(o.get("StartDate"))
+        last_modified_dt = parse_date(o.get("LastModifiedDateTime"))
         shaped.append({
-            "id":              o.get("OpportunityID"),
-            "opp_number":      o.get("OpportunityNumber"),
-            "name":            o.get("OpportunityName") or "(no name)",
-            "property":        o.get("PropertyName") or "",
-            "division":        o.get("DivisionName") or "",
-            "opp_type":        o.get("OpportunityType") or "Unknown",
-            "sales_type":      o.get("SalesTypeName") or "",
-            "status":          o.get("OpportunityStatusName") or "",
-            "created_date":    (created_dt.date().isoformat() if created_dt else None),
-            "due_date":        (due_dt.date().isoformat()     if due_dt     else None),
-            "start_date":      (start_dt.date().isoformat()   if start_dt   else None),
-            "end_date":        (end_dt.date().isoformat()      if end_dt     else None),
+            "id":                 o.get("OpportunityID"),
+            "opp_number":         o.get("OpportunityNumber"),
+            "name":               o.get("OpportunityName") or "(no name)",
+            "property":           o.get("PropertyName") or "",
+            "division":           o.get("DivisionName") or "",
+            "opp_type":           o.get("OpportunityType") or "Unknown",
+            "sales_type":         o.get("SalesTypeName") or "",
+            "status":             o.get("OpportunityStatusName") or "",
+            "created_date":       (created_dt.date().isoformat()      if created_dt      else None),
+            "due_date":           (due_dt.date().isoformat()          if due_dt          else None),
+            "start_date":         (start_dt.date().isoformat()        if start_dt        else None),
+            "last_activity_date": (last_modified_dt.date().isoformat() if last_modified_dt else None),
             "estimated_value": float(o.get("EstimatedDollars") or 0),
             "days_old":        days_since(created_dt),
             "days_until_due":  due_days,
@@ -494,9 +494,10 @@ async def get_estimating_dashboard():
         "due_this_week": sum(1 for s in shaped if s["_due_this_week"]),
     }
 
-    # ── Unique sales types and phases (sorted, blanks excluded) ──────────────
+    # ── Unique sales types, phases and divisions (sorted, blanks excluded) ────
     sales_types = sorted({s["sales_type"] for s in shaped if s["sales_type"]})
     phases      = sorted({s["status"]     for s in shaped if s["status"]})
+    divisions   = sorted({s["division"]   for s in shaped if s["division"]})
 
     # ── Group by salesperson → stage ──────────────────────────────────────────
     from collections import defaultdict
@@ -537,5 +538,6 @@ async def get_estimating_dashboard():
         "summary":     summary,
         "sales_types": sales_types,
         "phases":      phases,
+        "divisions":   divisions,
         "salespeople": salespeople,
     }

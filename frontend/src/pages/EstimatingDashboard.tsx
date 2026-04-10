@@ -137,12 +137,12 @@ function OppTable({ opps, showSalesperson = false }: { opps: EstimatingOpp[]; sh
             <SortTh field="opp_type"        align="center" {...sp}>Type</SortTh>
             <SortTh field="division"        align="left"   {...sp}>Division</SortTh>
             <SortTh field="sales_type"      align="left"   {...sp}>Sales Type</SortTh>
-            <SortTh field="estimated_value" align="right"  {...sp}>Est. Value</SortTh>
-            <SortTh field="created_date"    align="right"  {...sp}>Created</SortTh>
-            <SortTh field="due_date"        align="right"  {...sp}>Bid Due</SortTh>
-            <SortTh field="start_date"      align="right"  {...sp}>Start</SortTh>
-            <SortTh field="end_date"        align="right"  {...sp}>End</SortTh>
-            <SortTh field="days_old"        align="right"  {...sp}>Age</SortTh>
+            <SortTh field="estimated_value"    align="right"  {...sp}>Est. Value</SortTh>
+            <SortTh field="created_date"       align="right"  {...sp}>Created</SortTh>
+            <SortTh field="due_date"           align="right"  {...sp}>Bid Due</SortTh>
+            <SortTh field="start_date"         align="right"  {...sp}>Start</SortTh>
+            <SortTh field="last_activity_date" align="right"  {...sp}>Last Activity</SortTh>
+            <SortTh field="days_old"           align="right"  {...sp}>Age</SortTh>
           </tr>
         </thead>
         <tbody>
@@ -213,9 +213,9 @@ function OppTable({ opps, showSalesperson = false }: { opps: EstimatingOpp[]; sh
                 <Td align="right">
                   <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtDate(o.start_date)}</span>
                 </Td>
-                {/* End date */}
+                {/* Last activity */}
                 <Td align="right">
-                  <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtDate(o.end_date)}</span>
+                  <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtDate(o.last_activity_date)}</span>
                 </Td>
                 {/* Age */}
                 <Td align="right">
@@ -364,6 +364,7 @@ export default function EstimatingDashboard() {
   const [filterType,          setFilterType]           = useState('All');
   const [filterPhase,         setFilterPhase]          = useState('All');
   const [filterStartYear,     setFilterStartYear]      = useState('2026');
+  const [filterDivision,      setFilterDivision]       = useState('All');
   const [groupBy, setGroupBy] = useState<'salesperson' | 'status' | 'flat'>('salesperson');
 
   useEffect(() => {
@@ -390,7 +391,7 @@ export default function EstimatingDashboard() {
     </div>
   );
 
-  const { sales_types, phases, salespeople } = data;
+  const { sales_types, phases, divisions, salespeople } = data;
 
   // Salesperson names for the filter dropdown
   const salespersonNames = salespeople.map(s => s.name);
@@ -404,6 +405,7 @@ export default function EstimatingDashboard() {
   const baseMatch = (o: EstimatingOpp) =>
     (filterType      === 'All' || o.opp_type   === filterType) &&
     (filterSalesType === 'All' || o.sales_type === filterSalesType) &&
+    (filterDivision  === 'All' || o.division   === filterDivision) &&
     (filterStartYear === 'All' || !o.start_date || o.start_date.startsWith(filterStartYear));
 
   const matchesFilters = (o: EstimatingOpp) =>
@@ -513,6 +515,15 @@ export default function EstimatingDashboard() {
           <select value={filterSalesType} onChange={e => setFilterSalesType(e.target.value)} style={SELECT_STYLE(filterSalesType !== 'All')}>
             <option value="All">All</option>
             {sales_types.map(st => <option key={st} value={st}>{st}</option>)}
+          </select>
+        </div>
+
+        {/* Division */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Division:</label>
+          <select value={filterDivision} onChange={e => setFilterDivision(e.target.value)} style={SELECT_STYLE(filterDivision !== 'All')}>
+            <option value="All">All</option>
+            {divisions.map(d => <option key={d} value={d}>{d}</option>)}
           </select>
         </div>
 
