@@ -53,6 +53,54 @@ async def get_employees():
 
 # ── Opportunity probe ────────────────────────────────────────────────────────
 
+@router.get("/clock-times/probe")
+async def probe_clock_times():
+    """
+    Probe the Aspire ClockTimes endpoint.
+    1. GET /ClockTimes — check if readable and what fields exist
+    2. GET /ClockTimes with $top=1 — sample record
+    3. Check if PATCH/edit is possible (OPTIONS or known methods)
+    Does NOT create any real data.
+    """
+    _check_credentials()
+    result = {}
+
+    # 1. Try GET /ClockTimes
+    try:
+        data = await _aspire._get("ClockTimes", {"$top": "5", "$orderby": "ClockStartDateTime desc"})
+        records = _aspire._extract_list(data)
+        result["get_clock_times"] = "OK"
+        result["sample_count"] = len(records)
+        result["sample_fields"] = sorted(records[0].keys()) if records else []
+        result["sample_record"] = records[0] if records else None
+    except Exception as e:
+        result["get_clock_times"] = f"FAILED: {e}"
+
+    # 2. Try GET /Contacts to check if employee list is accessible
+    try:
+        contacts = await _aspire._get("Contacts", {
+            "$select": "ContactID,FirstName,LastName,Active,ContactTypeName",
+            "$filter": "Active eq true and ContactTypeName eq 'Employee'",
+            "$top": "5",
+        })
+        recs = _aspire._extract_list(contacts)
+        result["get_contacts_employees"] = f"OK — {len(recs)} returned"
+        result["contact_sample"] = recs[:2]
+    except Exception as e:
+        result["get_contacts_employees"] = f"FAILED: {e}"
+
+    # 3. Try GET /Branches to find valid BranchID
+    try:
+        branches = await _aspire._get("Branches", {"$top": "10"})
+        recs = _aspire._extract_list(branches)
+        result["get_branches"] = f"OK — {len(recs)} returned"
+        result["branches"] = recs
+    except Exception as e:
+        result["get_branches"] = f"FAILED: {e}"
+
+    return result
+
+
 @router.get("/opportunities/probe")
 async def probe_opportunity_fields():
     """Return all fields on a sample Opportunity — used to find Status/Type field names."""
