@@ -363,13 +363,23 @@ export default function EstimatingDashboard() {
     sp.stages.flatMap(st => st.opportunities).filter(baseMatch)
   );
 
-  // Per-phase stats for the tiles
+  // Per-phase stats for the tiles — ordered by desired workflow sequence
+  const PHASE_ORDER = ['New', 'Qualified', 'In Design', 'Estimating', 'Reviewed', 'Delivered'];
   const phaseTiles = phases
     .map(phase => {
       const opps = baseOpps.filter(o => o.status === phase);
       return { phase, count: opps.length, value: opps.reduce((s, o) => s + o.estimated_value, 0) };
     })
-    .filter(t => t.count > 0);
+    .filter(t => t.count > 0)
+    .sort((a, b) => {
+      const ai = PHASE_ORDER.indexOf(a.phase);
+      const bi = PHASE_ORDER.indexOf(b.phase);
+      // Known phases follow the defined order; unknown phases go to the end alphabetically
+      if (ai === -1 && bi === -1) return a.phase.localeCompare(b.phase);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
 
   const allTile = {
     count: baseOpps.length,
