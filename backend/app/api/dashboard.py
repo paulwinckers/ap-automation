@@ -342,6 +342,20 @@ async def estimating_fields_probe():
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@router.get("/properties/fields")
+async def properties_fields_probe():
+    """Fetch one Property with ALL fields to discover tags, tiers, classifications."""
+    try:
+        result = await _aspire._get("Properties", {"$top": "1"})
+        props = _aspire._extract_list(result)
+        if not props:
+            return {"error": "No properties found or endpoint 403"}
+        prop = props[0]
+        return {"all_field_names": sorted(prop.keys()), "sample": prop}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/estimating/probe")
 async def estimating_probe():
     """
