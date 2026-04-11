@@ -25,6 +25,7 @@ const NAV = [
       { label: 'Operations',   path: '/dashboards/ops',          icon: '⚙️' },
       { label: 'Construction', path: '/dashboards/construction', icon: '🏗️' },
       { label: 'Estimating',  path: '/dashboards/estimating',  icon: '📋' },
+      { label: 'Activities',  path: '/dashboards/activities',  icon: '📅' },
     ],
   },
 ];

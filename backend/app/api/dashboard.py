@@ -563,3 +563,138 @@ async def get_estimating_dashboard():
         "divisions":   divisions,
         "salespeople": salespeople,
     }
+
+
+# ── Activities Dashboard ───────────────────────────────────────────────────────
+
+@router.get("/activities/probe")
+async def activities_probe():
+    result = {}
+    try:
+        data = await _aspire._get("Activities", {"$top": "3", "$orderby": "DueDate asc"})
+        recs = _aspire._extract_list(data)
+        result["get_activities"] = "OK"
+        result["count"] = len(recs)
+        result["fields"] = sorted(recs[0].keys()) if recs else []
+        result["samples"] = recs
+        # summarise unique values
+        result["statuses"]  = list({r.get("Status")       for r in recs if r.get("Status")})
+        result["types"]     = list({r.get("ActivityType") for r in recs if r.get("ActivityType")})
+        result["priorities"]= list({r.get("Priority")     for r in recs if r.get("Priority")})
+    except Exception as e:
+        result["get_activities"] = f"FAILED: {e}"
+    return result
+
+
+@router.get("/activities")
+async def get_activities_dashboard(show_completed: bool = False):
+    from datetime import datetime, timezone, timedelta
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire credentials not configured")
+
+    try:
+        raw = await _aspire._get_all("Activities", {
+            "$select": (
+                "ActivityID,ActivityNumber,Subject,ActivityType,Status,Priority,"
+                "Notes,StartDate,EndDate,DueDate,CompleteDate,CreatedDate,ModifiedDate,"
+                "CreatedByUserName,CompletedByUserName,"
+                "PropertyID,OpportunityID,WorkTicketID,"
+                "ActivityCategoryName,IsMileStone,Private"
+            ),
+            "$top": "500",
+            "$orderby": "DueDate asc",
+        })
+        logger.info(f"Activities dashboard: fetched {len(raw)} total from Aspire")
+    except Exception as e:
+        logger.error(f"Activities fetch failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
+
+    # Filter completed/cancelled unless show_completed=True
+    def is_active(a: dict) -> bool:
+        if show_completed:
+            return True
+        status = (a.get("Status") or "").strip().lower()
+        return "complet" not in status and "closed" not in status and "cancel" not in status
+
+    activities = [a for a in raw if is_active(a)]
+
+    now = datetime.now(timezone.utc)
+    week_end = now + timedelta(days=7)
+
+    def parse_dt(s):
+        if not s:
+            return None
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+        except Exception:
+            return None
+
+    def urgency(due_dt) -> str:
+        if due_dt is None:
+            return "no-date"
+        d = (due_dt - now).days
+        if d < 0:   return "overdue"
+        if d <= 7:  return "urgent"
+        if d <= 30: return "soon"
+        return "ok"
+
+    shaped = []
+    for a in activities:
+        due_dt     = parse_dt(a.get("DueDate"))
+        created_dt = parse_dt(a.get("CreatedDate"))
+        modified_dt= parse_dt(a.get("ModifiedDate"))
+        urg        = urgency(due_dt)
+        due_days   = int((due_dt - now).days) if due_dt else None
+
+        shaped.append({
+            "id":            a.get("ActivityID"),
+            "number":        a.get("ActivityNumber"),
+            "subject":       a.get("Subject") or "(no subject)",
+            "activity_type": a.get("ActivityType") or "Unknown",
+            "status":        a.get("Status") or "",
+            "priority":      a.get("Priority") or "",
+            "category":      a.get("ActivityCategoryName") or "",
+            "notes":         (a.get("Notes") or "")[:200],   # truncate for perf
+            "due_date":      due_dt.date().isoformat()      if due_dt      else None,
+            "start_date":    parse_dt(a.get("StartDate")).date().isoformat() if parse_dt(a.get("StartDate")) else None,
+            "complete_date": parse_dt(a.get("CompleteDate")).date().isoformat() if parse_dt(a.get("CompleteDate")) else None,
+            "created_date":  created_dt.date().isoformat()  if created_dt  else None,
+            "modified_date": modified_dt.date().isoformat() if modified_dt else None,
+            "created_by":    a.get("CreatedByUserName") or "",
+            "completed_by":  a.get("CompletedByUserName") or "",
+            "opportunity_id":a.get("OpportunityID"),
+            "work_ticket_id":a.get("WorkTicketID"),
+            "is_milestone":  bool(a.get("IsMileStone")),
+            "days_until_due":due_days,
+            "urgency":       urg,
+            "_is_overdue":   urg == "overdue",
+            "_due_this_week":due_dt is not None and now <= due_dt <= week_end,
+        })
+
+    summary = {
+        "total":         len(shaped),
+        "overdue":       sum(1 for s in shaped if s["_is_overdue"]),
+        "due_this_week": sum(1 for s in shaped if s["_due_this_week"]),
+        "milestones":    sum(1 for s in shaped if s["is_milestone"]),
+    }
+
+    activity_types = sorted({s["activity_type"] for s in shaped if s["activity_type"] and s["activity_type"] != "Unknown"})
+    statuses       = sorted({s["status"]         for s in shaped if s["status"]})
+    priorities     = sorted({s["priority"]        for s in shaped if s["priority"]})
+    categories     = sorted({s["category"]        for s in shaped if s["category"]})
+    created_by_list= sorted({s["created_by"]      for s in shaped if s["created_by"]})
+
+    # Strip internal keys before returning
+    def clean(a: dict) -> dict:
+        return {k: v for k, v in a.items() if not k.startswith("_")}
+
+    return {
+        "summary":        summary,
+        "activity_types": activity_types,
+        "statuses":       statuses,
+        "priorities":     priorities,
+        "categories":     categories,
+        "created_by_list":created_by_list,
+        "activities":     [clean(a) for a in shaped],
+    }

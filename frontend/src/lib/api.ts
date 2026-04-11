@@ -488,6 +488,45 @@ export async function getEstimatingDashboard(): Promise<EstimatingDashboardData>
   return request<EstimatingDashboardData>('GET', '/dashboard/estimating');
 }
 
+// ── Activities Dashboard ──────────────────────────────────────────────────────
+
+export interface Activity {
+  id: number;
+  number: number | null;
+  subject: string;
+  activity_type: string;
+  status: string;
+  priority: string;
+  category: string;
+  notes: string;
+  due_date: string | null;
+  start_date: string | null;
+  complete_date: string | null;
+  created_date: string | null;
+  modified_date: string | null;
+  created_by: string;
+  completed_by: string;
+  opportunity_id: number | null;
+  work_ticket_id: number | null;
+  is_milestone: boolean;
+  days_until_due: number | null;
+  urgency: 'overdue' | 'urgent' | 'soon' | 'ok' | 'no-date';
+}
+
+export interface ActivitiesDashboardData {
+  summary: { total: number; overdue: number; due_this_week: number; milestones: number };
+  activity_types: string[];
+  statuses: string[];
+  priorities: string[];
+  categories: string[];
+  created_by_list: string[];
+  activities: Activity[];
+}
+
+export async function getActivitiesDashboard(showCompleted = false): Promise<ActivitiesDashboardData> {
+  return request<ActivitiesDashboardData>('GET', `/dashboard/activities?show_completed=${showCompleted}`);
+}
+
 export async function createFieldOpportunity(p: FieldOpportunityPayload): Promise<CreateOpportunityResponse> {
   const form = new FormData();
   form.append('submitter_name', p.submitterName);

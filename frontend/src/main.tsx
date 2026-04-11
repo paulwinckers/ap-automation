@@ -14,6 +14,7 @@ import SalesDashboard        from './pages/SalesDashboard';
 import OpsDashboard          from './pages/OpsDashboard';
 import ConstructionDashboard from './pages/ConstructionDashboard';
 import EstimatingDashboard  from './pages/EstimatingDashboard';
+import ActivitiesDashboard  from './pages/ActivitiesDashboard';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -42,7 +43,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/dashboards/sales"         element={<Office><SalesDashboard /></Office>} />
         <Route path="/dashboards/ops"           element={<Office><OpsDashboard /></Office>} />
         <Route path="/dashboards/construction"  element={<Office><ConstructionDashboard /></Office>} />
-        <Route path="/dashboards/estimating"   element={<Office><EstimatingDashboard /></Office>} />
+        <Route path="/dashboards/estimating"    element={<Office><EstimatingDashboard /></Office>} />
+        <Route path="/dashboards/activities"   element={<Office><ActivitiesDashboard /></Office>} />
 
         {/* Legacy URL redirects */}
         <Route path="/vendors"      element={<Navigate to="/ap/vendors"   replace />} />
