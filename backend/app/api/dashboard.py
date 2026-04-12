@@ -654,12 +654,12 @@ async def get_sales_work_tickets():
     try:
         raw = await _aspire._get_all("WorkTickets", params={
             "$select": (
-                "WorkTicketID,WorkTicketStatusName,WorkTicketType,"
-                "ScheduledDate,ScheduledStartDate,"
+                "WorkTicketID,WorkTicketStatusName,"
+                "ScheduledDate,CompleteDate,"
                 "EstimatedLaborHours,OpportunityID"
             ),
             "$top": "500",
-            "$orderby": "ScheduledStartDate asc",
+            "$orderby": "ScheduledDate asc",
         })
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire WorkTickets error: {e}")
