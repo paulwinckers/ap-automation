@@ -681,7 +681,7 @@ async def get_sales_work_tickets():
             "$filter": (
                 "(WorkTicketStatusName eq 'Open' or WorkTicketStatusName eq 'Scheduled')"
             ),
-            "$top": "2000",
+            "$top": "500",
             "$orderby": "ScheduledStartDate asc",
         })
     except Exception as e:
