@@ -591,51 +591,46 @@ async def get_sales_pipeline():
     """
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Aspire credentials not configured")
-    try:
-        raw = await _aspire._get_all("Opportunities", params={
-            "$filter": "OpportunityStatusName ne 'Lost'",
-            "$select": (
-                "OpportunityID,OpportunityNumber,OpportunityName,"
-                "DivisionName,OpportunityStatusName,"
-                "StartDate,WonDate,EstimatedDollars,Probability,EstimatedLaborHours"
-            ),
-            "$top": "500",
-        })
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
+    SELECT = (
+        "OpportunityID,OpportunityNumber,OpportunityName,"
+        "DivisionName,OpportunityStatusName,"
+        "StartDate,WonDate,EstimatedDollars,Probability,EstimatedLaborHours"
+    )
+    CURRENT_YEAR = "2026"
 
     def _date_only(val: str | None) -> str | None:
-        """Strip time component so parseDateAny(YYYY-MM-DD) works in JS."""
         if not val:
             return None
         return val[:10]  # '2025-03-01T00:00:00Z' → '2025-03-01'
 
-    CURRENT_YEAR = "2026"
+    try:
+        # Call 1: active pipeline only (excludes Won so 500-cap isn't eaten by closed deals)
+        active_raw = await _aspire._get_all("Opportunities", params={
+            "$filter": "OpportunityStatusName ne 'Won' and OpportunityStatusName ne 'Lost'",
+            "$select": SELECT,
+            "$top": "500",
+        })
+        # Call 2: Won opps from current year only
+        won_raw = await _aspire._get_all("Opportunities", params={
+            "$filter": "OpportunityStatusName eq 'Won'",
+            "$select": SELECT,
+            "$top": "500",
+            "$orderby": "WonDate desc",   # most-recent first so we get 2026 wins
+        })
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
     pipeline = []
-    for o in raw:
-        status    = o.get("OpportunityStatusName") or ""
-        is_won    = status.lower() == "won"
-        won_date  = _date_only(o.get("WonDate"))
-        start_date = _date_only(o.get("StartDate"))
 
-        # Won opps: only include those won in current year; use WonDate for bucketing
-        if is_won:
-            if not won_date or not won_date.startswith(CURRENT_YEAR):
-                continue
-            chart_date = won_date
-        else:
-            # Active pipeline: include all; use StartDate for bucketing
-            chart_date = start_date
-
+    def _build_row(o: dict, chart_date: str | None) -> dict | None:
+        if not chart_date:
+            return None
         estimated   = float(o.get("EstimatedDollars") or 0)
-        # Aspire stores Probability as 0-100 (percent), JS expects 0-1 (decimal)
         probability = float(o.get("Probability") or 0) / 100.0
         est_hours   = float(o.get("EstimatedLaborHours") or 0)
-
-        pipeline.append({
+        return {
             "division":          o.get("DivisionName") or "",
-            "status":            status,
+            "status":            o.get("OpportunityStatusName") or "",
             "start_date":        chart_date,
             "estimated_dollars": estimated,
             "probability":       probability,
@@ -643,7 +638,22 @@ async def get_sales_pipeline():
             "weighted_hours":    round(est_hours * probability, 2),
             "opp_number":        o.get("OpportunityNumber"),
             "opp_name":          o.get("OpportunityName") or "",
-        })
+        }
+
+    # Active pipeline — use StartDate for monthly bucketing
+    for o in active_raw:
+        row = _build_row(o, _date_only(o.get("StartDate")))
+        if row:
+            pipeline.append(row)
+
+    # Won in current year — use WonDate for monthly bucketing
+    for o in won_raw:
+        won_date = _date_only(o.get("WonDate"))
+        if not won_date or not won_date.startswith(CURRENT_YEAR):
+            continue
+        row = _build_row(o, won_date)
+        if row:
+            pipeline.append(row)
 
     return {
         "count":    len(pipeline),
