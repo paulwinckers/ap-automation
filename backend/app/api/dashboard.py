@@ -579,6 +579,103 @@ async def get_estimating_dashboard():
     }
 
 
+# ── Sales Dashboard — live Aspire feeds ──────────────────────────────────────
+
+@router.get("/sales/pipeline")
+async def get_sales_pipeline():
+    """
+    Pipeline feed for the Sales Dashboard.
+    Returns all opportunities (excluding Lost) shaped for chart consumption.
+    JS expects: division, status, start_date, estimated_dollars,
+                probability, weighted_pipeline, weighted_hours
+    """
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire credentials not configured")
+    try:
+        raw = await _aspire._get_all("Opportunities", params={
+            "$filter": "OpportunityStatusName ne 'Lost'",
+            "$select": (
+                "OpportunityID,OpportunityNumber,OpportunityName,"
+                "DivisionName,OpportunityStatusName,"
+                "StartDate,EstimatedDollars,Probability,EstimatedLaborHours"
+            ),
+            "$top": "500",
+        })
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
+
+    pipeline = []
+    for o in raw:
+        # Skip blanks / test records
+        prop = (o.get("PropertyName") or "").lower()
+        if "dario" in prop and "test" in prop:
+            continue
+
+        estimated   = float(o.get("EstimatedDollars") or 0)
+        probability = float(o.get("Probability") or 0)
+        est_hours   = float(o.get("EstimatedLaborHours") or 0)
+
+        pipeline.append({
+            "division":          o.get("DivisionName") or "",
+            "status":            o.get("OpportunityStatusName") or "",
+            "start_date":        o.get("StartDate"),           # ISO string, JS parseDateAny handles it
+            "estimated_dollars": estimated,
+            "probability":       probability,
+            "weighted_pipeline": round(estimated * probability, 2),
+            "weighted_hours":    round(est_hours * probability, 2),
+            "opp_number":        o.get("OpportunityNumber"),
+            "opp_name":          o.get("OpportunityName") or "",
+        })
+
+    return {
+        "count":    len(pipeline),
+        "pipeline": pipeline,
+    }
+
+
+@router.get("/sales/work-tickets")
+async def get_sales_work_tickets():
+    """
+    Work tickets feed for the Sales Dashboard hours charts.
+    Returns all work tickets with status, scheduled date, estimated hours, division.
+    """
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire credentials not configured")
+    try:
+        raw = await _aspire._get_all("WorkTickets", params={
+            "$select": (
+                "WorkTicketID,WorkTicketStatusName,WorkTicketType,"
+                "ScheduledDate,ScheduledStartDate,"
+                "EstimatedLaborHours,DivisionName,OpportunityID"
+            ),
+            "$top": "500",
+            "$orderby": "ScheduledDate asc",
+        })
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
+
+    tickets = []
+    for t in raw:
+        est_hrs = float(t.get("EstimatedLaborHours") or 0)
+        if est_hrs <= 0:
+            continue
+        # Prefer ScheduledDate; fall back to ScheduledStartDate
+        sched = t.get("ScheduledDate") or t.get("ScheduledStartDate")
+        if not sched:
+            continue
+        tickets.append({
+            "status":    t.get("WorkTicketStatusName") or "",
+            "sched_date": sched,
+            "est_hrs":   est_hrs,
+            "division":  t.get("DivisionName") or "",
+        })
+
+    return {
+        "count":        len(tickets),
+        "work_tickets": tickets,
+    }
+
+
 # ── Activities Dashboard ───────────────────────────────────────────────────────
 
 @router.get("/activities/probe")
