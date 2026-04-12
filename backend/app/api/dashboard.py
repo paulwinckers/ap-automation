@@ -761,15 +761,23 @@ async def get_sales_work_tickets():
 
 @router.get("/sales/revenue/probe")
 async def get_sales_revenue_probe():
-    """Return first 5 raw RevenueVariances records so we can verify field names/values."""
+    """Fetch up to 500 RevenueVariances and show year breakdown + sample per year."""
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Aspire credentials not configured")
     try:
-        data = await _aspire._get("RevenueVariances", params={"$top": "5"})
+        data = await _aspire._get("RevenueVariances", params={
+            "$top": "500", "$orderby": "AdjustmentDate desc"
+        })
         records = _aspire._extract_list(data)
+        from collections import defaultdict
+        by_year: dict = defaultdict(list)
+        for r in records:
+            yr = (r.get("AdjustmentDate") or "unknown")[:4]
+            by_year[yr].append(r)
         return {
-            "count": len(records),
-            "sample": records,
+            "total_fetched": len(records),
+            "years_found": {yr: len(rows) for yr, rows in sorted(by_year.items())},
+            "sample_newest_5": records[:5],
             "all_fields": sorted(records[0].keys()) if records else [],
         }
     except Exception as e:
