@@ -675,12 +675,13 @@ async def get_sales_work_tickets():
     # Paginate through all work tickets using $skip (Aspire caps at 500/page)
     SELECT_WT = (
         "WorkTicketID,WorkTicketStatusName,"
-        "ScheduledStartDate,AnticStartDate,CompleteDate,HoursEst,OpportunityID"
+        "ScheduledStartDate,AnticStartDate,CompleteDate,HoursEst,HoursAct,OpportunityID"
     )
     FILTER_WT = (
         "WorkTicketStatusName eq 'Open'"
         " or WorkTicketStatusName eq 'Scheduled'"
         " or WorkTicketStatusName eq 'Pending Approval'"
+        " or WorkTicketStatusName eq 'Complete'"
     )
     PAGE = 500
     raw: list = []
@@ -735,10 +736,11 @@ async def get_sales_work_tickets():
         opp_id   = str(t.get("OpportunityID") or "")
         division = opp_division.get(opp_id, "")
         tickets.append({
-            "status":     t.get("WorkTicketStatusName") or "",
-            "sched_date": sched[:10],   # strip time component
-            "est_hrs":    est_hrs,
-            "division":   division,
+            "status":    t.get("WorkTicketStatusName") or "",
+            "sched_date": sched[:10],
+            "est_hrs":   est_hrs,
+            "act_hrs":   float(t.get("HoursAct") or 0),
+            "division":  division,
         })
 
     return {
