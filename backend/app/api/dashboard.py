@@ -801,7 +801,8 @@ async def get_sales_revenue():
 
     def _is_maintenance(name: str) -> bool:
         s = (name or "").lower()
-        return "maintenance" in s or "irrigation" in s or "lighting" in s
+        return ("maintenance" in s or "irrigation" in s or "lighting" in s
+                or "residential" in s or "commercial" in s)
 
     for r in raw:
         adj_date = r.get("AdjustmentDate") or ""
