@@ -46,20 +46,39 @@ SCOPE = "com.intuit.quickbooks.accounting"
 
 
 def _to_qbo_date(d: str | None) -> str:
-    """Normalize any date string to YYYY-MM-DD for QBO. Falls back to today."""
+    """Normalize any date string to YYYY-MM-DD for QBO. Falls back to today.
+
+    Also guards against OCR-garbled dates that are implausibly old (> 2 years)
+    — QBO will reject anything before the book closing date.
+    """
+    today = date.today()
+    min_date = date(today.year - 2, today.month, today.day)
+
+    def _clamp(parsed: date) -> str:
+        if parsed < min_date:
+            logger.warning(
+                f"Extracted date {parsed.isoformat()} is implausibly old "
+                f"(before {min_date.isoformat()}) — likely an OCR error, using today"
+            )
+            return today.isoformat()
+        return parsed.isoformat()
+
     if not d:
-        return date.today().isoformat()
-    # Already correct
+        return today.isoformat()
+    # Already correct format — still clamp
     if len(d) == 10 and d[4] == "-":
-        return d
+        try:
+            return _clamp(date.fromisoformat(d))
+        except ValueError:
+            pass
     # Try common formats
     for fmt in ("%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y", "%Y/%m/%d"):
         try:
-            return datetime.strptime(d, fmt).strftime("%Y-%m-%d")
+            return _clamp(datetime.strptime(d, fmt).date())
         except ValueError:
             continue
     logger.warning(f"Could not parse date '{d}' — using today")
-    return date.today().isoformat()
+    return today.isoformat()
 
 # ── Canadian BC tax codes ─────────────────────────────────────────────────────
 # These must match the tax agency names in your QBO company exactly.
