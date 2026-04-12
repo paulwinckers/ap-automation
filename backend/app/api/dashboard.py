@@ -757,6 +757,72 @@ async def get_sales_work_tickets():
     }
 
 
+# ── Sales Revenue (RevenueVariances) ──────────────────────────────────────────
+
+@router.get("/sales/revenue")
+async def get_sales_revenue():
+    """
+    Monthly earned revenue by division from Aspire RevenueVariances.
+    Returns { revenue: { "2026-01": { constrRev, maintRev }, ... } }
+    """
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire credentials not configured")
+
+    SELECT = "AdjustmentDate,DivisionName,EarnedRevenue,ContractYear"
+    FILTER = "ContractYear eq 2026"
+    PAGE   = 500
+    raw: list = []
+    try:
+        skip = 0
+        while True:
+            page_data = await _aspire._get("RevenueVariances", params={
+                "$select": SELECT,
+                "$filter": FILTER,
+                "$top":    str(PAGE),
+                "$skip":   str(skip),
+                "$orderby": "AdjustmentDate asc",
+            })
+            records = _aspire._extract_list(page_data)
+            raw.extend(records)
+            if len(records) < PAGE:
+                break
+            skip += PAGE
+            if skip >= 50_000:
+                break
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Aspire RevenueVariances error: {e}")
+
+    # Aggregate EarnedRevenue by month-key and division type
+    from collections import defaultdict
+    monthly: dict = defaultdict(lambda: {"constrRev": 0.0, "maintRev": 0.0})
+
+    def _is_construction(name: str) -> bool:
+        return "construction" in (name or "").lower()
+
+    def _is_maintenance(name: str) -> bool:
+        s = (name or "").lower()
+        return "maintenance" in s or "irrigation" in s or "lighting" in s
+
+    for r in raw:
+        adj_date = r.get("AdjustmentDate") or ""
+        if not adj_date:
+            continue
+        mk = adj_date[:7]          # "2026-03"
+        if not mk.startswith("2026"):
+            continue
+        earned = float(r.get("EarnedRevenue") or 0)
+        div    = r.get("DivisionName") or ""
+        if _is_construction(div):
+            monthly[mk]["constrRev"] += earned
+        elif _is_maintenance(div):
+            monthly[mk]["maintRev"] += earned
+
+    return {
+        "count":   len(raw),
+        "revenue": dict(monthly),
+    }
+
+
 # ── Activities Dashboard ───────────────────────────────────────────────────────
 
 @router.get("/activities/probe")
