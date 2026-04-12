@@ -785,23 +785,28 @@ async def get_sales_revenue():
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Aspire credentials not configured")
 
-    SELECT = "AdjustmentDate,DivisionName,EarnedRevenue,ContractYear"
-    FILTER = "ContractYear eq 2026"
+    # ContractYear is a contract-sequence number (1, 2…), NOT a calendar year.
+    # Filter by AdjustmentDate in Python; order desc so 2026 rows come first
+    # and we can exit early once we fall into prior years.
+    SELECT = "AdjustmentDate,DivisionName,EarnedRevenue"
     PAGE   = 500
     raw: list = []
     try:
         skip = 0
         while True:
             page_data = await _aspire._get("RevenueVariances", params={
-                "$select": SELECT,
-                "$filter": FILTER,
-                "$top":    str(PAGE),
-                "$skip":   str(skip),
-                "$orderby": "AdjustmentDate asc",
+                "$select":  SELECT,
+                "$top":     str(PAGE),
+                "$skip":    str(skip),
+                "$orderby": "AdjustmentDate desc",
             })
             records = _aspire._extract_list(page_data)
             raw.extend(records)
             if len(records) < PAGE:
+                break
+            # Early exit: last record on this page is before 2026
+            last_date = records[-1].get("AdjustmentDate") or ""
+            if last_date and last_date < "2026-01-01":
                 break
             skip += PAGE
             if skip >= 50_000:
