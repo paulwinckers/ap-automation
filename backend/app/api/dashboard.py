@@ -597,7 +597,7 @@ async def get_sales_pipeline():
             "$select": (
                 "OpportunityID,OpportunityNumber,OpportunityName,"
                 "DivisionName,OpportunityStatusName,"
-                "StartDate,EstimatedDollars,Probability,EstimatedLaborHours"
+                "StartDate,WonDate,EstimatedDollars,Probability,EstimatedLaborHours"
             ),
             "$top": "500",
         })
@@ -610,12 +610,23 @@ async def get_sales_pipeline():
             return None
         return val[:10]  # '2025-03-01T00:00:00Z' → '2025-03-01'
 
+    CURRENT_YEAR = "2026"
+
     pipeline = []
     for o in raw:
-        # Skip blanks / test records
-        prop = (o.get("PropertyName") or "").lower()
-        if "dario" in prop and "test" in prop:
-            continue
+        status    = o.get("OpportunityStatusName") or ""
+        is_won    = status.lower() == "won"
+        won_date  = _date_only(o.get("WonDate"))
+        start_date = _date_only(o.get("StartDate"))
+
+        # Won opps: only include those won in current year; use WonDate for bucketing
+        if is_won:
+            if not won_date or not won_date.startswith(CURRENT_YEAR):
+                continue
+            chart_date = won_date
+        else:
+            # Active pipeline: include all; use StartDate for bucketing
+            chart_date = start_date
 
         estimated   = float(o.get("EstimatedDollars") or 0)
         # Aspire stores Probability as 0-100 (percent), JS expects 0-1 (decimal)
@@ -624,8 +635,8 @@ async def get_sales_pipeline():
 
         pipeline.append({
             "division":          o.get("DivisionName") or "",
-            "status":            o.get("OpportunityStatusName") or "",
-            "start_date":        _date_only(o.get("StartDate")),
+            "status":            status,
+            "start_date":        chart_date,
             "estimated_dollars": estimated,
             "probability":       probability,
             "weighted_pipeline": round(estimated * probability, 2),
