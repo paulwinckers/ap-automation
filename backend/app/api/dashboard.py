@@ -681,36 +681,30 @@ async def get_sales_work_tickets():
             "$filter": (
                 "(WorkTicketStatusName eq 'Open' or WorkTicketStatusName eq 'Scheduled')"
             ),
-            "$top": "500",
+            "$top": "2000",
             "$orderby": "ScheduledStartDate asc",
         })
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire WorkTickets error: {e}")
 
-    # Build OpportunityID → DivisionName lookup by fetching only the
-    # exact OpportunityIDs that appear in the work tickets (100% coverage)
-    unique_opp_ids = [
-        str(t.get("OpportunityID"))
-        for t in raw
-        if t.get("OpportunityID")
-    ]
-    unique_opp_ids = list(dict.fromkeys(unique_opp_ids))  # dedupe, preserve order
-
+    # Build OpportunityID → DivisionName lookup.
+    # Two passes (recent-won desc + oldest-won asc) to maximise coverage
+    # within Aspire's 500-record cap.
     opp_division: dict[str, str] = {}
     try:
-        batch_size = 25
-        for i in range(0, len(unique_opp_ids), batch_size):
-            batch = unique_opp_ids[i : i + batch_size]
-            filter_str = " or ".join(f"OpportunityID eq {oid}" for oid in batch)
-            batch_opps = await _aspire._get_all("Opportunities", params={
+        for order in ("WonDate desc", "WonDate asc"):
+            batch = await _aspire._get_all("Opportunities", params={
                 "$select": "OpportunityID,DivisionName",
-                "$filter": f"({filter_str})",
-                "$top": str(batch_size + 5),
+                "$filter": "OpportunityStatusName eq 'Won'",
+                "$top": "500",
+                "$orderby": order,
             })
-            for o in batch_opps:
-                opp_division[str(o.get("OpportunityID"))] = o.get("DivisionName") or ""
+            for o in batch:
+                oid = str(o.get("OpportunityID"))
+                if oid not in opp_division:
+                    opp_division[oid] = o.get("DivisionName") or ""
     except Exception:
-        pass  # non-fatal — division will be blank for unresolved IDs
+        pass  # non-fatal
 
     tickets = []
     for t in raw:
