@@ -679,7 +679,8 @@ async def get_sales_work_tickets():
                 "ScheduledStartDate,AnticStartDate,CompleteDate,HoursEst,OpportunityID"
             ),
             "$filter": (
-                "(WorkTicketStatusName eq 'Open' or WorkTicketStatusName eq 'Scheduled')"
+                "(WorkTicketStatusName eq 'Open' or WorkTicketStatusName eq 'Scheduled' or WorkTicketStatusName eq 'Pending')"
+                " and ScheduledStartDate ge '2026-01-01T00:00:00Z'"
             ),
             "$top": "500",
             "$orderby": "ScheduledStartDate asc",
