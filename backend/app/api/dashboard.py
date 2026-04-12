@@ -733,6 +733,9 @@ async def get_sales_work_tickets():
         sched = t.get("ScheduledStartDate") or t.get("AnticStartDate") or t.get("CompleteDate")
         if not sched:
             continue
+        # Ignore tickets outside 2026 (e.g. 2025 closed tickets)
+        if not sched.startswith("2026"):
+            continue
         opp_id   = str(t.get("OpportunityID") or "")
         division = opp_division.get(opp_id, "")
         tickets.append({
