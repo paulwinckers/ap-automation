@@ -75,43 +75,60 @@ def _normalize_invoice_number(raw: str) -> str:
 def _diff_statement_vs_qbo(
     statement_lines: list[dict],
     qbo_bills: list[dict],
+    qbo_credits: list[dict] = None,
 ) -> dict:
     """
-    Compare statement lines against QBO bills.
-    Returns a structured diff with four categories.
-    """
-    # Build lookup maps — keyed by normalized invoice number
-    # Statement: number → line
-    stmt_map: dict[str, dict] = {}
-    for line in statement_lines:
-        if line.get("amount", 0) <= 0:
-            continue  # skip payments/credits for matching
-        num = _normalize_invoice_number(line.get("invoice_number") or "")
-        if num:
-            stmt_map[num] = line
+    Compare statement lines against QBO bills and vendor credits.
+    Returns a structured diff with categories for both charges and credits.
 
-    # QBO: DocNumber → bill
-    qbo_map: dict[str, dict] = {}
+    Charge lines (amount > 0) are matched against QBO Bills.
+    Credit lines (amount < 0) are matched against QBO VendorCredits.
+    Payment lines are skipped — they appear on both sides and aren't a discrepancy.
+    """
+    qbo_credits = qbo_credits or []
+
+    # ── Separate statement lines into charges and credits ─────────────────────
+    stmt_charges: dict[str, dict] = {}
+    stmt_credits: dict[str, dict] = {}
+
+    for line in statement_lines:
+        amount = line.get("amount", 0)
+        num = _normalize_invoice_number(line.get("invoice_number") or "")
+        if not num:
+            continue
+        if amount > 0:
+            stmt_charges[num] = line
+        elif amount < 0:
+            # Negative amounts on statements are credits/adjustments
+            stmt_credits[num] = line
+        # amount == 0 (e.g. pure payment lines) → skip
+
+    # ── QBO lookup maps ───────────────────────────────────────────────────────
+    qbo_bill_map: dict[str, dict] = {}
     for bill in qbo_bills:
         doc = _normalize_invoice_number(bill.get("DocNumber") or "")
         if doc:
-            qbo_map[doc] = bill
+            qbo_bill_map[doc] = bill
 
+    qbo_credit_map: dict[str, dict] = {}
+    for credit in qbo_credits:
+        doc = _normalize_invoice_number(credit.get("DocNumber") or "")
+        if doc:
+            qbo_credit_map[doc] = credit
+
+    # ── Diff: charges vs QBO Bills ────────────────────────────────────────────
     matched = []
     amount_mismatch = []
     in_stmt_not_qbo = []
     in_qbo_not_stmt = []
 
-    # Walk statement lines
-    for num, stmt_line in stmt_map.items():
+    for num, stmt_line in stmt_charges.items():
         stmt_amount = stmt_line.get("amount", 0)
-        if num in qbo_map:
-            qbo_bill = qbo_map[num]
-            # Compare against TotalAmt (original billed amount), not Balance
-            # (current outstanding).  A bill paid after the statement date should
-            # still match — the vendor billed correctly, we just paid it already.
+        if num in qbo_bill_map:
+            qbo_bill = qbo_bill_map[num]
+            # Compare against TotalAmt (original billed amount), not Balance.
+            # A bill paid after the statement date should still match.
             qbo_amount = float(qbo_bill.get("TotalAmt") or 0)
-            # Allow $0.01 rounding tolerance
             if abs(stmt_amount - qbo_amount) <= 0.01:
                 matched.append({
                     "invoice_number": num,
@@ -138,30 +155,86 @@ def _diff_statement_vs_qbo(
                 "raw_description": stmt_line.get("raw_description"),
             })
 
-    # Walk QBO bills not matched
-    for num, qbo_bill in qbo_map.items():
-        if num not in stmt_map:
+    for num, qbo_bill in qbo_bill_map.items():
+        if num not in stmt_charges:
             in_qbo_not_stmt.append({
                 "invoice_number": num,
                 "qbo_amount": float(qbo_bill.get("TotalAmt") or 0),
-                # Use as-of-date balance (injected by get_vendor_bills) so that
-                # bills paid after the statement date show their full balance, not 0.
+                # As-of-date balance injected by get_vendor_bills
                 "qbo_balance": float(qbo_bill.get("_balance_as_of_date") or qbo_bill.get("Balance") or 0),
                 "qbo_date": qbo_bill.get("TxnDate"),
                 "qbo_bill_id": qbo_bill.get("Id"),
                 "qbo_doc_number": qbo_bill.get("DocNumber"),
             })
 
+    # ── Diff: credit notes vs QBO VendorCredits ───────────────────────────────
+    credits_matched = []
+    credits_amount_mismatch = []
+    credits_in_stmt_not_qbo = []
+    credits_in_qbo_not_stmt = []
+
+    for num, stmt_line in stmt_credits.items():
+        stmt_amount = abs(stmt_line.get("amount", 0))  # compare as positive
+        if num in qbo_credit_map:
+            qbo_credit = qbo_credit_map[num]
+            qbo_amount = float(qbo_credit.get("TotalAmt") or 0)
+            if abs(stmt_amount - qbo_amount) <= 0.01:
+                credits_matched.append({
+                    "invoice_number": num,
+                    "date": stmt_line.get("line_date"),
+                    "stmt_amount": -stmt_amount,
+                    "qbo_amount": qbo_amount,
+                    "qbo_credit_id": qbo_credit.get("Id"),
+                    "qbo_doc_number": qbo_credit.get("DocNumber"),
+                })
+            else:
+                credits_amount_mismatch.append({
+                    "invoice_number": num,
+                    "date": stmt_line.get("line_date"),
+                    "stmt_amount": -stmt_amount,
+                    "qbo_amount": qbo_amount,
+                    "difference": round(qbo_amount - stmt_amount, 2),
+                    "qbo_credit_id": qbo_credit.get("Id"),
+                })
+        else:
+            credits_in_stmt_not_qbo.append({
+                "invoice_number": num,
+                "date": stmt_line.get("line_date"),
+                "stmt_amount": -stmt_amount,
+                "raw_description": stmt_line.get("raw_description"),
+            })
+
+    for num, qbo_credit in qbo_credit_map.items():
+        if num not in stmt_credits:
+            credits_in_qbo_not_stmt.append({
+                "invoice_number": num,
+                "qbo_amount": float(qbo_credit.get("TotalAmt") or 0),
+                "qbo_balance": float(qbo_credit.get("_balance_as_of_date") or qbo_credit.get("Balance") or 0),
+                "qbo_date": qbo_credit.get("TxnDate"),
+                "qbo_credit_id": qbo_credit.get("Id"),
+                "qbo_doc_number": qbo_credit.get("DocNumber"),
+            })
+
     return {
+        # Charge discrepancies
         "matched": matched,
         "amount_mismatch": amount_mismatch,
         "in_stmt_not_qbo": in_stmt_not_qbo,
         "in_qbo_not_stmt": in_qbo_not_stmt,
+        # Credit note discrepancies
+        "credits_matched": credits_matched,
+        "credits_amount_mismatch": credits_amount_mismatch,
+        "credits_in_stmt_not_qbo": credits_in_stmt_not_qbo,
+        "credits_in_qbo_not_stmt": credits_in_qbo_not_stmt,
         "summary": {
             "matched_count": len(matched),
             "mismatch_count": len(amount_mismatch),
             "missing_from_qbo": len(in_stmt_not_qbo),
             "extra_in_qbo": len(in_qbo_not_stmt),
+            "credits_matched_count": len(credits_matched),
+            "credits_mismatch_count": len(credits_amount_mismatch),
+            "credits_missing_from_qbo": len(credits_in_stmt_not_qbo),
+            "credits_extra_in_qbo": len(credits_in_qbo_not_stmt),
             "total_discrepancy": round(
                 sum(r["difference"] for r in amount_mismatch) +
                 sum(r["stmt_amount"] for r in in_stmt_not_qbo), 2
@@ -240,33 +313,47 @@ class ReconciliationService:
                     + (f" [linked to QBO vendor {qbo_vendor_id}]" if qbo_vendor_id else ""))
 
         try:
-            qbo_bills = await self.qbo.get_vendor_bills(vendor_name, from_date, to_date, vendor_id=qbo_vendor_id)
+            qbo_result = await self.qbo.get_vendor_bills(vendor_name, from_date, to_date, vendor_id=qbo_vendor_id)
         except Exception as e:
-            logger.error(f"QBO bill query failed for {vendor_name}: {e}")
-            qbo_bills = []
+            logger.error(f"QBO bill/credit query failed for {vendor_name}: {e}")
+            qbo_result = {"bills": [], "credits": []}
+
+        qbo_bills   = qbo_result.get("bills", [])
+        qbo_credits = qbo_result.get("credits", [])
 
         diff = _diff_statement_vs_qbo(
             statement_lines=statement.get("lines", []),
             qbo_bills=qbo_bills,
+            qbo_credits=qbo_credits,
         )
 
-        # Sum as-of-date balances. get_vendor_bills already filtered to only
-        # bills that were open as of to_date and annotated each with
-        # _balance_as_of_date, so we just sum them directly.
-        qbo_total_balance = round(
+        # Net QBO balance = open bill balances (already net of applied credits)
+        #                   minus any unapplied credits still sitting on the account.
+        # get_vendor_bills annotates each bill with _balance_as_of_date (net of
+        # payments + applied credits) and each credit with _balance_as_of_date
+        # (0 if applied, full amount if unapplied).
+        open_bill_total = round(
             sum(float(b.get("_balance_as_of_date") or b.get("TotalAmt") or 0) for b in qbo_bills),
             2,
         )
+        unapplied_credit_total = round(
+            sum(float(c.get("_balance_as_of_date") or 0) for c in qbo_credits),
+            2,
+        )
+        qbo_total_balance = round(open_bill_total - unapplied_credit_total, 2)
 
         return {
             "vendor_name": vendor_name,
             "statement_date": statement.get("statement_date"),
             "closing_balance": statement.get("closing_balance"),
             "qbo_total_balance": qbo_total_balance,
+            "qbo_open_bill_total": open_bill_total,
+            "qbo_unapplied_credit_total": unapplied_credit_total,
             "currency": statement.get("currency", "CAD"),
             "aging": statement.get("aging", {}),
             "statement_line_count": len(statement.get("lines", [])),
             "qbo_bill_count": len(qbo_bills),
+            "qbo_credit_count": len(qbo_credits),
             "diff": diff,
             "refreshed_at": datetime.utcnow().isoformat() + "Z",
         }

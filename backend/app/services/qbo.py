@@ -901,59 +901,61 @@ class QBOClient:
         from_date: str,
         to_date: str,
         vendor_id: str = None,
-    ) -> list[dict]:
+    ) -> dict:
         """
-        Fetch bills for a vendor that were OPEN as of to_date.
+        Fetch bills and vendor credits for a vendor as of to_date.
         Used for vendor statement reconciliation — moment-in-time snapshot.
 
+        Returns:
+          {
+            "bills":   [...],   # open bills with _balance_as_of_date (net of payments + applied credits)
+            "credits": [...],   # vendor credits with _balance_as_of_date (unapplied portion)
+          }
+
         A bill is "open as of to_date" if:
-          TxnDate <= to_date  (it existed by the statement date)
-          AND (TotalAmt - payments_received_on_or_before_to_date) > 0
+          TxnDate <= to_date  AND balance_as_of_date > 0
+          (balance = TotalAmt − payments − applied credits, all dated <= to_date)
 
-        Bills paid AFTER to_date are treated as unpaid for reconciliation purposes.
-        Bills fully paid ON OR BEFORE to_date are excluded (they were closed by then).
-
-        Each returned bill has an extra key `_balance_as_of_date` with the
-        as-of-date outstanding balance for use in the diff engine.
+        Applied credits reduce the specific bill they're linked to.
+        Unapplied credits (no LinkedTxn to a bill) are returned separately so the
+        caller can subtract them from the vendor's net payable balance.
         """
         if not vendor_id:
             vendor = await self.find_vendor(vendor_name)
             if not vendor:
-                return []
+                return {"bills": [], "credits": []}
             vendor_id = vendor["Id"]
 
-        # Fetch all bills with TxnDate <= to_date
-        result = await self._get(
-            "query",
-            {
-                "query": (
-                    f"SELECT * FROM Bill "
-                    f"WHERE VendorRef = '{vendor_id}' "
-                    f"AND TxnDate <= '{to_date}' "
-                    f"MAXRESULTS 200"
-                )
-            },
+        # ── Fetch bills, payments, and credits in parallel ────────────────────
+        bill_result, pay_result, credit_result = await asyncio.gather(
+            self._get("query", {"query": (
+                f"SELECT * FROM Bill "
+                f"WHERE VendorRef = '{vendor_id}' "
+                f"AND TxnDate <= '{to_date}' "
+                f"MAXRESULTS 200"
+            )}),
+            self._get("query", {"query": (
+                f"SELECT * FROM BillPayment "
+                f"WHERE VendorRef = '{vendor_id}' "
+                f"AND TxnDate <= '{to_date}' "
+                f"MAXRESULTS 200"
+            )}),
+            self._get("query", {"query": (
+                f"SELECT * FROM VendorCredit "
+                f"WHERE VendorRef = '{vendor_id}' "
+                f"AND TxnDate <= '{to_date}' "
+                f"MAXRESULTS 200"
+            )}),
         )
-        all_bills = result.get("QueryResponse", {}).get("Bill", [])
-        if not all_bills:
-            return []
 
-        # Fetch BillPayments made ON OR BEFORE to_date so we know what was
-        # already paid by the statement date.
-        pay_result = await self._get(
-            "query",
-            {
-                "query": (
-                    f"SELECT * FROM BillPayment "
-                    f"WHERE VendorRef = '{vendor_id}' "
-                    f"AND TxnDate <= '{to_date}' "
-                    f"MAXRESULTS 200"
-                )
-            },
-        )
-        payments = pay_result.get("QueryResponse", {}).get("BillPayment", [])
+        all_bills   = bill_result.get("QueryResponse",   {}).get("Bill",         [])
+        payments    = pay_result.get("QueryResponse",    {}).get("BillPayment",   [])
+        all_credits = credit_result.get("QueryResponse", {}).get("VendorCredit",  [])
 
-        # Build map: bill_id → total amount paid on or before to_date
+        if not all_bills and not all_credits:
+            return {"bills": [], "credits": []}
+
+        # ── Build map: bill_id → total payments received on or before to_date ─
         paid_by_date: dict[str, float] = {}
         for pmt in payments:
             for line in pmt.get("Line", []):
@@ -966,17 +968,50 @@ class QBOClient:
                                 + float(line.get("Amount") or 0)
                             )
 
-        # Keep only bills that had an outstanding balance as of to_date
+        # ── Build map: bill_id → total credits applied on or before to_date ──
+        # A VendorCredit's LinkedTxn lists the bill(s) it was applied to.
+        # If a credit is applied to multiple bills (rare), distribute evenly.
+        # Unapplied credits (no linked bills) are tracked separately.
+        credited_by_date: dict[str, float] = {}
+        unapplied_credits: list[dict] = []
+
+        for credit in all_credits:
+            credit_total = float(credit.get("TotalAmt") or 0)
+            linked_bills = [
+                lt for lt in credit.get("LinkedTxn", [])
+                if lt.get("TxnType") == "Bill"
+            ]
+            if linked_bills:
+                per_bill = credit_total / len(linked_bills)
+                for lt in linked_bills:
+                    bill_id = lt.get("TxnId")
+                    if bill_id:
+                        credited_by_date[bill_id] = (
+                            credited_by_date.get(bill_id, 0.0) + per_bill
+                        )
+                credit["_balance_as_of_date"] = 0.0  # fully absorbed into bill(s)
+            else:
+                # Not yet applied to a bill — sits as an open credit on the account
+                credit["_balance_as_of_date"] = credit_total
+                unapplied_credits.append(credit)
+
+        # ── Keep only bills that had an outstanding balance as of to_date ─────
         open_bills = []
         for bill in all_bills:
-            total = float(bill.get("TotalAmt") or 0)
-            paid = paid_by_date.get(bill["Id"], 0.0)
-            balance_as_of_date = round(total - paid, 2)
+            total    = float(bill.get("TotalAmt") or 0)
+            paid     = paid_by_date.get(bill["Id"], 0.0)
+            credited = credited_by_date.get(bill["Id"], 0.0)
+            balance_as_of_date = round(total - paid - credited, 2)
             if balance_as_of_date > 0.01:
                 bill["_balance_as_of_date"] = balance_as_of_date
                 open_bills.append(bill)
 
-        return open_bills
+        logger.info(
+            f"get_vendor_bills: {len(open_bills)} open bills, "
+            f"{len(all_credits)} credits ({len(unapplied_credits)} unapplied) "
+            f"for vendor {vendor_id} as of {to_date}"
+        )
+        return {"bills": open_bills, "credits": all_credits}
 
     async def get_transaction_amount(self, entity_id: str, doc_type: Optional[str]) -> Optional[float]:
         """
