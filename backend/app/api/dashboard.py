@@ -678,8 +678,11 @@ async def get_sales_work_tickets():
                 "WorkTicketID,WorkTicketStatusName,"
                 "ScheduledStartDate,AnticStartDate,CompleteDate,HoursEst,OpportunityID"
             ),
+            "$filter": (
+                "(WorkTicketStatusName eq 'Open' or WorkTicketStatusName eq 'Scheduled')"
+            ),
             "$top": "500",
-            "$orderby": "AnticStartDate asc",
+            "$orderby": "ScheduledStartDate asc",
         })
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire WorkTickets error: {e}")
@@ -702,8 +705,8 @@ async def get_sales_work_tickets():
         est_hrs = float(t.get("HoursEst") or 0)
         if est_hrs <= 0:
             continue
-        # Prefer AnticStartDate → ScheduledStartDate → CompleteDate
-        sched = t.get("AnticStartDate") or t.get("ScheduledStartDate") or t.get("CompleteDate")
+        # Prefer ScheduledStartDate → AnticStartDate → CompleteDate
+        sched = t.get("ScheduledStartDate") or t.get("AnticStartDate") or t.get("CompleteDate")
         if not sched:
             continue
         opp_id   = str(t.get("OpportunityID") or "")
