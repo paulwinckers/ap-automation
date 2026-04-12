@@ -687,11 +687,14 @@ async def get_sales_work_tickets():
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire WorkTickets error: {e}")
 
-    # Build OpportunityID → DivisionName lookup from Opportunities
+    # Build OpportunityID → DivisionName lookup from Won opportunities
+    # (work tickets are generated from Won contracts — fetch most recent Won first)
     try:
         opp_raw = await _aspire._get_all("Opportunities", params={
             "$select": "OpportunityID,DivisionName",
+            "$filter": "OpportunityStatusName eq 'Won'",
             "$top": "500",
+            "$orderby": "WonDate desc",
         })
         opp_division = {
             str(o.get("OpportunityID")): o.get("DivisionName") or ""
