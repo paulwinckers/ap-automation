@@ -637,37 +637,54 @@ async def get_sales_pipeline():
 async def get_sales_work_tickets():
     """
     Work tickets feed for the Sales Dashboard hours charts.
-    Returns all work tickets with status, scheduled date, estimated hours, division.
+    DivisionName is not on WorkTickets — we fetch OpportunityID→DivisionName
+    from Opportunities and join in Python.
     """
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Aspire credentials not configured")
+
+    # Fetch work tickets (no DivisionName — it's not a WorkTicket field)
     try:
         raw = await _aspire._get_all("WorkTickets", params={
             "$select": (
                 "WorkTicketID,WorkTicketStatusName,WorkTicketType,"
                 "ScheduledDate,ScheduledStartDate,"
-                "EstimatedLaborHours,DivisionName,OpportunityID"
+                "EstimatedLaborHours,OpportunityID"
             ),
             "$top": "500",
-            "$orderby": "ScheduledDate asc",
+            "$orderby": "ScheduledStartDate asc",
         })
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
+        raise HTTPException(status_code=502, detail=f"Aspire WorkTickets error: {e}")
+
+    # Build OpportunityID → DivisionName lookup from Opportunities
+    try:
+        opp_raw = await _aspire._get_all("Opportunities", params={
+            "$select": "OpportunityID,DivisionName",
+            "$top": "500",
+        })
+        opp_division = {
+            str(o.get("OpportunityID")): o.get("DivisionName") or ""
+            for o in opp_raw
+        }
+    except Exception:
+        opp_division = {}  # non-fatal — division will be blank
 
     tickets = []
     for t in raw:
         est_hrs = float(t.get("EstimatedLaborHours") or 0)
         if est_hrs <= 0:
             continue
-        # Prefer ScheduledDate; fall back to ScheduledStartDate
         sched = t.get("ScheduledDate") or t.get("ScheduledStartDate")
         if not sched:
             continue
+        opp_id  = str(t.get("OpportunityID") or "")
+        division = opp_division.get(opp_id, "")
         tickets.append({
-            "status":    t.get("WorkTicketStatusName") or "",
+            "status":     t.get("WorkTicketStatusName") or "",
             "sched_date": sched,
-            "est_hrs":   est_hrs,
-            "division":  t.get("DivisionName") or "",
+            "est_hrs":    est_hrs,
+            "division":   division,
         })
 
     return {
