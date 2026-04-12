@@ -672,18 +672,35 @@ async def get_sales_work_tickets():
         raise HTTPException(status_code=503, detail="Aspire credentials not configured")
 
     # Fetch work tickets (no DivisionName — it's not a WorkTicket field)
+    # Paginate through all work tickets using $skip (Aspire caps at 500/page)
+    SELECT_WT = (
+        "WorkTicketID,WorkTicketStatusName,"
+        "ScheduledStartDate,AnticStartDate,CompleteDate,HoursEst,OpportunityID"
+    )
+    FILTER_WT = (
+        "WorkTicketStatusName eq 'Open'"
+        " or WorkTicketStatusName eq 'Scheduled'"
+        " or WorkTicketStatusName eq 'Pending Approval'"
+    )
+    PAGE = 500
+    raw: list = []
     try:
-        raw = await _aspire._get_all("WorkTickets", params={
-            "$select": (
-                "WorkTicketID,WorkTicketStatusName,"
-                "ScheduledStartDate,AnticStartDate,CompleteDate,HoursEst,OpportunityID"
-            ),
-            "$filter": (
-                "WorkTicketStatusName eq 'Open' or WorkTicketStatusName eq 'Scheduled' or WorkTicketStatusName eq 'Pending'"
-            ),
-            "$top": "500",
-            "$orderby": "ScheduledStartDate asc",
-        })
+        skip = 0
+        while True:
+            page_data = await _aspire._get("WorkTickets", params={
+                "$select": SELECT_WT,
+                "$filter": FILTER_WT,
+                "$top":    str(PAGE),
+                "$skip":   str(skip),
+                "$orderby": "ScheduledStartDate asc",
+            })
+            records = _aspire._extract_list(page_data)
+            raw.extend(records)
+            if len(records) < PAGE:
+                break   # last page
+            skip += PAGE
+            if skip >= 10_000:
+                break   # safety cap
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire WorkTickets error: {e}")
 
