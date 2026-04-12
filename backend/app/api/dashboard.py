@@ -666,9 +666,10 @@ async def get_sales_work_tickets():
         raw = await _aspire._get_all("WorkTickets", params={
             "$select": (
                 "WorkTicketID,WorkTicketStatusName,"
-                "CompleteDate,EstimatedLaborHours,OpportunityID"
+                "ScheduledStartDate,AnticStartDate,CompleteDate,HoursEst,OpportunityID"
             ),
             "$top": "500",
+            "$orderby": "AnticStartDate asc",
         })
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire WorkTickets error: {e}")
@@ -688,10 +689,11 @@ async def get_sales_work_tickets():
 
     tickets = []
     for t in raw:
-        est_hrs = float(t.get("EstimatedLaborHours") or 0)
+        est_hrs = float(t.get("HoursEst") or 0)
         if est_hrs <= 0:
             continue
-        sched = t.get("CompleteDate")
+        # Prefer AnticStartDate → ScheduledStartDate → CompleteDate
+        sched = t.get("AnticStartDate") or t.get("ScheduledStartDate") or t.get("CompleteDate")
         if not sched:
             continue
         opp_id   = str(t.get("OpportunityID") or "")
