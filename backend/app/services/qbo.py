@@ -861,10 +861,10 @@ class QBOClient:
 
     async def list_expense_accounts(self) -> list[dict]:
         """
-        Return all active expense/overhead accounts from the QBO chart of accounts.
+        Return all active expense/overhead/COGS accounts from the QBO chart of accounts.
         Used for GL suggestion when a vendor is unknown or the user wants to correct the GL.
         """
-        # QBO query language doesn't support OR with parentheses — run two queries
+        # QBO query language doesn't support OR with parentheses — run separate queries
         expense_result = await self._get(
             "query",
             {"query": "SELECT Id, Name, AcctNum, AccountType, AccountSubType FROM Account WHERE Active = true AND AccountType = 'Expense' MAXRESULTS 200"},
@@ -873,9 +873,14 @@ class QBOClient:
             "query",
             {"query": "SELECT Id, Name, AcctNum, AccountType, AccountSubType FROM Account WHERE Active = true AND AccountType = 'Other Expense' MAXRESULTS 200"},
         )
+        cogs_result = await self._get(
+            "query",
+            {"query": "SELECT Id, Name, AcctNum, AccountType, AccountSubType FROM Account WHERE Active = true AND AccountType = 'Cost of Goods Sold' MAXRESULTS 200"},
+        )
         accounts = (
             expense_result.get("QueryResponse", {}).get("Account", []) +
-            other_result.get("QueryResponse", {}).get("Account", [])
+            other_result.get("QueryResponse", {}).get("Account", []) +
+            cogs_result.get("QueryResponse", {}).get("Account", [])
         )
         return accounts
 
