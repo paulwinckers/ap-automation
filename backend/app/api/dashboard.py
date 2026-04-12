@@ -687,21 +687,30 @@ async def get_sales_work_tickets():
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire WorkTickets error: {e}")
 
-    # Build OpportunityID → DivisionName lookup from Won opportunities
-    # (work tickets are generated from Won contracts — fetch most recent Won first)
+    # Build OpportunityID → DivisionName lookup by fetching only the
+    # exact OpportunityIDs that appear in the work tickets (100% coverage)
+    unique_opp_ids = [
+        str(t.get("OpportunityID"))
+        for t in raw
+        if t.get("OpportunityID")
+    ]
+    unique_opp_ids = list(dict.fromkeys(unique_opp_ids))  # dedupe, preserve order
+
+    opp_division: dict[str, str] = {}
     try:
-        opp_raw = await _aspire._get_all("Opportunities", params={
-            "$select": "OpportunityID,DivisionName",
-            "$filter": "OpportunityStatusName eq 'Won'",
-            "$top": "500",
-            "$orderby": "WonDate desc",
-        })
-        opp_division = {
-            str(o.get("OpportunityID")): o.get("DivisionName") or ""
-            for o in opp_raw
-        }
+        batch_size = 25
+        for i in range(0, len(unique_opp_ids), batch_size):
+            batch = unique_opp_ids[i : i + batch_size]
+            filter_str = " or ".join(f"OpportunityID eq {oid}" for oid in batch)
+            batch_opps = await _aspire._get_all("Opportunities", params={
+                "$select": "OpportunityID,DivisionName",
+                "$filter": f"({filter_str})",
+                "$top": str(batch_size + 5),
+            })
+            for o in batch_opps:
+                opp_division[str(o.get("OpportunityID"))] = o.get("DivisionName") or ""
     except Exception:
-        opp_division = {}  # non-fatal — division will be blank
+        pass  # non-fatal — division will be blank for unresolved IDs
 
     tickets = []
     for t in raw:
