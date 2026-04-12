@@ -693,15 +693,20 @@ async def get_sales_work_tickets():
                 "$filter": FILTER_WT,
                 "$top":    str(PAGE),
                 "$skip":   str(skip),
-                "$orderby": "ScheduledStartDate asc",
+                "$orderby": "ScheduledStartDate desc",
             })
             records = _aspire._extract_list(page_data)
             raw.extend(records)
             if len(records) < PAGE:
-                break   # last page
+                break   # last page — end of data
+            # Early exit: if the last record on this page is pre-2026,
+            # all subsequent pages will also be pre-2026 (descending order)
+            last_date = records[-1].get("ScheduledStartDate") or ""
+            if last_date and last_date < "2026-01-01":
+                break
             skip += PAGE
-            if skip >= 10_000:
-                break   # safety cap
+            if skip >= 50_000:
+                break   # hard safety cap
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire WorkTickets error: {e}")
 
