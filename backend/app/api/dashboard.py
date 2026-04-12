@@ -759,6 +759,31 @@ async def get_sales_work_tickets():
 
 # ── Sales Revenue (RevenueVariances) ──────────────────────────────────────────
 
+@router.get("/sales/wt-revenue/probe")
+async def get_wt_revenue_probe():
+    """Probe WorkTicketRevenues — check fields, date range and sample values."""
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire credentials not configured")
+    try:
+        data = await _aspire._get("WorkTicketRevenues", params={
+            "$top": "10", "$orderby": "RevenueMonth desc"
+        })
+        records = _aspire._extract_list(data)
+        from collections import defaultdict
+        by_year: dict = defaultdict(int)
+        for r in records:
+            yr = (r.get("RevenueMonth") or "")[:4]
+            by_year[yr] += 1
+        return {
+            "count": len(records),
+            "all_fields": sorted(records[0].keys()) if records else [],
+            "years_in_sample": dict(by_year),
+            "sample": records,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/sales/invoices/probe")
 async def get_sales_invoices_probe():
     """Probe Invoices endpoint — show available fields and sample records."""
