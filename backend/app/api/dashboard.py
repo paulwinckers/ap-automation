@@ -604,6 +604,12 @@ async def get_sales_pipeline():
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
+    def _date_only(val: str | None) -> str | None:
+        """Strip time component so parseDateAny(YYYY-MM-DD) works in JS."""
+        if not val:
+            return None
+        return val[:10]  # '2025-03-01T00:00:00Z' → '2025-03-01'
+
     pipeline = []
     for o in raw:
         # Skip blanks / test records
@@ -612,13 +618,14 @@ async def get_sales_pipeline():
             continue
 
         estimated   = float(o.get("EstimatedDollars") or 0)
-        probability = float(o.get("Probability") or 0)
+        # Aspire stores Probability as 0-100 (percent), JS expects 0-1 (decimal)
+        probability = float(o.get("Probability") or 0) / 100.0
         est_hours   = float(o.get("EstimatedLaborHours") or 0)
 
         pipeline.append({
             "division":          o.get("DivisionName") or "",
             "status":            o.get("OpportunityStatusName") or "",
-            "start_date":        o.get("StartDate"),           # ISO string, JS parseDateAny handles it
+            "start_date":        _date_only(o.get("StartDate")),
             "estimated_dollars": estimated,
             "probability":       probability,
             "weighted_pipeline": round(estimated * probability, 2),
@@ -678,11 +685,11 @@ async def get_sales_work_tickets():
         sched = t.get("ScheduledDate") or t.get("ScheduledStartDate")
         if not sched:
             continue
-        opp_id  = str(t.get("OpportunityID") or "")
+        opp_id   = str(t.get("OpportunityID") or "")
         division = opp_division.get(opp_id, "")
         tickets.append({
             "status":     t.get("WorkTicketStatusName") or "",
-            "sched_date": sched,
+            "sched_date": sched[:10],   # strip time component
             "est_hrs":    est_hrs,
             "division":   division,
         })
