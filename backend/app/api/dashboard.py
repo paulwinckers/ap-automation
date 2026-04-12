@@ -759,6 +759,23 @@ async def get_sales_work_tickets():
 
 # ── Sales Revenue (RevenueVariances) ──────────────────────────────────────────
 
+@router.get("/sales/revenue/probe")
+async def get_sales_revenue_probe():
+    """Return first 5 raw RevenueVariances records so we can verify field names/values."""
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire credentials not configured")
+    try:
+        data = await _aspire._get("RevenueVariances", params={"$top": "5"})
+        records = _aspire._extract_list(data)
+        return {
+            "count": len(records),
+            "sample": records,
+            "all_fields": sorted(records[0].keys()) if records else [],
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/sales/revenue")
 async def get_sales_revenue():
     """
