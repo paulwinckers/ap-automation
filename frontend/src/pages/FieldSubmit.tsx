@@ -307,7 +307,9 @@ export default function FieldSubmit() {
               </div>
               <div style={{...S.jobres,background:'#eff6ff',borderColor:'#bfdbfe'}}>
                 <div style={{fontSize:13,color:'#1e40af',lineHeight:1.6}}>
-                  📋 This invoice will be forwarded to your AP team for entry into Aspire.
+                  {po
+                    ? '✅ PO number will be matched in Aspire automatically.'
+                    : '📋 No PO? This invoice will be forwarded to your AP team.'}
                 </div>
               </div>
             </>}
@@ -355,7 +357,9 @@ export default function FieldSubmit() {
             <div style={S.ssub}>
               {costType==='overhead'
                 ? "Sent to AP — you'll get a confirmation email once it's posted."
-                : 'Forwarded to your AP team for entry into Aspire.'}
+                : po
+                  ? "Submitted — matching your PO in Aspire now."
+                  : 'Forwarded to your AP team for entry into Aspire.'}
             </div>
             {referenceId && <div style={S.ref}>{referenceId}</div>}
           </div>

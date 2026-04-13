@@ -251,25 +251,26 @@ async def upload_invoice(
         logger.warning(f"R2 upload failed for field invoice {invoice_id} — attachment may be missing on retry: {e}")
 
     invoice = Invoice(
-        id             = invoice_id,
-        status         = InvoiceStatus.PENDING,
-        vendor_name    = routing_vendor,
-        invoice_number = extraction.invoice_number,
-        invoice_date   = extraction.invoice_date,
-        due_date       = extraction.due_date,
-        subtotal       = extraction.subtotal,
-        tax_amount     = extraction.tax_amount,
-        total_amount   = extraction.total_amount,
-        currency       = extraction.currency,
-        po_number      = extraction.po_number,
-        pdf_filename   = file.filename,
-        intake_source  = "upload",
-        line_items     = [LineItem(**li.model_dump()) for li in extraction.line_items],
-        tax_lines      = [TaxLine(**tl.model_dump()) for tl in extraction.tax_lines],
-        file_bytes     = pdf_bytes,
-        doc_type       = doc_type,
+        id                 = invoice_id,
+        status             = InvoiceStatus.PENDING,
+        vendor_name        = routing_vendor,
+        invoice_number     = extraction.invoice_number,
+        invoice_date       = extraction.invoice_date,
+        due_date           = extraction.due_date,
+        subtotal           = extraction.subtotal,
+        tax_amount         = extraction.tax_amount,
+        total_amount       = extraction.total_amount,
+        currency           = extraction.currency,
+        po_number          = extraction.po_number,
+        po_number_override = po_number_hint or None,  # field crew's entered PO takes precedence over extraction
+        pdf_filename       = file.filename,
+        intake_source      = "upload",
+        line_items         = [LineItem(**li.model_dump()) for li in extraction.line_items],
+        tax_lines          = [TaxLine(**tl.model_dump()) for tl in extraction.tax_lines],
+        file_bytes         = pdf_bytes,
+        doc_type           = doc_type,
         # User-confirmed GL from GL confirmation step (overrides vendor rule lookup)
-        gl_account     = gl_account or None,
+        gl_account         = gl_account or None,
     )
 
     outcome = await route_invoice(invoice, db, _aspire, _qbo, employee_name=employee_name)

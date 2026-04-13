@@ -40,6 +40,15 @@ def _normalize_date(date_str: Optional[str]) -> Optional[str]:
     return date_str
 
 
+def _to_aspire_datetime(date_str: Optional[str]) -> Optional[str]:
+    """Convert YYYY-MM-DD to the ISO datetime format Aspire expects: YYYY-MM-DDT00:00:00Z."""
+    if not date_str:
+        return None
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+        return f"{date_str}T00:00:00Z"
+    return date_str
+
+
 class AspireClient:
     def __init__(self, sandbox: bool = False):
         self.base_url = SANDBOX_BASE if sandbox else PRODUCTION_BASE
@@ -253,15 +262,31 @@ class AspireClient:
 
     # ── Receipt fill ─────────────────────────────────────────────────────────
 
+    # Fields Aspire accepts in ReceiptItems when POSTing a receipt update.
+    # ItemAllocations and other read-only metadata cause a 400 if included.
+    _RECEIPT_ITEM_FIELDS = frozenset({
+        "ReceiptItemID", "CatalogItemID", "ItemName", "ItemQuantity",
+        "ItemUnitCost", "ItemExtendedCost", "ItemType", "ReceivedQuantity",
+    })
+
     @staticmethod
     def _build_receipt_items(existing_items: list[dict], invoice: Invoice) -> list[dict]:
         """
         Build updated ReceiptItems from existing PO items + actual invoice amounts.
         Tax goes in ReceiptExtraCosts (separate field), NOT here.
 
-        1. Keep all existing non-tax ReceiptItems as-is (preserve CatalogItemID etc.)
-        2. Scale item costs proportionally if actual subtotal differs from PO subtotal.
+        1. Exclude tax-like items (PST already in ReceiptItems for some vendors)
+           so we don't double-count with ReceiptExtraCosts.
+        2. Scale non-tax item costs proportionally if actual subtotal differs from PO subtotal.
+        3. Strip read-only fields (ItemAllocations etc.) — Aspire returns 400 if included.
         """
+        # Separate tax items (e.g. PST as a line item) from real material/labour items
+        tax_keywords = {"pst", "gst", "hst", "tax"}
+        material_items = [
+            i for i in existing_items
+            if not any(kw in (i.get("ItemName") or "").lower() for kw in tax_keywords)
+        ]
+
         # Determine actual subtotal (total minus taxes)
         if invoice.subtotal is not None:
             actual_subtotal = float(invoice.subtotal)
@@ -271,26 +296,27 @@ class AspireClient:
             )
             actual_subtotal = float(invoice.total_amount or 0) - tax_total
 
-        # PO subtotal from existing items
+        # PO subtotal from material items only
         po_subtotal = sum(
             float(i.get("ItemUnitCost") or 0) * float(i.get("ItemQuantity") or 1)
-            for i in existing_items
+            for i in material_items
         )
 
         # Scale items to match actual subtotal if different
         updated_items = []
-        if existing_items:
+        if material_items:
             if abs(actual_subtotal - po_subtotal) > 0.001 and po_subtotal != 0:
                 scale = actual_subtotal / po_subtotal
-                for orig in existing_items:
+                for orig in material_items:
                     item = dict(orig)
                     item["ItemUnitCost"] = round(float(orig.get("ItemUnitCost") or 0) * scale, 4)
                     updated_items.append(item)
             else:
-                updated_items = [dict(i) for i in existing_items]
+                updated_items = [dict(i) for i in material_items]
 
-        # Strip None values; keep ReceiptItemID for in-place upsert
-        return [{k: v for k, v in item.items() if v is not None} for item in updated_items]
+        # Keep only fields Aspire accepts; strip ItemAllocations and other read-only metadata
+        allowed = AspireClient._RECEIPT_ITEM_FIELDS
+        return [{k: v for k, v in item.items() if k in allowed and v is not None} for item in updated_items]
 
     @staticmethod
     def _build_extra_costs(invoice: Invoice) -> list[dict]:
@@ -344,8 +370,8 @@ class AspireClient:
             "VendorInvoiceDate":  _normalize_date(invoice.invoice_date),
             "ReceivedDate":       (
                 receipt.get("ReceivedDate")
-                or _normalize_date(invoice.invoice_date)
-                or date.today().isoformat()
+                or _to_aspire_datetime(_normalize_date(invoice.invoice_date))
+                or f"{date.today().isoformat()}T00:00:00Z"
             ),
             "WorkTicketID":       receipt.get("WorkTicketID"),
             "ReceiptNote":        new_note,
