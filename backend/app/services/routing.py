@@ -167,43 +167,124 @@ async def _route_to_aspire(
     aspire: AspireClient,
     vendor_rule=None,
 ) -> RoutingOutcome:
-    """Validate PO in Aspire, then post the bill."""
+    """Find open Receipt in Aspire, fill it with invoice data, notify contact."""
 
     if not po_number:
-        # Job-cost vendor but no PO — queue for manual PO entry
         logger.warning(f"Job-cost vendor '{invoice.vendor_name}' has no PO — queuing")
         await _queue(invoice, db, reason="job_cost_no_po")
         return RoutingOutcome.QUEUED
 
-    # Validate PO exists and is open in Aspire
-    po_data = await aspire.get_purchase_order(po_number)
+    receipt = await aspire.find_open_receipt(po_number)
 
-    if po_data is None:
-        logger.warning(f"PO '{po_number}' not found in Aspire — queuing invoice {invoice.id}")
+    if receipt is None:
+        logger.warning(f"PO '{po_number}' not found in Aspire as open receipt — queuing invoice {invoice.id}")
         await _queue(invoice, db, reason="po_not_found", detail={"po_number": po_number})
         return RoutingOutcome.QUEUED
 
-    if po_data.get("status") == "Closed":
-        logger.warning(f"PO '{po_number}' is closed in Aspire — queuing invoice {invoice.id}")
-        await _queue(invoice, db, reason="po_closed", detail={"po_number": po_number})
-        return RoutingOutcome.QUEUED
-
-    # Post the bill
     try:
-        receipt_id = await aspire.post_bill(invoice, po_data, vendor_rule=vendor_rule)
-        await db.mark_posted_aspire(invoice.id, receipt_id, po_data["OpportunityID"])
+        receipt_id = await aspire.fill_receipt_from_invoice(invoice, receipt)
+        opportunity_id = receipt.get("OpportunityID")
+
+        await db.mark_posted_aspire(invoice.id, receipt_id, opportunity_id)
         await db.audit(invoice.id, "posted", "system", {
             "destination": "aspire",
             "receipt_id": receipt_id,
+            "receipt_number": receipt.get("ReceiptNumber"),
             "po_number": po_number,
+            "work_ticket_id": receipt.get("WorkTicketID"),
+            "opportunity_id": opportunity_id,
         })
-        logger.info(f"Invoice {invoice.id} posted to Aspire — receipt {receipt_id}")
+        logger.info(
+            f"Invoice {invoice.id} → updated Aspire Receipt "
+            f"#{receipt.get('ReceiptNumber')} (ID={receipt_id}), "
+            f"WorkTicket={receipt.get('WorkTicketID')}"
+        )
+
+        # Notify the assigned contact
+        if vendor_rule and vendor_rule.forward_to:
+            await _notify_aspire_updated(invoice, receipt, vendor_rule, db)
+
         return RoutingOutcome.POSTED_ASPIRE
 
     except Exception as e:
-        logger.error(f"Aspire post failed for invoice {invoice.id}: {e}")
+        logger.error(f"Aspire receipt update failed for invoice {invoice.id}: {e}")
         await db.mark_error(invoice.id, str(e))
         return RoutingOutcome.ERROR
+
+
+async def _notify_aspire_updated(invoice, receipt, vendor_rule, db=None):
+    """Email the assigned contact when an Aspire receipt is updated with an invoice."""
+    forward_to = vendor_rule.forward_to if vendor_rule else None
+    if not forward_to:
+        return
+    try:
+        from app.services.email_intake import GraphClient
+        if not settings.MS_AP_INBOX:
+            return
+
+        amount = f"${invoice.total_amount:,.2f}" if invoice.total_amount else "unknown"
+        receipt_num = receipt.get("ReceiptNumber") or receipt.get("ReceiptID")
+        work_ticket = receipt.get("WorkTicketNumber") or receipt.get("WorkTicketID") or "—"
+        opportunity = receipt.get("OpportunityNumber") or receipt.get("OpportunityID") or "—"
+
+        graph = GraphClient()
+        try:
+            await graph.send_email(
+                mailbox=settings.MS_AP_INBOX,
+                to_addresses=[forward_to],
+                subject=f"PO #{receipt_num} updated — {invoice.vendor_name or 'Unknown vendor'} {amount}",
+                body_html=f"""
+<html><body style="font-family:Arial,sans-serif;color:#1a1d23;max-width:600px">
+<div style="background:#1e3a2f;padding:20px 24px;border-radius:8px 8px 0 0">
+  <h2 style="color:#fff;margin:0;font-size:18px">✅ Purchase Receipt Updated</h2>
+</div>
+<div style="background:#fff;border:1px solid #e2e6ed;border-top:none;padding:24px;border-radius:0 0 8px 8px">
+  <p style="margin:0 0 16px;color:#374151">
+    An invoice has been matched to an Aspire Purchase Receipt and updated automatically.
+  </p>
+  <table style="width:100%;border-collapse:collapse;font-size:14px">
+    <tr><td style="padding:8px 0;color:#6b7280;width:160px">Vendor</td>
+        <td style="padding:8px 0;font-weight:600">{invoice.vendor_name or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Receipt / PO #</td>
+        <td style="padding:8px 0;font-weight:600">{receipt_num}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Invoice #</td>
+        <td style="padding:8px 0">{invoice.invoice_number or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Invoice Date</td>
+        <td style="padding:8px 0">{invoice.invoice_date or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Amount</td>
+        <td style="padding:8px 0;font-weight:600">{amount}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Work Ticket</td>
+        <td style="padding:8px 0">#{work_ticket}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Opportunity</td>
+        <td style="padding:8px 0">#{opportunity}</td></tr>
+  </table>
+  <p style="margin:24px 0 0">
+    <a href="https://darios-ap.pages.dev/ap"
+       style="background:#1e3a2f;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">
+      Open AP Dashboard
+    </a>
+  </p>
+  <p style="margin:16px 0 0;font-size:12px;color:#9ca3af">
+    AP Automation · Dario's Landscape Services
+  </p>
+</div>
+</body></html>""",
+                attachment_bytes=invoice.file_bytes,
+                attachment_filename=invoice.pdf_filename or f"invoice_{invoice.id}.pdf",
+            )
+            logger.info(f"Aspire update notification sent to {forward_to} for invoice {invoice.id}")
+            if db:
+                await db.mark_forwarded(invoice.id, forward_to)
+        finally:
+            await graph.close()
+    except Exception as e:
+        logger.warning(f"Aspire update notification failed (non-fatal): {e}")
 
 
 async def _resolve_gl_name(gl_account: str, gl_name: Optional[str], qbo: QBOClient) -> Optional[str]:
