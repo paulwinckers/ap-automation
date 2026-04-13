@@ -357,25 +357,45 @@ async def debug_receipt(po_number: str = Query(...)):
 
 
 @router.get("/debug-attachment")
-async def debug_attachment(ticket_id: int = Query(...)):
+async def debug_attachment(ticket_id: int = Query(...), type_id: int = Query(1), object_code: str = Query("WorkTicket")):
     """
     Debug endpoint — tries to upload a tiny test attachment to a WorkTicket.
-    Used to confirm Aspire Attachments API permission is working.
+    Try different type_id and object_code values to find what Aspire accepts.
     """
     import base64
+    import httpx
     # 1x1 white pixel PNG
     test_bytes = base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI6QAAAABJRU5ErkJggg=="
     )
+    token = await _aspire._get_token()
+    file_data = base64.b64encode(test_bytes).decode("utf-8")
+    body = {
+        "FileName":         "ap_test.png",
+        "FileData":         file_data,
+        "ObjectId":         ticket_id,
+        "ObjectCode":       object_code,
+        "AttachmentTypeId": type_id,
+        "ExposeToCrew":     False,
+    }
     try:
-        result = await _aspire.upload_aspire_attachment(
-            object_id=ticket_id,
-            object_code="WorkTicket",
-            filename="ap_test.png",
-            file_bytes=test_bytes,
-            expose_to_crew=False,
+        resp = await _aspire._http.post(
+            f"{_aspire.base_url}/Attachments",
+            json=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
         )
-        return {"success": True, "result": result}
+        return {
+            "success": resp.is_success,
+            "status_code": resp.status_code,
+            "response_body": resp.text[:2000],
+            "request_body_keys": list(body.keys()),
+            "object_code": object_code,
+            "type_id": type_id,
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
