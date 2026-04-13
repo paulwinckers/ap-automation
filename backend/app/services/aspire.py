@@ -262,82 +262,29 @@ class AspireClient:
 
     # ── Receipt fill ─────────────────────────────────────────────────────────
 
-    # Fields Aspire accepts in ReceiptItems when POSTing a receipt update.
-    # ItemAllocations and other read-only metadata cause a 400 if included.
-    _RECEIPT_ITEM_FIELDS = frozenset({
-        "ReceiptItemID", "CatalogItemID", "ItemName", "ItemQuantity",
-        "ItemUnitCost", "ItemExtendedCost", "ItemType", "ReceivedQuantity",
-    })
-
     @staticmethod
-    def _build_receipt_items(existing_items: list[dict], invoice: Invoice) -> list[dict]:
+    def _strip_receipt_items(existing_items: list[dict]) -> list[dict]:
         """
-        Build updated ReceiptItems from existing PO items + actual invoice amounts.
-        Tax goes in ReceiptExtraCosts (separate field), NOT here.
-
-        1. Exclude tax-like items (PST already in ReceiptItems for some vendors)
-           so we don't double-count with ReceiptExtraCosts.
-        2. Scale non-tax item costs proportionally if actual subtotal differs from PO subtotal.
-        3. Strip read-only fields (ItemAllocations etc.) — Aspire returns 400 if included.
+        Return existing ReceiptItems with ItemAllocations stripped.
+        Aspire returns 400 if ItemAllocations are included in the POST body.
+        All other fields (ReceiptItemID, CatalogItemID, costs, etc.) are preserved.
         """
-        # Separate tax items (e.g. PST as a line item) from real material/labour items
-        tax_keywords = {"pst", "gst", "hst", "tax"}
-        material_items = [
-            i for i in existing_items
-            if not any(kw in (i.get("ItemName") or "").lower() for kw in tax_keywords)
+        return [
+            {k: v for k, v in item.items() if k != "ItemAllocations" and v is not None}
+            for item in existing_items
         ]
 
-        # Determine actual subtotal (total minus taxes)
-        if invoice.subtotal is not None:
-            actual_subtotal = float(invoice.subtotal)
-        else:
-            tax_total = sum(
-                float(tl.tax_amount or 0) for tl in (invoice.tax_lines or [])
-            )
-            actual_subtotal = float(invoice.total_amount or 0) - tax_total
-
-        # PO subtotal from material items only
-        po_subtotal = sum(
-            float(i.get("ItemUnitCost") or 0) * float(i.get("ItemQuantity") or 1)
-            for i in material_items
-        )
-
-        # Scale items to match actual subtotal if different
-        updated_items = []
-        if material_items:
-            if abs(actual_subtotal - po_subtotal) > 0.001 and po_subtotal != 0:
-                scale = actual_subtotal / po_subtotal
-                for orig in material_items:
-                    item = dict(orig)
-                    item["ItemUnitCost"] = round(float(orig.get("ItemUnitCost") or 0) * scale, 4)
-                    updated_items.append(item)
-            else:
-                updated_items = [dict(i) for i in material_items]
-
-        # Keep only fields Aspire accepts; strip ItemAllocations and other read-only metadata
-        allowed = AspireClient._RECEIPT_ITEM_FIELDS
-        return [{k: v for k, v in item.items() if k in allowed and v is not None} for item in updated_items]
-
     @staticmethod
-    def _build_extra_costs(invoice: Invoice) -> list[dict]:
+    def _strip_extra_costs(existing_costs: list[dict]) -> list[dict]:
         """
-        Build ReceiptExtraCosts from invoice tax lines.
-        GST → ExtraCostType "Tax", PST → ExtraCostType "Other".
+        Return existing ReceiptExtraCosts with read-only metadata stripped.
+        Preserves ReceiptExtraCostID so Aspire treats these as updates, not inserts.
         """
-        extra_costs = []
-        for tl in (invoice.tax_lines or []):
-            tax_name = (tl.tax_name or "").lower()
-            if "gst" in tax_name:
-                cost_type = "Tax"
-            elif "pst" in tax_name:
-                cost_type = "Other"
-            else:
-                cost_type = "Tax"
-            extra_costs.append({
-                "ExtraCostType": cost_type,
-                "ExtraCost": float(tl.tax_amount or 0),
-            })
-        return extra_costs
+        allowed = {"ReceiptExtraCostID", "ExtraCostType", "ExtraCost"}
+        return [
+            {k: v for k, v in cost.items() if k in allowed and v is not None}
+            for cost in existing_costs
+        ]
 
     async def fill_receipt_from_invoice(self, invoice: Invoice, receipt: dict) -> str:
         """
@@ -348,6 +295,7 @@ class AspireClient:
         receipt_id = receipt["ReceiptID"]
         receipt_number = receipt.get("ReceiptNumber")
         existing_items = receipt.get("ReceiptItems") or []
+        existing_extra_costs = receipt.get("ReceiptExtraCosts") or []
 
         logger.info(
             f"Updating Aspire Receipt #{receipt_number} (ID={receipt_id}) "
@@ -376,8 +324,11 @@ class AspireClient:
             "WorkTicketID":       receipt.get("WorkTicketID"),
             "ReceiptNote":        new_note,
             "ReceiptTotalCost":   float(invoice.total_amount or 0),
-            "ReceiptItems":       self._build_receipt_items(existing_items, invoice),
-            "ReceiptExtraCosts":  self._build_extra_costs(invoice),
+            # Pass back existing items/costs with read-only fields stripped.
+            # Aspire returns 400 if ItemAllocations are included.
+            # Using existing IDs so Aspire treats these as updates, not inserts.
+            "ReceiptItems":       self._strip_receipt_items(existing_items),
+            "ReceiptExtraCosts":  self._strip_extra_costs(existing_extra_costs),
         }
         # Remove None-valued top-level keys
         body = {k: v for k, v in body.items() if v is not None}

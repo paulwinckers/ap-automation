@@ -380,10 +380,6 @@ async def debug_receipt_post(po_number: str = Query(...)):
         ],
     )
 
-    existing_items = receipt.get("ReceiptItems") or []
-    receipt_items = _aspire._build_receipt_items(existing_items, invoice)
-    extra_costs = _aspire._build_extra_costs(invoice)
-
     from datetime import date
     from app.services.aspire import _normalize_date, _to_aspire_datetime
     existing_note = receipt.get("ReceiptNote") or ""
@@ -404,8 +400,8 @@ async def debug_receipt_post(po_number: str = Query(...)):
         "WorkTicketID":      receipt.get("WorkTicketID"),
         "ReceiptNote":       new_note,
         "ReceiptTotalCost":  float(invoice.total_amount or 0),
-        "ReceiptItems":      receipt_items,
-        "ReceiptExtraCosts": extra_costs,
+        "ReceiptItems":      _aspire._strip_receipt_items(receipt.get("ReceiptItems") or []),
+        "ReceiptExtraCosts": _aspire._strip_extra_costs(receipt.get("ReceiptExtraCosts") or []),
     }
     body = {k: v for k, v in body.items() if v is not None}
     return {"receipt_found": receipt, "post_body": body}
