@@ -502,12 +502,18 @@ class AspireClient:
             contacts = self._extract_list(result)
             out = []
             for c in contacts:
-                cid   = c.get("ContactID")
-                first = (c.get("FirstName") or "").strip()
-                last  = (c.get("LastName")  or "").strip()
-                name  = f"{first} {last}".strip()
+                cid    = c.get("ContactID")
+                uid    = c.get("UserID")
+                first  = (c.get("FirstName") or "").strip()
+                last   = (c.get("LastName")  or "").strip()
+                name   = f"{first} {last}".strip()
                 if cid and name:
-                    out.append({"ContactID": cid, "FullName": name, "Email": c.get("Email") or ""})
+                    out.append({
+                        "ContactID": cid,
+                        "UserID":    uid,   # used for AssignedTo in Issues
+                        "FullName":  name,
+                        "Email":     c.get("Email") or "",
+                    })
             logger.info(f"Employee list from Contacts: {len(out)}")
             return out
         except Exception as e:
