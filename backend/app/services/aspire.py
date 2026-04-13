@@ -685,7 +685,7 @@ class AspireClient:
 
         logger.info(f"Fetched {len(tickets)} work tickets for range={date_range}")
 
-        # Enrich with OpportunityName + PropertyName
+        # Step 1: Enrich with OpportunityName + PropertyName + PropertyID
         opp_ids = list({t.get("OpportunityID") for t in tickets if t.get("OpportunityID")})
         opp_map: dict = {}
         for chunk_start in range(0, len(opp_ids), 15):
@@ -694,36 +694,55 @@ class AspireClient:
             try:
                 opp_result = await self._get("Opportunities", {
                     "$filter": f"({or_filter})",
-                    "$select": (
-                        "OpportunityID,OpportunityName,PropertyName,"
-                        "BillingAddressLine1,BillingAddressLine2,"
-                        "BillingAddressCity,BillingAddressStateProvince,BillingAddressPostalCode"
-                    ),
+                    "$select": "OpportunityID,OpportunityName,PropertyName,PropertyID",
                     "$top": "50",
                 })
                 for opp in self._extract_list(opp_result):
-                    # Build a clean address string
-                    parts = [
-                        opp.get("BillingAddressLine1") or "",
-                        opp.get("BillingAddressLine2") or "",
-                        opp.get("BillingAddressCity") or "",
-                        opp.get("BillingAddressStateProvince") or "",
-                        opp.get("BillingAddressPostalCode") or "",
-                    ]
-                    address = ", ".join(p for p in parts if p)
                     opp_map[opp.get("OpportunityID")] = {
-                        "name":     opp.get("OpportunityName") or "",
-                        "property": opp.get("PropertyName") or "",
-                        "address":  address,
+                        "name":        opp.get("OpportunityName") or "",
+                        "property":    opp.get("PropertyName") or "",
+                        "property_id": opp.get("PropertyID"),
                     }
             except Exception as e:
                 logger.warning(f"Opportunity name enrichment failed: {e}")
 
+        # Step 2: Fetch property addresses in bulk
+        property_ids = list({
+            info["property_id"]
+            for info in opp_map.values()
+            if info.get("property_id")
+        })
+        prop_map: dict = {}
+        for chunk_start in range(0, len(property_ids), 15):
+            chunk = property_ids[chunk_start:chunk_start + 15]
+            or_filter = " or ".join(f"PropertyID eq {pid}" for pid in chunk)
+            try:
+                prop_result = await self._get("Properties", {
+                    "$filter": f"({or_filter})",
+                    "$select": (
+                        "PropertyID,PropertyAddressLine1,PropertyAddressLine2,"
+                        "PropertyAddressCity,PropertyAddressStateProvinceCode,PropertyAddressZipCode"
+                    ),
+                    "$top": "50",
+                })
+                for prop in self._extract_list(prop_result):
+                    parts = [
+                        prop.get("PropertyAddressLine1") or "",
+                        prop.get("PropertyAddressLine2") or "",
+                        prop.get("PropertyAddressCity") or "",
+                        prop.get("PropertyAddressStateProvinceCode") or "",
+                        prop.get("PropertyAddressZipCode") or "",
+                    ]
+                    prop_map[prop.get("PropertyID")] = ", ".join(p for p in parts if p)
+            except Exception as e:
+                logger.warning(f"Property address enrichment failed: {e}")
+
         for t in tickets:
             info = opp_map.get(t.get("OpportunityID"), {})
+            prop_id = info.get("property_id")
             t["OpportunityName"]  = info.get("name", "")
             t["PropertyName"]     = info.get("property", "")
-            t["PropertyAddress"]  = info.get("address", "")
+            t["PropertyAddress"]  = prop_map.get(prop_id, "") if prop_id else ""
             # Resolve route name: prefer Routes lookup, fall back to crew leader name
             crew_id = t.get("CrewLeaderContactID")
             t["_RouteName"] = (
