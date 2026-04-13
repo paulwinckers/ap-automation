@@ -503,20 +503,60 @@ async def debug_aspire_post(po_number: str = Query(...)):
     except Exception as e:
         results["put_odata_error"] = str(e)
 
-    # Try POST /Receipts with ReceiptID=0 (create linked to existing PO?)
-    body_new = dict(body)
-    body_new["ReceiptID"] = 0
+    # Try POST /Receipts with ReceiptID omitted + fresh ItemAllocations (no existing IDs)
+    # ItemAllocations must match item quantities — Aspire rejects if they don't sum
+    work_ticket_id = receipt.get("WorkTicketID")
+    fresh_items = []
+    for item in receipt.get("ReceiptItems") or []:
+        fresh_item = {
+            "ItemName":     item["ItemName"],
+            "ItemQuantity": item["ItemQuantity"],
+            "ItemUnitCost": item["ItemUnitCost"],
+            "ItemType":     item.get("ItemType", "Material"),
+            "ItemAllocations": [
+                {
+                    "WorkTicketID": work_ticket_id,
+                    "ItemQuantity":    item["ItemQuantity"],
+                    "ReceiptItemPrice": round(float(item["ItemUnitCost"]) * float(item["ItemQuantity"]), 4),
+                    "ItemEstUnitCost":  item["ItemUnitCost"],
+                }
+            ] if work_ticket_id else [],
+        }
+        if item.get("CatalogItemID"):
+            fresh_item["CatalogItemID"] = item["CatalogItemID"]
+        fresh_items.append(fresh_item)
+
+    fresh_extra = [
+        {"ExtraCostType": c["ExtraCostType"], "ExtraCost": c["ExtraCost"]}
+        for c in (receipt.get("ReceiptExtraCosts") or [])
+    ]
+
+    body_fresh = {
+        "BranchID":          receipt.get("BranchID"),
+        "VendorID":          receipt.get("VendorID"),
+        "VendorInvoiceNum":  invoice.invoice_number,
+        "VendorInvoiceDate": _to_aspire_datetime(_normalize_date(invoice.invoice_date)),
+        "ReceivedDate":      _to_aspire_datetime(_normalize_date(invoice.invoice_date)),
+        "WorkTicketID":      work_ticket_id,
+        "ReceiptNote":       "AP Automation test — fresh receipt",
+        "ReceiptTotalCost":  float(invoice.total_amount or 0),
+        "ReceiptItems":      fresh_items,
+        "ReceiptExtraCosts": fresh_extra,
+    }
+    body_fresh = {k: v for k, v in body_fresh.items() if v is not None}
+
     try:
         resp5 = await _aspire._http.post(
             f"{_aspire.base_url}/Receipts",
-            json=body_new,
+            json=body_fresh,
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
         )
-        results["post_id0_status"] = resp5.status_code
-        results["post_id0_body"] = resp5.text[:2000]
+        results["post_fresh_status"] = resp5.status_code
+        results["post_fresh_body"] = resp5.text[:2000]
     except Exception as e:
-        results["post_id0_error"] = str(e)
+        results["post_fresh_error"] = str(e)
 
+    results["post_fresh_body_sent"] = body_fresh
     return {"receipt_id": receipt["ReceiptID"], "post_body_sent": body, "results": results}
 
 
