@@ -926,7 +926,11 @@ class QBOClient:
                 return {"bills": [], "credits": []}
             vendor_id = vendor["Id"]
 
-        # ── Fetch bills, payments, and credits in parallel ────────────────────
+        # ── Fetch bills, payments, and credits ───────────────────────────────
+        # Pre-warm the token with one call first — _refresh_access_token has no
+        # lock, so parallel calls would each try to rotate the refresh token and
+        # Intuit would reject the 2nd and 3rd with an already-consumed token.
+        await self._ensure_token()
         bill_result, pay_result, credit_result = await asyncio.gather(
             self._get("query", {"query": (
                 f"SELECT * FROM Bill "
