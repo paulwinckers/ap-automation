@@ -318,6 +318,10 @@ async def debug_receipt(po_number: str = Query(...)):
     Debug endpoint — returns raw Aspire Receipt data for a PO number.
     Tries multiple filter strategies to diagnose OData issues.
     """
+    # Force a fresh token — clears any cached token from before permission changes
+    _aspire._token = None
+    _aspire._token_expires_at = 0.0
+
     po_int = _aspire._extract_po_int(po_number)
     results = {}
 
