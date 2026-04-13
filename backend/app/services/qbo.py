@@ -972,40 +972,25 @@ class QBOClient:
                                 + float(line.get("Amount") or 0)
                             )
 
-        # ── Build map: bill_id → total credits applied on or before to_date ──
-        # A VendorCredit's LinkedTxn lists the bill(s) it was applied to.
-        # If a credit is applied to multiple bills (rare), distribute evenly.
-        # Unapplied credits (no linked bills) are tracked separately.
-        credited_by_date: dict[str, float] = {}
-        unapplied_credits: list[dict] = []
-
+        # ── Annotate credits with their unapplied balance as of to_date ────────
+        # Use QBO's Balance field (not LinkedTxn) — Balance is reliably 0 when a
+        # credit is fully applied regardless of *how* it was applied in QBO.
+        # LinkedTxn type varies by workflow and cannot be used as a reliable signal.
         for credit in all_credits:
-            credit_total = float(credit.get("TotalAmt") or 0)
-            linked_bills = [
-                lt for lt in credit.get("LinkedTxn", [])
-                if lt.get("TxnType") == "Bill"
-            ]
-            if linked_bills:
-                per_bill = credit_total / len(linked_bills)
-                for lt in linked_bills:
-                    bill_id = lt.get("TxnId")
-                    if bill_id:
-                        credited_by_date[bill_id] = (
-                            credited_by_date.get(bill_id, 0.0) + per_bill
-                        )
-                credit["_balance_as_of_date"] = 0.0  # fully absorbed into bill(s)
-            else:
-                # Not yet applied to a bill — sits as an open credit on the account
-                credit["_balance_as_of_date"] = credit_total
-                unapplied_credits.append(credit)
+            credit["_balance_as_of_date"] = float(credit.get("Balance") or 0)
 
         # ── Keep only bills that had an outstanding balance as of to_date ─────
+        # Use the lower of:
+        #   (a) TotalAmt − payments_before_to_date  — as-of-date payment adjustment
+        #   (b) QBO current Balance                 — captures credits applied to this bill
+        # Taking min() means applied credits that reduced Balance are reflected,
+        # while bills paid after to_date still show their full as-of-date balance.
         open_bills = []
         for bill in all_bills:
-            total    = float(bill.get("TotalAmt") or 0)
-            paid     = paid_by_date.get(bill["Id"], 0.0)
-            credited = credited_by_date.get(bill["Id"], 0.0)
-            balance_as_of_date = round(total - paid - credited, 2)
+            total           = float(bill.get("TotalAmt") or 0)
+            paid            = paid_by_date.get(bill["Id"], 0.0)
+            current_balance = float(bill.get("Balance") or 0)
+            balance_as_of_date = round(min(total - paid, current_balance), 2)
             if balance_as_of_date > 0.01:
                 bill["_balance_as_of_date"] = balance_as_of_date
                 open_bills.append(bill)
