@@ -655,7 +655,7 @@ class AspireClient:
             orderby = "ScheduledStartDate asc"
 
         select_fields = ",".join([
-            "WorkTicketID", "WorkTicketNumber", "OpportunityID",
+            "WorkTicketID", "WorkTicketNumber", "OpportunityID", "OpportunityServiceID",
             "WorkTicketStatusName",
             "ScheduledStartDate", "CompleteDate",
             "HoursAct", "HoursEst",
@@ -737,12 +737,31 @@ class AspireClient:
             except Exception as e:
                 logger.warning(f"Property address enrichment failed: {e}")
 
+        # Step 3: Fetch service names from OpportunityServices
+        service_ids = list({t.get("OpportunityServiceID") for t in tickets if t.get("OpportunityServiceID")})
+        service_map: dict = {}
+        for chunk_start in range(0, len(service_ids), 15):
+            chunk = service_ids[chunk_start:chunk_start + 15]
+            or_filter = " or ".join(f"OpportunityServiceID eq {sid}" for sid in chunk)
+            try:
+                svc_result = await self._get("OpportunityServices", {
+                    "$filter": f"({or_filter})",
+                    "$select": "OpportunityServiceID,ServiceName",
+                    "$top": "50",
+                })
+                for svc in self._extract_list(svc_result):
+                    service_map[svc.get("OpportunityServiceID")] = svc.get("ServiceName") or ""
+            except Exception as e:
+                logger.warning(f"Service name enrichment failed: {e}")
+
         for t in tickets:
             info = opp_map.get(t.get("OpportunityID"), {})
             prop_id = info.get("property_id")
+            svc_id = t.get("OpportunityServiceID")
             t["OpportunityName"]  = info.get("name", "")
             t["PropertyName"]     = info.get("property", "")
             t["PropertyAddress"]  = prop_map.get(prop_id, "") if prop_id else ""
+            t["ServiceName"]      = service_map.get(svc_id, "") if svc_id else ""
             # Resolve route name: prefer Routes lookup, fall back to crew leader name
             crew_id = t.get("CrewLeaderContactID")
             t["_RouteName"] = (
@@ -754,7 +773,7 @@ class AspireClient:
             t["ScheduledDate"]       = t.get("ScheduledStartDate")
             t["ActualLaborHours"]    = t.get("HoursAct")
             t["EstimatedLaborHours"] = t.get("HoursEst")
-            t["WorkTicketTitle"]     = f"Ticket #{t.get('WorkTicketNumber') or t.get('WorkTicketID')}"
+            t["WorkTicketTitle"]     = t.get("PropertyName") or f"Ticket #{t.get('WorkTicketNumber') or t.get('WorkTicketID')}"
 
         return tickets
 

@@ -606,16 +606,21 @@ async def create_opportunity(
         opp_id     = int(result)
         opp_number = None
     else:
-        opp_id = (
+        raw_id = (
             result.get("OpportunityID")
             or result.get("Id")
             or result.get("id")
-            or "unknown"
         )
+        try:
+            opp_id = int(raw_id) if raw_id is not None else None
+        except (ValueError, TypeError):
+            opp_id = None
         opp_number = (
             result.get("OpportunityNumber")
             or result.get("opportunityNumber")
         )
+        if opp_id is None:
+            logger.warning(f"Could not parse OpportunityID from Aspire response: {result}")
 
     # ── Create linked Issue with notes + R2 photo links ───────────────────────
     if isinstance(opp_id, int) and opp_id > 0:

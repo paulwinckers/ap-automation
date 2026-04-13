@@ -266,15 +266,15 @@ export default function FieldWorkTicket() {
                       >
                         <div style={{flex:1, textAlign:'left'}}>
                           <div style={{fontSize:13, fontWeight:600, color:'#1a1d23', marginBottom:2}}>
-                            {t.WorkTicketTitle || `Ticket #${t.WorkTicketID}`}
+                            {t.PropertyName || t.WorkTicketTitle || `Ticket #${t.WorkTicketID}`}
                           </div>
                           <div style={{fontSize:11, color:'#6b7280'}}>
-                            {t.OpportunityName || `Job #${t.OpportunityID}`}
+                            {t.ServiceName || t.OpportunityName || `Job #${t.OpportunityID}`}
                             {t.ScheduledDate ? ` · ${fmtDate(t.ScheduledDate)}` : ''}
                           </div>
-                          {(t.PropertyAddress || t.PropertyName) && (
+                          {t.PropertyAddress && (
                             <div style={{fontSize:11, color:'#9ca3af', marginTop:1}}>
-                              {t.PropertyAddress || t.PropertyName}
+                              {t.PropertyAddress}
                             </div>
                           )}
                         </div>
@@ -299,10 +299,11 @@ export default function FieldWorkTicket() {
           <>
             <div style={{...S.card, background:'#eff6ff', border:'1.5px solid #bfdbfe'}}>
               <div style={{fontSize:13, fontWeight:600, color:'#1d4ed8', marginBottom:2}}>
-                {selectedTicket.WorkTicketTitle || `Ticket #${selectedTicket.WorkTicketID}`}
+                {selectedTicket.PropertyName || selectedTicket.WorkTicketTitle || `Ticket #${selectedTicket.WorkTicketID}`}
               </div>
               <div style={{fontSize:11, color:'#3b82f6'}}>
-                {selectedTicket.OpportunityName}{selectedTicket.PropertyName ? ` · ${selectedTicket.PropertyName}` : ''}
+                {selectedTicket.ServiceName || selectedTicket.OpportunityName}
+                {selectedTicket.PropertyAddress ? ` · ${selectedTicket.PropertyAddress}` : ''}
               </div>
             </div>
 
@@ -374,9 +375,10 @@ export default function FieldWorkTicket() {
         {step === 4 && selectedTicket && (
           <div style={S.card}>
             <div style={S.ctitle}>Review before submitting</div>
-            <RR label="Route"  value={selectedTicket._RouteName || '—'}/>
-            <RR label="Ticket" value={selectedTicket.WorkTicketTitle || `#${selectedTicket.WorkTicketID}`}/>
-            <RR label="Job"    value={selectedTicket.OpportunityName || `#${selectedTicket.OpportunityID}`}/>
+            <RR label="Route"    value={selectedTicket._RouteName || '—'}/>
+            <RR label="Property" value={selectedTicket.PropertyName || selectedTicket.WorkTicketTitle || `#${selectedTicket.WorkTicketID}`}/>
+            <RR label="Service"  value={selectedTicket.ServiceName || selectedTicket.OpportunityName || `#${selectedTicket.OpportunityID}`}/>
+            {selectedTicket.PropertyAddress && <RR label="Address" value={selectedTicket.PropertyAddress}/>}
             {selectedTicket.ScheduledDate && <RR label="Date" value={fmtDate(selectedTicket.ScheduledDate)}/>}
             <RR label="Media"  value={`${photos.length} file${photos.length !== 1 ? 's' : ''}`} color={photos.length > 0 ? '#059669' : '#6b7280'}/>
             <div style={{paddingTop:10, fontSize:13, color:'#1a1d23', lineHeight:1.6, whiteSpace:'pre-wrap'}}>
