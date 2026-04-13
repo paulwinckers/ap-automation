@@ -402,6 +402,38 @@ async def debug_attachment(ticket_id: int = Query(...), type_id: int = Query(1),
         return {"success": False, "error": str(e)}
 
 
+@router.get("/debug-issue")
+async def debug_issue(ticket_id: int = Query(...)):
+    """
+    Debug endpoint — tries to POST an Issue to a WorkTicket and returns the raw Aspire response.
+    """
+    token = await _aspire._get_token()
+    body = {
+        "Subject":      f"AP Test Note — WorkTicket #{ticket_id}",
+        "Notes":        "This is a test note from AP Automation.",
+        "WorkTicketID": ticket_id,
+        "PublicComment": False,
+    }
+    try:
+        resp = await _aspire._http.post(
+            f"{_aspire.base_url}/Issues",
+            json=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        return {
+            "success": resp.is_success,
+            "status_code": resp.status_code,
+            "response_body": resp.text[:2000],
+            "body_sent": body,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @router.get("/feed")
 async def get_invoice_feed(
     limit: int      = Query(100, le=500),
