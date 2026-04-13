@@ -807,4 +807,5 @@ class Database:
             notes=r.get("notes"),
             is_employee=bool(r.get("is_employee", 0)),
             active=bool(r.get("active", 1)),
+            aspire_post=bool(r.get("aspire_post", 0)),
         )

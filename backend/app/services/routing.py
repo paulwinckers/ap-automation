@@ -137,22 +137,33 @@ async def route_invoice(
 def _decide(vendor_rule: VendorRule, effective_po: Optional[str]) -> RoutingDecision:
     """
     Pure function — no I/O. Makes the routing decision based on vendor
-    type and whether a PO number is available.
-    When Aspire is not configured, job_cost invoices queue for manual review.
+    type, whether a PO is available, and the vendor's aspire_post flag.
+
+    Aspire posting only fires when ALL THREE conditions are true:
+      1. Aspire credentials are configured
+      2. A PO number is present
+      3. vendor_rule.aspire_post is True
+
+    Without aspire_post, job_cost invoices with a PO queue for manual review
+    (AP gets emailed the invoice). This is the default / safe behaviour.
     """
     aspire_up = _aspire_configured()
+    aspire_enabled = aspire_up and getattr(vendor_rule, "aspire_post", False)
 
     if vendor_rule.type == VendorType.JOB_COST:
-        return RoutingDecision.ASPIRE if aspire_up else RoutingDecision.QUEUE
+        if aspire_enabled:
+            return RoutingDecision.ASPIRE
+        else:
+            return RoutingDecision.QUEUE  # email AP team
 
     elif vendor_rule.type == VendorType.OVERHEAD:
         return RoutingDecision.QBO
 
     elif vendor_rule.type == VendorType.MIXED:
-        if effective_po and aspire_up:
+        if effective_po and aspire_enabled:
             return RoutingDecision.ASPIRE
         elif effective_po:
-            return RoutingDecision.QUEUE  # has PO but Aspire not ready
+            return RoutingDecision.QUEUE  # has PO but Aspire not enabled for this vendor
         else:
             return RoutingDecision.QBO   # no PO → overhead GL
 

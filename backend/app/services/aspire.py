@@ -288,62 +288,88 @@ class AspireClient:
 
     async def fill_receipt_from_invoice(self, invoice: Invoice, receipt: dict) -> str:
         """
-        Update an existing Aspire Purchase Receipt with actual invoice data.
-        Uses POST /Receipts with ReceiptID included (upsert).
-        Returns the ReceiptID as a string.
+        Create a new Aspire Purchase Receipt for this invoice, linked to the
+        same WorkTicket as the matched PO receipt.
+
+        Aspire's REST API has no update endpoint — POST /Receipts is create-only
+        and rejects any existing ReceiptID. We therefore create a fresh receipt
+        with the invoice's actual line items and prices, allocated to the same
+        WorkTicket. The original PO receipt is left unchanged.
+
+        Returns the new ReceiptID as a string.
         """
-        receipt_id = receipt["ReceiptID"]
         receipt_number = receipt.get("ReceiptNumber")
-        existing_items = receipt.get("ReceiptItems") or []
-        existing_extra_costs = receipt.get("ReceiptExtraCosts") or []
+        work_ticket_id = receipt.get("WorkTicketID")
 
         logger.info(
-            f"Updating Aspire Receipt #{receipt_number} (ID={receipt_id}) "
-            f"with invoice {invoice.invoice_number}, total ${invoice.total_amount}"
+            f"Creating Aspire invoice receipt for PO #{receipt_number} "
+            f"(WorkTicket {work_ticket_id}) — "
+            f"invoice {invoice.invoice_number}, total ${invoice.total_amount}"
         )
 
-        # Build note: append AP automation note to existing note
-        existing_note = receipt.get("ReceiptNote") or ""
-        ap_note = (
-            f"AP Automation: Invoice {invoice.invoice_number} | "
-            f"${invoice.total_amount:.2f} | {date.today().isoformat()}"
-        )
-        new_note = f"{existing_note}\n{ap_note}".strip() if existing_note else ap_note
+        # Build ReceiptItems from invoice line items with WorkTicket allocations.
+        # ItemAllocations must sum to ItemQuantity — Aspire validates this.
+        receipt_items = []
+        for li in (invoice.line_items or []):
+            qty  = float(li.quantity or 1)
+            cost = float(li.unit_price or 0)
+            item: dict = {
+                "ItemName":     (li.description or "")[:100],
+                "ItemQuantity": qty,
+                "ItemUnitCost": cost,
+                "ItemType":     "Material",
+            }
+            if work_ticket_id:
+                item["ItemAllocations"] = [{
+                    "WorkTicketID":    work_ticket_id,
+                    "ItemQuantity":    qty,
+                    "ReceiptItemPrice": round(cost * qty, 4),
+                    "ItemEstUnitCost":  cost,
+                }]
+            receipt_items.append(item)
+
+        # Build ReceiptExtraCosts from invoice tax lines.
+        # GST → "Tax", PST/HST → "Other"
+        extra_costs = []
+        for tl in (invoice.tax_lines or []):
+            tax_name  = (tl.tax_name or "").lower()
+            cost_type = "Tax" if "gst" in tax_name else "Other"
+            extra_costs.append({
+                "ExtraCostType": cost_type,
+                "ExtraCost":     float(tl.tax_amount or 0),
+            })
 
         body = {
-            "ReceiptID":          receipt_id,
-            "BranchID":           receipt.get("BranchID"),
-            "VendorID":           receipt.get("VendorID"),
-            "VendorInvoiceNum":   invoice.invoice_number or "",
-            "VendorInvoiceDate":  _to_aspire_datetime(_normalize_date(invoice.invoice_date)),
-            "ReceivedDate":       (
-                receipt.get("ReceivedDate")
-                or _to_aspire_datetime(_normalize_date(invoice.invoice_date))
+            "BranchID":          receipt.get("BranchID"),
+            "VendorID":          receipt.get("VendorID"),
+            "VendorInvoiceNum":  invoice.invoice_number or "",
+            "VendorInvoiceDate": _to_aspire_datetime(_normalize_date(invoice.invoice_date)),
+            "ReceivedDate":      (
+                _to_aspire_datetime(_normalize_date(invoice.invoice_date))
                 or f"{date.today().isoformat()}T00:00:00Z"
             ),
-            "WorkTicketID":       receipt.get("WorkTicketID"),
-            "ReceiptNote":        new_note,
-            "ReceiptTotalCost":   float(invoice.total_amount or 0),
-            # Pass back existing items/costs with read-only fields stripped.
-            # Aspire returns 400 if ItemAllocations are included.
-            # Using existing IDs so Aspire treats these as updates, not inserts.
-            "ReceiptItems":       self._strip_receipt_items(existing_items),
-            "ReceiptExtraCosts":  self._strip_extra_costs(existing_extra_costs),
+            "WorkTicketID":      work_ticket_id,
+            "ReceiptNote":       (
+                f"AP Automation: Invoice {invoice.invoice_number} | "
+                f"${invoice.total_amount:.2f} | {date.today().isoformat()}"
+            ),
+            "ReceiptTotalCost":  float(invoice.total_amount or 0),
+            "ReceiptItems":      receipt_items,
+            "ReceiptExtraCosts": extra_costs,
         }
-        # Remove None-valued top-level keys
         body = {k: v for k, v in body.items() if v is not None}
 
         result = await self._post("Receipts", body)
 
-        returned_id = (
+        new_id = (
             result.get("ReceiptID")
             or result.get("receiptId")
             or result.get("Id")
             or result.get("id")
             or result.get("value")
-            or receipt_id
         )
-        return str(returned_id)
+        logger.info(f"New Aspire receipt created — ReceiptID={new_id} for invoice {invoice.invoice_number}")
+        return str(new_id)
 
     # ── Vendor lookup ─────────────────────────────────────────────────────────
 

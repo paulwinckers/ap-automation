@@ -23,6 +23,7 @@ class VendorRule(BaseModel):
     notes:               Optional[str] = None
     is_employee:         bool = False
     active:              bool = True
+    aspire_post:         bool = False   # if True, attempt to create receipt in Aspire on match
 
 
 class VendorRuleCreate(BaseModel):
@@ -46,3 +47,4 @@ class VendorRuleUpdate(BaseModel):
     notes:               Optional[str] = None
     is_employee:         Optional[bool] = None
     active:              Optional[bool] = None
+    aspire_post:         Optional[bool] = None

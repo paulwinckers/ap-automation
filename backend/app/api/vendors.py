@@ -53,6 +53,7 @@ class VendorUpdateRequest(BaseModel):
     match_keyword:      Optional[str] = None
     is_employee:        Optional[bool] = None
     active:             Optional[bool] = None
+    aspire_post:        Optional[bool] = None   # enable direct Aspire receipt creation for this vendor
 
 
 @router.get("/employees")
