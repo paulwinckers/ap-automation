@@ -694,13 +694,27 @@ class AspireClient:
             try:
                 opp_result = await self._get("Opportunities", {
                     "$filter": f"({or_filter})",
-                    "$select": "OpportunityID,OpportunityName,PropertyName",
+                    "$select": (
+                        "OpportunityID,OpportunityName,PropertyName,"
+                        "BillingAddressLine1,BillingAddressLine2,"
+                        "BillingAddressCity,BillingAddressStateProvince,BillingAddressPostalCode"
+                    ),
                     "$top": "50",
                 })
                 for opp in self._extract_list(opp_result):
+                    # Build a clean address string
+                    parts = [
+                        opp.get("BillingAddressLine1") or "",
+                        opp.get("BillingAddressLine2") or "",
+                        opp.get("BillingAddressCity") or "",
+                        opp.get("BillingAddressStateProvince") or "",
+                        opp.get("BillingAddressPostalCode") or "",
+                    ]
+                    address = ", ".join(p for p in parts if p)
                     opp_map[opp.get("OpportunityID")] = {
                         "name":     opp.get("OpportunityName") or "",
                         "property": opp.get("PropertyName") or "",
+                        "address":  address,
                     }
             except Exception as e:
                 logger.warning(f"Opportunity name enrichment failed: {e}")
@@ -709,7 +723,7 @@ class AspireClient:
             info = opp_map.get(t.get("OpportunityID"), {})
             t["OpportunityName"]  = info.get("name", "")
             t["PropertyName"]     = info.get("property", "")
-            t["PropertyAddress"]  = ""
+            t["PropertyAddress"]  = info.get("address", "")
             # Resolve route name: prefer Routes lookup, fall back to crew leader name
             crew_id = t.get("CrewLeaderContactID")
             t["_RouteName"] = (
