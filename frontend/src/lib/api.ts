@@ -324,12 +324,16 @@ export interface TicketRoute {
   route_name: string;
   ticket_count: number;
   tickets: ScheduledWorkTicket[];
+  crew_leader_name?: string | null;
+  assigned_crew?: string[];   // populated client-side from crew assignments
 }
 
 export type TicketRange = 'past' | 'today' | 'upcoming';
 
-export async function getScheduledTickets(range: TicketRange): Promise<{ routes: TicketRoute[]; total_tickets: number }> {
-  return request('GET', `/aspire/field/work-tickets/scheduled?range=${range}`);
+export async function getScheduledTickets(range: TicketRange, workDate?: string): Promise<{ routes: TicketRoute[]; total_tickets: number }> {
+  const params = new URLSearchParams({ range });
+  if (workDate) params.set('work_date', workDate);
+  return request('GET', `/aspire/field/work-tickets/scheduled?${params}`);
 }
 
 export interface AspireEmployee {
@@ -527,6 +531,46 @@ export interface ActivitiesDashboardData {
 
 export async function getActivitiesDashboard(showCompleted = false): Promise<ActivitiesDashboardData> {
   return request<ActivitiesDashboardData>('GET', `/dashboard/activities?show_completed=${showCompleted}`);
+}
+
+// ── Crew Schedule ─────────────────────────────────────────────────────────────
+
+export interface CrewEmployee {
+  ContactID: number;
+  FullName: string;
+  Email?: string;
+}
+
+export interface CrewAssignment {
+  id: number;
+  route_name: string;
+  employee_id: number;
+  employee_name: string;
+}
+
+export async function getCrewEmployees(): Promise<CrewEmployee[]> {
+  const res = await request<{ employees: CrewEmployee[] }>('GET', '/crew/employees');
+  return res.employees;
+}
+
+export async function getCrewAssignments(workDate: string): Promise<Record<string, CrewAssignment[]>> {
+  const res = await request<{ assignments: Record<string, CrewAssignment[]> }>(
+    'GET', `/crew/assignments?work_date=${workDate}`
+  );
+  return res.assignments;
+}
+
+export async function addCrewAssignment(
+  workDate: string, routeName: string, employeeId: number, employeeName: string
+): Promise<{ id: number; created: boolean }> {
+  return request('POST', '/crew/assignments', {
+    work_date: workDate, route_name: routeName,
+    employee_id: employeeId, employee_name: employeeName,
+  });
+}
+
+export async function removeCrewAssignment(assignmentId: number): Promise<void> {
+  await request('DELETE', `/crew/assignments/${assignmentId}`);
 }
 
 export async function createFieldOpportunity(p: FieldOpportunityPayload): Promise<CreateOpportunityResponse> {

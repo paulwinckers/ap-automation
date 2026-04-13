@@ -692,10 +692,13 @@ class AspireClient:
             logger.warning(f"Routes endpoint unavailable, will group by crew leader: {e}")
             return {}
 
-    async def get_scheduled_work_tickets(self, date_range: str = "today") -> list[dict]:
+    async def get_scheduled_work_tickets(
+        self, date_range: str = "today", specific_date: Optional[str] = None
+    ) -> list[dict]:
         """
         Fetch work tickets filtered by ScheduledStartDate.
         date_range: 'today' | 'past' (last 14 days) | 'upcoming' (next 30 days)
+        specific_date: optional YYYY-MM-DD override — ignores date_range entirely.
 
         Uses full ISO-8601 datetime strings in the filter (Aspire stores
         ScheduledStartDate as datetime, not plain date).
@@ -709,7 +712,10 @@ class AspireClient:
         # Aspire OData date filter: plain YYYY-MM-DD, no quotes, no timezone suffix
         # e.g. Date(ScheduledStartDate) eq 2026-04-08   OR
         #      ScheduledStartDate ge 2026-03-25 and ScheduledStartDate lt 2026-04-08
-        if date_range == "past":
+        if specific_date:
+            filter_str = f"Date(ScheduledStartDate) eq {specific_date}"
+            orderby    = "ScheduledStartDate asc"
+        elif date_range == "past":
             since = (today - timedelta(days=14)).strftime("%Y-%m-%d")
             until = today.strftime("%Y-%m-%d")
             filter_str = f"ScheduledStartDate ge {since} and ScheduledStartDate lt {until}"

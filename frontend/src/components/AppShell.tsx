@@ -28,6 +28,12 @@ const NAV = [
       { label: 'Activities',  path: '/dashboards/activities',  icon: '📅' },
     ],
   },
+  {
+    section: 'Field Ops',
+    items: [
+      { label: 'Crew Schedule', path: '/ops/crew-schedule', icon: '👥' },
+    ],
+  },
 ];
 
 const FIELD_LINKS = [

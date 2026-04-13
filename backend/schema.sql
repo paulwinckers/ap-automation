@@ -192,6 +192,18 @@ ALTER TABLE invoices ADD COLUMN forwarded_to TEXT;
 -- Migration: actual amount confirmed by QBO on posting (vs extracted total_amount)
 ALTER TABLE invoices ADD COLUMN qbo_amount REAL;
 
+-- ── Crew Assignments — field crew scheduling per route per day ────────────────
+CREATE TABLE IF NOT EXISTS crew_assignments (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    work_date     TEXT NOT NULL,        -- YYYY-MM-DD
+    route_name    TEXT NOT NULL,        -- Aspire route / crew leader name
+    employee_id   INTEGER NOT NULL,     -- Aspire ContactID
+    employee_name TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_crew_date       ON crew_assignments(work_date);
+CREATE INDEX IF NOT EXISTS idx_crew_date_route ON crew_assignments(work_date, route_name);
+
 -- ── Vendor QBO links — permanent mapping from statement vendor name → QBO vendor ──
 -- Bypasses fuzzy name matching so the right QBO account is always used.
 CREATE TABLE IF NOT EXISTS vendor_qbo_links (

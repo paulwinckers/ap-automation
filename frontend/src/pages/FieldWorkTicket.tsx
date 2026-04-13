@@ -16,9 +16,11 @@ import { useState, useRef, useEffect } from 'react';
 import {
   getScheduledTickets,
   completeWorkTicket,
+  getCrewAssignments,
   type ScheduledWorkTicket,
   type TicketRoute,
   type TicketRange,
+  type CrewAssignment,
 } from '../lib/api';
 
 type Step = 1 | 2 | 3 | 4 | 5;
@@ -74,6 +76,7 @@ export default function FieldWorkTicket() {
   const [loadError, setLoadError]     = useState<string | null>(null);
   const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
   const [selectedTicket, setSelectedTicket] = useState<ScheduledWorkTicket | null>(null);
+  const [crewByRoute, setCrewByRoute]       = useState<Record<string, string[]>>({});
 
   const [submitterName] = useState('');
 
@@ -93,13 +96,22 @@ export default function FieldWorkTicket() {
   const galleryRef = useRef<HTMLInputElement>(null);
 
 
-  // Load routes when range changes
+  // Load routes when range changes, and also fetch today's crew assignments
   useEffect(() => {
     setLoading(true); setLoadError(null); setRoutes(null); setExpandedRoute(null);
-    getScheduledTickets(range)
-      .then(res => {
+    const today = new Date().toISOString().slice(0, 10);
+    Promise.all([
+      getScheduledTickets(range),
+      range === 'today' ? getCrewAssignments(today) : Promise.resolve({} as Record<string, CrewAssignment[]>),
+    ])
+      .then(([res, assignments]) => {
         setRoutes(res.routes);
-        // Auto-expand if only one route
+        // Build crewByRoute: route_name → [name, name, ...]
+        const crew: Record<string, string[]> = {};
+        for (const [routeName, list] of Object.entries(assignments)) {
+          crew[routeName] = list.map(a => a.employee_name);
+        }
+        setCrewByRoute(crew);
         if (res.routes.length === 1) setExpandedRoute(res.routes[0].route_name);
       })
       .catch(e => setLoadError((e as Error).message))
@@ -243,8 +255,16 @@ export default function FieldWorkTicket() {
                     <span style={{fontSize:18}}>🚛</span>
                     <div style={{textAlign:'left'}}>
                       <div style={{fontSize:15, fontWeight:700, color:'#1a1d23'}}>{route.route_name}</div>
-                      <div style={{fontSize:12, color:'#6b7280', marginTop:1}}>
+                      <div style={{fontSize:12, color:'#6b7280', marginTop:1, display:'flex', flexWrap:'wrap', gap:4, alignItems:'center'}}>
                         {route.ticket_count} ticket{route.ticket_count !== 1 ? 's' : ''}
+                        {(crewByRoute[route.route_name] ?? []).map(name => (
+                          <span key={name} style={{
+                            background:'#dcfce7', color:'#166534',
+                            borderRadius:10, padding:'1px 7px', fontSize:11, fontWeight:600,
+                          }}>
+                            {name}
+                          </span>
+                        ))}
                       </div>
                     </div>
                   </div>

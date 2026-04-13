@@ -288,14 +288,18 @@ async def get_recent_tickets():
 # ── Scheduled work tickets ───────────────────────────────────────────────────
 
 @router.get("/work-tickets/scheduled")
-async def get_scheduled_tickets(range: str = Query(default="today", pattern="^(today|past|upcoming)$")):
+async def get_scheduled_tickets(
+    range: str = Query(default="today", pattern="^(today|past|upcoming)$"),
+    work_date: Optional[str] = Query(default=None, description="Specific date override YYYY-MM-DD"),
+):
     """
     Return work tickets grouped by route.
     range: today | past (last 14 days) | upcoming (next 30 days)
+    work_date: optional specific date override (e.g. 2026-04-15) — ignores range
     Each route contains a list of tickets with OpportunityName and PropertyName.
     """
     _check_credentials()
-    tickets = await _aspire.get_scheduled_work_tickets(range)
+    tickets = await _aspire.get_scheduled_work_tickets(range, specific_date=work_date)
 
     # Group by _RouteName
     from collections import defaultdict
@@ -305,9 +309,10 @@ async def get_scheduled_tickets(range: str = Query(default="today", pattern="^(t
 
     routes = [
         {
-            "route_name":   name,
-            "ticket_count": len(tix),
-            "tickets":      tix,
+            "route_name":        name,
+            "ticket_count":      len(tix),
+            "tickets":           tix,
+            "crew_leader_name":  tix[0].get("CrewLeaderName") if tix else None,
         }
         for name, tix in sorted(groups.items())
     ]
