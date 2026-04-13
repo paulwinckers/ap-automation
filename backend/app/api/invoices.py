@@ -421,7 +421,7 @@ async def debug_issue(ticket_id: int = Query(...)):
         "Subject":      f"AP Test Note — WorkTicket #{ticket_id}",
         "Notes":        "This is a test note from AP Automation.",
         "WorkTicketID": ticket_id,
-        "AssignedTo":   7,  # try integer user ID
+        "AssignedTo":   7,  # Keeland Kannan ContactID
         "PublicComment": False,
     }
     try:

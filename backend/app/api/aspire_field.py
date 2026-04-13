@@ -390,27 +390,38 @@ async def complete_work_ticket(
             photo_urls.append(url)
             photos_uploaded += 1
 
-    # ── Create Aspire Issue linked to WorkTicket with notes + photo links ──────
+    # ── Create Aspire Issue linked to WorkTicket with notes ──────────────────────
     try:
+        # Look up submitter's ContactID — AssignedTo requires an integer
+        submitter_contact_id = None
+        try:
+            employees = await _aspire.get_aspire_employees()
+            for emp in employees:
+                if emp.get("FullName", "").lower() == (submitter_name or "").lower():
+                    submitter_contact_id = emp.get("ContactID")
+                    break
+        except Exception:
+            pass
+
         note_lines = [
             f"Submitted by: {submitter_name}",
             f"Date: {date.today().isoformat()}",
         ]
         if comment:
             note_lines += ["", comment]
-        if photo_urls:
-            note_lines += [f"\nPhotos ({len(photo_urls)}):"]
-            note_lines += [f"  {i+1}. {u}" for i, u in enumerate(photo_urls)]
         issue_notes = "\n".join(note_lines)
 
-        await _aspire.create_issue({
+        issue_body = {
             "Subject":      f"Work ticket update — #{ticket_id}",
             "Notes":        issue_notes,
-            "AssignedTo":   submitter_name or "Field crew",
             "WorkTicketID": ticket_id,
             "PublicComment": False,
-        })
-        logger.info(f"WorkTicket {ticket_id}: Issue created with notes + {len(photo_urls)} photo link(s)")
+        }
+        if submitter_contact_id:
+            issue_body["AssignedTo"] = submitter_contact_id
+
+        await _aspire.create_issue(issue_body)
+        logger.info(f"WorkTicket {ticket_id}: Issue created (AssignedTo ContactID={submitter_contact_id})")
     except Exception as e:
         logger.warning(f"WorkTicket {ticket_id}: Issue creation failed: {e}")
 
@@ -589,21 +600,30 @@ async def create_opportunity(
     # ── Create linked Issue with notes + R2 photo links ───────────────────────
     if isinstance(opp_id, int) and opp_id > 0:
         try:
-            full_notes = notes_text
-            if photo_urls:
-                full_notes += f"\n\nPhotos ({len(photo_urls)}):\n"
-                full_notes += "\n".join(f"  {i+1}. {u}" for i, u in enumerate(photo_urls))
+            # Look up salesperson or submitter ContactID — AssignedTo requires an integer
+            assigned_contact_id = None
+            try:
+                employees = await _aspire.get_aspire_employees()
+                target_name = (salesperson_name or submitter_name or "").lower()
+                for emp in employees:
+                    if emp.get("FullName", "").lower() == target_name:
+                        assigned_contact_id = emp.get("ContactID")
+                        break
+            except Exception:
+                pass
+
             issue_body: dict = {
                 "Subject":       f"Field submission — {opportunity_name}",
-                "Notes":         full_notes,
-                "AssignedTo":    salesperson_name or submitter_name,
+                "Notes":         notes_text,
                 "OpportunityID": opp_id,
                 "PublicComment": False,
             }
+            if assigned_contact_id:
+                issue_body["AssignedTo"] = assigned_contact_id
             if property_id:
                 issue_body["PropertyID"] = property_id
             await _aspire.create_issue(issue_body)
-            logger.info(f"Opportunity {opp_id}: Issue created with notes + {len(photo_urls)} photo link(s)")
+            logger.info(f"Opportunity {opp_id}: Issue created (AssignedTo ContactID={assigned_contact_id})")
         except Exception as e:
             logger.warning(f"Opportunity {opp_id}: Issue creation failed: {e}")
 
