@@ -557,6 +557,31 @@ async def debug_aspire_post(po_number: str = Query(...)):
         results["post_fresh_error"] = str(e)
 
     results["post_fresh_body_sent"] = body_fresh
+
+    # Try POST /Receipts/{id} (direct path with ID)
+    try:
+        resp6 = await _aspire._http.post(
+            f"{_aspire.base_url}/Receipts/{receipt['ReceiptID']}",
+            json={"VendorInvoiceNum": "TEST-7040-PATCH", "VendorInvoiceDate": "2026-04-13T00:00:00Z"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
+        )
+        results["post_path_id_status"] = resp6.status_code
+        results["post_path_id_body"] = resp6.text[:500]
+    except Exception as e:
+        results["post_path_id_error"] = str(e)
+
+    # Try PATCH /Receipts (no path ID, ReceiptID in body)
+    try:
+        resp7 = await _aspire._http.patch(
+            f"{_aspire.base_url}/Receipts",
+            json={"ReceiptID": receipt["ReceiptID"], "VendorInvoiceNum": "TEST-7040-PATCH"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/merge-patch+json", "Accept": "application/json"},
+        )
+        results["patch_body_id_status"] = resp7.status_code
+        results["patch_body_id_body"] = resp7.text[:500]
+    except Exception as e:
+        results["patch_body_id_error"] = str(e)
+
     return {"receipt_id": receipt["ReceiptID"], "post_body_sent": body, "results": results}
 
 
