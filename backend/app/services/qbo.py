@@ -980,17 +980,14 @@ class QBOClient:
             credit["_balance_as_of_date"] = float(credit.get("Balance") or 0)
 
         # ── Keep only bills that had an outstanding balance as of to_date ─────
-        # Use the lower of:
-        #   (a) TotalAmt − payments_before_to_date  — as-of-date payment adjustment
-        #   (b) QBO current Balance                 — captures credits applied to this bill
-        # Taking min() means applied credits that reduced Balance are reflected,
-        # while bills paid after to_date still show their full as-of-date balance.
+        # balance_as_of_date = TotalAmt − payments received on or before to_date.
+        # Bills paid AFTER to_date are correctly treated as open (paid = 0).
+        # Applied credits are handled at the total level via credit._balance_as_of_date.
         open_bills = []
         for bill in all_bills:
-            total           = float(bill.get("TotalAmt") or 0)
-            paid            = paid_by_date.get(bill["Id"], 0.0)
-            current_balance = float(bill.get("Balance") or 0)
-            balance_as_of_date = round(min(total - paid, current_balance), 2)
+            total = float(bill.get("TotalAmt") or 0)
+            paid  = paid_by_date.get(bill["Id"], 0.0)
+            balance_as_of_date = round(total - paid, 2)
             if balance_as_of_date > 0.01:
                 bill["_balance_as_of_date"] = balance_as_of_date
                 open_bills.append(bill)
