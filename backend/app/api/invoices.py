@@ -357,6 +357,60 @@ async def debug_receipt(po_number: str = Query(...)):
     return results
 
 
+@router.get("/debug-receipt-post")
+async def debug_receipt_post(po_number: str = Query(...)):
+    """
+    Debug endpoint — shows the exact POST body that would be sent to Aspire
+    for a given PO number, without actually sending it.
+    """
+    from app.models.invoice import Invoice, InvoiceStatus, TaxLine
+    receipt = await _aspire.find_open_receipt(po_number)
+    if receipt is None:
+        return {"error": f"PO '{po_number}' not found in Aspire"}
+
+    # Simulate a Foxglove-style invoice to show body structure
+    invoice = Invoice(
+        id=0, status=InvoiceStatus.PENDING,
+        vendor_name="Foxglove Wholesale Nursery",
+        invoice_number="7040", invoice_date="2026-04-13",
+        subtotal=88.0, tax_amount=10.56, total_amount=98.56, currency="CAD",
+        tax_lines=[
+            TaxLine(tax_name="GST", tax_rate=0.05, tax_amount=4.40),
+            TaxLine(tax_name="PST", tax_rate=0.07, tax_amount=6.16),
+        ],
+    )
+
+    existing_items = receipt.get("ReceiptItems") or []
+    receipt_items = _aspire._build_receipt_items(existing_items, invoice)
+    extra_costs = _aspire._build_extra_costs(invoice)
+
+    from datetime import date
+    from app.services.aspire import _normalize_date, _to_aspire_datetime
+    existing_note = receipt.get("ReceiptNote") or ""
+    ap_note = f"AP Automation: Invoice {invoice.invoice_number} | ${invoice.total_amount:.2f} | {date.today().isoformat()}"
+    new_note = f"{existing_note}\n{ap_note}".strip() if existing_note else ap_note
+
+    body = {
+        "ReceiptID":         receipt["ReceiptID"],
+        "BranchID":          receipt.get("BranchID"),
+        "VendorID":          receipt.get("VendorID"),
+        "VendorInvoiceNum":  invoice.invoice_number or "",
+        "VendorInvoiceDate": _to_aspire_datetime(_normalize_date(invoice.invoice_date)),
+        "ReceivedDate":      (
+            receipt.get("ReceivedDate")
+            or _to_aspire_datetime(_normalize_date(invoice.invoice_date))
+            or f"{date.today().isoformat()}T00:00:00Z"
+        ),
+        "WorkTicketID":      receipt.get("WorkTicketID"),
+        "ReceiptNote":       new_note,
+        "ReceiptTotalCost":  float(invoice.total_amount or 0),
+        "ReceiptItems":      receipt_items,
+        "ReceiptExtraCosts": extra_costs,
+    }
+    body = {k: v for k, v in body.items() if v is not None}
+    return {"receipt_found": receipt, "post_body": body}
+
+
 @router.get("/debug-attachment")
 async def debug_attachment(ticket_id: int = Query(...), type_id: int = Query(1), object_code: str = Query("WorkTicket")):
     """

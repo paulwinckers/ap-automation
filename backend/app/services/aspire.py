@@ -367,7 +367,7 @@ class AspireClient:
             "BranchID":           receipt.get("BranchID"),
             "VendorID":           receipt.get("VendorID"),
             "VendorInvoiceNum":   invoice.invoice_number or "",
-            "VendorInvoiceDate":  _normalize_date(invoice.invoice_date),
+            "VendorInvoiceDate":  _to_aspire_datetime(_normalize_date(invoice.invoice_date)),
             "ReceivedDate":       (
                 receipt.get("ReceivedDate")
                 or _to_aspire_datetime(_normalize_date(invoice.invoice_date))
