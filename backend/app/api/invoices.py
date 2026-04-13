@@ -378,6 +378,16 @@ async def debug_attachment(ticket_id: int = Query(...), type_id: int = Query(1),
         "AttachmentTypeId": type_id,
         "ExposeToCrew":     False,
     }
+    # First fetch valid attachment types
+    try:
+        types_resp = await _aspire._http.get(
+            f"{_aspire.base_url}/AttachmentTypes",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+        attachment_types = types_resp.json() if types_resp.is_success else f"Error {types_resp.status_code}: {types_resp.text[:500]}"
+    except Exception as e:
+        attachment_types = str(e)
+
     try:
         resp = await _aspire._http.post(
             f"{_aspire.base_url}/Attachments",
@@ -392,12 +402,12 @@ async def debug_attachment(ticket_id: int = Query(...), type_id: int = Query(1),
             "success": resp.is_success,
             "status_code": resp.status_code,
             "response_body": resp.text[:2000],
-            "request_body_keys": list(body.keys()),
+            "attachment_types": attachment_types,
             "object_code": object_code,
             "type_id": type_id,
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "attachment_types": attachment_types}
 
 
 @router.get("/feed")
