@@ -356,6 +356,30 @@ async def debug_receipt(po_number: str = Query(...)):
     return results
 
 
+@router.get("/debug-attachment")
+async def debug_attachment(ticket_id: int = Query(...)):
+    """
+    Debug endpoint — tries to upload a tiny test attachment to a WorkTicket.
+    Used to confirm Aspire Attachments API permission is working.
+    """
+    import base64
+    # 1x1 white pixel PNG
+    test_bytes = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI6QAAAABJRU5ErkJggg=="
+    )
+    try:
+        result = await _aspire.upload_aspire_attachment(
+            object_id=ticket_id,
+            object_code="WorkTicket",
+            filename="ap_test.png",
+            file_bytes=test_bytes,
+            expose_to_crew=False,
+        )
+        return {"success": True, "result": result}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @router.get("/feed")
 async def get_invoice_feed(
     limit: int      = Query(100, le=500),
