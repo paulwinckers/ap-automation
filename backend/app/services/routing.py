@@ -101,6 +101,17 @@ async def route_invoice(
     decision = _decide(vendor_rule, effective_po)
 
     # ── Step 4: Execute the decision ──────────────────────────────────────────
+
+    # aspire_post with no PO: create an unmatched receipt in Aspire so the user
+    # can manually assign it to a work ticket. Bypasses the PO-lookup flow.
+    if (
+        getattr(vendor_rule, "aspire_post", False)
+        and _aspire_configured()
+        and not effective_po
+        and invoice.doc_type not in ("mastercard", "expense")
+    ):
+        return await _route_to_aspire_unmatched(invoice, db, aspire, vendor_rule=vendor_rule)
+
     if decision == RoutingDecision.ASPIRE:
         return await _route_to_aspire(invoice, effective_po, db, aspire, vendor_rule=vendor_rule)
 
@@ -236,6 +247,104 @@ async def _route_to_aspire(
         logger.error(f"Aspire receipt update failed for invoice {invoice.id}: {e}")
         await db.mark_error(invoice.id, str(e))
         return RoutingOutcome.ERROR
+
+
+async def _route_to_aspire_unmatched(
+    invoice: Invoice,
+    db: Database,
+    aspire: AspireClient,
+    vendor_rule=None,
+) -> RoutingOutcome:
+    """
+    Create an unmatched Aspire receipt — no PO/WorkTicket lookup.
+    Used when aspire_post=True but no PO number is on the invoice.
+    The user opens Aspire and manually assigns it to the correct work ticket.
+    """
+    try:
+        receipt_id = await aspire.create_unmatched_receipt(invoice)
+        await db.mark_posted_aspire(invoice.id, receipt_id, opportunity_id=None)
+        await db.audit(invoice.id, "posted", "system", {
+            "destination": "aspire_unmatched",
+            "receipt_id":  receipt_id,
+        })
+        logger.info(f"Invoice {invoice.id} → new unmatched Aspire receipt (ID={receipt_id})")
+
+        # Notify the assigned contact so they know to assign the work ticket
+        if vendor_rule and vendor_rule.forward_to:
+            await _notify_aspire_unmatched(invoice, receipt_id, vendor_rule, db)
+
+        return RoutingOutcome.POSTED_ASPIRE
+
+    except Exception as e:
+        logger.error(f"Aspire unmatched receipt creation failed for invoice {invoice.id}: {e}")
+        await db.mark_error(invoice.id, str(e))
+        return RoutingOutcome.ERROR
+
+
+async def _notify_aspire_unmatched(invoice, receipt_id, vendor_rule, db=None):
+    """Email the assigned contact when an unmatched Aspire receipt is created."""
+    forward_to = vendor_rule.forward_to if vendor_rule else None
+    if not forward_to:
+        return
+    try:
+        from app.services.email_intake import GraphClient
+        if not settings.MS_AP_INBOX:
+            return
+
+        amount = f"${invoice.total_amount:,.2f}" if invoice.total_amount else "unknown"
+        graph = GraphClient()
+        try:
+            await graph.send_email(
+                mailbox=settings.MS_AP_INBOX,
+                to_addresses=[forward_to],
+                subject=f"New Aspire receipt — {invoice.vendor_name or 'Unknown vendor'} {amount} (assign work ticket)",
+                body_html=f"""
+<html><body style="font-family:Arial,sans-serif;color:#1a1d23;max-width:600px">
+<div style="background:#1e3a2f;padding:20px 24px;border-radius:8px 8px 0 0">
+  <h2 style="color:#fff;margin:0;font-size:18px">📋 New Aspire Receipt — Work Ticket Needed</h2>
+</div>
+<div style="background:#fff;border:1px solid #e2e6ed;border-top:none;padding:24px;border-radius:0 0 8px 8px">
+  <p style="margin:0 0 16px;color:#374151">
+    An invoice receipt has been created in Aspire without a work ticket.
+    Please open Aspire and assign it to the correct job.
+  </p>
+  <table style="width:100%;border-collapse:collapse;font-size:14px">
+    <tr><td style="padding:8px 0;color:#6b7280;width:160px">Vendor</td>
+        <td style="padding:8px 0;font-weight:600">{invoice.vendor_name or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Invoice #</td>
+        <td style="padding:8px 0">{invoice.invoice_number or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Invoice Date</td>
+        <td style="padding:8px 0">{invoice.invoice_date or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Amount</td>
+        <td style="padding:8px 0;font-weight:600">{amount}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Aspire Receipt ID</td>
+        <td style="padding:8px 0">{receipt_id}</td></tr>
+  </table>
+  <p style="margin:24px 0 0">
+    <a href="https://darios-ap.pages.dev/ap"
+       style="background:#1e3a2f;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">
+      Open AP Dashboard
+    </a>
+  </p>
+  <p style="margin:16px 0 0;font-size:12px;color:#9ca3af">
+    AP Automation · Dario's Landscape Services
+  </p>
+</div>
+</body></html>""",
+                attachment_bytes=invoice.file_bytes,
+                attachment_filename=invoice.pdf_filename or f"invoice_{invoice.id}.pdf",
+            )
+            logger.info(f"Unmatched receipt notification sent to {forward_to} for invoice {invoice.id}")
+            if db:
+                await db.mark_forwarded(invoice.id, forward_to)
+        finally:
+            await graph.close()
+    except Exception as e:
+        logger.warning(f"Unmatched receipt notification failed (non-fatal): {e}")
 
 
 async def _notify_aspire_updated(invoice, receipt, vendor_rule, db=None):

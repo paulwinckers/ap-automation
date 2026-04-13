@@ -371,6 +371,72 @@ class AspireClient:
         logger.info(f"New Aspire receipt created — ReceiptID={new_id} for invoice {invoice.invoice_number}")
         return str(new_id)
 
+    async def create_unmatched_receipt(self, invoice: Invoice) -> str:
+        """
+        Create a new Aspire receipt with no WorkTicket assignment.
+        Used when aspire_post=True but no PO was found.
+        The user opens Aspire and manually drags it to the correct work ticket.
+
+        Items are posted without ItemAllocations since there is no WorkTicket yet.
+        Returns the new ReceiptID as a string.
+        """
+        # Look up the VendorID in Aspire by name
+        vendor_id = await self.get_vendor_id(invoice.vendor_name or "")
+
+        # Build items without ItemAllocations — no WorkTicket to allocate to yet
+        receipt_items = []
+        for li in (invoice.line_items or []):
+            item = {
+                "ItemName":     (li.description or "")[:100],
+                "ItemQuantity": float(li.quantity or 1),
+                "ItemUnitCost": float(li.unit_price or 0),
+                "ItemType":     "Material",
+            }
+            receipt_items.append(item)
+
+        # Tax lines → ReceiptExtraCosts
+        extra_costs = []
+        for tl in (invoice.tax_lines or []):
+            tax_name  = (tl.tax_name or "").lower()
+            cost_type = "Tax" if "gst" in tax_name else "Other"
+            extra_costs.append({
+                "ExtraCostType": cost_type,
+                "ExtraCost":     float(tl.tax_amount or 0),
+            })
+
+        body: dict = {
+            "BranchID":          settings.ASPIRE_BRANCH_ID or 2,
+            "VendorInvoiceNum":  invoice.invoice_number or "",
+            "VendorInvoiceDate": _to_aspire_datetime(_normalize_date(invoice.invoice_date)),
+            "ReceivedDate":      _to_aspire_datetime(_normalize_date(invoice.invoice_date)) or f"{date.today().isoformat()}T00:00:00Z",
+            "ReceiptNote":       (
+                f"AP Automation: Invoice {invoice.invoice_number} | "
+                f"${invoice.total_amount:.2f} | {date.today().isoformat()} — assign work ticket"
+            ),
+            "ReceiptTotalCost":  float(invoice.total_amount or 0),
+            "ReceiptItems":      receipt_items,
+            "ReceiptExtraCosts": extra_costs,
+        }
+        if vendor_id:
+            body["VendorID"] = vendor_id
+
+        body = {k: v for k, v in body.items() if v is not None}
+
+        logger.info(
+            f"Creating unmatched Aspire receipt for '{invoice.vendor_name}' "
+            f"invoice {invoice.invoice_number}, total ${invoice.total_amount}"
+        )
+        result = await self._post("Receipts", body)
+
+        new_id = (
+            result.get("ReceiptID")
+            or result.get("receiptId")
+            or result.get("Id")
+            or result.get("id")
+        )
+        logger.info(f"Unmatched Aspire receipt created — ReceiptID={new_id}")
+        return str(new_id)
+
     # ── Vendor lookup ─────────────────────────────────────────────────────────
 
     async def get_vendor_id(self, vendor_name: str) -> Optional[int]:
