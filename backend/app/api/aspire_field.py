@@ -235,6 +235,23 @@ async def probe_work_ticket_fields():
     return await _aspire.probe_work_ticket_fields()
 
 
+@router.get("/debug-property")
+async def debug_property(property_id: int = Query(...)):
+    """Debug: fetch a single Property record to see available address fields."""
+    _check_credentials()
+    try:
+        result = await _aspire._get("Properties", {
+            "$filter": f"PropertyID eq {property_id}",
+            "$top": "1",
+        })
+        records = _aspire._extract_list(result)
+        if records:
+            return {"fields": sorted(records[0].keys()), "sample": records[0]}
+        return {"error": "not found"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/work-tickets/recent")
 async def get_recent_tickets():
     """
