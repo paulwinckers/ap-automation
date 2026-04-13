@@ -915,10 +915,12 @@ class AspireClient:
         file_bytes: bytes,
         attachment_type_id: int = 3,  # 3=Photo, 4=Document, 11=AP Invoice
         expose_to_crew: bool = True,
+        attach_to_invoice: Optional[bool] = None,
     ) -> dict:
         """
         Upload a file directly to Aspire via POST /Attachments.
         FileData is base64-encoded. ObjectCode is 'WorkTicket' or 'Opportunity'.
+        attach_to_invoice must be set (True/False) for Opportunity attachments.
         """
         import base64
         file_data = base64.b64encode(file_bytes).decode("utf-8")
@@ -930,6 +932,8 @@ class AspireClient:
             "AttachmentTypeId": attachment_type_id,
             "ExposeToCrew":     expose_to_crew,
         }
+        if attach_to_invoice is not None:
+            body["AttachToInvoice"] = attach_to_invoice
         return await self._post("Attachments", body)
 
     async def close(self):

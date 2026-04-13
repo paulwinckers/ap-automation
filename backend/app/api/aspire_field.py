@@ -648,8 +648,8 @@ async def create_opportunity(
             }
             if assigned_contact_id:
                 issue_body["AssignedTo"] = assigned_contact_id
-            if property_id:
-                issue_body["PropertyID"] = property_id
+            # NOTE: do NOT include PropertyID here — Aspire rejects Issues with both
+            # OpportunityID and PropertyID in the same request.
             await _aspire.create_issue(issue_body)
             logger.info(f"Opportunity {opp_id}: Issue created (AssignedTo ContactID={assigned_contact_id})")
         except Exception as e:
@@ -670,6 +670,7 @@ async def create_opportunity(
                     filename=fname,
                     file_bytes=raw,
                     expose_to_crew=True,
+                    attach_to_invoice=False,  # required for Opportunity attachments
                 )
                 photos_uploaded += 1
                 aspire_ok = True
