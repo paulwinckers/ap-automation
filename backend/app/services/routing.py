@@ -29,13 +29,9 @@ from app.core.config import settings
 
 
 def _aspire_configured() -> bool:
-    """True only when Aspire credentials are fully set up and not default placeholders."""
-    return bool(
-        settings.ASPIRE_TOKEN_URL
-        and settings.ASPIRE_CLIENT_ID
-        and settings.ASPIRE_CLIENT_SECRET
-        and "youraspire.com/token" not in settings.ASPIRE_TOKEN_URL
-    )
+    """True only when Aspire credentials are set. Only CLIENT_ID and SECRET are
+    required — the client posts directly to /Authorization, not a token URL."""
+    return bool(settings.ASPIRE_CLIENT_ID and settings.ASPIRE_CLIENT_SECRET)
 
 # Fallback GL account when a MasterCard vendor is not in vendor_rules.
 # This is the "General overhead" catch-all account — AP can recode later.

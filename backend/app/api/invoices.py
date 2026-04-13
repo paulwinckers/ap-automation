@@ -430,13 +430,8 @@ async def apply_po_override(
     if row["status"] not in ("queued", "error"):
         raise HTTPException(status_code=400, detail=f"Invoice status is '{row['status']}' — cannot override")
 
-    # Validate against Aspire only if fully configured (token URL + credentials)
-    aspire_ready = (
-        settings.ASPIRE_TOKEN_URL
-        and settings.ASPIRE_CLIENT_ID
-        and settings.ASPIRE_CLIENT_SECRET
-        and "youraspire.com/token" not in settings.ASPIRE_TOKEN_URL  # not default placeholder
-    )
+    # Validate against Aspire only if credentials are configured
+    aspire_ready = bool(settings.ASPIRE_CLIENT_ID and settings.ASPIRE_CLIENT_SECRET)
     if aspire_ready:
         is_valid, error_msg = await _aspire.validate_po(body.po_number)
         if not is_valid:
