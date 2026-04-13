@@ -208,10 +208,13 @@ async def upload_statement(
         )
         await db.create_statement_lines(statement_id, extraction.get("lines", []))
 
-        # Upload PDF to R2
-        r2_key = await upload_statement_pdf(file_bytes, period, vendor_name, filename)
-        if r2_key:
-            await db.save_pdf_r2_key(statement_id, r2_key)
+        # Upload PDF to R2 (non-fatal — statement is saved even if R2 fails)
+        try:
+            r2_key = await upload_statement_pdf(file_bytes, period, vendor_name, filename)
+            if r2_key:
+                await db.save_pdf_r2_key(statement_id, r2_key)
+        except Exception as e:
+            logger.warning(f"R2 PDF upload failed (non-fatal): {e}")
 
         # Run live QBO diff
         from_date, to_date = _period_date_range(period)
