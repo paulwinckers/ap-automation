@@ -992,9 +992,10 @@ class QBOClient:
                 bill["_balance_as_of_date"] = balance_as_of_date
                 open_bills.append(bill)
 
+        unapplied_count = sum(1 for c in all_credits if float(c.get("Balance") or 0) > 0.01)
         logger.info(
             f"get_vendor_bills: {len(open_bills)} open bills, "
-            f"{len(all_credits)} credits ({len(unapplied_credits)} unapplied) "
+            f"{len(all_credits)} credits ({unapplied_count} unapplied) "
             f"for vendor {vendor_id} as of {to_date}"
         )
         return {"bills": open_bills, "credits": all_credits}
