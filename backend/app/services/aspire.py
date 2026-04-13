@@ -920,33 +920,20 @@ class AspireClient:
         self, ticket_id: int, notes: str
     ) -> dict:
         """
-        Write Notes to a WorkTicket. Tries multiple approaches:
+        Append *notes* to a WorkTicket's Notes field.
+
+        Fetches the existing Notes first so previous submissions are preserved
+        (new entry is prepended above the old content with a separator line).
+
+        Write strategy — tries in order:
         1. PATCH WorkTickets(id)
         2. PUT  WorkTickets(id)
         3. POST WorkTickets with WorkTicketID in body (upsert)
-        4. Fetch full ticket then POST it back with Notes added
+        4. Fetch full ticket then POST it back with updated Notes
         """
-        body_minimal = {"WorkTicketID": ticket_id, "Notes": notes}
-
-        # 1. PATCH WorkTickets(id)
-        try:
-            return await self._patch(f"WorkTickets({ticket_id})", {"Notes": notes})
-        except Exception as e:
-            logger.info(f"PATCH WorkTickets({ticket_id}) failed ({getattr(getattr(e,'response',None),'status_code',None)}), trying PUT")
-
-        # 2. PUT WorkTickets(id)
-        try:
-            return await self._put(f"WorkTickets({ticket_id})", {"Notes": notes})
-        except Exception as e:
-            logger.info(f"PUT WorkTickets({ticket_id}) failed ({getattr(getattr(e,'response',None),'status_code',None)}), trying POST upsert")
-
-        # 3. POST WorkTickets with WorkTicketID in body
-        try:
-            return await self._post("WorkTickets", body_minimal)
-        except Exception as e:
-            logger.info(f"POST WorkTickets (upsert) failed ({getattr(getattr(e,'response',None),'status_code',None)}), trying full ticket fetch+post")
-
-        # 4. Fetch full ticket then POST back with Notes
+        # ── Fetch existing notes so we can append rather than overwrite ──────
+        existing_notes = ""
+        full_ticket: dict | None = None
         try:
             result = await self._get("WorkTickets", {
                 "$filter": f"WorkTicketID eq {ticket_id}",
@@ -954,8 +941,36 @@ class AspireClient:
             })
             tickets = self._extract_list(result)
             if tickets:
-                full_body = {**tickets[0], "Notes": notes}
-                return await self._post("WorkTickets", full_body)
+                full_ticket = tickets[0]
+                existing_notes = (full_ticket.get("Notes") or "").strip()
+        except Exception as e:
+            logger.info(f"Could not fetch existing WorkTicket notes ({e}); will overwrite")
+
+        separator = "\n" + "─" * 40 + "\n"
+        combined_notes = (notes + separator + existing_notes) if existing_notes else notes
+
+        # 1. PATCH WorkTickets(id)
+        try:
+            return await self._patch(f"WorkTickets({ticket_id})", {"Notes": combined_notes})
+        except Exception as e:
+            logger.info(f"PATCH WorkTickets({ticket_id}) failed ({getattr(getattr(e,'response',None),'status_code',None)}), trying PUT")
+
+        # 2. PUT WorkTickets(id)
+        try:
+            return await self._put(f"WorkTickets({ticket_id})", {"Notes": combined_notes})
+        except Exception as e:
+            logger.info(f"PUT WorkTickets({ticket_id}) failed ({getattr(getattr(e,'response',None),'status_code',None)}), trying POST upsert")
+
+        # 3. POST WorkTickets with WorkTicketID in body
+        try:
+            return await self._post("WorkTickets", {"WorkTicketID": ticket_id, "Notes": combined_notes})
+        except Exception as e:
+            logger.info(f"POST WorkTickets (upsert) failed ({getattr(getattr(e,'response',None),'status_code',None)}), trying full ticket fetch+post")
+
+        # 4. Fetch full ticket then POST back with updated Notes
+        try:
+            if full_ticket:
+                return await self._post("WorkTickets", {**full_ticket, "Notes": combined_notes})
         except Exception as e:
             logger.info(f"Full fetch+POST failed ({getattr(getattr(e,'response',None),'status_code',None)})")
 

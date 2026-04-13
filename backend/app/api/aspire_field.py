@@ -445,13 +445,32 @@ async def complete_work_ticket(
     except Exception as e:
         logger.warning(f"WorkTicket {ticket_id}: Issue creation failed: {e}")
 
+    # ── Write note into WorkTicket Notes field ────────────────────────────────
+    ticket_notes_written = False
+    try:
+        note_lines = [
+            f"Submitted by: {submitter_name}",
+            f"Date: {date.today().isoformat()}",
+        ]
+        if comment:
+            note_lines += ["", comment]
+        if photo_urls:
+            note_lines += ["", "Photos:"] + [f"  {u}" for u in photo_urls]
+
+        await _aspire.patch_work_ticket_notes(ticket_id, "\n".join(note_lines))
+        ticket_notes_written = True
+        logger.info(f"WorkTicket {ticket_id}: Ticket Notes updated successfully")
+    except Exception as e:
+        logger.warning(f"WorkTicket {ticket_id}: Ticket Notes update failed: {e}")
+
     logger.info(f"WorkTicket {ticket_id}: {photos_uploaded}/{len(photo_data)} photos saved")
 
     return {
-        "success":         True,
-        "ticket_id":       ticket_id,
-        "photos_uploaded": photos_uploaded,
-        "aspire_updated":  True,
+        "success":              True,
+        "ticket_id":            ticket_id,
+        "photos_uploaded":      photos_uploaded,
+        "aspire_updated":       True,
+        "ticket_notes_written": ticket_notes_written,
     }
 
 
