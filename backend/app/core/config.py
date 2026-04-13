@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     ASPIRE_SANDBOX:           bool = False  # AP invoice posting (set True for sandbox testing)
     ASPIRE_DASHBOARD_SANDBOX: bool = False  # Dashboard reads — always False (production data)
     ASPIRE_BRANCH_ID:         int = 0    # Required — integer, find in Aspire Settings → Branches
+    ASPIRE_DEFAULT_USER_ID:   int = 7    # Fallback UserID for Issues AssignedTo (Keeland = 7)
 
     # QBO
     QBO_CLIENT_ID:       str = ""

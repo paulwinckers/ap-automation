@@ -393,12 +393,15 @@ async def complete_work_ticket(
     # ── Create Aspire Issue linked to WorkTicket with notes ──────────────────────
     try:
         # Look up submitter's UserID — AssignedTo requires an integer UserID
-        submitter_contact_id = None
+        # Most field crew don't have Aspire user accounts so fall back to default
+        submitter_contact_id = settings.ASPIRE_DEFAULT_USER_ID
         try:
             employees = await _aspire.get_aspire_employees()
             for emp in employees:
                 if emp.get("FullName", "").lower() == (submitter_name or "").lower():
-                    submitter_contact_id = emp.get("UserID") or emp.get("ContactID")
+                    uid = emp.get("UserID")
+                    if uid:
+                        submitter_contact_id = uid
                     break
         except Exception:
             pass
@@ -601,13 +604,16 @@ async def create_opportunity(
     if isinstance(opp_id, int) and opp_id > 0:
         try:
             # Look up salesperson or submitter UserID — AssignedTo requires an integer UserID
-            assigned_contact_id = None
+            # Most field crew don't have Aspire user accounts so fall back to default
+            assigned_contact_id = settings.ASPIRE_DEFAULT_USER_ID
             try:
                 employees = await _aspire.get_aspire_employees()
                 target_name = (salesperson_name or submitter_name or "").lower()
                 for emp in employees:
                     if emp.get("FullName", "").lower() == target_name:
-                        assigned_contact_id = emp.get("UserID") or emp.get("ContactID")
+                        uid = emp.get("UserID")
+                        if uid:
+                            assigned_contact_id = uid
                         break
             except Exception:
                 pass
