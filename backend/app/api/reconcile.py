@@ -365,6 +365,50 @@ async def get_statement_pdf_url(statement_id: int, db: Database = Depends(get_db
         await db.close()
 
 
+@router.post("/statements/{statement_id}/pdf")
+async def attach_statement_pdf(
+    statement_id: int,
+    file: UploadFile = File(...),
+    db: Database = Depends(get_db),
+):
+    """
+    Attach or replace the PDF file for an existing statement.
+    Useful for backfilling PDFs that failed to save when R2 wasn't configured,
+    or replacing a file after a re-upload.
+    """
+    await db.connect()
+    try:
+        stmt = await db.get_statement(statement_id)
+        if not stmt:
+            raise HTTPException(status_code=404, detail="Statement not found")
+
+        file_bytes = await file.read()
+        filename = file.filename or stmt.get("pdf_filename") or "statement.pdf"
+
+        try:
+            # Derive period from statement date or fall back to current month
+            stmt_date = stmt.get("statement_date") or date.today().isoformat()
+            period = stmt_date[:7]  # "YYYY-MM"
+            r2_key = await upload_statement_pdf(file_bytes, period, stmt["vendor_name"], filename)
+            if r2_key:
+                await db.save_pdf_r2_key(statement_id, r2_key)
+                # Also update the stored filename
+                await db._q(
+                    "UPDATE vendor_statements SET pdf_filename = ? WHERE id = ?",
+                    [filename, statement_id],
+                )
+                return {"statement_id": statement_id, "pdf_filename": filename, "r2_key": r2_key}
+            else:
+                raise HTTPException(status_code=503, detail="R2 storage not configured — set R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY in Railway")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"PDF attach failed for statement {statement_id}: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await db.close()
+
+
 # ── Vendor QBO link management ────────────────────────────────────────────────
 
 @router.get("/qbo-vendors/search")

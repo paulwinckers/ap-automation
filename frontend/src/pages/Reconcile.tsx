@@ -112,7 +112,9 @@ export default function Reconcile() {
   const [vendorSearch, setVendorSearch] = useState('');
   const [vendorResults, setVendorResults] = useState<{id: string; name: string}[]>([]);
   const [searchingVendors, setSearchingVendors] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [attachingPdf, setAttachingPdf] = useState<number | null>(null);
+  const fileRef    = useRef<HTMLInputElement>(null);
+  const pdfRefs    = useRef<Record<number, HTMLInputElement | null>>({});
 
   useEffect(() => { loadPeriods(); }, []);
   useEffect(() => {
@@ -247,6 +249,25 @@ export default function Reconcile() {
     if (!confirm(`Delete ${vendorName} statement?`)) return;
     await fetch(`${API}/reconcile/statements/${statementId}`, { method: 'DELETE' });
     await loadStatements(activePeriod);
+  }
+
+  async function handleAttachPdf(statementId: number, file: File) {
+    setAttachingPdf(statementId);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch(`${API}/reconcile/statements/${statementId}/pdf`, { method: 'POST', body: form });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`PDF upload failed: ${err.detail || res.statusText}`);
+        return;
+      }
+      await loadStatements(activePeriod);
+    } catch {
+      alert('PDF upload failed — check Railway logs');
+    } finally {
+      setAttachingPdf(null);
+    }
   }
 
   const diffSummaryColor = (d: DiffResult) => {
@@ -465,15 +486,40 @@ export default function Reconcile() {
 
                     {/* Actions */}
                     <div style={{ display: 'flex', gap: 6, flex: '0 0 auto' }} onClick={e => e.stopPropagation()}>
-                      <button onClick={async () => {
-                        const res = await fetch(`${API}/reconcile/statements/${stmt.id}/pdf`);
-                        if (!res.ok) { alert('No PDF stored for this statement'); return; }
-                        const { url } = await res.json();
-                        window.open(url, '_blank');
-                      }} style={{
-                        padding: '3px 10px', fontSize: 11, border: '1px solid #e2e8f0',
-                        borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
-                      }} title="View PDF">📄</button>
+                      {/* View PDF — only shown when one is stored */}
+                      {stmt.pdf_filename && (
+                        <button onClick={async () => {
+                          const res = await fetch(`${API}/reconcile/statements/${stmt.id}/pdf`);
+                          if (!res.ok) { alert('No PDF stored for this statement'); return; }
+                          const { url } = await res.json();
+                          window.open(url, '_blank');
+                        }} style={{
+                          padding: '3px 10px', fontSize: 11, border: '1px solid #e2e8f0',
+                          borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
+                        }} title="View PDF">📄</button>
+                      )}
+                      {/* Attach / replace PDF */}
+                      {periodStatus === 'open' && (
+                        <label style={{
+                          padding: '3px 10px', fontSize: 11, border: `1px solid ${stmt.pdf_filename ? '#e2e8f0' : '#fbbf24'}`,
+                          borderRadius: 6, background: stmt.pdf_filename ? '#f8fafc' : '#fffbeb',
+                          cursor: attachingPdf === stmt.id ? 'wait' : 'pointer', color: stmt.pdf_filename ? '#64748b' : '#d97706',
+                          whiteSpace: 'nowrap',
+                        }} title={stmt.pdf_filename ? 'Replace PDF' : 'Attach PDF'}>
+                          {attachingPdf === stmt.id ? '…' : stmt.pdf_filename ? '📎' : '📎 Attach PDF'}
+                          <input
+                            type="file" accept=".pdf,.png,.jpg,.jpeg"
+                            style={{ display: 'none' }}
+                            ref={el => { pdfRefs.current[stmt.id] = el; }}
+                            disabled={attachingPdf !== null}
+                            onChange={e => {
+                              const f = e.target.files?.[0];
+                              if (f) handleAttachPdf(stmt.id, f);
+                              if (pdfRefs.current[stmt.id]) pdfRefs.current[stmt.id]!.value = '';
+                            }}
+                          />
+                        </label>
+                      )}
                       {periodStatus === 'open' && (
                         <button onClick={() => loadDiff(stmt.id)} disabled={isLoading} style={{
                           padding: '3px 10px', fontSize: 11, border: '1px solid #e2e8f0',
