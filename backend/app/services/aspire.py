@@ -193,12 +193,11 @@ class AspireClient:
         """
         Find an open Purchase Receipt in Aspire by PO/Receipt number.
 
-        GET /Receipts
-          $filter=ReceiptNumber eq {po_int} and (ReceiptStatusName eq 'New' or ReceiptStatusName eq 'Received')
-          $expand=ReceiptItems
-          $top=1
+        Aspire OData does not support compound filters like:
+          ReceiptNumber eq X and (Status eq 'New' or Status eq 'Received')
+        So we filter by ReceiptNumber only, then check status in Python.
 
-        Returns the receipt dict or None.
+        Returns the receipt dict (status New or Received) or None.
         """
         po_int = self._extract_po_int(po_number)
         if po_int is None:
@@ -210,22 +209,28 @@ class AspireClient:
             result = await self._get(
                 "Receipts",
                 params={
-                    "$filter": (
-                        f"ReceiptNumber eq {po_int} and "
-                        f"(ReceiptStatusName eq 'New' or ReceiptStatusName eq 'Received')"
-                    ),
-                    "$expand": "ReceiptItems",
-                    "$top": 1,
+                    "$filter": f"ReceiptNumber eq {po_int}",
+                    "$top": 5,
                 },
             )
             records = self._extract_list(result)
-            if not records:
+
+            # Filter to open statuses in Python — Aspire OData rejects compound filters
+            open_statuses = {"new", "received"}
+            open_records = [
+                r for r in records
+                if (r.get("ReceiptStatusName") or "").lower() in open_statuses
+            ]
+
+            if not open_records:
+                statuses = [r.get("ReceiptStatusName") for r in records]
                 logger.warning(
                     f"No open Receipt found for ReceiptNumber={po_int} "
-                    f"(PO '{po_number}')"
+                    f"(PO '{po_number}') — found statuses: {statuses}"
                 )
                 return None
-            receipt = records[0]
+
+            receipt = open_records[0]
             logger.info(
                 f"Receipt found — ReceiptID={receipt.get('ReceiptID')}, "
                 f"Status={receipt.get('ReceiptStatusName')}, "
@@ -252,20 +257,12 @@ class AspireClient:
     def _build_receipt_items(existing_items: list[dict], invoice: Invoice) -> list[dict]:
         """
         Build updated ReceiptItems from existing PO items + actual invoice amounts.
+        Tax goes in ReceiptExtraCosts (separate field), NOT here.
 
-        1. Separate non-tax items from tax/other items.
-        2. Scale non-tax item costs to match actual invoice subtotal.
-        3. Strip existing tax items and replace with actual tax lines from invoice.
+        1. Keep all existing non-tax ReceiptItems as-is (preserve CatalogItemID etc.)
+        2. Scale item costs proportionally if actual subtotal differs from PO subtotal.
         """
-        # Separate items
-        tax_type_names = {"tax", "other"}
-        non_tax_items = [
-            i for i in existing_items
-            if (i.get("ItemType") or "").lower() not in tax_type_names
-        ]
-        # tax items are dropped — replaced by actual invoice tax lines below
-
-        # Determine actual subtotal
+        # Determine actual subtotal (total minus taxes)
         if invoice.subtotal is not None:
             actual_subtotal = float(invoice.subtotal)
         else:
@@ -274,61 +271,47 @@ class AspireClient:
             )
             actual_subtotal = float(invoice.total_amount or 0) - tax_total
 
-        # Determine PO subtotal
+        # PO subtotal from existing items
         po_subtotal = sum(
             float(i.get("ItemUnitCost") or 0) * float(i.get("ItemQuantity") or 1)
-            for i in non_tax_items
+            for i in existing_items
         )
 
-        # Scale non-tax items to match actual subtotal
+        # Scale items to match actual subtotal if different
         updated_items = []
-        if non_tax_items:
-            if abs(actual_subtotal - po_subtotal) > 0.001:
-                if len(non_tax_items) == 1:
-                    item = dict(non_tax_items[0])
-                    item["ItemUnitCost"] = actual_subtotal
-                    item["ItemQuantity"] = 1
+        if existing_items:
+            if abs(actual_subtotal - po_subtotal) > 0.001 and po_subtotal != 0:
+                scale = actual_subtotal / po_subtotal
+                for orig in existing_items:
+                    item = dict(orig)
+                    item["ItemUnitCost"] = round(float(orig.get("ItemUnitCost") or 0) * scale, 4)
                     updated_items.append(item)
-                else:
-                    for orig in non_tax_items:
-                        item = dict(orig)
-                        item_cost = float(orig.get("ItemUnitCost") or 0) * float(orig.get("ItemQuantity") or 1)
-                        if po_subtotal != 0:
-                            item["ItemUnitCost"] = item_cost * (actual_subtotal / po_subtotal)
-                        else:
-                            item["ItemUnitCost"] = 0.0
-                        item["ItemQuantity"] = 1
-                        updated_items.append(item)
-                    if po_subtotal == 0 and updated_items:
-                        updated_items[0]["ItemUnitCost"] = actual_subtotal
             else:
-                updated_items = [dict(i) for i in non_tax_items]
+                updated_items = [dict(i) for i in existing_items]
 
-        # Add actual tax lines from invoice
+        # Strip None values; keep ReceiptItemID for in-place upsert
+        return [{k: v for k, v in item.items() if v is not None} for item in updated_items]
+
+    @staticmethod
+    def _build_extra_costs(invoice: Invoice) -> list[dict]:
+        """
+        Build ReceiptExtraCosts from invoice tax lines.
+        GST → ExtraCostType "Tax", PST → ExtraCostType "Other".
+        """
+        extra_costs = []
         for tl in (invoice.tax_lines or []):
             tax_name = (tl.tax_name or "").lower()
             if "gst" in tax_name:
-                item_type = "Tax"
-                item_name = "GST"
+                cost_type = "Tax"
             elif "pst" in tax_name:
-                item_type = "Other"
-                item_name = "PST"
+                cost_type = "Other"
             else:
-                item_type = "Tax"
-                item_name = tl.tax_name or "Tax"
-            updated_items.append({
-                "ItemType": item_type,
-                "ItemName": item_name,
-                "ItemQuantity": 1,
-                "ItemUnitCost": float(tl.tax_amount or 0),
+                cost_type = "Tax"
+            extra_costs.append({
+                "ExtraCostType": cost_type,
+                "ExtraCost": float(tl.tax_amount or 0),
             })
-
-        # Strip None values from each item dict; keep ReceiptItemID for in-place upsert
-        clean_items = []
-        for item in updated_items:
-            clean_items.append({k: v for k, v in item.items() if v is not None})
-
-        return clean_items
+        return extra_costs
 
     async def fill_receipt_from_invoice(self, invoice: Invoice, receipt: dict) -> str:
         """
@@ -354,20 +337,21 @@ class AspireClient:
         new_note = f"{existing_note}\n{ap_note}".strip() if existing_note else ap_note
 
         body = {
-            "ReceiptID":         receipt_id,
-            "BranchID":          receipt.get("BranchID"),
-            "VendorID":          receipt.get("VendorID"),
-            "VendorInvoiceNum":  invoice.invoice_number or "",
-            "VendorInvoiceDate": _normalize_date(invoice.invoice_date),
-            "ReceivedDate":      (
+            "ReceiptID":          receipt_id,
+            "BranchID":           receipt.get("BranchID"),
+            "VendorID":           receipt.get("VendorID"),
+            "VendorInvoiceNum":   invoice.invoice_number or "",
+            "VendorInvoiceDate":  _normalize_date(invoice.invoice_date),
+            "ReceivedDate":       (
                 receipt.get("ReceivedDate")
                 or _normalize_date(invoice.invoice_date)
                 or date.today().isoformat()
             ),
-            "WorkTicketID":      receipt.get("WorkTicketID"),
-            "ReceiptNote":       new_note,
-            "ReceiptTotalCost":  float(invoice.total_amount or 0),
-            "ReceiptItems":      self._build_receipt_items(existing_items, invoice),
+            "WorkTicketID":       receipt.get("WorkTicketID"),
+            "ReceiptNote":        new_note,
+            "ReceiptTotalCost":   float(invoice.total_amount or 0),
+            "ReceiptItems":       self._build_receipt_items(existing_items, invoice),
+            "ReceiptExtraCosts":  self._build_extra_costs(invoice),
         }
         # Remove None-valued top-level keys
         body = {k: v for k, v in body.items() if v is not None}
