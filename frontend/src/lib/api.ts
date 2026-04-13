@@ -169,6 +169,7 @@ export interface VendorRule {
   notes?: string;
   is_employee?: boolean;
   active: boolean;
+  aspire_post?: boolean;
 }
 
 export async function lookupGLName(account: string): Promise<{ found: boolean; gl_name: string | null }> {

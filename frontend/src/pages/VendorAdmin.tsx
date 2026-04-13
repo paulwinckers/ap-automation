@@ -79,6 +79,7 @@ const EMPTY_FORM = {
   vendor_id_qbo: '',
   notes: '',
   is_employee: false,
+  aspire_post: false,
 };
 
 export default function VendorAdmin() {
@@ -234,6 +235,7 @@ function VendorAdminInner() {
       vendor_id_qbo:      v.vendor_id_qbo || '',
       notes:              v.notes || '',
       is_employee:        v.is_employee ?? false,
+      aspire_post:        v.aspire_post ?? false,
     });
     setSaveError(null);
     setShowForm(true);
@@ -253,6 +255,7 @@ function VendorAdminInner() {
         vendor_id_qbo:      form.vendor_id_qbo.trim() || undefined,
         notes:              form.notes.trim() || undefined,
         is_employee:        form.is_employee,
+        aspire_post:        form.aspire_post,
       };
       if (editingId !== null) {
         await updateVendor(editingId, payload);
@@ -376,6 +379,7 @@ function VendorAdminInner() {
                     <span style={S.vendorName}>{v.vendor_name}</span>
                     <span style={{ ...S.badge, ...typeBadge[v.type] }}>{typeLabel[v.type]}</span>
                     {v.is_employee && <span style={S.empBadge}>Employee</span>}
+                    {v.aspire_post && <span style={S.aspireBadge}>Aspire ✓</span>}
                     {!v.active && <span style={S.inactiveBadge}>Inactive</span>}
                   </div>
                   <div style={S.cardActions}>
@@ -464,6 +468,31 @@ function VendorAdminInner() {
                   </span>
                 </label>
               </div>
+
+              {/* Aspire receipt creation — job cost / mixed only */}
+              {(form.type === 'job_cost' || form.type === 'mixed') && !form.is_employee && (
+                <div style={S.field}>
+                  <label style={S.label}>Create Aspire receipt</label>
+                  <label style={S.checkRow}>
+                    <div
+                      style={{ ...S.toggleTrack, background: form.aspire_post ? '#059669' : '#e2e6ed' }}
+                      onClick={() => setForm(f => ({ ...f, aspire_post: !f.aspire_post }))}
+                    >
+                      <div style={{ ...S.toggleThumb, transform: form.aspire_post ? 'translateX(20px)' : 'translateX(0)' }} />
+                    </div>
+                    <span style={S.checkLabel}>
+                      {form.aspire_post
+                        ? 'Creates a receipt in Aspire (no PO needed)'
+                        : 'Off — invoice will be emailed to AP'}
+                    </span>
+                  </label>
+                  {form.aspire_post && (
+                    <div style={{ ...S.hint, color: '#065f46', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 6, padding: '8px 10px', marginTop: 6 }}>
+                      When an invoice arrives with no PO, a new receipt will be created in Aspire automatically. You then open Aspire and assign it to the correct work ticket.
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* GL account (overhead / mixed) */}
               {(form.type === 'overhead' || form.type === 'mixed') && (
@@ -610,6 +639,7 @@ const S: Record<string, React.CSSProperties> = {
   vendorName:  { fontSize: 15, fontWeight: 600, color: '#1a1d23' },
   badge:       { fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 20 },
   empBadge:    { fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: '#dcfce7', color: '#166534' },
+  aspireBadge: { fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: '#d1fae5', color: '#065f46' },
   inactiveBadge: { fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: '#f1f5f9', color: '#94a3b8' },
   cardActions: { display: 'flex', gap: 8, flexShrink: 0 },
   cardDetail:  { marginTop: 8, display: 'flex', gap: 16, fontSize: 12, color: '#6b7280' },
