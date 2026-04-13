@@ -494,7 +494,7 @@ class AspireClient:
         # Try Contacts endpoint first (correct field is 'Active', not 'IsActive')
         try:
             result = await self._get("Contacts", {
-                "$select": "ContactID,FirstName,LastName,Email,Active,ContactTypeName",
+                "$select": "ContactID,UserID,FirstName,LastName,Email,Active,ContactTypeName",
                 "$filter": "Active eq true and ContactTypeName eq 'Employee'",
                 "$top":    "500",
                 "$orderby": "LastName asc",
