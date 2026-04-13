@@ -479,6 +479,50 @@ async def complete_work_ticket(
     }
 
 
+# ── Debug: probe WorkTicket notes endpoint ───────────────────────────────────
+
+@router.get("/debug/ticket-notes/{ticket_id}")
+async def debug_ticket_notes(ticket_id: int):
+    """
+    Probe what fields exist on a WorkTicket and what endpoints are available
+    for writing notes — helps identify the correct API surface.
+    """
+    _check_credentials()
+    results: dict = {}
+
+    # 1. Fetch the full ticket to see all fields
+    try:
+        raw = await _aspire._get("WorkTickets", {
+            "$filter": f"WorkTicketID eq {ticket_id}",
+            "$top": "1",
+        })
+        tickets = _aspire._extract_list(raw)
+        results["ticket_fields"] = list(tickets[0].keys()) if tickets else []
+        results["ticket_notes_value"] = tickets[0].get("Notes") if tickets else None
+    except Exception as e:
+        results["ticket_fetch_error"] = str(e)
+
+    # 2. Try to find a WorkTicketNotes or TicketNotes collection
+    for collection in ("WorkTicketNotes", "TicketNotes", "Notes"):
+        try:
+            r = await _aspire._get(collection, {
+                "$filter": f"WorkTicketID eq {ticket_id}",
+                "$top": "5",
+            })
+            results[f"{collection}_response"] = r
+        except Exception as e:
+            results[f"{collection}_error"] = str(e)
+
+    # 3. Try PATCH with Notes field
+    try:
+        r = await _aspire._patch(f"WorkTickets({ticket_id})", {"Notes": "__probe__"})
+        results["patch_response"] = r
+    except Exception as e:
+        results["patch_error"] = str(e)
+
+    return results
+
+
 # ── Lead sources & sales types ───────────────────────────────────────────────
 
 @router.get("/lead-sources")
