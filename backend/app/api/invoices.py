@@ -284,22 +284,26 @@ async def upload_invoice(
 
 
 @router.get("/validate-po")
-async def validate_po(po_number: str):
+async def validate_po_endpoint(
+    po_number: str = Query(..., description="PO number to validate against Aspire"),
+):
     """
     Validate a PO number against Aspire.
-    Used by the field crew mobile app before submission.
-    Returns job name and address if found.
+    Looks for an open Receipt (New or Received) matching the PO number.
     """
-    is_valid, error_msg = await _aspire.validate_po(po_number)
-    if not is_valid:
-        raise HTTPException(status_code=422, detail=error_msg)
-    po_data = await _aspire.get_purchase_order(po_number)
+    receipt = await _aspire.find_open_receipt(po_number)
+    if receipt is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"PO '{po_number}' not found in Aspire (no open receipt with that number)"
+        )
     return {
-        "found":           True,
-        "OpportunityName": po_data.get("OpportunityName"),
-        "BillingAddressLine1": po_data.get("BillingAddressLine1"),
-        "BillingAddressCity":  po_data.get("BillingAddressCity"),
-        "OpportunityStatusName": po_data.get("OpportunityStatusName"),
+        "valid": True,
+        "receipt_id":     receipt.get("ReceiptID"),
+        "receipt_number": receipt.get("ReceiptNumber"),
+        "status":         receipt.get("ReceiptStatusName"),
+        "vendor":         receipt.get("VendorName"),
+        "work_ticket_id": receipt.get("WorkTicketID"),
     }
 
 
@@ -308,30 +312,44 @@ async def get_counts(db: Database = Depends(get_db)):
     return await db.get_queue_counts()
 
 
-@router.get("/validate-po")
-async def validate_po_endpoint(
-    po_number: str = Query(..., description="PO number to validate against Aspire"),
-    db: Database = Depends(get_db),
-):
+@router.get("/debug-receipt")
+async def debug_receipt(po_number: str = Query(...)):
     """
-    Validate a PO number against Aspire.
-    Used by the field crew mobile app before submission.
+    Debug endpoint — returns raw Aspire Receipt data for a PO number.
+    Tries multiple filter strategies to diagnose OData issues.
     """
-    cached = await db.get_cached_po(po_number)
-    if cached:
-        return {"valid": True, "job": cached, "cached": True}
+    po_int = _aspire._extract_po_int(po_number)
+    results = {}
 
-    po_data = await _aspire.get_purchase_order(po_number)
+    # Strategy 1: ReceiptNumber eq int, with status filter
+    try:
+        r1 = await _aspire._get("Receipts", params={
+            "$filter": f"ReceiptNumber eq {po_int} and (ReceiptStatusName eq 'New' or ReceiptStatusName eq 'Received')",
+            "$expand": "ReceiptItems",
+            "$top": 3,
+        })
+        results["strategy_1_number_and_status"] = r1
+    except Exception as e:
+        results["strategy_1_error"] = str(e)
 
-    if po_data is None:
-        return {"valid": False, "error": f"PO '{po_number}' not found in Aspire"}
+    # Strategy 2: ReceiptNumber only, no status filter
+    try:
+        r2 = await _aspire._get("Receipts", params={
+            "$filter": f"ReceiptNumber eq {po_int}",
+            "$top": 3,
+        })
+        results["strategy_2_number_only"] = r2
+    except Exception as e:
+        results["strategy_2_error"] = str(e)
 
-    status = po_data.get("OpportunityStatusName", "")
-    if "cancel" in status.lower() or "closed" in status.lower():
-        return {"valid": False, "error": f"PO '{po_number}' is {status}"}
+    # Strategy 3: No filter at all — just grab first 5 to see field names
+    try:
+        r3 = await _aspire._get("Receipts", params={"$top": 5})
+        results["strategy_3_no_filter_sample"] = r3
+    except Exception as e:
+        results["strategy_3_error"] = str(e)
 
-    await db.cache_po(po_number, po_data)
-    return {"valid": True, "job": po_data, "cached": False}
+    return results
 
 
 @router.get("/feed")
