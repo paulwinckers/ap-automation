@@ -185,6 +185,21 @@ async def _route_to_aspire(
         receipt_id = await aspire.fill_receipt_from_invoice(invoice, receipt)
         opportunity_id = receipt.get("OpportunityID")
 
+        # Attach invoice PDF to the Receipt in Aspire (type 11 = AP Invoice)
+        if invoice.file_bytes:
+            try:
+                await aspire.upload_aspire_attachment(
+                    object_id=int(receipt_id),
+                    object_code="Receipt",
+                    filename=invoice.pdf_filename or f"invoice_{invoice.id}.pdf",
+                    file_bytes=invoice.file_bytes,
+                    attachment_type_id=11,
+                    expose_to_crew=False,
+                )
+                logger.info(f"Invoice PDF attached to Aspire Receipt #{receipt.get('ReceiptNumber')}")
+            except Exception as e:
+                logger.warning(f"Aspire PDF attachment failed (non-fatal): {e}")
+
         await db.mark_posted_aspire(invoice.id, receipt_id, opportunity_id)
         await db.audit(invoice.id, "posted", "system", {
             "destination": "aspire",

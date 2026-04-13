@@ -875,7 +875,7 @@ class AspireClient:
         object_code: str,
         filename: str,
         file_bytes: bytes,
-        attachment_type_id: int = 1,
+        attachment_type_id: int = 3,  # 3=Photo, 4=Document, 11=AP Invoice
         expose_to_crew: bool = True,
     ) -> dict:
         """

@@ -370,6 +370,9 @@ async def debug_attachment(ticket_id: int = Query(...), type_id: int = Query(1),
     )
     token = await _aspire._get_token()
     file_data = base64.b64encode(test_bytes).decode("utf-8")
+    # Default to type 3 (Photo) — valid IDs: 3=Photo, 4=Document, 11=AP Invoice
+    if type_id == 1:
+        type_id = 3
     body = {
         "FileName":         "ap_test.png",
         "FileData":         file_data,
