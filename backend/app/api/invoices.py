@@ -474,7 +474,7 @@ async def debug_aspire_post(po_number: str = Query(...)):
     except Exception as e:
         results["put_error"] = str(e)
 
-    # Try PATCH /Receipts/{id} with minimal fields only
+    # Try PATCH /Receipts({id}) — OData key notation
     minimal = {
         "VendorInvoiceNum":  invoice.invoice_number,
         "VendorInvoiceDate": _to_aspire_datetime(_normalize_date(invoice.invoice_date)),
@@ -482,14 +482,40 @@ async def debug_aspire_post(po_number: str = Query(...)):
     }
     try:
         resp3 = await _aspire._http.patch(
-            f"{_aspire.base_url}/Receipts/{receipt['ReceiptID']}",
+            f"{_aspire.base_url}/Receipts({receipt['ReceiptID']})",
             json=minimal,
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
         )
-        results["patch_status"] = resp3.status_code
-        results["patch_body"] = resp3.text[:2000]
+        results["patch_odata_status"] = resp3.status_code
+        results["patch_odata_body"] = resp3.text[:2000]
     except Exception as e:
-        results["patch_error"] = str(e)
+        results["patch_odata_error"] = str(e)
+
+    # Try PUT /Receipts({id}) — OData key notation
+    try:
+        resp4 = await _aspire._http.put(
+            f"{_aspire.base_url}/Receipts({receipt['ReceiptID']})",
+            json=body,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
+        )
+        results["put_odata_status"] = resp4.status_code
+        results["put_odata_body"] = resp4.text[:2000]
+    except Exception as e:
+        results["put_odata_error"] = str(e)
+
+    # Try POST /Receipts with ReceiptID=0 (create linked to existing PO?)
+    body_new = dict(body)
+    body_new["ReceiptID"] = 0
+    try:
+        resp5 = await _aspire._http.post(
+            f"{_aspire.base_url}/Receipts",
+            json=body_new,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
+        )
+        results["post_id0_status"] = resp5.status_code
+        results["post_id0_body"] = resp5.text[:2000]
+    except Exception as e:
+        results["post_id0_error"] = str(e)
 
     return {"receipt_id": receipt["ReceiptID"], "post_body_sent": body, "results": results}
 
