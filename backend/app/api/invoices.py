@@ -378,10 +378,11 @@ async def debug_attachment(ticket_id: int = Query(...), type_id: int = Query(1),
         "AttachmentTypeId": type_id,
         "ExposeToCrew":     False,
     }
-    # First fetch valid attachment types
+    # Fetch existing attachments to discover valid AttachmentTypeID values
     try:
         types_resp = await _aspire._http.get(
-            f"{_aspire.base_url}/AttachmentTypes",
+            f"{_aspire.base_url}/Attachments/AttachmentFileData",
+            params={"$top": "10", "$select": "AttachmentID,FileName,ObjectCode,AttachmentTypeID"},
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
         )
         attachment_types = types_resp.json() if types_resp.is_success else f"Error {types_resp.status_code}: {types_resp.text[:500]}"
