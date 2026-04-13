@@ -408,10 +408,20 @@ async def debug_issue(ticket_id: int = Query(...)):
     Debug endpoint — tries to POST an Issue to a WorkTicket and returns the raw Aspire response.
     """
     token = await _aspire._get_token()
+
+    # First fetch existing issues to see what AssignedTo looks like
+    sample_resp = await _aspire._http.get(
+        f"{_aspire.base_url}/Issues",
+        params={"$top": "3"},
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+    )
+    sample = sample_resp.json() if sample_resp.is_success else f"Error {sample_resp.status_code}: {sample_resp.text[:300]}"
+
     body = {
         "Subject":      f"AP Test Note — WorkTicket #{ticket_id}",
         "Notes":        "This is a test note from AP Automation.",
         "WorkTicketID": ticket_id,
+        "AssignedTo":   7,  # try integer user ID
         "PublicComment": False,
     }
     try:
@@ -428,10 +438,10 @@ async def debug_issue(ticket_id: int = Query(...)):
             "success": resp.is_success,
             "status_code": resp.status_code,
             "response_body": resp.text[:2000],
-            "body_sent": body,
+            "sample_issues": sample,
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "sample_issues": sample}
 
 
 @router.get("/feed")
