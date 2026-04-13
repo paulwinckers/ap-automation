@@ -407,6 +407,93 @@ async def debug_receipt_post(po_number: str = Query(...)):
     return {"receipt_found": receipt, "post_body": body}
 
 
+@router.post("/debug-aspire-post")
+async def debug_aspire_post(po_number: str = Query(...)):
+    """
+    Debug endpoint — actually fires the POST/PUT to Aspire and returns
+    the full error body so we can see what it's rejecting.
+    """
+    from app.models.invoice import Invoice, InvoiceStatus, TaxLine
+    from datetime import date
+    from app.services.aspire import _normalize_date, _to_aspire_datetime
+
+    receipt = await _aspire.find_open_receipt(po_number)
+    if receipt is None:
+        return {"error": f"PO '{po_number}' not found in Aspire"}
+
+    invoice = Invoice(
+        id=0, status=InvoiceStatus.PENDING,
+        vendor_name="Foxglove Wholesale Nursery",
+        invoice_number="7040", invoice_date="2026-04-13",
+        subtotal=88.0, tax_amount=10.56, total_amount=98.56, currency="CAD",
+        tax_lines=[
+            TaxLine(tax_name="GST", tax_rate=0.05, tax_amount=4.40),
+            TaxLine(tax_name="PST", tax_rate=0.07, tax_amount=6.16),
+        ],
+    )
+
+    body = {
+        "ReceiptID":         receipt["ReceiptID"],
+        "BranchID":          receipt.get("BranchID"),
+        "VendorID":          receipt.get("VendorID"),
+        "VendorInvoiceNum":  invoice.invoice_number or "",
+        "VendorInvoiceDate": _to_aspire_datetime(_normalize_date(invoice.invoice_date)),
+        "ReceivedDate":      _to_aspire_datetime(_normalize_date(invoice.invoice_date)),
+        "WorkTicketID":      receipt.get("WorkTicketID"),
+        "ReceiptNote":       "AP Automation test",
+        "ReceiptTotalCost":  float(invoice.total_amount or 0),
+        "ReceiptItems":      _aspire._strip_receipt_items(receipt.get("ReceiptItems") or []),
+        "ReceiptExtraCosts": _aspire._strip_extra_costs(receipt.get("ReceiptExtraCosts") or []),
+    }
+    body = {k: v for k, v in body.items() if v is not None}
+
+    token = await _aspire._get_token()
+    results = {}
+
+    # Try POST /Receipts
+    try:
+        resp = await _aspire._http.post(
+            f"{_aspire.base_url}/Receipts",
+            json=body,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
+        )
+        results["post_status"] = resp.status_code
+        results["post_body"] = resp.text[:2000]
+    except Exception as e:
+        results["post_error"] = str(e)
+
+    # Try PUT /Receipts/{id}
+    try:
+        resp2 = await _aspire._http.put(
+            f"{_aspire.base_url}/Receipts/{receipt['ReceiptID']}",
+            json=body,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
+        )
+        results["put_status"] = resp2.status_code
+        results["put_body"] = resp2.text[:2000]
+    except Exception as e:
+        results["put_error"] = str(e)
+
+    # Try PATCH /Receipts/{id} with minimal fields only
+    minimal = {
+        "VendorInvoiceNum":  invoice.invoice_number,
+        "VendorInvoiceDate": _to_aspire_datetime(_normalize_date(invoice.invoice_date)),
+        "ReceivedDate":      _to_aspire_datetime(_normalize_date(invoice.invoice_date)),
+    }
+    try:
+        resp3 = await _aspire._http.patch(
+            f"{_aspire.base_url}/Receipts/{receipt['ReceiptID']}",
+            json=minimal,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
+        )
+        results["patch_status"] = resp3.status_code
+        results["patch_body"] = resp3.text[:2000]
+    except Exception as e:
+        results["patch_error"] = str(e)
+
+    return {"receipt_id": receipt["ReceiptID"], "post_body_sent": body, "results": results}
+
+
 @router.get("/debug-attachment")
 async def debug_attachment(ticket_id: int = Query(...), type_id: int = Query(1), object_code: str = Query("WorkTicket")):
     """
