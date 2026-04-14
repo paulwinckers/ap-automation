@@ -56,6 +56,18 @@ class VendorUpdateRequest(BaseModel):
     aspire_post:        Optional[bool] = None   # enable direct Aspire receipt creation for this vendor
 
 
+@router.post("/reset-aspire-post")
+async def reset_all_aspire_post(db: Database = Depends(get_db)):
+    """Set aspire_post = false for every vendor. One-shot admin action."""
+    await db._x("UPDATE vendor_rules SET aspire_post = 0")
+    vendors = await db.get_all_vendor_rules()
+    still_on = [v.vendor_name for v in vendors if v.aspire_post]
+    return {
+        "updated": len(vendors),
+        "still_on": still_on,   # should be empty
+    }
+
+
 @router.get("/employees")
 async def list_employees(db: Database = Depends(get_db)):
     """Return names of vendors flagged as employees — used by the field crew expense form."""
