@@ -453,98 +453,15 @@ async def complete_work_ticket(
     except Exception as e:
         logger.warning(f"WorkTicket {ticket_id}: Issue creation failed: {e}")
 
-    # ── Write note into WorkTicket Notes field ────────────────────────────────
-    ticket_notes_written = False
-    try:
-        note_lines = [
-            f"Submitted by: {submitter_name}",
-            f"Date: {date.today().isoformat()}",
-        ]
-        if comment:
-            note_lines += ["", comment]
-        if photo_urls:
-            note_lines += ["", "Photos:"] + [f"  {u}" for u in photo_urls]
-
-        await _aspire.patch_work_ticket_notes(ticket_id, "\n".join(note_lines))
-        ticket_notes_written = True
-        logger.info(f"WorkTicket {ticket_id}: Ticket Notes updated successfully")
-    except Exception as e:
-        logger.warning(f"WorkTicket {ticket_id}: Ticket Notes update failed: {e}")
-
     logger.info(f"WorkTicket {ticket_id}: {photos_uploaded}/{len(photo_data)} photos saved")
 
     return {
-        "success":              True,
-        "ticket_id":            ticket_id,
-        "photos_uploaded":      photos_uploaded,
-        "aspire_updated":       True,
-        "ticket_notes_written": ticket_notes_written,
+        "success":         True,
+        "ticket_id":       ticket_id,
+        "photos_uploaded": photos_uploaded,
+        "aspire_updated":  True,
     }
 
-
-# ── Debug: probe WorkTicket notes endpoint ───────────────────────────────────
-
-@router.get("/debug/ticket-notes/{ticket_id}")
-async def debug_ticket_notes(ticket_id: int):
-    """
-    Probe what fields exist on a WorkTicket and what endpoints are available
-    for writing notes — helps identify the correct API surface.
-    """
-    _check_credentials()
-    results: dict = {}
-
-    # 1. Fetch the full ticket to see all fields
-    try:
-        raw = await _aspire._get("WorkTickets", {
-            "$filter": f"WorkTicketID eq {ticket_id}",
-            "$top": "1",
-        })
-        tickets = _aspire._extract_list(raw)
-        results["ticket_fields"] = list(tickets[0].keys()) if tickets else []
-        results["ticket_notes_value"] = tickets[0].get("Notes") if tickets else None
-    except Exception as e:
-        results["ticket_fetch_error"] = str(e)
-
-    # 2. Try POST to WorkTicketNotes (dedicated notes collection)
-    try:
-        r = await _aspire._post("WorkTicketNotes", {
-            "WorkTicketID": ticket_id,
-            "Notes": "__probe__ note from API",
-        })
-        results["WorkTicketNotes_post_response"] = r
-    except Exception as e:
-        results["WorkTicketNotes_post_error"] = str(e)
-
-    # 3. Try POST to WorkTicketNotes with different field names
-    try:
-        r = await _aspire._post("WorkTicketNotes", {
-            "WorkTicketID": ticket_id,
-            "Note": "__probe__ note from API",
-            "NoteText": "__probe__ note from API",
-        })
-        results["WorkTicketNotes_post2_response"] = r
-    except Exception as e:
-        results["WorkTicketNotes_post2_error"] = str(e)
-
-    # 4. Try GET WorkTicketNotes without filter (see if collection exists at all)
-    try:
-        r = await _aspire._get("WorkTicketNotes", {"$top": "1"})
-        results["WorkTicketNotes_get_response"] = r
-    except Exception as e:
-        results["WorkTicketNotes_get_error"] = str(e)
-
-    # 5. What does an Opportunity look like — does it have a Notes field we can compare?
-    try:
-        opp_result = await _aspire._get("Opportunities", {
-            "$filter": f"OpportunityID eq {ticket_id}",
-            "$top": "1",
-        })
-        opps = _aspire._extract_list(opp_result)
-        results["opportunity_notes_field"] = opps[0].get("Notes") if opps else "not found"
-    except Exception as e:
-        results["opportunity_fetch_error"] = str(e)
-
-    return results
 
 
 # ── Lead sources & sales types ───────────────────────────────────────────────
