@@ -411,7 +411,7 @@ class AspireClient:
             "ReceivedDate":      _to_aspire_datetime(_normalize_date(invoice.invoice_date)) or f"{date.today().isoformat()}T00:00:00Z",
             "ReceiptNote":       (
                 f"AP Automation: Invoice {invoice.invoice_number} | "
-                f"${invoice.total_amount:.2f} | {date.today().isoformat()} — assign work ticket"
+                f"${float(invoice.total_amount or 0):.2f} | {date.today().isoformat()} — assign work ticket"
             ),
             "ReceiptTotalCost":  float(invoice.total_amount or 0),
             "ReceiptItems":      receipt_items,
