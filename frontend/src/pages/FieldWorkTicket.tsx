@@ -362,14 +362,15 @@ export default function FieldWorkTicket() {
                           </span>
                         </button>
                         {expandedNote === t.WorkTicketID && t.ProductionNote && (
-                          <div style={{
-                            margin:'0 16px 10px', padding:'10px 12px',
-                            background:'#fefce8', border:'1px solid #fde047',
-                            borderRadius:8, fontSize:13, color:'#713f12',
-                            lineHeight:1.6, whiteSpace:'pre-wrap',
-                          }}>
-                            {t.ProductionNote}
-                          </div>
+                          <div
+                            dangerouslySetInnerHTML={{ __html: t.ProductionNote }}
+                            style={{
+                              margin:'0 16px 10px', padding:'10px 12px',
+                              background:'#fefce8', border:'1px solid #fde047',
+                              borderRadius:8, fontSize:13, color:'#713f12',
+                              lineHeight:1.6,
+                            }}
+                          />
                         )}
                       </div>
                     ))}
