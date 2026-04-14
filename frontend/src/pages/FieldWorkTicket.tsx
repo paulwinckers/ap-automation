@@ -325,6 +325,7 @@ export default function FieldWorkTicket() {
                           <div style={{fontSize:11, color:'#6b7280'}}>
                             {t.WorkTicketTitle || t.ServiceName || `Job #${t.OpportunityID}`}
                             {t.ScheduledDate ? ` · ${fmtDate(t.ScheduledDate)}` : ''}
+                            {t.EstimatedLaborHours ? ` · ${t.EstimatedLaborHours}h est` : ''}
                           </div>
                           {t.PropertyAddress && (
                             <a
