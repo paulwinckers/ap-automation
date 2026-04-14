@@ -922,20 +922,41 @@ class AspireClient:
             logger.warning(f"Property search failed: {e}")
             return []
 
+    # Fields confirmed read-only / computed on WorkTicket — exclude from POST body
+    _TICKET_READONLY = frozenset({
+        "WorkTicketStatusName", "CrewLeaderName", "BranchName", "OpportunityNumber",
+        "HoursAct", "WarrantyHoursAct", "OTHoursAct",
+        "LaborCostAct", "MaterialCostAct", "EquipmentCostAct",
+        "SubCostAct", "OtherCostAct", "TotalCostAct",
+        "EarnedRevenue", "RealizeRateRevenue", "EstRealizeRateRevenue",
+        "InvoiceNumber", "InvoiceID", "InvoicedAmount",
+        "LastModifiedByUserID", "LastModifiedByUserName", "LastModifiedDateTime",
+        "CreatedByUserID", "CreatedByUserName", "CreatedDateTime",
+        "WorkTicketRevenues", "WorkTicketStatus",
+        "OnSiteHours", "OnSiteOverUnder", "OnSiteVariance",
+        "Revenue", "BudgetVariance", "PercentComplete",
+        "VisitsScheduled", "DistributedHours",
+        "ReviewedDateTime", "ReviewedUserID", "ReviewedUserName",
+        "StartFormDateTime", "StartFormUserId",
+        "Occurrences",
+    })
+
     async def patch_work_ticket_notes(
         self, ticket_id: int, notes: str
     ) -> dict:
         """
         Append *notes* to a WorkTicket's Notes field.
 
-        Fetches the existing Notes first so previous submissions are preserved
+        Fetches the existing Notes first so previous submissions accumulate
         (new entry is prepended above the old content with a separator line).
 
-        Write strategy — tries in order:
-        1. PATCH WorkTickets(id)
-        2. PUT  WorkTickets(id)
-        3. POST WorkTickets with WorkTicketID in body (upsert)
-        4. Fetch full ticket then POST it back with updated Notes
+        Write strategy — tries six URL patterns in order until one succeeds:
+        1. PATCH WorkTickets/{id}          (slash notation)
+        2. PATCH WorkTickets({id})         (OData key notation)
+        3. PUT   WorkTickets/{id}
+        4. PUT   WorkTickets({id})
+        5. POST  WorkTickets  body={WorkTicketID, Notes}          (minimal upsert)
+        6. POST  WorkTickets  body=<full ticket stripped of RO fields + Notes>
         """
         # ── Fetch existing notes so we can append rather than overwrite ──────
         existing_notes = ""
@@ -955,30 +976,35 @@ class AspireClient:
         separator = "\n" + "─" * 40 + "\n"
         combined_notes = (notes + separator + existing_notes) if existing_notes else notes
 
-        # 1. PATCH WorkTickets(id)
-        try:
-            return await self._patch(f"WorkTickets({ticket_id})", {"Notes": combined_notes})
-        except Exception as e:
-            logger.info(f"PATCH WorkTickets({ticket_id}) failed ({getattr(getattr(e,'response',None),'status_code',None)}), trying PUT")
+        attempts = [
+            ("PATCH", f"WorkTickets/{ticket_id}",    {"Notes": combined_notes}),
+            ("PATCH", f"WorkTickets({ticket_id})",   {"Notes": combined_notes}),
+            ("PUT",   f"WorkTickets/{ticket_id}",    {"Notes": combined_notes}),
+            ("PUT",   f"WorkTickets({ticket_id})",   {"Notes": combined_notes}),
+            ("POST",  "WorkTickets",                 {"WorkTicketID": ticket_id, "Notes": combined_notes}),
+        ]
+        # Attempt 6: full ticket body stripped of read-only fields
+        if full_ticket:
+            stripped = {
+                k: v for k, v in full_ticket.items()
+                if k not in self._TICKET_READONLY
+            }
+            stripped["Notes"] = combined_notes
+            attempts.append(("POST", "WorkTickets", stripped))
 
-        # 2. PUT WorkTickets(id)
-        try:
-            return await self._put(f"WorkTickets({ticket_id})", {"Notes": combined_notes})
-        except Exception as e:
-            logger.info(f"PUT WorkTickets({ticket_id}) failed ({getattr(getattr(e,'response',None),'status_code',None)}), trying POST upsert")
-
-        # 3. POST WorkTickets with WorkTicketID in body
-        try:
-            return await self._post("WorkTickets", {"WorkTicketID": ticket_id, "Notes": combined_notes})
-        except Exception as e:
-            logger.info(f"POST WorkTickets (upsert) failed ({getattr(getattr(e,'response',None),'status_code',None)}), trying full ticket fetch+post")
-
-        # 4. Fetch full ticket then POST back with updated Notes
-        try:
-            if full_ticket:
-                return await self._post("WorkTickets", {**full_ticket, "Notes": combined_notes})
-        except Exception as e:
-            logger.info(f"Full fetch+POST failed ({getattr(getattr(e,'response',None),'status_code',None)})")
+        for method, path, body in attempts:
+            try:
+                if method == "PATCH":
+                    result = await self._patch(path, body)
+                elif method == "PUT":
+                    result = await self._put(path, body)
+                else:
+                    result = await self._post(path, body)
+                logger.info(f"WorkTicket {ticket_id} Notes written via {method} {path}")
+                return result
+            except Exception as e:
+                sc = getattr(getattr(e, "response", None), "status_code", None)
+                logger.info(f"{method} {path} failed ({sc}), trying next…")
 
         raise RuntimeError(f"All write attempts failed for WorkTicket {ticket_id}")
 
