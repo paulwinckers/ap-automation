@@ -323,13 +323,19 @@ export default function FieldWorkTicket() {
                             {t.PropertyName || t.WorkTicketTitle || `Ticket #${t.WorkTicketID}`}
                           </div>
                           <div style={{fontSize:11, color:'#6b7280'}}>
-                            {t.ServiceName || t.OpportunityName || `Job #${t.OpportunityID}`}
+                            {t.ServiceName || `Job #${t.OpportunityID}`}
                             {t.ScheduledDate ? ` · ${fmtDate(t.ScheduledDate)}` : ''}
                           </div>
                           {t.PropertyAddress && (
-                            <div style={{fontSize:11, color:'#9ca3af', marginTop:1}}>
+                            <a
+                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(t.PropertyAddress)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              style={{fontSize:11, color:'#2563eb', marginTop:1, display:'block', textDecoration:'underline'}}
+                            >
                               {t.PropertyAddress}
-                            </div>
+                            </a>
                           )}
                         </div>
                         <span style={{
@@ -431,8 +437,10 @@ export default function FieldWorkTicket() {
             <div style={S.ctitle}>Review before submitting</div>
             <RR label="Route"    value={selectedTicket._RouteName || '—'}/>
             <RR label="Property" value={selectedTicket.PropertyName || selectedTicket.WorkTicketTitle || `#${selectedTicket.WorkTicketID}`}/>
-            <RR label="Service"  value={selectedTicket.ServiceName || selectedTicket.OpportunityName || `#${selectedTicket.OpportunityID}`}/>
-            {selectedTicket.PropertyAddress && <RR label="Address" value={selectedTicket.PropertyAddress}/>}
+            <RR label="Service"  value={selectedTicket.ServiceName || `#${selectedTicket.OpportunityID}`}/>
+            {selectedTicket.PropertyAddress && (
+              <RR label="Address" value={selectedTicket.PropertyAddress} mapsLink={selectedTicket.PropertyAddress} />
+            )}
             {selectedTicket.ScheduledDate && <RR label="Date" value={fmtDate(selectedTicket.ScheduledDate)}/>}
             <RR label="Media"  value={`${photos.length} file${photos.length !== 1 ? 's' : ''}`} color={photos.length > 0 ? '#059669' : '#6b7280'}/>
             <div style={{paddingTop:10, fontSize:13, color:'#1a1d23', lineHeight:1.6, whiteSpace:'pre-wrap'}}>
@@ -490,11 +498,20 @@ export default function FieldWorkTicket() {
   );
 }
 
-function RR({ label, value, color }: { label: string; value: string; color?: string }) {
+function RR({ label, value, color, mapsLink }: { label: string; value: string; color?: string; mapsLink?: string }) {
   return (
     <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', padding:'10px 0', borderBottom:'1px solid #e2e6ed'}}>
       <span style={{fontSize:12, color:'#6b7280', fontWeight:500, flexShrink:0}}>{label}</span>
-      <span style={{fontSize:13, fontWeight:500, textAlign:'right', maxWidth:220, color: color || '#1a1d23'}}>{value}</span>
+      {mapsLink ? (
+        <a
+          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapsLink)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{fontSize:13, fontWeight:500, textAlign:'right', maxWidth:220, color:'#2563eb', textDecoration:'underline'}}
+        >{value}</a>
+      ) : (
+        <span style={{fontSize:13, fontWeight:500, textAlign:'right', maxWidth:220, color: color || '#1a1d23'}}>{value}</span>
+      )}
     </div>
   );
 }
