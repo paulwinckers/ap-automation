@@ -32,6 +32,16 @@ async def get_db() -> Database:
     return _db
 
 
+# ── Employees excluded from scheduling (office/management) ───────────────────
+_EXCLUDED_EMPLOYEES = {
+    "paul winckers",
+    "rodger mclean",
+    "vesna hozjan",
+    "eduardo",
+    "keeland kannan",
+    "jimmy sturrock",
+}
+
 # ── Simple in-process employee cache (avoids hammering Aspire) ────────────────
 _emp_cache: list[dict] = []
 _emp_cache_ts: float   = 0.0
@@ -42,7 +52,11 @@ async def _get_employees() -> list[dict]:
     global _emp_cache, _emp_cache_ts
     if _emp_cache and (time.time() - _emp_cache_ts) < _EMP_TTL:
         return _emp_cache
-    _emp_cache    = await _aspire.get_aspire_employees()
+    all_employees = await _aspire.get_aspire_employees()
+    _emp_cache = [
+        e for e in all_employees
+        if e.get("FullName", "").strip().lower() not in _EXCLUDED_EMPLOYEES
+    ]
     _emp_cache_ts = time.time()
     return _emp_cache
 
