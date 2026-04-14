@@ -770,7 +770,7 @@ class AspireClient:
                 opp_result = await self._get("Opportunities", {
                     "$filter": f"({or_filter})",
                     "$select": (
-                        "OpportunityID,OpportunityName,PropertyName,"
+                        "OpportunityID,OpportunityName,PropertyID,PropertyName,"
                         "BillingAddressLine1,BillingAddressLine2,"
                         "BillingAddressCity,BillingAddressStateProvinceCode,BillingAddressZipCode"
                     ),
@@ -786,9 +786,10 @@ class AspireClient:
                     ]
                     address = ", ".join(p for p in parts if p)
                     opp_map[opp.get("OpportunityID")] = {
-                        "name":    opp.get("OpportunityName") or "",
-                        "property": opp.get("PropertyName") or "",
-                        "address": address,
+                        "name":      opp.get("OpportunityName") or "",
+                        "property":  opp.get("PropertyName") or "",
+                        "address":   address,
+                        "property_id": opp.get("PropertyID"),
                     }
             except Exception as e:
                 logger.warning(f"Opportunity enrichment failed: {e}")
@@ -818,12 +819,36 @@ class AspireClient:
             except Exception as e:
                 logger.warning(f"OpportunityServices enrichment failed: {e}")
 
+        # Step 4: Fetch ProductionNote from /Properties for each unique PropertyID
+        property_ids = list({
+            info["property_id"]
+            for info in opp_map.values()
+            if info.get("property_id")
+        })
+        production_note_map: dict = {}  # PropertyID → ProductionNote
+        for chunk_start in range(0, len(property_ids), 20):
+            chunk = property_ids[chunk_start:chunk_start + 20]
+            or_filter = " or ".join(f"PropertyID eq {pid}" for pid in chunk)
+            try:
+                prop_result = await self._get("Properties", {
+                    "$filter": f"({or_filter})",
+                    "$select": "PropertyID,ProductionNote",
+                    "$top": "100",
+                })
+                for prop in self._extract_list(prop_result):
+                    pid = prop.get("PropertyID")
+                    if pid:
+                        production_note_map[pid] = prop.get("ProductionNote") or ""
+            except Exception as e:
+                logger.warning(f"Properties ProductionNote fetch failed: {e}")
+
         for t in tickets:
             info = opp_map.get(t.get("OpportunityID"), {})
             svc_id = t.get("OpportunityServiceID")
             t["OpportunityName"]  = info.get("name", "")
             t["PropertyName"]     = info.get("property", "")
             t["PropertyAddress"]  = info.get("address", "")
+            t["ProductionNote"]   = production_note_map.get(info.get("property_id"), "")
             t["ServiceName"]      = service_map.get(svc_id, "") if svc_id else ""
             # Resolve route name: prefer Routes lookup, fall back to crew leader name
             crew_id = t.get("CrewLeaderContactID")

@@ -353,6 +353,7 @@ export interface ScheduledWorkTicket {
   ActualLaborHours: number | null;
   EstimatedLaborHours: number | null;
   _RouteName: string | null;
+  ProductionNote?: string | null;
 }
 
 export interface TicketRoute {

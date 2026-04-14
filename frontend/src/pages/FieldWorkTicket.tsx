@@ -90,6 +90,7 @@ export default function FieldWorkTicket() {
   const [loading, setLoading]         = useState(false);
   const [loadError, setLoadError]     = useState<string | null>(null);
   const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
+  const [expandedNote, setExpandedNote]   = useState<number | null>(null);
   const [selectedTicket, setSelectedTicket] = useState<ScheduledWorkTicket | null>(null);
   const [crewByRoute, setCrewByRoute]       = useState<Record<string, string[]>>({});
 
@@ -309,43 +310,68 @@ export default function FieldWorkTicket() {
                 {expandedRoute === route.route_name && (
                   <div style={{borderTop:'1px solid #e2e6ed', padding:'8px 0 4px'}}>
                     {route.tickets.map(t => (
-                      <button
-                        key={t.WorkTicketID}
-                        style={{
-                          ...S.ticketRow,
-                          background: selectedTicket?.WorkTicketID === t.WorkTicketID ? '#eff6ff' : 'transparent',
-                          borderLeft: selectedTicket?.WorkTicketID === t.WorkTicketID ? '3px solid #2563eb' : '3px solid transparent',
-                        }}
-                        onClick={() => selectTicket(t)}
-                      >
-                        <div style={{flex:1, textAlign:'left'}}>
-                          <div style={{fontSize:13, fontWeight:600, color:'#1a1d23', marginBottom:2}}>
-                            {t.PropertyName || t.WorkTicketTitle || `Ticket #${t.WorkTicketID}`}
+                      <div key={t.WorkTicketID}>
+                        <button
+                          style={{
+                            ...S.ticketRow,
+                            background: selectedTicket?.WorkTicketID === t.WorkTicketID ? '#eff6ff' : 'transparent',
+                            borderLeft: selectedTicket?.WorkTicketID === t.WorkTicketID ? '3px solid #2563eb' : '3px solid transparent',
+                          }}
+                          onClick={() => selectTicket(t)}
+                        >
+                          <div style={{flex:1, textAlign:'left'}}>
+                            <div style={{fontSize:13, fontWeight:600, color:'#1a1d23', marginBottom:2}}>
+                              {t.PropertyName || t.WorkTicketTitle || `Ticket #${t.WorkTicketID}`}
+                            </div>
+                            <div style={{fontSize:11, color:'#6b7280'}}>
+                              {t.WorkTicketTitle || t.ServiceName || `Job #${t.OpportunityID}`}
+                              {t.EstimatedLaborHours ? ` · Total Hours Est: ${t.EstimatedLaborHours}` : ''}
+                            </div>
+                            {t.PropertyAddress && (
+                              <a
+                                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(t.PropertyAddress)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                style={{fontSize:11, color:'#2563eb', marginTop:1, display:'block', textDecoration:'underline'}}
+                              >
+                                {t.PropertyAddress}
+                              </a>
+                            )}
+                            {t.ProductionNote && (
+                              <button
+                                onClick={e => { e.stopPropagation(); setExpandedNote(n => n === t.WorkTicketID ? null : t.WorkTicketID); }}
+                                style={{
+                                  marginTop:6, display:'inline-flex', alignItems:'center', gap:4,
+                                  background:'#fef9c3', border:'1px solid #fde047',
+                                  borderRadius:20, padding:'2px 10px',
+                                  fontSize:11, fontWeight:600, color:'#854d0e',
+                                  cursor:'pointer',
+                                }}
+                              >
+                                📋 Ops Note {expandedNote === t.WorkTicketID ? '▲' : '▼'}
+                              </button>
+                            )}
                           </div>
-                          <div style={{fontSize:11, color:'#6b7280'}}>
-                            {t.WorkTicketTitle || t.ServiceName || `Job #${t.OpportunityID}`}
-                            {t.EstimatedLaborHours ? ` · Total Hours Est: ${t.EstimatedLaborHours}` : ''}
+                          <span style={{
+                            fontSize:10, fontWeight:600, borderRadius:6, padding:'2px 8px',
+                            background: statusColor(t.WorkTicketStatusName) + '18',
+                            color: statusColor(t.WorkTicketStatusName), flexShrink:0, marginLeft:8,
+                          }}>
+                            {t.WorkTicketStatusName || '—'}
+                          </span>
+                        </button>
+                        {expandedNote === t.WorkTicketID && t.ProductionNote && (
+                          <div style={{
+                            margin:'0 16px 10px', padding:'10px 12px',
+                            background:'#fefce8', border:'1px solid #fde047',
+                            borderRadius:8, fontSize:13, color:'#713f12',
+                            lineHeight:1.6, whiteSpace:'pre-wrap',
+                          }}>
+                            {t.ProductionNote}
                           </div>
-                          {t.PropertyAddress && (
-                            <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(t.PropertyAddress)}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={e => e.stopPropagation()}
-                              style={{fontSize:11, color:'#2563eb', marginTop:1, display:'block', textDecoration:'underline'}}
-                            >
-                              {t.PropertyAddress}
-                            </a>
-                          )}
-                        </div>
-                        <span style={{
-                          fontSize:10, fontWeight:600, borderRadius:6, padding:'2px 8px',
-                          background: statusColor(t.WorkTicketStatusName) + '18',
-                          color: statusColor(t.WorkTicketStatusName), flexShrink:0, marginLeft:8,
-                        }}>
-                          {t.WorkTicketStatusName || '—'}
-                        </span>
-                      </button>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}
