@@ -178,6 +178,7 @@ class AspireClient:
             logger.error(
                 f"Aspire POST {path} failed {resp.status_code}: {resp.text[:500]}"
             )
+            logger.error(f"Aspire POST {path} payload: {body}")
         resp.raise_for_status()
         return resp.json()
 
