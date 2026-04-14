@@ -13,10 +13,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import bcrypt as _bcrypt
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel
 
 from app.core.config import settings
@@ -25,8 +25,15 @@ from app.core.database import Database
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+
+
+def _hash_pw(password: str) -> str:
+    return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
+
+
+def _verify_pw(password: str, hashed: str) -> bool:
+    return _bcrypt.checkpw(password.encode(), hashed.encode())
 
 ALGORITHM = "HS256"
 
@@ -104,7 +111,7 @@ async def login(
         "SELECT * FROM users WHERE LOWER(email) = LOWER(?) AND active = 1",
         [form.username],
     )
-    if not rows or not pwd_ctx.verify(form.password, rows[0]["password_hash"]):
+    if not rows or not _verify_pw(form.password, rows[0]["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     user = rows[0]
@@ -140,18 +147,24 @@ async def setup_first_admin(body: UserCreate, db: Database = Depends(get_db)):
     Create the first admin user. Only works when no users exist yet.
     Call this once after deployment to bootstrap the account.
     """
-    existing = await db._q("SELECT id FROM users LIMIT 1")
-    if existing:
-        raise HTTPException(status_code=403, detail="Setup already complete — use admin panel to add users")
+    try:
+        existing = await db._q("SELECT id FROM users LIMIT 1")
+        if existing:
+            raise HTTPException(status_code=403, detail="Setup already complete — use admin panel to add users")
 
-    pw_hash = pwd_ctx.hash(body.password)
-    uid = await db._x(
-        "INSERT INTO users (email, name, password_hash, role) VALUES (?, ?, ?, ?)",
-        [body.email.lower(), body.name, pw_hash, "admin"],
-    )
-    token = _make_token(uid, body.email.lower(), "admin")
-    logger.info(f"First admin created: {body.email}")
-    return {"access_token": token, "token_type": "bearer", "name": body.name, "role": "admin"}
+        pw_hash = _hash_pw(body.password)
+        uid = await db._x(
+            "INSERT INTO users (email, name, password_hash, role) VALUES (?, ?, ?, ?)",
+            [body.email.lower(), body.name, pw_hash, "admin"],
+        )
+        token = _make_token(uid, body.email.lower(), "admin")
+        logger.info(f"First admin created: {body.email}")
+        return {"access_token": token, "token_type": "bearer", "name": body.name, "role": "admin"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("setup_first_admin failed")
+        raise HTTPException(status_code=500, detail=f"Setup error: {exc}") from exc
 
 
 @router.get("/users")
@@ -178,7 +191,7 @@ async def create_user(
     if body.role not in ("admin", "staff"):
         raise HTTPException(status_code=400, detail="Role must be admin or staff")
 
-    pw_hash = pwd_ctx.hash(body.password)
+    pw_hash = _hash_pw(body.password)
     uid = await db._x(
         "INSERT INTO users (email, name, password_hash, role) VALUES (?, ?, ?, ?)",
         [body.email.lower(), body.name, pw_hash, body.role],
@@ -226,6 +239,6 @@ async def reset_password(
     if not rows:
         raise HTTPException(status_code=404, detail="User not found")
 
-    pw_hash = pwd_ctx.hash(body.password)
+    pw_hash = _hash_pw(body.password)
     await db._x("UPDATE users SET password_hash = ? WHERE id = ?", [pw_hash, user_id])
     return {"reset": True}

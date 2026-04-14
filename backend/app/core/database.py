@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # ── Config ────────────────────────────────────────────────────────────────────
 
 LOCAL_DB_PATH = os.environ.get("DB_PATH", "local.db")
-SCHEMA_PATH   = os.path.join(os.path.dirname(__file__), "../../infrastructure/schema.sql")
+SCHEMA_PATH   = os.path.join(os.path.dirname(__file__), "../../schema.sql")
 
 CF_D1_URL = (
     "https://api.cloudflare.com/client/v4/accounts/{account_id}"
