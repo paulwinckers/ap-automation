@@ -290,9 +290,14 @@ class QBOClient:
 
         # ── Line amount: subtotal (pre-tax) ───────────────────────────────────
         line_amount = invoice.subtotal if invoice.subtotal else invoice.total_amount
+        if not line_amount:
+            raise ValueError(
+                "Invoice amount could not be extracted from the PDF — "
+                "please review and enter the amount manually before retrying."
+            )
 
         line: dict = {
-            "Amount": line_amount,
+            "Amount": float(line_amount),
             "DetailType": "AccountBasedExpenseLineDetail",
             "Description": description,
             "AccountBasedExpenseLineDetail": {
