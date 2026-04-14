@@ -332,6 +332,8 @@ class Database:
             updates["is_employee"] = int(updates["is_employee"])
         if "active" in updates and isinstance(updates["active"], bool):
             updates["active"] = int(updates["active"])
+        if "aspire_post" in updates and isinstance(updates["aspire_post"], bool):
+            updates["aspire_post"] = int(updates["aspire_post"])
         fields = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [vendor_id]
         await self._x(
