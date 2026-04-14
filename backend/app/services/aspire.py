@@ -823,14 +823,17 @@ class AspireClient:
             try:
                 svc_def_result = await self._get("Services", {
                     "$filter": f"({or_filter})",
-                    "$select": "ServiceID,DisplayName,ServiceName",
+                    "$select": "ServiceID,ServiceNameAbr,DisplayName,ServiceName",
                     "$top": "200",
                 })
                 for svc in self._extract_list(svc_def_result):
                     sid = svc.get("ServiceID")
                     if sid:
                         service_display_map[sid] = (
-                            svc.get("DisplayName") or svc.get("ServiceName") or ""
+                            svc.get("ServiceNameAbr")
+                            or svc.get("DisplayName")
+                            or svc.get("ServiceName")
+                            or ""
                         )
             except Exception as e:
                 logger.warning(f"Services DisplayName enrichment failed: {e}")
