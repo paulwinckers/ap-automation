@@ -42,7 +42,7 @@ _EXCLUDED_EMPLOYEES = {
     "jimmy sturrock",
     "dario's landscaping",
     "darios landscaping",
-    "kohn ferguson",
+    "john ferguson",
 }
 
 # ── Simple in-process employee cache (avoids hammering Aspire) ────────────────
