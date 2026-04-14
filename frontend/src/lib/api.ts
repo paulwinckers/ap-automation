@@ -568,6 +568,39 @@ export async function getActivitiesDashboard(showCompleted = false): Promise<Act
   return request<ActivitiesDashboardData>('GET', `/dashboard/activities?show_completed=${showCompleted}`);
 }
 
+// ── User management (admin only) ─────────────────────────────────────────────
+
+export interface UserRecord {
+  id: number;
+  email: string;
+  name: string;
+  role: 'admin' | 'staff';
+  active: boolean | number;
+  created_at: string;
+  last_login: string | null;
+}
+
+export async function listUsers(): Promise<UserRecord[]> {
+  const res = await request<{ users: UserRecord[] }>('GET', '/auth/users');
+  return res.users;
+}
+
+export async function createUser(data: {
+  email: string; name: string; password: string; role: string;
+}): Promise<UserRecord> {
+  return request('POST', '/auth/users', data);
+}
+
+export async function updateUser(id: number, data: {
+  name?: string; role?: string; active?: boolean;
+}): Promise<UserRecord> {
+  return request('PUT', `/auth/users/${id}`, data);
+}
+
+export async function resetUserPassword(id: number, password: string): Promise<void> {
+  await request('POST', `/auth/users/${id}/reset-password`, { password });
+}
+
 // ── Crew Schedule ─────────────────────────────────────────────────────────────
 
 export interface CrewEmployee {

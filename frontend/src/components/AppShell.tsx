@@ -17,6 +17,7 @@ const NAV = [
       { label: 'Invoices',  path: '/ap',           icon: '💳' },
       { label: 'Vendors',   path: '/ap/vendors',   icon: '🏪' },
       { label: 'Reconcile', path: '/ap/reconcile', icon: '🔄' },
+      { label: 'Users',     path: '/ap/users',     icon: '👤' },
     ],
   },
   {

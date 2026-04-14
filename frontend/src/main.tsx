@@ -18,6 +18,7 @@ import ActivitiesDashboard  from './pages/ActivitiesDashboard';
 import CrewSchedule         from './pages/CrewSchedule';
 import Login                from './pages/Login';
 import Setup                from './pages/Setup';
+import UserAdmin            from './pages/UserAdmin';
 import RequireAuth          from './components/RequireAuth';
 
 /** Wrap a page in the office sidebar shell */
@@ -45,6 +46,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         {/* Office / AP — login required */}
         <Route path="/ap"           element={<RequireAuth><Office><APDashboard /></Office></RequireAuth>} />
         <Route path="/ap/vendors"   element={<RequireAuth><Office><VendorAdmin /></Office></RequireAuth>} />
+        <Route path="/ap/users"     element={<RequireAuth><Office><UserAdmin /></Office></RequireAuth>} />
         <Route path="/ap/reconcile" element={<RequireAuth><Office><Reconcile /></Office></RequireAuth>} />
 
         {/* Dashboards — login required */}
