@@ -502,23 +502,44 @@ async def debug_ticket_notes(ticket_id: int):
     except Exception as e:
         results["ticket_fetch_error"] = str(e)
 
-    # 2. Try to find a WorkTicketNotes or TicketNotes collection
-    for collection in ("WorkTicketNotes", "TicketNotes", "Notes"):
-        try:
-            r = await _aspire._get(collection, {
-                "$filter": f"WorkTicketID eq {ticket_id}",
-                "$top": "5",
-            })
-            results[f"{collection}_response"] = r
-        except Exception as e:
-            results[f"{collection}_error"] = str(e)
-
-    # 3. Try PATCH with Notes field
+    # 2. Try POST to WorkTicketNotes (dedicated notes collection)
     try:
-        r = await _aspire._patch(f"WorkTickets({ticket_id})", {"Notes": "__probe__"})
-        results["patch_response"] = r
+        r = await _aspire._post("WorkTicketNotes", {
+            "WorkTicketID": ticket_id,
+            "Notes": "__probe__ note from API",
+        })
+        results["WorkTicketNotes_post_response"] = r
     except Exception as e:
-        results["patch_error"] = str(e)
+        results["WorkTicketNotes_post_error"] = str(e)
+
+    # 3. Try POST to WorkTicketNotes with different field names
+    try:
+        r = await _aspire._post("WorkTicketNotes", {
+            "WorkTicketID": ticket_id,
+            "Note": "__probe__ note from API",
+            "NoteText": "__probe__ note from API",
+        })
+        results["WorkTicketNotes_post2_response"] = r
+    except Exception as e:
+        results["WorkTicketNotes_post2_error"] = str(e)
+
+    # 4. Try GET WorkTicketNotes without filter (see if collection exists at all)
+    try:
+        r = await _aspire._get("WorkTicketNotes", {"$top": "1"})
+        results["WorkTicketNotes_get_response"] = r
+    except Exception as e:
+        results["WorkTicketNotes_get_error"] = str(e)
+
+    # 5. What does an Opportunity look like — does it have a Notes field we can compare?
+    try:
+        opp_result = await _aspire._get("Opportunities", {
+            "$filter": f"OpportunityID eq {ticket_id}",
+            "$top": "1",
+        })
+        opps = _aspire._extract_list(opp_result)
+        results["opportunity_notes_field"] = opps[0].get("Notes") if opps else "not found"
+    except Exception as e:
+        results["opportunity_fetch_error"] = str(e)
 
     return results
 

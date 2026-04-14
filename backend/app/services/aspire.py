@@ -793,20 +793,22 @@ class AspireClient:
             except Exception as e:
                 logger.warning(f"Opportunity enrichment failed: {e}")
 
-        # Step 3: Fetch service names from OpportunityServices
-        service_ids = list({t.get("OpportunityServiceID") for t in tickets if t.get("OpportunityServiceID")})
-        service_map: dict = {}
-        for chunk_start in range(0, len(service_ids), 15):
-            chunk = service_ids[chunk_start:chunk_start + 15]
-            or_filter = " or ".join(f"OpportunityServiceID eq {sid}" for sid in chunk)
+        # Step 3: Fetch service names from OpportunityServices, keyed by OpportunityID
+        # (OpportunityServiceID filter returns 400 — OpportunityID works fine)
+        service_map: dict = {}  # OpportunityServiceID → ServiceName
+        for chunk_start in range(0, len(opp_ids), 10):
+            chunk = opp_ids[chunk_start:chunk_start + 10]
+            or_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
             try:
                 svc_result = await self._get("OpportunityServices", {
                     "$filter": f"({or_filter})",
-                    "$select": "OpportunityServiceID,ServiceName",
-                    "$top": "50",
+                    "$select": "OpportunityID,OpportunityServiceID,ServiceName",
+                    "$top": "200",
                 })
                 for svc in self._extract_list(svc_result):
-                    service_map[svc.get("OpportunityServiceID")] = svc.get("ServiceName") or ""
+                    sid = svc.get("OpportunityServiceID")
+                    if sid:
+                        service_map[sid] = svc.get("ServiceName") or ""
             except Exception as e:
                 logger.warning(f"Service name enrichment failed: {e}")
 
