@@ -16,6 +16,8 @@ import ConstructionDashboard from './pages/ConstructionDashboard';
 import EstimatingDashboard  from './pages/EstimatingDashboard';
 import ActivitiesDashboard  from './pages/ActivitiesDashboard';
 import CrewSchedule         from './pages/CrewSchedule';
+import Login                from './pages/Login';
+import RequireAuth          from './components/RequireAuth';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -30,23 +32,26 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         {/* Landing */}
         <Route path="/"    element={<Landing />} />
 
-        {/* Field crew — no shell, phone-optimised */}
+        {/* Auth */}
+        <Route path="/login" element={<Login />} />
+
+        {/* Field crew — no shell, phone-optimised, no login required */}
         <Route path="/field"             element={<FieldSubmit />} />
         <Route path="/field/work-ticket" element={<FieldWorkTicket />} />
         <Route path="/field/opportunity" element={<FieldOpportunity />} />
 
-        {/* Office / AP — wrapped in sidebar shell */}
-        <Route path="/ap"           element={<Office><APDashboard /></Office>} />
-        <Route path="/ap/vendors"   element={<Office><VendorAdmin /></Office>} />
-        <Route path="/ap/reconcile" element={<Office><Reconcile /></Office>} />
+        {/* Office / AP — login required */}
+        <Route path="/ap"           element={<RequireAuth><Office><APDashboard /></Office></RequireAuth>} />
+        <Route path="/ap/vendors"   element={<RequireAuth><Office><VendorAdmin /></Office></RequireAuth>} />
+        <Route path="/ap/reconcile" element={<RequireAuth><Office><Reconcile /></Office></RequireAuth>} />
 
-        {/* Dashboards — iframe embeds + native React */}
-        <Route path="/dashboards/sales"         element={<Office><SalesDashboard /></Office>} />
-        <Route path="/dashboards/ops"           element={<Office><OpsDashboard /></Office>} />
-        <Route path="/dashboards/construction"  element={<Office><ConstructionDashboard /></Office>} />
-        <Route path="/dashboards/estimating"    element={<Office><EstimatingDashboard /></Office>} />
-        <Route path="/dashboards/activities"   element={<Office><ActivitiesDashboard /></Office>} />
-        <Route path="/ops/crew-schedule"       element={<Office><CrewSchedule /></Office>} />
+        {/* Dashboards — login required */}
+        <Route path="/dashboards/sales"        element={<RequireAuth><Office><SalesDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/ops"          element={<RequireAuth><Office><OpsDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/construction" element={<RequireAuth><Office><ConstructionDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/estimating"   element={<RequireAuth><Office><EstimatingDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/activities"   element={<RequireAuth><Office><ActivitiesDashboard /></Office></RequireAuth>} />
+        <Route path="/ops/crew-schedule"       element={<RequireAuth><Office><CrewSchedule /></Office></RequireAuth>} />
 
         {/* Legacy URL redirects */}
         <Route path="/vendors"      element={<Navigate to="/ap/vendors"   replace />} />

@@ -14,6 +14,9 @@ async function request<T>(
   const headers: Record<string, string> = {};
   if (!isForm) headers['Content-Type'] = 'application/json';
 
+  const token = localStorage.getItem('ap_token');
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
@@ -29,6 +32,38 @@ async function request<T>(
     throw new Error(err.detail || `HTTP ${res.status}`);
   }
   return res.json();
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+export interface AuthUser { id: number; email: string; name: string; role: string; }
+
+export async function login(email: string, password: string): Promise<AuthUser> {
+  const form = new URLSearchParams({ username: email, password });
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+  if (!res.ok) throw new Error('Invalid email or password');
+  const data = await res.json();
+  localStorage.setItem('ap_token', data.access_token);
+  localStorage.setItem('ap_user', JSON.stringify({ name: data.name, email: data.email, role: data.role }));
+  return data;
+}
+
+export async function getMe(): Promise<AuthUser> {
+  return request<AuthUser>('GET', '/auth/me');
+}
+
+export function logout() {
+  localStorage.removeItem('ap_token');
+  localStorage.removeItem('ap_user');
+  window.location.href = '/login';
+}
+
+export function currentUser(): AuthUser | null {
+  try { return JSON.parse(localStorage.getItem('ap_user') || ''); } catch { return null; }
 }
 
 // ── Invoice endpoints ─────────────────────────────────────────────────────────

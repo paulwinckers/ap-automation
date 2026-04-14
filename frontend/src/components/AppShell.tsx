@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { logout, currentUser } from '../lib/api';
 
 const SIDEBAR_FULL  = 220;
 const SIDEBAR_MINI  = 56;
@@ -139,34 +140,35 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           ))}
         </div>
 
-        {/* Footer — field app links */}
+        {/* Footer — user + logout */}
         <div style={{
           padding: collapsed ? '10px 0 14px' : '10px 16px 14px',
           borderTop: '1px solid #1e293b',
         }}>
-          {!collapsed && (
-            <div style={{ color: '#334155', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 6 }}>
-              Field Staff
-            </div>
-          )}
-          {FIELD_LINKS.map(item => (
-            <Link
-              key={item.to}
-              to={item.to}
-              title={collapsed ? item.label : undefined}
-              style={{
-                color: '#475569', fontSize: 12, textDecoration: 'none',
-                display: 'flex', alignItems: 'center',
-                justifyContent: collapsed ? 'center' : 'flex-start',
-                gap: collapsed ? 0 : 6,
-                padding: collapsed ? '6px 0' : '4px 0',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              <span style={{ fontSize: collapsed ? 18 : 13 }}>{item.icon}</span>
-              {!collapsed && item.label}
-            </Link>
-          ))}
+          {!collapsed && (() => {
+            const user = currentUser();
+            return user ? (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ color: '#64748b', fontSize: 11, marginBottom: 2 }}>{user.name}</div>
+                <div style={{ color: '#334155', fontSize: 10 }}>{user.email}</div>
+              </div>
+            ) : null;
+          })()}
+          <button
+            onClick={logout}
+            title="Sign out"
+            style={{
+              display: 'flex', alignItems: 'center',
+              justifyContent: collapsed ? 'center' : 'flex-start',
+              gap: collapsed ? 0 : 6,
+              width: '100%', background: 'none', border: 'none',
+              cursor: 'pointer', color: '#475569', fontSize: 12,
+              padding: collapsed ? '6px 0' : '4px 0',
+            }}
+          >
+            <span style={{ fontSize: collapsed ? 18 : 14 }}>🚪</span>
+            {!collapsed && 'Sign out'}
+          </button>
         </div>
       </nav>
 

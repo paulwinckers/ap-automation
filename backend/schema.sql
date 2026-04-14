@@ -202,6 +202,19 @@ CREATE TABLE IF NOT EXISTS crew_assignments (
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_crew_date       ON crew_assignments(work_date);
+
+-- ── Users — simple login for office/admin staff ───────────────────────────────
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    email         TEXT NOT NULL UNIQUE,
+    name          TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'staff' CHECK(role IN ('admin','staff')),
+    active        INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    last_login    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_crew_date_route ON crew_assignments(work_date, route_name);
 
 -- ── Vendor QBO links — permanent mapping from statement vendor name → QBO vendor ──

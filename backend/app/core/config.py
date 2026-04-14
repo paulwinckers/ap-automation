@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     # Fallback forward-to email for job-cost invoices when vendor rule has none set
     AP_FORWARD_EMAIL:    str = ""   # e.g. keeland@darios.ca
 
+    # Auth
+    SECRET_KEY:          str = "change-me-in-production"  # set via Railway env var
+    TOKEN_EXPIRE_HOURS:  int = 24
+
     # App
     DEBUG:               bool = False
     LOG_LEVEL:           str = "INFO"
