@@ -17,6 +17,7 @@ import EstimatingDashboard  from './pages/EstimatingDashboard';
 import ActivitiesDashboard  from './pages/ActivitiesDashboard';
 import CrewSchedule         from './pages/CrewSchedule';
 import Login                from './pages/Login';
+import Setup                from './pages/Setup';
 import RequireAuth          from './components/RequireAuth';
 
 /** Wrap a page in the office sidebar shell */
@@ -34,6 +35,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
         {/* Auth */}
         <Route path="/login" element={<Login />} />
+        <Route path="/setup" element={<Setup />} />
 
         {/* Field crew — no shell, phone-optimised, no login required */}
         <Route path="/field"             element={<FieldSubmit />} />
