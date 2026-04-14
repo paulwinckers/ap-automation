@@ -801,13 +801,18 @@ class AspireClient:
             try:
                 svc_result = await self._get("OpportunityServices", {
                     "$filter": f"({or_filter})",
-                    "$select": "OpportunityID,OpportunityServiceID,ServiceName",
+                    "$select": "OpportunityID,OpportunityServiceID,ServiceNameAbr,DisplayName,ServiceName",
                     "$top": "200",
                 })
                 for svc in self._extract_list(svc_result):
                     sid = svc.get("OpportunityServiceID")
                     if sid:
-                        service_map[sid] = svc.get("ServiceName") or ""
+                        service_map[sid] = (
+                            svc.get("ServiceNameAbr")
+                            or svc.get("DisplayName")
+                            or svc.get("ServiceName")
+                            or ""
+                        )
             except Exception as e:
                 logger.warning(f"OpportunityServices enrichment failed: {e}")
 
