@@ -90,7 +90,8 @@ export default function FieldWorkTicket() {
   const [loading, setLoading]         = useState(false);
   const [loadError, setLoadError]     = useState<string | null>(null);
   const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
-  const [expandedNote, setExpandedNote]   = useState<number | null>(null);
+  const [expandedNote, setExpandedNote]         = useState<number | null>(null);
+  const [expandedTicketNote, setExpandedTicketNote] = useState<number | null>(null);
   const [selectedTicket, setSelectedTicket] = useState<ScheduledWorkTicket | null>(null);
   const [crewByRoute, setCrewByRoute]       = useState<Record<string, string[]>>({});
 
@@ -338,20 +339,36 @@ export default function FieldWorkTicket() {
                                 {t.PropertyAddress}
                               </a>
                             )}
-                            {t.ProductionNote && (
-                              <button
-                                onClick={e => { e.stopPropagation(); setExpandedNote(n => n === t.WorkTicketID ? null : t.WorkTicketID); }}
-                                style={{
-                                  marginTop:6, display:'inline-flex', alignItems:'center', gap:4,
-                                  background:'#fef9c3', border:'1px solid #fde047',
-                                  borderRadius:20, padding:'2px 10px',
-                                  fontSize:11, fontWeight:600, color:'#854d0e',
-                                  cursor:'pointer',
-                                }}
-                              >
-                                📋 Ops Note {expandedNote === t.WorkTicketID ? '▲' : '▼'}
-                              </button>
-                            )}
+                            <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop: (t.ProductionNote || t.Notes) ? 6 : 0 }}>
+                              {t.ProductionNote && (
+                                <button
+                                  onClick={e => { e.stopPropagation(); setExpandedNote(n => n === t.WorkTicketID ? null : t.WorkTicketID); }}
+                                  style={{
+                                    display:'inline-flex', alignItems:'center', gap:4,
+                                    background:'#fef9c3', border:'1px solid #fde047',
+                                    borderRadius:20, padding:'2px 10px',
+                                    fontSize:11, fontWeight:600, color:'#854d0e',
+                                    cursor:'pointer',
+                                  }}
+                                >
+                                  📋 Ops Note {expandedNote === t.WorkTicketID ? '▲' : '▼'}
+                                </button>
+                              )}
+                              {t.Notes && (
+                                <button
+                                  onClick={e => { e.stopPropagation(); setExpandedTicketNote(n => n === t.WorkTicketID ? null : t.WorkTicketID); }}
+                                  style={{
+                                    display:'inline-flex', alignItems:'center', gap:4,
+                                    background:'#dbeafe', border:'1px solid #93c5fd',
+                                    borderRadius:20, padding:'2px 10px',
+                                    fontSize:11, fontWeight:600, color:'#1e40af',
+                                    cursor:'pointer',
+                                  }}
+                                >
+                                  📝 Ticket Note {expandedTicketNote === t.WorkTicketID ? '▲' : '▼'}
+                                </button>
+                              )}
+                            </div>
                           </div>
                           <span style={{
                             fontSize:10, fontWeight:600, borderRadius:6, padding:'2px 8px',
@@ -365,9 +382,20 @@ export default function FieldWorkTicket() {
                           <div
                             dangerouslySetInnerHTML={{ __html: t.ProductionNote }}
                             style={{
-                              margin:'0 16px 10px', padding:'10px 12px',
+                              margin:'0 16px 6px', padding:'10px 12px',
                               background:'#fefce8', border:'1px solid #fde047',
                               borderRadius:8, fontSize:13, color:'#713f12',
+                              lineHeight:1.6,
+                            }}
+                          />
+                        )}
+                        {expandedTicketNote === t.WorkTicketID && t.Notes && (
+                          <div
+                            dangerouslySetInnerHTML={{ __html: t.Notes }}
+                            style={{
+                              margin:'0 16px 10px', padding:'10px 12px',
+                              background:'#eff6ff', border:'1px solid #93c5fd',
+                              borderRadius:8, fontSize:13, color:'#1e3a5f',
                               lineHeight:1.6,
                             }}
                           />

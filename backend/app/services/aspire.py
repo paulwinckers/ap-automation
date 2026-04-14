@@ -735,6 +735,7 @@ class AspireClient:
             "ScheduledStartDate", "CompleteDate",
             "HoursAct", "HoursEst",
             "CrewLeaderContactID", "CrewLeaderName",
+            "Notes",
         ])
 
         # Fetch tickets and route map concurrently
