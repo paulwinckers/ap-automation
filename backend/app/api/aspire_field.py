@@ -436,11 +436,14 @@ async def complete_work_ticket(
             note_lines += ["", comment]
         issue_notes = "\n".join(note_lines)
 
+        today_dt = f"{date.today().isoformat()}T00:00:00Z"
         issue_body = {
-            "Subject":      f"Work ticket update — #{ticket_id}",
-            "Notes":        issue_notes,
-            "WorkTicketID": ticket_id,
+            "Subject":       f"Work ticket update — #{ticket_id}",
+            "Notes":         issue_notes,
+            "WorkTicketID":  ticket_id,
             "PublicComment": False,
+            "DueDate":       today_dt,
+            "CompleteDate":  today_dt,   # marks the issue as complete immediately
         }
         if submitter_contact_id:
             issue_body["AssignedTo"] = submitter_contact_id
