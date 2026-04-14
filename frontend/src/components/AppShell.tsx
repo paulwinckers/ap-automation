@@ -73,12 +73,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           gap: 8,
         }}>
           {!collapsed && (
-            <div>
-              <div style={{ color: '#fff', fontWeight: 700, fontSize: 16, letterSpacing: '-0.3px' }}>
-                🌿 Darios
-              </div>
-              <div style={{ color: '#475569', fontSize: 11, marginTop: 2 }}>Landscaping</div>
-            </div>
+            <img
+              src="/darios-logo.png"
+              alt="Darios Landscaping"
+              style={{ height: 36, objectFit: 'contain' }}
+            />
           )}
           <button
             onClick={() => setCollapsed(c => !c)}

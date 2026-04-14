@@ -75,10 +75,7 @@ export default function Landing() {
 
       {/* Brand */}
       <div style={{ textAlign: 'center', marginBottom: 36 }}>
-        <div style={{ fontSize: 48, marginBottom: 10 }}>🌿</div>
-        <h1 style={{ color: '#fff', fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: '-0.5px' }}>
-          Darios Landscaping
-        </h1>
+        <img src="/darios-logo.png" alt="Darios Landscaping" style={{ height: 80, marginBottom: 12, objectFit: 'contain' }} />
         <p style={{ color: '#475569', marginTop: 6, fontSize: 13, margin: '6px 0 0' }}>
           Operations Portal
         </p>
