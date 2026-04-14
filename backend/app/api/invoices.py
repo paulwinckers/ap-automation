@@ -956,6 +956,32 @@ async def retry_invoice(invoice_id: int, db: Database = Depends(get_db)):
     r2_key = row.get("pdf_r2_key")
     file_bytes = await get_file_bytes(r2_key) if r2_key else None
 
+    # Re-extract amounts from PDF if total_amount is missing and we have the file
+    if row.get("total_amount") is None and file_bytes:
+        try:
+            logger.info(f"Re-extracting amounts for invoice {invoice_id} (total_amount was None)")
+            re_extracted = await _extractor.extract_from_pdf_bytes(
+                file_bytes, row.get("pdf_filename") or ""
+            )
+            if re_extracted.total_amount:
+                logger.info(f"Re-extraction got total_amount={re_extracted.total_amount} for invoice {invoice_id}")
+                await db._x(
+                    """UPDATE invoices
+                       SET total_amount=?, subtotal=?, tax_amount=?
+                       WHERE id=?""",
+                    [re_extracted.total_amount, re_extracted.subtotal,
+                     re_extracted.tax_amount, invoice_id],
+                )
+                # Refresh row with new amounts
+                row = await db.get_invoice(invoice_id)
+                raw = json.loads(row.get("intake_raw") or "{}")
+                if re_extracted.line_items:
+                    raw["line_items"] = [li.model_dump() for li in re_extracted.line_items]
+                if re_extracted.tax_lines:
+                    raw["tax_lines"] = [tl.model_dump() for tl in re_extracted.tax_lines]
+        except Exception as e:
+            logger.warning(f"Re-extraction failed for invoice {invoice_id} (non-fatal): {e}")
+
     # Restore doc_type from DB; if missing, infer credit_memo from negative total
     # (handles entries saved before doc_type was persisted)
     doc_type = row.get("doc_type")
