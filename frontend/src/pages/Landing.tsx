@@ -10,7 +10,7 @@ import { Link } from 'react-router-dom';
 
 const FIELD_LINKS = [
   { to: '/field',             icon: '🧾', label: 'Submit Receipt',       sub: 'Invoices, MC & expenses' },
-  { to: '/field/work-ticket', icon: '✅', label: 'Complete Work Ticket', sub: 'Photos + completion notes' },
+  { to: '/field/work-ticket', icon: '✅', label: 'Schedule',             sub: 'View routes & complete tickets' },
   { to: '/field/opportunity', icon: '➕', label: 'New Opportunity',       sub: 'Create a job in Aspire' },
 ];
 

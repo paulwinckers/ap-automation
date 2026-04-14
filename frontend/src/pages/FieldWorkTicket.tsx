@@ -28,6 +28,21 @@ type Step = 1 | 2 | 3 | 4 | 5;
 const MAX_FILES = 10;
 const MAX_PX    = 1600;
 
+function todayISO() { return new Date().toISOString().slice(0, 10); }
+function shiftDate(iso: string, days: number) {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function rangeForDate(iso: string): TicketRange {
+  const t = todayISO();
+  if (iso === t) return 'today';
+  return iso < t ? 'past' : 'upcoming';
+}
+function fmtShort(iso: string) {
+  return new Date(iso + 'T12:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+}
+
 function compressImage(f: File): Promise<File> {
   return new Promise(resolve => {
     if (f.type === 'application/pdf' || f.size < 1.5 * 1024 * 1024) { resolve(f); return; }
@@ -70,7 +85,7 @@ export default function FieldWorkTicket() {
   const [step, setStep]               = useState<Step>(1);
 
   // Route / ticket list
-  const [range, setRange]             = useState<TicketRange>('today');
+  const [selectedDate, setSelectedDate] = useState(todayISO());
   const [routes, setRoutes]           = useState<TicketRoute[] | null>(null);
   const [loading, setLoading]         = useState(false);
   const [loadError, setLoadError]     = useState<string | null>(null);
@@ -96,17 +111,16 @@ export default function FieldWorkTicket() {
   const galleryRef = useRef<HTMLInputElement>(null);
 
 
-  // Load routes when range changes, and also fetch today's crew assignments
+  // Load routes when date changes
   useEffect(() => {
     setLoading(true); setLoadError(null); setRoutes(null); setExpandedRoute(null);
-    const today = new Date().toISOString().slice(0, 10);
+    const range = rangeForDate(selectedDate);
     Promise.all([
-      getScheduledTickets(range),
-      range === 'today' ? getCrewAssignments(today) : Promise.resolve({} as Record<string, CrewAssignment[]>),
+      getScheduledTickets(range, selectedDate),
+      getCrewAssignments(selectedDate),
     ])
       .then(([res, assignments]) => {
         setRoutes(res.routes);
-        // Build crewByRoute: route_name → [name, name, ...]
         const crew: Record<string, string[]> = {};
         for (const [routeName, list] of Object.entries(assignments)) {
           crew[routeName] = list.map(a => a.employee_name);
@@ -116,7 +130,7 @@ export default function FieldWorkTicket() {
       })
       .catch(e => setLoadError((e as Error).message))
       .finally(() => setLoading(false));
-  }, [range]);
+  }, [selectedDate]);
 
   // Media handlers
   const handleFiles = async (files: FileList | null) => {
@@ -194,7 +208,7 @@ export default function FieldWorkTicket() {
             <span style={S.chip}>{selectedTicket._RouteName || 'Route'}</span>
           )}
         </div>
-        <div style={S.hsub}>Work Ticket Update</div>
+        <div style={S.hsub}>Schedule</div>
       </div>
 
       {/* Progress */}
@@ -214,14 +228,36 @@ export default function FieldWorkTicket() {
         {/* ── Step 1: Routes & tickets ── */}
         {step === 1 && (
           <>
-            {/* Range toggle */}
-            <div style={S.rangeBar}>
-              {(['past', 'today', 'upcoming'] as TicketRange[]).map(r => (
-                <button key={r} style={{...S.rangeBtn, ...(range === r ? S.rangeBtnActive : {})}}
-                  onClick={() => setRange(r)}>
-                  {r === 'past' ? '← Past 2 wks' : r === 'today' ? 'Today' : 'Upcoming →'}
-                </button>
-              ))}
+            {/* Date navigation */}
+            <div style={{ marginBottom: 12 }}>
+              {/* Yesterday / Today / Tomorrow */}
+              <div style={S.rangeBar}>
+                <button
+                  style={{...S.rangeBtn, ...(selectedDate === shiftDate(todayISO(), -1) ? S.rangeBtnActive : {})}}
+                  onClick={() => setSelectedDate(shiftDate(todayISO(), -1))}
+                >← Yesterday</button>
+                <button
+                  style={{...S.rangeBtn, ...(selectedDate === todayISO() ? S.rangeBtnActive : {})}}
+                  onClick={() => setSelectedDate(todayISO())}
+                >Today ({fmtShort(todayISO())})</button>
+                <button
+                  style={{...S.rangeBtn, ...(selectedDate === shiftDate(todayISO(), 1) ? S.rangeBtnActive : {})}}
+                  onClick={() => setSelectedDate(shiftDate(todayISO(), 1))}
+                >Tomorrow →</button>
+              </div>
+              {/* Date picker */}
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={e => e.target.value && setSelectedDate(e.target.value)}
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  padding: '9px 12px', borderRadius: 10,
+                  border: '1.5px solid #e2e6ed', fontSize: 14,
+                  color: '#1a1d23', background: '#fff',
+                  fontFamily: 'inherit', outline: 'none',
+                }}
+              />
             </div>
 
             {loading && (
@@ -238,9 +274,7 @@ export default function FieldWorkTicket() {
 
             {routes && routes.length === 0 && (
               <div style={{...S.card, color:'#6b7280', fontSize:14, textAlign:'center', padding:'24px 16px'}}>
-                {range === 'today' ? 'No tickets scheduled for today.'
-                  : range === 'past' ? 'No tickets in the last 2 weeks.'
-                  : 'No upcoming tickets in the next 30 days.'}
+                No tickets scheduled for {fmtShort(selectedDate)}.
               </div>
             )}
 

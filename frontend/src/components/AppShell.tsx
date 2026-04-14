@@ -40,7 +40,7 @@ const NAV = [
 
 const FIELD_LINKS = [
   { to: '/field',             icon: '🧾', label: 'Submit Receipt' },
-  { to: '/field/work-ticket', icon: '✅', label: 'Complete Ticket' },
+  { to: '/field/work-ticket', icon: '✅', label: 'Schedule' },
   { to: '/field/opportunity', icon: '➕', label: 'New Opportunity' },
 ];
 
