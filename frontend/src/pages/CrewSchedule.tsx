@@ -230,7 +230,7 @@ export default function CrewSchedule() {
             <p style={statusTxt}>No routes scheduled for {fmtDate(selectedDate)}.</p>
           )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
             {routes.map(route => {
               const routeAssignments = assignments[route.route_name] ?? [];
               const isOver = dragOver === route.route_name;
@@ -240,11 +240,11 @@ export default function CrewSchedule() {
                   style={{
                     background: '#fff',
                     border: isOver ? '2px solid #3b82f6' : '1px solid #e2e8f0',
-                    borderRadius: 12,
-                    padding: '14px 18px',
+                    borderRadius: 8,
+                    padding: '8px 12px',
                     boxShadow: isOver
-                      ? '0 0 0 4px #dbeafe'
-                      : '0 1px 3px rgba(0,0,0,0.05)',
+                      ? '0 0 0 3px #dbeafe'
+                      : '0 1px 2px rgba(0,0,0,0.05)',
                     transition: 'border 0.15s, box-shadow 0.15s',
                   }}
                   onDragOver={e => onDragOver(e, route.route_name)}
@@ -254,33 +254,31 @@ export default function CrewSchedule() {
                   {/* Route header row */}
                   <div style={{
                     display: 'flex', alignItems: 'center',
-                    justifyContent: 'space-between', marginBottom: 10,
+                    justifyContent: 'space-between', marginBottom: 6,
                   }}>
                     <div>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a' }}>
                         {route.route_name}
                       </span>
-                      <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 8 }}>
+                      <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>
                         {route.ticket_count} ticket{route.ticket_count !== 1 ? 's' : ''}
                       </span>
                     </div>
                     {isOver && (
-                      <span style={{ fontSize: 12, color: '#3b82f6', fontWeight: 600 }}>
-                        Drop to assign
+                      <span style={{ fontSize: 11, color: '#3b82f6', fontWeight: 600 }}>
+                        Drop here
                       </span>
                     )}
                   </div>
 
                   {/* Crew chips */}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minHeight: 32 }}>
-                    {/* Crew leader */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minHeight: 24 }}>
                     {route.crew_leader_name && (
                       <span style={leadChip} title="Crew leader (Aspire)">
                         ⭐ {route.crew_leader_name}
                       </span>
                     )}
 
-                    {/* Assigned crew */}
                     {routeAssignments.map(a => (
                       <span
                         key={a.id}
@@ -306,9 +304,8 @@ export default function CrewSchedule() {
                       </span>
                     ))}
 
-                    {/* Empty hint */}
                     {!route.crew_leader_name && routeAssignments.length === 0 && (
-                      <span style={{ fontSize: 12, color: '#cbd5e1', alignSelf: 'center' }}>
+                      <span style={{ fontSize: 11, color: '#cbd5e1', alignSelf: 'center' }}>
                         Drop staff here
                       </span>
                     )}
@@ -399,18 +396,18 @@ const statusTxt: React.CSSProperties = {
 };
 
 const leadChip: React.CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', gap: 4,
+  display: 'inline-flex', alignItems: 'center', gap: 3,
   background: '#1e40af', color: '#fff',
-  borderRadius: 20, padding: '4px 12px',
-  fontSize: 12, fontWeight: 600,
+  borderRadius: 20, padding: '2px 8px',
+  fontSize: 11, fontWeight: 600,
   userSelect: 'none',
 };
 
 const assignedChip: React.CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', gap: 4,
+  display: 'inline-flex', alignItems: 'center', gap: 3,
   background: '#dcfce7', color: '#166534',
-  borderRadius: 20, padding: '4px 12px',
-  fontSize: 12, fontWeight: 600,
+  borderRadius: 20, padding: '2px 8px',
+  fontSize: 11, fontWeight: 600,
   cursor: 'grab', userSelect: 'none',
 };
 
