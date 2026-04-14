@@ -730,7 +730,7 @@ class AspireClient:
             orderby = "ScheduledStartDate asc"
 
         select_fields = ",".join([
-            "WorkTicketID", "WorkTicketNumber", "OpportunityID", "OpportunityServiceID",
+            "WorkTicketID", "WorkTicketNumber", "WorkTicketTitle", "OpportunityID", "OpportunityServiceID",
             "WorkTicketStatusName",
             "ScheduledStartDate", "CompleteDate",
             "HoursAct", "HoursEst",
@@ -863,7 +863,7 @@ class AspireClient:
             t["ScheduledDate"]       = t.get("ScheduledStartDate")
             t["ActualLaborHours"]    = t.get("HoursAct")
             t["EstimatedLaborHours"] = t.get("HoursEst")
-            t["WorkTicketTitle"]     = t.get("PropertyName") or f"Ticket #{t.get('WorkTicketNumber') or t.get('WorkTicketID')}"
+            t["WorkTicketTitle"]     = t.get("WorkTicketTitle") or f"Ticket #{t.get('WorkTicketNumber') or t.get('WorkTicketID')}"
 
         return tickets
 

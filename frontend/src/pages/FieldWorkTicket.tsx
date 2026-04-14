@@ -323,7 +323,7 @@ export default function FieldWorkTicket() {
                             {t.PropertyName || t.WorkTicketTitle || `Ticket #${t.WorkTicketID}`}
                           </div>
                           <div style={{fontSize:11, color:'#6b7280'}}>
-                            {t.ServiceName || `Job #${t.OpportunityID}`}
+                            {t.WorkTicketTitle || t.ServiceName || `Job #${t.OpportunityID}`}
                             {t.ScheduledDate ? ` · ${fmtDate(t.ScheduledDate)}` : ''}
                           </div>
                           {t.PropertyAddress && (
@@ -437,7 +437,7 @@ export default function FieldWorkTicket() {
             <div style={S.ctitle}>Review before submitting</div>
             <RR label="Route"    value={selectedTicket._RouteName || '—'}/>
             <RR label="Property" value={selectedTicket.PropertyName || selectedTicket.WorkTicketTitle || `#${selectedTicket.WorkTicketID}`}/>
-            <RR label="Service"  value={selectedTicket.ServiceName || `#${selectedTicket.OpportunityID}`}/>
+            <RR label="Service"  value={selectedTicket.WorkTicketTitle || selectedTicket.ServiceName || `#${selectedTicket.OpportunityID}`}/>
             {selectedTicket.PropertyAddress && (
               <RR label="Address" value={selectedTicket.PropertyAddress} mapsLink={selectedTicket.PropertyAddress} />
             )}
