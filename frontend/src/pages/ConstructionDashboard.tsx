@@ -329,6 +329,7 @@ function CompletedTable({ jobs }: { jobs: ConstructionJob[] }) {
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
+            <SortTh field="OpportunityNumber" align="right" {...sp}>#</SortTh>
             <SortTh field="PropertyName"              align="left"  {...sp}>Job</SortTh>
             <SortTh field="WonDollars"                             {...sp}>Contracted</SortTh>
             <SortTh field="ActualEarnedRevenue"                    {...sp}>Revenue</SortTh>
@@ -341,6 +342,7 @@ function CompletedTable({ jobs }: { jobs: ConstructionJob[] }) {
         <tbody>
           {sorted.map((job, i) => (
             <tr key={job.OpportunityID} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+              <Td align="right" muted>{job.OpportunityNumber ?? '—'}</Td>
               <JobNameCell job={job} />
               <ContractedCell job={job} />
               <Td align="right" bold>{fmt$(job.ActualEarnedRevenue)}</Td>
@@ -355,7 +357,7 @@ function CompletedTable({ jobs }: { jobs: ConstructionJob[] }) {
         </tbody>
         <tfoot>
           <tr style={{ background: '#f8fafc', borderTop: '2px solid #e5e7eb' }}>
-            <FooterTd>Total ({jobs.length})</FooterTd>
+            <FooterTd colSpan={2}>Total ({jobs.length})</FooterTd>
             <FooterTd align="right">{fmt$(totalContract)}</FooterTd>
             <FooterTd align="right">{fmt$(totalRevenue)}</FooterTd>
             <FooterTd align="right">{fmt$(totalMargin)}</FooterTd>
@@ -384,6 +386,7 @@ function InProductionTable({ jobs }: { jobs: ConstructionJob[] }) {
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
+            <SortTh field="OpportunityNumber" align="right" {...sp}>#</SortTh>
             <SortTh field="PropertyName"              align="left"  {...sp}>Job</SortTh>
             <SortTh field="WonDollars"                             {...sp}>Contracted</SortTh>
             <SortTh field="ActualEarnedRevenue"                    {...sp}>Revenue (Act.)</SortTh>
@@ -396,6 +399,7 @@ function InProductionTable({ jobs }: { jobs: ConstructionJob[] }) {
         <tbody>
           {sorted.map((job, i) => (
             <tr key={job.OpportunityID} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+              <Td align="right" muted>{job.OpportunityNumber ?? '—'}</Td>
               <JobNameCell job={job} />
               <ContractedCell job={job} />
               <Td align="right" bold style={{ color: '#2563eb' }}>{fmt$(job.ActualEarnedRevenue)}</Td>
@@ -408,7 +412,7 @@ function InProductionTable({ jobs }: { jobs: ConstructionJob[] }) {
         </tbody>
         <tfoot>
           <tr style={{ background: '#f8fafc', borderTop: '2px solid #e5e7eb' }}>
-            <FooterTd>Total ({jobs.length})</FooterTd>
+            <FooterTd colSpan={2}>Total ({jobs.length})</FooterTd>
             <FooterTd align="right">{fmt$(totalContract)}</FooterTd>
             <FooterTd align="right">{fmt$(totalActualRev)}</FooterTd>
             <FooterTd align="right">{fmt$(totalActualMargin)}</FooterTd>
@@ -436,6 +440,7 @@ function InQueueTable({ jobs }: { jobs: ConstructionJob[] }) {
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
+            <SortTh field="OpportunityNumber"           align="right" {...sp}>#</SortTh>
             <SortTh field="PropertyName"                align="left"  {...sp}>Job</SortTh>
             <Th>Readiness</Th>
             <SortTh field="WonDollars"                               {...sp}>Contracted</SortTh>
@@ -448,6 +453,7 @@ function InQueueTable({ jobs }: { jobs: ConstructionJob[] }) {
         <tbody>
           {sorted.map((job, i) => (
             <tr key={job.OpportunityID} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+              <Td align="right" muted>{job.OpportunityNumber ?? '—'}</Td>
               <JobNameCell job={job} />
               {/* Readiness: tags-based indicator — to be wired up once tag field names confirmed */}
               <Td><span style={{ color: '#9ca3af', fontSize: 12 }}>—</span></Td>
@@ -461,7 +467,7 @@ function InQueueTable({ jobs }: { jobs: ConstructionJob[] }) {
         </tbody>
         <tfoot>
           <tr style={{ background: '#f8fafc', borderTop: '2px solid #e5e7eb' }}>
-            <FooterTd colSpan={2} align="left">Total ({jobs.length})</FooterTd>
+            <FooterTd colSpan={3} align="left">Total ({jobs.length})</FooterTd>
             <FooterTd align="right">{fmt$(totalContract)}</FooterTd>
             <FooterTd align="right">{fmt$(totalEstRev)}</FooterTd>
             <td colSpan={2} />
