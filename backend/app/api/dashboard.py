@@ -207,9 +207,8 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
 
     # ── Merge change orders into their parent opportunity ─────────────────────
     def _is_change_order(o: dict) -> bool:
-        type_name = (o.get("OpportunityTypeName") or "").lower()
-        opp_name  = (o.get("OpportunityName")     or "").lower()
-        return "change order" in type_name or opp_name.startswith("change order")
+        opp_name = (o.get("OpportunityName") or "").lower()
+        return opp_name.startswith("change order")
 
     def merge_change_orders(jobs: list) -> list:
         """
