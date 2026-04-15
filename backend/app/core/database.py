@@ -792,6 +792,90 @@ class Database:
         changes = await self._x("DELETE FROM invoices WHERE id=?", [invoice_id])
         return changes > 0
 
+    # ── Settings (key-value) ──────────────────────────────────────────────────
+
+    async def get_setting(self, key: str) -> Optional[str]:
+        rows = await self._q("SELECT value FROM settings WHERE key = ?", [key])
+        return rows[0]["value"] if rows else None
+
+    async def set_setting(self, key: str, value: str) -> None:
+        await self._x(
+            "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+            [key, value],
+        )
+
+    # ── Time tracking ─────────────────────────────────────────────────────────
+
+    async def create_time_session(
+        self, work_date: str, employee_id: int, employee_name: str
+    ) -> int:
+        return await self._x(
+            """INSERT INTO time_sessions (work_date, employee_id, employee_name, clock_in)
+               VALUES (?, ?, ?, datetime('now'))""",
+            [work_date, employee_id, employee_name],
+        )
+
+    async def get_time_session(self, session_id: int) -> Optional[dict]:
+        rows = await self._q(
+            "SELECT * FROM time_sessions WHERE id = ?", [session_id]
+        )
+        return rows[0] if rows else None
+
+    async def get_time_session_for_day(
+        self, employee_id: int, work_date: str
+    ) -> Optional[dict]:
+        rows = await self._q(
+            "SELECT * FROM time_sessions WHERE employee_id = ? AND work_date = ?",
+            [employee_id, work_date],
+        )
+        return rows[0] if rows else None
+
+    async def get_time_segments(self, session_id: int) -> list[dict]:
+        return await self._q(
+            "SELECT * FROM time_segments WHERE session_id = ? ORDER BY start_time",
+            [session_id],
+        )
+
+    async def update_time_session(self, session_id: int, updates: dict) -> None:
+        if not updates:
+            return
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        params = list(updates.values()) + [session_id]
+        await self._x(
+            f"UPDATE time_sessions SET {set_clause} WHERE id = ?", params
+        )
+
+    async def create_time_segment(
+        self,
+        session_id: int,
+        segment_type: str,
+        work_ticket_id: Optional[int],
+        work_ticket_num: Optional[str],
+        work_ticket_name: Optional[str],
+        start_time: str,
+    ) -> int:
+        return await self._x(
+            """INSERT INTO time_segments
+               (session_id, segment_type, work_ticket_id, work_ticket_num, work_ticket_name, start_time)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [session_id, segment_type, work_ticket_id, work_ticket_num, work_ticket_name, start_time],
+        )
+
+    async def end_time_segment(
+        self, segment_id: int, end_time: str, duration_minutes: int
+    ) -> None:
+        await self._x(
+            "UPDATE time_segments SET end_time = ?, duration_minutes = ? WHERE id = ?",
+            [end_time, duration_minutes, segment_id],
+        )
+
+    async def get_open_segment(self, session_id: int) -> Optional[dict]:
+        rows = await self._q(
+            "SELECT * FROM time_segments WHERE session_id = ? AND end_time IS NULL ORDER BY start_time DESC LIMIT 1",
+            [session_id],
+        )
+        return rows[0] if rows else None
+
     # ── Helper ────────────────────────────────────────────────────────────────
 
     @staticmethod

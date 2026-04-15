@@ -33,7 +33,8 @@ const NAV = [
   {
     section: 'Field Ops',
     items: [
-      { label: 'Crew Schedule', path: '/ops/crew-schedule', icon: '👥' },
+      { label: 'Crew Schedule',  path: '/ops/crew-schedule',  icon: '👥' },
+      { label: 'Time Tracking',  path: '/ops/time-tracking',  icon: '⏱️' },
     ],
   },
 ];

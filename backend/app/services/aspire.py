@@ -867,6 +867,93 @@ class AspireClient:
 
         return tickets
 
+    async def post_work_ticket_time(
+        self,
+        work_ticket_id: int,
+        contact_id: int,
+        start_time: str,
+        end_time: str,
+        route_id: Optional[int] = None,
+    ) -> dict:
+        """
+        POST a time entry to /WorkTicketTimes.
+        Returns the created record dict (includes WorkTicketTimeID).
+        """
+        body: dict = {
+            "WorkTicketID": work_ticket_id,
+            "ContactID":    contact_id,
+            "StartTime":    start_time,
+            "EndTime":      end_time,
+        }
+        if route_id is not None:
+            body["RouteID"] = route_id
+        logger.info(
+            f"POST /WorkTicketTimes ContactID={contact_id} WorkTicketID={work_ticket_id}"
+        )
+        return await self._post("WorkTicketTimes", body)
+
+    async def post_clock_time(
+        self,
+        contact_id: int,
+        date: str,
+        clock_in_time: str,
+        clock_out_time: str,
+        break_time: int = 0,
+    ) -> dict:
+        """
+        POST a clock-in/out record to /ClockTimes.
+        break_time is in minutes.
+        Returns the created record dict (includes ClockTimeID).
+        """
+        body = {
+            "ContactID":    contact_id,
+            "Date":         date,
+            "ClockInTime":  clock_in_time,
+            "ClockOutTime": clock_out_time,
+            "BreakTime":    break_time,
+        }
+        logger.info(
+            f"POST /ClockTimes ContactID={contact_id} Date={date}"
+        )
+        return await self._post("ClockTimes", body)
+
+    async def get_crew_members_with_pin(self) -> list[dict]:
+        """
+        Fetch active employees including MobilePhone and EmployeePin.
+        Used by the time-tracking PIN login screen.
+        """
+        try:
+            result = await self._get("Contacts", {
+                "$select": (
+                    "ContactID,UserID,FirstName,LastName,Email,Active,"
+                    "ContactTypeName,MobilePhone,EmployeePin"
+                ),
+                "$filter": "Active eq true and ContactTypeName eq 'Employee'",
+                "$top":    "500",
+                "$orderby": "LastName asc",
+            })
+            contacts = self._extract_list(result)
+            out = []
+            for c in contacts:
+                cid   = c.get("ContactID")
+                first = (c.get("FirstName") or "").strip()
+                last  = (c.get("LastName")  or "").strip()
+                name  = f"{first} {last}".strip()
+                if not cid or not name:
+                    continue
+                out.append({
+                    "ContactID":   cid,
+                    "FullName":    name,
+                    "Email":       c.get("Email") or "",
+                    "MobilePhone": c.get("MobilePhone") or "",
+                    "EmployeePin": c.get("EmployeePin") or c.get("Pin") or "",
+                })
+            logger.info(f"Crew members with PIN: fetched {len(out)}")
+            return out
+        except Exception as e:
+            logger.error(f"get_crew_members_with_pin failed: {e}", exc_info=True)
+            return []
+
     async def get_lead_sources(self) -> list[dict]:
         """Fetch all lead sources from Aspire."""
         try:

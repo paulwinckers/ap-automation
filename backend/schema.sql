@@ -226,3 +226,36 @@ CREATE TABLE IF NOT EXISTS vendor_qbo_links (
     qbo_vendor_name TEXT NOT NULL,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ── Time Tracking ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS time_sessions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    work_date       TEXT NOT NULL,
+    employee_id     INTEGER NOT NULL,
+    employee_name   TEXT NOT NULL,
+    clock_in        TEXT,
+    clock_out       TEXT,
+    break_minutes   INTEGER DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','submitted','error')),
+    aspire_clock_id TEXT,
+    submitted_at    TEXT,
+    notes           TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_time_sessions_date ON time_sessions(work_date);
+CREATE INDEX IF NOT EXISTS idx_time_sessions_emp  ON time_sessions(employee_id, work_date);
+
+CREATE TABLE IF NOT EXISTS time_segments (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      INTEGER NOT NULL REFERENCES time_sessions(id) ON DELETE CASCADE,
+    segment_type    TEXT NOT NULL CHECK(segment_type IN ('onsite','drive','lunch')),
+    work_ticket_id  INTEGER,
+    work_ticket_num TEXT,
+    work_ticket_name TEXT,
+    start_time      TEXT NOT NULL,
+    end_time        TEXT,
+    duration_minutes INTEGER,
+    aspire_wtt_id   TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_time_segments_session ON time_segments(session_id);

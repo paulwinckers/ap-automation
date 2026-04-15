@@ -1,0 +1,1186 @@
+/**
+ * TimeTracking.tsx — Mobile-first crew time tracking.
+ *
+ * Flow:
+ *  1. PIN entry → match employee → store in localStorage for the day
+ *  2. Main screen: Clock In → segment controls → Clock Out → Submit to Aspire
+ *
+ * No login required — this page is accessed directly on crew phones.
+ */
+
+import { useState, useEffect, useRef, useCallback } from 'react';
+
+const BASE = import.meta.env.VITE_API_URL || 'https://ap-automation-production.up.railway.app';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface CrewMember {
+  ContactID:   number;
+  FullName:    string;
+  Email:       string;
+  MobilePhone: string;
+  EmployeePin: string;
+}
+
+interface TimeSession {
+  id:            number;
+  work_date:     string;
+  employee_id:   number;
+  employee_name: string;
+  clock_in:      string | null;
+  clock_out:     string | null;
+  break_minutes: number;
+  status:        'draft' | 'submitted' | 'error';
+  submitted_at:  string | null;
+  notes:         string | null;
+  created_at:    string;
+}
+
+interface TimeSegment {
+  id:               number;
+  session_id:       number;
+  segment_type:     'onsite' | 'drive' | 'lunch';
+  work_ticket_id:   number | null;
+  work_ticket_num:  string | null;
+  work_ticket_name: string | null;
+  start_time:       string;
+  end_time:         string | null;
+  duration_minutes: number | null;
+  aspire_wtt_id:    string | null;
+}
+
+interface WorkTicket {
+  WorkTicketID:     number;
+  WorkTicketNumber: string | null;
+  WorkTicketTitle:  string;
+  OpportunityName:  string;
+  PropertyName:     string;
+  ScheduledDate:    string | null;
+  _RouteName:       string;
+}
+
+interface DriveTicket {
+  ticket_id:    number | null;
+  ticket_num:   string | null;
+  ticket_name:  string | null;
+  ticket_month: string | null;
+}
+
+// ── Local-storage session state ───────────────────────────────────────────────
+
+interface StoredSession {
+  employee_id:   number;
+  employee_name: string;
+  session_id:    number | null;
+  work_date:     string;
+}
+
+const LS_KEY = 'time_tracking_session';
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function loadStoredSession(): StoredSession | null {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return null;
+    const parsed: StoredSession = JSON.parse(raw);
+    // Only valid if it's from today
+    if (parsed.work_date !== todayISO()) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveStoredSession(s: StoredSession) {
+  localStorage.setItem(LS_KEY, JSON.stringify(s));
+}
+
+function clearStoredSession() {
+  localStorage.removeItem(LS_KEY);
+}
+
+// ── API helpers ───────────────────────────────────────────────────────────────
+
+async function apiFetch<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// ── Elapsed-time hook ─────────────────────────────────────────────────────────
+
+function useElapsed(startIso: string | null): string {
+  const [elapsed, setElapsed] = useState('0:00');
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!startIso) { setElapsed('0:00'); return; }
+    const update = () => {
+      const diff = Math.max(0, Date.now() - new Date(startIso).getTime());
+      const h = Math.floor(diff / 3_600_000);
+      const m = Math.floor((diff % 3_600_000) / 60_000);
+      const s = Math.floor((diff % 60_000) / 1_000);
+      setElapsed(h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`);
+    };
+    update();
+    timerRef.current = setInterval(update, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [startIso]);
+
+  return elapsed;
+}
+
+// ── Format helpers ────────────────────────────────────────────────────────────
+
+function fmtTime(iso: string | null): string {
+  if (!iso) return '--:--';
+  return new Date(iso).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+function fmtDuration(minutes: number | null): string {
+  if (minutes === null || minutes === undefined) return '--';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function fmtDate(iso: string): string {
+  return new Date(iso + 'T12:00:00').toLocaleDateString('en-CA', {
+    weekday: 'long', month: 'long', day: 'numeric',
+  });
+}
+
+// ── Ticket picker modal ───────────────────────────────────────────────────────
+
+interface TicketPickerProps {
+  tickets:    WorkTicket[];
+  loading:    boolean;
+  onSelect:   (t: WorkTicket) => void;
+  onManual:   (id: string, num: string, name: string) => void;
+  onClose:    () => void;
+}
+
+function TicketPicker({ tickets, loading, onSelect, onManual, onClose }: TicketPickerProps) {
+  const [query,      setQuery]      = useState('');
+  const [manualId,   setManualId]   = useState('');
+  const [manualNum,  setManualNum]  = useState('');
+  const [manualName, setManualName] = useState('');
+
+  const filtered = query.trim()
+    ? tickets.filter(t =>
+        (t.OpportunityName || '').toLowerCase().includes(query.toLowerCase()) ||
+        (t.PropertyName    || '').toLowerCase().includes(query.toLowerCase()) ||
+        (t.WorkTicketTitle || '').toLowerCase().includes(query.toLowerCase()) ||
+        String(t.WorkTicketNumber || t.WorkTicketID).includes(query)
+      )
+    : tickets;
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      zIndex: 200, display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{
+        background: '#fff', flex: 1, display: 'flex', flexDirection: 'column',
+        marginTop: 40, borderRadius: '16px 16px 0 0', overflow: 'hidden',
+      }}>
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 20px', borderBottom: '1px solid #e2e8f0',
+          background: '#f8fafc',
+        }}>
+          <span style={{ fontWeight: 700, fontSize: 18 }}>Select Work Ticket</span>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', fontSize: 24, cursor: 'pointer',
+            color: '#64748b', lineHeight: 1,
+          }}>×</button>
+        </div>
+
+        {/* Search */}
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0' }}>
+          <input
+            type="search"
+            placeholder="Search by name, property, or ticket #…"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            autoFocus
+            style={{
+              width: '100%', padding: '12px 14px', fontSize: 16,
+              border: '2px solid #cbd5e1', borderRadius: 10, outline: 'none',
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+
+        {/* Ticket list */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+          {loading && (
+            <div style={{ padding: 24, textAlign: 'center', color: '#64748b' }}>Loading tickets…</div>
+          )}
+          {!loading && filtered.length === 0 && (
+            <div style={{ padding: 24, textAlign: 'center', color: '#64748b' }}>No tickets found</div>
+          )}
+          {filtered.map(t => (
+            <button
+              key={t.WorkTicketID}
+              onClick={() => onSelect(t)}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                padding: '14px 20px', background: 'none', border: 'none',
+                borderBottom: '1px solid #f1f5f9', cursor: 'pointer',
+              }}
+            >
+              <div style={{ fontWeight: 600, fontSize: 15, color: '#0f172a' }}>
+                {t.OpportunityName || t.WorkTicketTitle || `Ticket #${t.WorkTicketNumber || t.WorkTicketID}`}
+              </div>
+              {t.PropertyName && (
+                <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>{t.PropertyName}</div>
+              )}
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
+                #{t.WorkTicketNumber || t.WorkTicketID} · {t._RouteName || ''}
+                {t.ScheduledDate ? ` · ${fmtDate(t.ScheduledDate.slice(0, 10))}` : ''}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Manual entry */}
+        <div style={{
+          padding: 16, borderTop: '2px solid #e2e8f0', background: '#f8fafc',
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#475569', marginBottom: 8 }}>
+            Enter ticket manually
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              type="number"
+              placeholder="Ticket ID"
+              value={manualId}
+              onChange={e => setManualId(e.target.value)}
+              style={{
+                flex: '0 0 110px', padding: '10px 12px', fontSize: 15,
+                border: '1px solid #cbd5e1', borderRadius: 8,
+              }}
+            />
+            <input
+              type="text"
+              placeholder="Ticket # (optional)"
+              value={manualNum}
+              onChange={e => setManualNum(e.target.value)}
+              style={{
+                flex: '0 0 140px', padding: '10px 12px', fontSize: 15,
+                border: '1px solid #cbd5e1', borderRadius: 8,
+              }}
+            />
+            <input
+              type="text"
+              placeholder="Description"
+              value={manualName}
+              onChange={e => setManualName(e.target.value)}
+              style={{
+                flex: 1, minWidth: 120, padding: '10px 12px', fontSize: 15,
+                border: '1px solid #cbd5e1', borderRadius: 8,
+              }}
+            />
+            <button
+              onClick={() => {
+                if (!manualId) return;
+                onManual(manualId, manualNum, manualName || `Ticket #${manualId}`);
+              }}
+              disabled={!manualId}
+              style={{
+                padding: '10px 18px', background: '#0f172a', color: '#fff',
+                border: 'none', borderRadius: 8, fontSize: 15, cursor: 'pointer',
+                opacity: manualId ? 1 : 0.4,
+              }}
+            >
+              Use
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Drive-ticket settings modal ───────────────────────────────────────────────
+
+interface DriveTicketSettingsProps {
+  current:  DriveTicket;
+  tickets:  WorkTicket[];
+  loading:  boolean;
+  onSave:   (dt: DriveTicket) => void;
+  onClose:  () => void;
+}
+
+function DriveTicketSettings({ current, tickets, loading, onSave, onClose }: DriveTicketSettingsProps) {
+  const [query,  setQuery]  = useState('');
+  const [chosen, setChosen] = useState<DriveTicket>(current);
+
+  const filtered = query.trim()
+    ? tickets.filter(t =>
+        (t.OpportunityName || '').toLowerCase().includes(query.toLowerCase()) ||
+        (t.WorkTicketTitle || '').toLowerCase().includes(query.toLowerCase()) ||
+        String(t.WorkTicketNumber || t.WorkTicketID).includes(query)
+      )
+    : tickets;
+
+  const thisMonth = new Date().toISOString().slice(0, 7);
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      zIndex: 200, display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{
+        background: '#fff', flex: 1, display: 'flex', flexDirection: 'column',
+        marginTop: 40, borderRadius: '16px 16px 0 0', overflow: 'hidden',
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 20px', borderBottom: '1px solid #e2e8f0', background: '#f8fafc',
+        }}>
+          <span style={{ fontWeight: 700, fontSize: 18 }}>Set Monthly Drive Ticket</span>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', color: '#64748b',
+          }}>×</button>
+        </div>
+
+        {chosen.ticket_id && (
+          <div style={{
+            padding: '12px 20px', background: '#eff6ff', borderBottom: '1px solid #bfdbfe',
+          }}>
+            <div style={{ fontWeight: 600, color: '#1d4ed8' }}>
+              Selected: {chosen.ticket_name}
+            </div>
+            <div style={{ fontSize: 13, color: '#3b82f6' }}>
+              ID {chosen.ticket_id} · #{chosen.ticket_num} · Month {chosen.ticket_month}
+            </div>
+          </div>
+        )}
+
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0' }}>
+          <input
+            type="search"
+            placeholder="Search tickets…"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            autoFocus
+            style={{
+              width: '100%', padding: '12px 14px', fontSize: 16,
+              border: '2px solid #cbd5e1', borderRadius: 10, outline: 'none',
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+          {loading && <div style={{ padding: 24, textAlign: 'center', color: '#64748b' }}>Loading…</div>}
+          {filtered.map(t => (
+            <button
+              key={t.WorkTicketID}
+              onClick={() => setChosen({
+                ticket_id:    t.WorkTicketID,
+                ticket_num:   String(t.WorkTicketNumber || t.WorkTicketID),
+                ticket_name:  t.OpportunityName || t.WorkTicketTitle || `#${t.WorkTicketID}`,
+                ticket_month: thisMonth,
+              })}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                padding: '14px 20px', background: chosen.ticket_id === t.WorkTicketID ? '#eff6ff' : 'none',
+                border: 'none', borderBottom: '1px solid #f1f5f9', cursor: 'pointer',
+              }}
+            >
+              <div style={{ fontWeight: 600, fontSize: 15 }}>
+                {t.OpportunityName || t.WorkTicketTitle || `Ticket #${t.WorkTicketID}`}
+              </div>
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
+                #{t.WorkTicketNumber || t.WorkTicketID}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <div style={{ padding: 16, borderTop: '2px solid #e2e8f0', background: '#f8fafc' }}>
+          <button
+            onClick={() => chosen.ticket_id && onSave(chosen)}
+            disabled={!chosen.ticket_id}
+            style={{
+              width: '100%', padding: 16, fontSize: 16, fontWeight: 700,
+              background: '#1d4ed8', color: '#fff', border: 'none',
+              borderRadius: 12, cursor: 'pointer', opacity: chosen.ticket_id ? 1 : 0.4,
+            }}
+          >
+            Save Drive Ticket
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+export default function TimeTracking() {
+  const today = todayISO();
+
+  // ── Auth state
+  const [phase,        setPhase]        = useState<'pin' | 'main'>('pin');
+  const [pinInput,     setPinInput]      = useState('');
+  const [pinError,     setPinError]      = useState<string | null>(null);
+  const [crewMembers,  setCrewMembers]   = useState<CrewMember[]>([]);
+  const [crewLoading,  setCrewLoading]   = useState(false);
+  const [employee,     setEmployee]      = useState<CrewMember | null>(null);
+
+  // ── Session state
+  const [session,  setSession]  = useState<TimeSession | null>(null);
+  const [segments, setSegments] = useState<TimeSegment[]>([]);
+  const [sessionLoading, setSessionLoading] = useState(false);
+
+  // ── Tickets
+  const [tickets,        setTickets]        = useState<WorkTicket[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState(false);
+  const [driveTicket,    setDriveTicket]    = useState<DriveTicket>({
+    ticket_id: null, ticket_num: null, ticket_name: null, ticket_month: null,
+  });
+
+  // ── UI state
+  const [showTicketPicker, setShowTicketPicker] = useState(false);
+  const [pickerMode,       setPickerMode]       = useState<'start' | 'switch'>('start');
+  const [showDriveSettings, setShowDriveSettings] = useState(false);
+  const [showHistory,      setShowHistory]      = useState(false);
+  const [actionLoading,    setActionLoading]    = useState(false);
+  const [submitError,      setSubmitError]      = useState<string | null>(null);
+  const [submitOk,         setSubmitOk]         = useState(false);
+
+  // Elapsed timer for active segment
+  const openSegment = segments.find(s => !s.end_time) ?? null;
+  const elapsed = useElapsed(openSegment?.start_time ?? null);
+
+  // ── Load crew members on mount ────────────────────────────────────────────
+  useEffect(() => {
+    setCrewLoading(true);
+    apiFetch<{ crew_members: CrewMember[] }>('GET', '/time/crew-members')
+      .then(r => setCrewMembers(r.crew_members))
+      .catch(e => console.error('crew-members:', e))
+      .finally(() => setCrewLoading(false));
+  }, []);
+
+  // ── Restore localStorage session ──────────────────────────────────────────
+  useEffect(() => {
+    const stored = loadStoredSession();
+    if (!stored) return;
+
+    // We have a stored session — need crew member too
+    // We'll restore employee once crew members are loaded
+    if (stored.session_id) {
+      setSessionLoading(true);
+      apiFetch<{ session: TimeSession | null; segments: TimeSegment[] }>(
+        'GET',
+        `/time/session?employee_id=${stored.employee_id}&work_date=${stored.work_date}`
+      )
+        .then(r => {
+          if (r.session) {
+            setSession(r.session);
+            setSegments(r.segments);
+            // Restore employee from stored name — full object fetched after crew loads
+            setEmployee({
+              ContactID:   stored.employee_id,
+              FullName:    stored.employee_name,
+              Email:       '',
+              MobilePhone: '',
+              EmployeePin: '',
+            });
+            setPhase('main');
+          } else {
+            clearStoredSession();
+          }
+        })
+        .catch(() => clearStoredSession())
+        .finally(() => setSessionLoading(false));
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Enrich employee from crew list once loaded ────────────────────────────
+  useEffect(() => {
+    if (!employee || crewMembers.length === 0) return;
+    const full = crewMembers.find(m => m.ContactID === employee.ContactID);
+    if (full) setEmployee(full);
+  }, [crewMembers]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Load work tickets and drive ticket when entering main phase ───────────
+  useEffect(() => {
+    if (phase !== 'main') return;
+    setTicketsLoading(true);
+    apiFetch<{ work_tickets: WorkTicket[] }>('GET', `/time/work-tickets?work_date=${today}`)
+      .then(r => setTickets(r.work_tickets))
+      .catch(e => console.error('work-tickets:', e))
+      .finally(() => setTicketsLoading(false));
+
+    apiFetch<DriveTicket>('GET', '/time/drive-ticket')
+      .then(dt => setDriveTicket(dt))
+      .catch(e => console.error('drive-ticket:', e));
+  }, [phase, today]);
+
+  // ── PIN submission ────────────────────────────────────────────────────────
+  const handlePin = useCallback(async () => {
+    setPinError(null);
+    const pin = pinInput.trim();
+    if (pin.length < 4) { setPinError('Enter your 4-digit PIN'); return; }
+
+    const match = crewMembers.find(m =>
+      m.EmployeePin && m.EmployeePin.trim() === pin
+    );
+    if (!match) {
+      setPinError('PIN not recognised. Check with your supervisor.');
+      setPinInput('');
+      return;
+    }
+
+    setEmployee(match);
+
+    // Check for existing session today
+    setSessionLoading(true);
+    try {
+      const r = await apiFetch<{ session: TimeSession | null; segments: TimeSegment[] }>(
+        'GET',
+        `/time/session?employee_id=${match.ContactID}&work_date=${today}`
+      );
+      if (r.session) {
+        setSession(r.session);
+        setSegments(r.segments);
+      }
+    } catch (e) {
+      console.error('session fetch:', e);
+    } finally {
+      setSessionLoading(false);
+    }
+
+    saveStoredSession({
+      employee_id:   match.ContactID,
+      employee_name: match.FullName,
+      session_id:    null,
+      work_date:     today,
+    });
+    setPhase('main');
+  }, [pinInput, crewMembers, today]);
+
+  // Keypad press
+  const handleKeypadPress = (digit: string) => {
+    if (pinInput.length >= 4) return;
+    const next = pinInput + digit;
+    setPinInput(next);
+    if (next.length === 4) {
+      // auto-submit after a brief moment
+      setTimeout(() => handlePin(), 100);
+    }
+  };
+
+  // ── Clock in ──────────────────────────────────────────────────────────────
+  const handleClockIn = async () => {
+    if (!employee) return;
+    setActionLoading(true);
+    try {
+      const r = await apiFetch<{ session: TimeSession; segments: TimeSegment[] }>(
+        'POST', '/time/clock-in',
+        { employee_id: employee.ContactID, employee_name: employee.FullName, work_date: today }
+      );
+      setSession(r.session);
+      setSegments(r.segments);
+      saveStoredSession({
+        employee_id:   employee.ContactID,
+        employee_name: employee.FullName,
+        session_id:    r.session.id,
+        work_date:     today,
+      });
+    } catch (e: unknown) {
+      alert(`Clock-in failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // ── Start segment ─────────────────────────────────────────────────────────
+  const startSegment = async (
+    type: 'onsite' | 'drive' | 'lunch',
+    wtId?: number, wtNum?: string, wtName?: string
+  ) => {
+    if (!session) return;
+    setActionLoading(true);
+    try {
+      const r = await apiFetch<{ new_segment_id: number; segments: TimeSegment[] }>(
+        'POST', '/time/segment/start',
+        {
+          session_id:       session.id,
+          segment_type:     type,
+          work_ticket_id:   wtId ?? null,
+          work_ticket_num:  wtNum ?? null,
+          work_ticket_name: wtName ?? null,
+        }
+      );
+      setSegments(r.segments);
+    } catch (e: unknown) {
+      alert(`Failed to start segment: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // ── Segment button click ──────────────────────────────────────────────────
+  const handleSegmentButton = (type: 'onsite' | 'drive' | 'lunch') => {
+    if (!session?.clock_in || session.clock_out) return;
+
+    if (type === 'lunch') {
+      startSegment('lunch');
+      return;
+    }
+
+    if (type === 'drive') {
+      if (!driveTicket.ticket_id) {
+        alert('No drive ticket set for this month. Tap the ⚙ icon to configure it.');
+        return;
+      }
+      startSegment(
+        'drive',
+        driveTicket.ticket_id,
+        driveTicket.ticket_num ?? '',
+        driveTicket.ticket_name ?? '',
+      );
+      return;
+    }
+
+    // onsite — open picker
+    setPickerMode('start');
+    setShowTicketPicker(true);
+  };
+
+  // ── Ticket selected from picker ───────────────────────────────────────────
+  const handleTicketSelect = (t: WorkTicket) => {
+    setShowTicketPicker(false);
+    startSegment(
+      'onsite',
+      t.WorkTicketID,
+      String(t.WorkTicketNumber || t.WorkTicketID),
+      t.OpportunityName || t.WorkTicketTitle || `#${t.WorkTicketID}`,
+    );
+  };
+
+  const handleTicketManual = (id: string, num: string, name: string) => {
+    setShowTicketPicker(false);
+    startSegment('onsite', parseInt(id, 10), num, name);
+  };
+
+  // ── Clock out ─────────────────────────────────────────────────────────────
+  const handleClockOut = async () => {
+    if (!session) return;
+    if (!window.confirm('Clock out now?')) return;
+    setActionLoading(true);
+    try {
+      const r = await apiFetch<{ session: TimeSession; segments: TimeSegment[] }>(
+        'POST', '/time/clock-out', { session_id: session.id }
+      );
+      setSession(r.session);
+      setSegments(r.segments);
+    } catch (e: unknown) {
+      alert(`Clock-out failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // ── Submit to Aspire ──────────────────────────────────────────────────────
+  const handleSubmit = async () => {
+    if (!session) return;
+    if (!window.confirm('Submit this day to Aspire? This cannot be undone.')) return;
+    setActionLoading(true);
+    setSubmitError(null);
+    setSubmitOk(false);
+    try {
+      await apiFetch('POST', `/time/submit/${session.id}`);
+      setSubmitOk(true);
+      // Refresh session
+      const r = await apiFetch<{ session: TimeSession; segments: TimeSegment[] }>(
+        'GET',
+        `/time/session?employee_id=${session.employee_id}&work_date=${session.work_date}`
+      );
+      if (r.session) { setSession(r.session); setSegments(r.segments); }
+    } catch (e: unknown) {
+      setSubmitError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // ── Save drive ticket ─────────────────────────────────────────────────────
+  const handleSaveDriveTicket = async (dt: DriveTicket) => {
+    if (!dt.ticket_id) return;
+    try {
+      await apiFetch('POST', '/time/drive-ticket', {
+        ticket_id:   dt.ticket_id,
+        ticket_num:  dt.ticket_num ?? '',
+        ticket_name: dt.ticket_name ?? '',
+        month:       dt.ticket_month ?? new Date().toISOString().slice(0, 7),
+      });
+      setDriveTicket(dt);
+      setShowDriveSettings(false);
+    } catch (e: unknown) {
+      alert(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  // ── Sign out (clear localStorage) ────────────────────────────────────────
+  const handleSignOut = () => {
+    clearStoredSession();
+    setPhase('pin');
+    setPinInput('');
+    setEmployee(null);
+    setSession(null);
+    setSegments([]);
+    setSubmitOk(false);
+    setSubmitError(null);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER — PIN entry
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (phase === 'pin') {
+    return (
+      <div style={{
+        minHeight: '100vh', background: '#0f172a',
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        justifyContent: 'center', padding: 24,
+      }}>
+        <div style={{ marginBottom: 32, textAlign: 'center' }}>
+          <div style={{ fontSize: 40, marginBottom: 8 }}>⏱️</div>
+          <h1 style={{ color: '#fff', fontSize: 24, fontWeight: 700, margin: 0 }}>Time Tracking</h1>
+          <p style={{ color: '#64748b', fontSize: 14, marginTop: 6 }}>Enter your 4-digit PIN</p>
+        </div>
+
+        {/* PIN display */}
+        <div style={{ display: 'flex', gap: 12, marginBottom: 28 }}>
+          {[0,1,2,3].map(i => (
+            <div key={i} style={{
+              width: 52, height: 52, borderRadius: 10,
+              background: i < pinInput.length ? '#22c55e' : '#1e293b',
+              border: '2px solid ' + (i < pinInput.length ? '#22c55e' : '#334155'),
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              {i < pinInput.length && (
+                <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#fff' }} />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {pinError && (
+          <div style={{
+            background: '#fee2e2', color: '#dc2626', borderRadius: 10,
+            padding: '10px 16px', marginBottom: 16, fontSize: 14, maxWidth: 280,
+            textAlign: 'center',
+          }}>
+            {pinError}
+          </div>
+        )}
+
+        {/* Keypad */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: 12, maxWidth: 280, width: '100%',
+        }}>
+          {['1','2','3','4','5','6','7','8','9','','0','⌫'].map((key, i) => (
+            <button
+              key={i}
+              onClick={() => {
+                if (key === '') return;
+                if (key === '⌫') { setPinInput(p => p.slice(0,-1)); return; }
+                handleKeypadPress(key);
+              }}
+              disabled={crewLoading || (key !== '⌫' && key !== '' && pinInput.length >= 4)}
+              style={{
+                height: 64, borderRadius: 12,
+                background: key === '' ? 'transparent' : '#1e293b',
+                border: key === '' ? 'none' : '1px solid #334155',
+                color: '#fff', fontSize: 22, fontWeight: 600,
+                cursor: key === '' ? 'default' : 'pointer',
+                opacity: crewLoading ? 0.5 : 1,
+              }}
+            >
+              {key}
+            </button>
+          ))}
+        </div>
+
+        {crewLoading && (
+          <div style={{ color: '#64748b', fontSize: 13, marginTop: 20 }}>Loading employee list…</div>
+        )}
+      </div>
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER — Main tracking screen
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const isClockedIn  = !!session?.clock_in;
+  const isClockedOut = !!session?.clock_out;
+  const isSubmitted  = session?.status === 'submitted';
+
+  const completedSegments = segments.filter(s => !!s.end_time);
+  const totalMinutes = completedSegments.reduce((sum, s) => sum + (s.duration_minutes ?? 0), 0);
+
+  const segBtnStyle = (type: 'onsite' | 'drive' | 'lunch', active: boolean) => {
+    const colours: Record<string, { bg: string; border: string; text: string }> = {
+      onsite: { bg: active ? '#16a34a' : '#f0fdf4', border: active ? '#16a34a' : '#86efac', text: active ? '#fff' : '#15803d' },
+      drive:  { bg: active ? '#1d4ed8' : '#eff6ff', border: active ? '#1d4ed8' : '#93c5fd', text: active ? '#fff' : '#1d4ed8' },
+      lunch:  { bg: active ? '#d97706' : '#fefce8', border: active ? '#d97706' : '#fcd34d', text: active ? '#fff' : '#92400e' },
+    };
+    const c = colours[type];
+    return {
+      flex: 1, minHeight: 72, borderRadius: 14,
+      background: c.bg, border: `2px solid ${c.border}`, color: c.text,
+      fontSize: 17, fontWeight: 700, cursor: 'pointer',
+      display: 'flex', flexDirection: 'column' as const,
+      alignItems: 'center', justifyContent: 'center', gap: 4,
+      opacity: isClockedOut ? 0.4 : 1,
+      transition: 'all 0.15s',
+    };
+  };
+
+  return (
+    <div style={{
+      minHeight: '100vh', background: '#f1f5f9',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      maxWidth: 480, margin: '0 auto',
+    }}>
+
+      {/* ── Header ────────────────────────────────────────────────────────── */}
+      <div style={{
+        background: '#0f172a', padding: '20px 20px 16px',
+        position: 'sticky', top: 0, zIndex: 10,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ color: '#fff', fontWeight: 700, fontSize: 20 }}>
+              {employee?.FullName ?? 'Time Tracking'}
+            </div>
+            <div style={{ color: '#64748b', fontSize: 13, marginTop: 2 }}>
+              {fmtDate(today)}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              onClick={() => setShowDriveSettings(true)}
+              title="Drive ticket settings"
+              style={{
+                background: '#1e293b', border: 'none', color: '#94a3b8',
+                borderRadius: 8, width: 36, height: 36, fontSize: 16,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              ⚙
+            </button>
+            <button
+              onClick={handleSignOut}
+              title="Sign out"
+              style={{
+                background: '#1e293b', border: 'none', color: '#94a3b8',
+                borderRadius: 8, padding: '8px 12px', fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              Sign out
+            </button>
+          </div>
+        </div>
+
+        {/* Clock row */}
+        {isClockedIn && (
+          <div style={{
+            display: 'flex', gap: 16, marginTop: 12,
+            padding: '10px 14px', background: '#1e293b', borderRadius: 10,
+          }}>
+            <div style={{ color: '#94a3b8', fontSize: 13 }}>
+              In: <span style={{ color: '#fff', fontWeight: 600 }}>{fmtTime(session?.clock_in ?? null)}</span>
+            </div>
+            {isClockedOut && (
+              <div style={{ color: '#94a3b8', fontSize: 13 }}>
+                Out: <span style={{ color: '#fff', fontWeight: 600 }}>{fmtTime(session?.clock_out ?? null)}</span>
+              </div>
+            )}
+            <div style={{ color: '#94a3b8', fontSize: 13, marginLeft: 'auto' }}>
+              Total: <span style={{ color: '#22c55e', fontWeight: 700 }}>{fmtDuration(totalMinutes)}</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ padding: '20px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+        {/* ── Loading spinner ────────────────────────────────────────────── */}
+        {sessionLoading && (
+          <div style={{
+            background: '#fff', borderRadius: 14, padding: 32,
+            textAlign: 'center', color: '#64748b',
+          }}>
+            Loading…
+          </div>
+        )}
+
+        {/* ── Submitted banner ──────────────────────────────────────────── */}
+        {isSubmitted && (
+          <div style={{
+            background: '#dcfce7', border: '2px solid #86efac',
+            borderRadius: 14, padding: 20, textAlign: 'center',
+          }}>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>✅</div>
+            <div style={{ fontWeight: 700, color: '#15803d', fontSize: 17 }}>
+              Submitted to Aspire
+            </div>
+            <div style={{ color: '#166534', fontSize: 13, marginTop: 4 }}>
+              {fmtTime(session?.submitted_at ?? null)}
+            </div>
+          </div>
+        )}
+
+        {/* ── Clock In button ───────────────────────────────────────────── */}
+        {!sessionLoading && !isClockedIn && !isSubmitted && (
+          <button
+            onClick={handleClockIn}
+            disabled={actionLoading}
+            style={{
+              width: '100%', minHeight: 80, borderRadius: 16,
+              background: '#22c55e', border: 'none', color: '#fff',
+              fontSize: 22, fontWeight: 700, cursor: 'pointer',
+              opacity: actionLoading ? 0.6 : 1,
+            }}
+          >
+            {actionLoading ? 'Clocking in…' : '🕐 Clock In'}
+          </button>
+        )}
+
+        {/* ── Active segment display ────────────────────────────────────── */}
+        {isClockedIn && !isClockedOut && openSegment && (
+          <div style={{
+            background: '#fff', borderRadius: 14, padding: 20,
+            border: '2px solid ' + (
+              openSegment.segment_type === 'onsite' ? '#86efac' :
+              openSegment.segment_type === 'drive'  ? '#93c5fd' : '#fcd34d'
+            ),
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <span style={{
+                  display: 'inline-block', padding: '3px 10px', borderRadius: 20,
+                  fontSize: 12, fontWeight: 700, textTransform: 'uppercase',
+                  background: openSegment.segment_type === 'onsite' ? '#dcfce7' :
+                              openSegment.segment_type === 'drive'  ? '#dbeafe' : '#fef9c3',
+                  color:      openSegment.segment_type === 'onsite' ? '#15803d' :
+                              openSegment.segment_type === 'drive'  ? '#1d4ed8' : '#92400e',
+                }}>
+                  {openSegment.segment_type === 'onsite' ? 'On-Site' :
+                   openSegment.segment_type === 'drive'  ? 'Drive'   : 'Lunch'}
+                </span>
+                {openSegment.work_ticket_name && (
+                  <div style={{ fontWeight: 600, fontSize: 15, marginTop: 6, color: '#0f172a' }}>
+                    {openSegment.work_ticket_name}
+                  </div>
+                )}
+                {openSegment.work_ticket_num && (
+                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                    #{openSegment.work_ticket_num}
+                  </div>
+                )}
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 28, fontWeight: 700, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
+                  {elapsed}
+                </div>
+                <div style={{ fontSize: 12, color: '#64748b' }}>elapsed</div>
+              </div>
+            </div>
+
+            {/* Switch ticket (onsite only) */}
+            {openSegment.segment_type === 'onsite' && (
+              <button
+                onClick={() => { setPickerMode('switch'); setShowTicketPicker(true); }}
+                style={{
+                  marginTop: 12, width: '100%', padding: '10px',
+                  background: '#f8fafc', border: '1px solid #e2e8f0',
+                  borderRadius: 10, fontSize: 14, color: '#475569',
+                  cursor: 'pointer', fontWeight: 600,
+                }}
+              >
+                Switch Ticket
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ── Segment buttons ───────────────────────────────────────────── */}
+        {isClockedIn && !isClockedOut && !isSubmitted && (
+          <div style={{ display: 'flex', gap: 10 }}>
+            {(['onsite', 'drive', 'lunch'] as const).map(type => {
+              const active = openSegment?.segment_type === type;
+              const labels = { onsite: '🏗 On-Site', drive: '🚗 Drive', lunch: '🥪 Lunch' };
+              return (
+                <button
+                  key={type}
+                  onClick={() => handleSegmentButton(type)}
+                  disabled={actionLoading || active}
+                  style={segBtnStyle(type, active)}
+                >
+                  <span style={{ fontSize: 22 }}>
+                    {type === 'onsite' ? '🏗' : type === 'drive' ? '🚗' : '🥪'}
+                  </span>
+                  <span>
+                    {type === 'onsite' ? 'On-Site' : type === 'drive' ? 'Drive' : 'Lunch'}
+                  </span>
+                  {active && <span style={{ fontSize: 11, fontWeight: 400 }}>ACTIVE</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── Clock Out ─────────────────────────────────────────────────── */}
+        {isClockedIn && !isClockedOut && !isSubmitted && (
+          <button
+            onClick={handleClockOut}
+            disabled={actionLoading}
+            style={{
+              width: '100%', minHeight: 64, borderRadius: 14,
+              background: '#ef4444', border: 'none', color: '#fff',
+              fontSize: 18, fontWeight: 700, cursor: 'pointer',
+              opacity: actionLoading ? 0.6 : 1,
+            }}
+          >
+            {actionLoading ? 'Clocking out…' : '🔴 Clock Out'}
+          </button>
+        )}
+
+        {/* ── Submit to Aspire ──────────────────────────────────────────── */}
+        {isClockedOut && !isSubmitted && (
+          <>
+            {submitError && (
+              <div style={{
+                background: '#fee2e2', borderRadius: 10, padding: '12px 16px',
+                color: '#dc2626', fontSize: 14,
+              }}>
+                <strong>Submission error:</strong> {submitError}
+              </div>
+            )}
+            {submitOk && (
+              <div style={{
+                background: '#dcfce7', borderRadius: 10, padding: '12px 16px',
+                color: '#15803d', fontSize: 14, fontWeight: 600,
+              }}>
+                Successfully submitted to Aspire!
+              </div>
+            )}
+            <button
+              onClick={handleSubmit}
+              disabled={actionLoading || submitOk}
+              style={{
+                width: '100%', minHeight: 70, borderRadius: 14,
+                background: '#7c3aed', border: 'none', color: '#fff',
+                fontSize: 18, fontWeight: 700, cursor: 'pointer',
+                opacity: actionLoading || submitOk ? 0.6 : 1,
+              }}
+            >
+              {actionLoading ? 'Submitting…' : '📤 Submit to Aspire'}
+            </button>
+          </>
+        )}
+
+        {/* ── Segment history ───────────────────────────────────────────── */}
+        {completedSegments.length > 0 && (
+          <div style={{ background: '#fff', borderRadius: 14, overflow: 'hidden' }}>
+            <button
+              onClick={() => setShowHistory(h => !h)}
+              style={{
+                width: '100%', padding: '14px 20px',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                background: 'none', border: 'none', cursor: 'pointer',
+                fontWeight: 700, fontSize: 15, color: '#0f172a',
+              }}
+            >
+              <span>Segment History ({completedSegments.length})</span>
+              <span style={{ color: '#64748b', fontSize: 18 }}>{showHistory ? '▲' : '▼'}</span>
+            </button>
+            {showHistory && (
+              <div style={{ borderTop: '1px solid #f1f5f9' }}>
+                {completedSegments.map(seg => (
+                  <div key={seg.id} style={{
+                    padding: '12px 20px', borderBottom: '1px solid #f1f5f9',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  }}>
+                    <div>
+                      <span style={{
+                        display: 'inline-block', padding: '2px 8px', borderRadius: 12,
+                        fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+                        background: seg.segment_type === 'onsite' ? '#dcfce7' :
+                                    seg.segment_type === 'drive'  ? '#dbeafe' : '#fef9c3',
+                        color:      seg.segment_type === 'onsite' ? '#15803d' :
+                                    seg.segment_type === 'drive'  ? '#1d4ed8' : '#92400e',
+                        marginBottom: 4,
+                      }}>
+                        {seg.segment_type}
+                      </span>
+                      {seg.work_ticket_name && (
+                        <div style={{ fontSize: 14, color: '#0f172a', fontWeight: 500 }}>
+                          {seg.work_ticket_name}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                        {fmtTime(seg.start_time)} – {fmtTime(seg.end_time)}
+                      </div>
+                    </div>
+                    <div style={{
+                      fontWeight: 700, fontSize: 15, color: '#0f172a',
+                      minWidth: 50, textAlign: 'right',
+                    }}>
+                      {fmtDuration(seg.duration_minutes)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Modals ────────────────────────────────────────────────────────── */}
+      {showTicketPicker && (
+        <TicketPicker
+          tickets={tickets}
+          loading={ticketsLoading}
+          onSelect={handleTicketSelect}
+          onManual={handleTicketManual}
+          onClose={() => setShowTicketPicker(false)}
+        />
+      )}
+
+      {showDriveSettings && (
+        <DriveTicketSettings
+          current={driveTicket}
+          tickets={tickets}
+          loading={ticketsLoading}
+          onSave={handleSaveDriveTicket}
+          onClose={() => setShowDriveSettings(false)}
+        />
+      )}
+    </div>
+  );
+}

@@ -24,6 +24,7 @@ from app.api.reconcile import router as reconcile_router
 from app.api.dashboard import router as dashboard_router
 from app.api.aspire_field import router as aspire_field_router
 from app.api.crew_schedule import router as crew_schedule_router
+from app.api.time_tracking import router as time_tracking_router
 from app.api.auth import router as auth_router
 from app.core.config import settings
 from app.core.database import Database
@@ -134,5 +135,6 @@ app.include_router(reconcile_router)
 app.include_router(dashboard_router)
 app.include_router(aspire_field_router)
 app.include_router(crew_schedule_router)
+app.include_router(time_tracking_router)
 app.include_router(auth_router)
 app.include_router(qbo_auth_router)
