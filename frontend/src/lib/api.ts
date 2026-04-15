@@ -507,6 +507,7 @@ export interface EstimatingOpp {
   days_old: number;
   days_until_due: number | null;
   urgency: 'overdue' | 'urgent' | 'soon' | 'ok' | 'no-date';
+  is_tier1: boolean;
 }
 
 export interface EstimatingStage {
@@ -523,7 +524,7 @@ export interface EstimatingSalesperson {
 }
 
 export interface EstimatingDashboardData {
-  summary: { total: number; total_value: number; overdue: number; due_this_week: number };
+  summary: { total: number; total_value: number; overdue: number; due_this_week: number; tier1_count: number };
   sales_types: string[];
   phases: string[];
   divisions: string[];

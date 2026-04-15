@@ -490,8 +490,10 @@ async def get_estimating_dashboard():
             detail="Aspire credentials not configured (ASPIRE_CLIENT_ID / ASPIRE_CLIENT_SECRET)",
         )
 
-    try:
-        raw_opps = await _aspire._get_all("Opportunities", {
+    import asyncio
+
+    async def _fetch_opps():
+        return await _aspire._get_all("Opportunities", {
             "$select": (
                 "OpportunityID,OpportunityNumber,OpportunityName,PropertyName,DivisionName,DivisionID,"
                 "SalesRepContactName,SalesRepContactID,"
@@ -499,12 +501,38 @@ async def get_estimating_dashboard():
                 "OpportunityType,SalesTypeName,SalesTypeID,"
                 "EstimatedDollars,BidDueDate,StartDate,CreatedDateTime,ModifiedDate,WonDate,LostDate"
             ),
-            # Filter Won/Lost at the API level so the 500-record cap is spent
-            # entirely on active opportunities rather than closed ones.
             "$filter": "OpportunityStatusName ne 'Won' and OpportunityStatusName ne 'Lost'",
             "$top": "500",
             "$orderby": "CreatedDateTime desc",
         })
+
+    async def _fetch_tier1_names() -> set[str]:
+        """Return lowercase property names that carry a 'Tier 1' tag."""
+        try:
+            props = await _aspire._get_all("Properties", {
+                "$select": "PropertyName,Tags",
+                "$top": "500",
+            })
+        except Exception as e:
+            logger.warning(f"Tier 1 properties fetch failed: {e}")
+            return set()
+        names: set[str] = set()
+        for p in props:
+            raw_tags = p.get("Tags") or ""
+            # Tags may come back as a comma-separated string or a list
+            if isinstance(raw_tags, list):
+                tags_lower = " ".join(str(t) for t in raw_tags).lower()
+            else:
+                tags_lower = str(raw_tags).lower()
+            if "tier 1" in tags_lower:
+                pname = (p.get("PropertyName") or "").strip()
+                if pname:
+                    names.add(pname.lower())
+        logger.info(f"Tier 1 properties found: {len(names)}")
+        return names
+
+    try:
+        raw_opps, tier1_names = await asyncio.gather(_fetch_opps(), _fetch_tier1_names())
         logger.info(f"Estimating dashboard: fetched {len(raw_opps)} active opportunities from Aspire")
     except Exception as e:
         logger.error(f"Estimating dashboard fetch failed: {e}")
@@ -586,6 +614,7 @@ async def get_estimating_dashboard():
             "days_old":        days_since(created_dt),
             "days_until_due":  due_days,
             "urgency":         urg,
+            "is_tier1":        (o.get("PropertyName") or "").strip().lower() in tier1_names,
             "_salesperson":    (o.get("SalesRepContactName") or "Unassigned").strip(),
             "_stage":          o.get("OpportunityStatusName") or "Unknown",
             "_is_overdue":     urg == "overdue",
@@ -598,6 +627,7 @@ async def get_estimating_dashboard():
         "total_value":   sum(s["estimated_value"] for s in shaped),
         "overdue":       sum(1 for s in shaped if s["_is_overdue"]),
         "due_this_week": sum(1 for s in shaped if s["_due_this_week"]),
+        "tier1_count":   sum(1 for s in shaped if s["is_tier1"]),
     }
 
     # ── Unique sales types, phases and divisions (sorted, blanks excluded) ────

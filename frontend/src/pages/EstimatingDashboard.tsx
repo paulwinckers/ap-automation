@@ -149,12 +149,27 @@ function OppTable({ opps, showSalesperson = false }: { opps: EstimatingOpp[]; sh
           {sorted.map((o, i) => {
             const duColor = URGENCY_COLOR[o.urgency] ?? '#9ca3af';
             const isContract = o.opp_type === 'Contract';
+            const rowBg = o.is_tier1
+              ? (i % 2 === 0 ? '#fffbeb' : '#fef3c7')
+              : (i % 2 === 0 ? '#fff' : '#f9fafb');
             return (
-              <tr key={o.id} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+              <tr key={o.id} style={{
+                background: rowBg,
+                borderLeft: o.is_tier1 ? '4px solid #d97706' : '4px solid transparent',
+              }}>
                 {/* Property (bold) then #Num – Opp Name as link */}
                 <Td>
-                  <div style={{ fontWeight: 700, fontSize: 12, color: '#111827', marginBottom: 2 }}>
-                    {o.property || '—'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                    <span style={{ fontWeight: 700, fontSize: 12, color: '#111827' }}>
+                      {o.property || '—'}
+                    </span>
+                    {o.is_tier1 && (
+                      <span style={{
+                        fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3,
+                        background: '#d97706', color: '#fff', letterSpacing: 0.5,
+                        flexShrink: 0,
+                      }}>T1</span>
+                    )}
                   </div>
                   <a
                     href={`https://cloud.youraspire.com/app/opportunities/details/${o.id}`}
@@ -365,6 +380,7 @@ export default function EstimatingDashboard() {
   const [filterPhase,         setFilterPhase]          = useState('All');
   const [filterStartYear,     setFilterStartYear]      = useState('2026');
   const [filterDivision,      setFilterDivision]       = useState('All');
+  const [filterTier1,         setFilterTier1]          = useState(false);
   const [search,              setSearch]               = useState('');
   const [groupBy, setGroupBy] = useState<'salesperson' | 'status' | 'flat'>('salesperson');
 
@@ -413,6 +429,7 @@ export default function EstimatingDashboard() {
   const matchesFilters = (o: EstimatingOpp) =>
     baseMatch(o) &&
     (filterPhase === 'All' || o.status === filterPhase) &&
+    (!filterTier1 || o.is_tier1) &&
     (!searchLower || (
       o.property.toLowerCase().includes(searchLower) ||
       o.name.toLowerCase().includes(searchLower) ||
@@ -430,12 +447,22 @@ export default function EstimatingDashboard() {
   const phaseTiles = PHASE_ORDER
     .map(phase => {
       const opps = baseOpps.filter(o => o.status === phase);
-      return { phase, count: opps.length, value: opps.reduce((s, o) => s + o.estimated_value, 0) };
+      const tier1 = opps.filter(o => o.is_tier1);
+      return {
+        phase,
+        count: opps.length,
+        value: opps.reduce((s, o) => s + o.estimated_value, 0),
+        tier1Count: tier1.length,
+        tier1Value: tier1.reduce((s, o) => s + o.estimated_value, 0),
+      };
     });
 
+  const allTier1 = baseOpps.filter(o => o.is_tier1);
   const allTile = {
     count: baseOpps.length,
     value: baseOpps.reduce((s, o) => s + o.estimated_value, 0),
+    tier1Count: allTier1.length,
+    tier1Value: allTier1.reduce((s, o) => s + o.estimated_value, 0),
   };
 
   const visibleCount = visibleSalespeople.reduce((acc, sp) =>
@@ -473,12 +500,17 @@ export default function EstimatingDashboard() {
                 <div style={{ fontSize: 10, fontWeight: 700, color: active ? '#2563eb' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>All Phases</div>
                 <div style={{ fontSize: 20, fontWeight: 800, color: active ? '#1d4ed8' : '#1f2937', lineHeight: 1 }}>{allTile.count}</div>
                 <div style={{ fontSize: 11, color: active ? '#3b82f6' : '#6b7280', marginTop: 3 }}>{fmt$(allTile.value)}</div>
+                {allTile.tier1Count > 0 && (
+                  <div style={{ fontSize: 10, color: '#d97706', marginTop: 4, fontWeight: 600 }}>
+                    ⭐ {allTile.tier1Count} · {fmt$(allTile.tier1Value)}
+                  </div>
+                )}
               </button>
             );
           })()}
 
           {/* One tile per phase */}
-          {phaseTiles.map(({ phase, count, value }) => {
+          {phaseTiles.map(({ phase, count, value, tier1Count, tier1Value }) => {
             const active = filterPhase === phase;
             return (
               <button
@@ -495,6 +527,11 @@ export default function EstimatingDashboard() {
                 <div style={{ fontSize: 10, fontWeight: 700, color: active ? '#2563eb' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{phase}</div>
                 <div style={{ fontSize: 20, fontWeight: 800, color: active ? '#1d4ed8' : '#1f2937', lineHeight: 1 }}>{count}</div>
                 <div style={{ fontSize: 11, color: active ? '#3b82f6' : '#6b7280', marginTop: 3 }}>{fmt$(value)}</div>
+                {tier1Count > 0 && (
+                  <div style={{ fontSize: 10, color: '#d97706', marginTop: 4, fontWeight: 600 }}>
+                    ⭐ {tier1Count} · {fmt$(tier1Value)}
+                  </div>
+                )}
               </button>
             );
           })}
@@ -528,6 +565,32 @@ export default function EstimatingDashboard() {
             <button onClick={() => setSearch('')} style={{ fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>✕</button>
           )}
         </div>
+
+        {/* Tier 1 toggle */}
+        <button
+          onClick={() => setFilterTier1(f => !f)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
+            border: `2px solid ${filterTier1 ? '#d97706' : '#e5e7eb'}`,
+            background: filterTier1 ? '#fffbeb' : '#fff',
+            color: filterTier1 ? '#92400e' : '#6b7280',
+            fontWeight: filterTier1 ? 700 : 500,
+            fontSize: 12, whiteSpace: 'nowrap',
+          }}
+        >
+          <span>⭐</span>
+          <span>Tier 1</span>
+          {data?.summary.tier1_count != null && (
+            <span style={{
+              background: filterTier1 ? '#d97706' : '#e5e7eb',
+              color: filterTier1 ? '#fff' : '#6b7280',
+              borderRadius: 999, padding: '1px 6px', fontSize: 11, fontWeight: 700,
+            }}>
+              {data.summary.tier1_count}
+            </span>
+          )}
+        </button>
 
         {/* Salesperson */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
