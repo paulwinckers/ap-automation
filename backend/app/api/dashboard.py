@@ -206,16 +206,13 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         return float(o.get("ActualLaborHours") or 0) > 0
 
     # ── Merge change orders into their parent opportunity ─────────────────────
-    def _is_change_order(o: dict) -> bool:
-        opp_name = (o.get("OpportunityName") or "").lower()
-        return opp_name.startswith("change order")
-
     def merge_change_orders(jobs: list) -> list:
         """
-        Group jobs by OpportunityNumber. For each group that contains both a
-        parent and one-or-more change orders, add the CO dollars into the
-        parent row and attach summary metadata. Returns a flat list with COs
-        removed as standalone rows.
+        Group all opportunities that share an OpportunityNumber. Within each
+        group the row with the largest WonDollars is treated as the parent
+        contract; every other row is a change order / add-on and gets rolled
+        into it. This avoids relying on name conventions (Aspire data uses
+        "Change Order", "Changed Order", or no prefix at all).
         """
         from collections import defaultdict
         groups: dict = defaultdict(list)
@@ -229,46 +226,45 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
 
         merged: list = []
         for num, group in groups.items():
-            parents = [o for o in group if not _is_change_order(o)]
-            cos     = [o for o in group if _is_change_order(o)]
-
-            if not parents:
-                # All are COs with no parent — keep as-is
-                merged.extend(group)
+            if len(group) == 1:
+                merged.append(group[0])
                 continue
 
-            # Use the first parent (there should only be one)
-            parent = dict(parents[0])  # shallow copy so we don't mutate the original
+            # Parent = largest WonDollars; all others are change orders
+            group_sorted = sorted(
+                group,
+                key=lambda o: float(o.get("WonDollars") or 0),
+                reverse=True,
+            )
+            parent = dict(group_sorted[0])  # shallow copy — don't mutate original
+            cos    = group_sorted[1:]
 
-            if cos:
-                co_won       = sum(float(c.get("WonDollars")                  or 0) for c in cos)
-                co_est       = sum(float(c.get("EstimatedDollars")             or 0) for c in cos)
-                co_est_gm    = sum(float(c.get("EstimatedGrossMarginDollars")  or 0) for c in cos)
-                co_act_rev   = sum(float(c.get("ActualEarnedRevenue")          or 0) for c in cos)
-                co_act_gm    = sum(float(c.get("ActualGrossMarginDollars")     or 0) for c in cos)
+            co_won    = sum(float(c.get("WonDollars")                  or 0) for c in cos)
+            co_est    = sum(float(c.get("EstimatedDollars")             or 0) for c in cos)
+            co_est_gm = sum(float(c.get("EstimatedGrossMarginDollars")  or 0) for c in cos)
+            co_act_rev = sum(float(c.get("ActualEarnedRevenue")         or 0) for c in cos)
+            co_act_gm  = sum(float(c.get("ActualGrossMarginDollars")    or 0) for c in cos)
 
-                parent["WonDollars"]                  = float(parent.get("WonDollars")                 or 0) + co_won
-                parent["EstimatedDollars"]            = float(parent.get("EstimatedDollars")           or 0) + co_est
-                parent["EstimatedGrossMarginDollars"] = float(parent.get("EstimatedGrossMarginDollars") or 0) + co_est_gm
-                parent["ActualEarnedRevenue"]         = float(parent.get("ActualEarnedRevenue")        or 0) + co_act_rev
-                parent["ActualGrossMarginDollars"]    = float(parent.get("ActualGrossMarginDollars")   or 0) + co_act_gm
+            parent["WonDollars"]                  = float(parent.get("WonDollars")                  or 0) + co_won
+            parent["EstimatedDollars"]            = float(parent.get("EstimatedDollars")            or 0) + co_est
+            parent["EstimatedGrossMarginDollars"] = float(parent.get("EstimatedGrossMarginDollars") or 0) + co_est_gm
+            parent["ActualEarnedRevenue"]         = float(parent.get("ActualEarnedRevenue")         or 0) + co_act_rev
+            parent["ActualGrossMarginDollars"]    = float(parent.get("ActualGrossMarginDollars")    or 0) + co_act_gm
 
-                # Recalculate margin %
-                new_est_rev = parent["EstimatedDollars"]
-                new_act_rev = parent["ActualEarnedRevenue"]
-                parent["EstimatedGrossMarginPercent"] = (
-                    (parent["EstimatedGrossMarginDollars"] / new_est_rev * 100) if new_est_rev else None
-                )
-                parent["ActualGrossMarginPercent"] = (
-                    (parent["ActualGrossMarginDollars"] / new_act_rev * 100) if new_act_rev else None
-                )
+            # Recalculate margin % from updated totals
+            new_est_rev = parent["EstimatedDollars"]
+            new_act_rev = parent["ActualEarnedRevenue"]
+            parent["EstimatedGrossMarginPercent"] = (
+                (parent["EstimatedGrossMarginDollars"] / new_est_rev * 100) if new_est_rev else None
+            )
+            parent["ActualGrossMarginPercent"] = (
+                (parent["ActualGrossMarginDollars"] / new_act_rev * 100) if new_act_rev else None
+            )
 
-                parent["change_order_count"] = len(cos)
-                parent["change_order_total"] = co_won
+            parent["change_order_count"] = len(cos)
+            parent["change_order_total"] = co_won
 
             merged.append(parent)
-            # Additional parents beyond the first (edge case) — keep separately
-            merged.extend(parents[1:])
 
         merged.extend(no_number)
         return merged
