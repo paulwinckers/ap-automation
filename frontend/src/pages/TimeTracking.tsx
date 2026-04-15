@@ -318,15 +318,34 @@ function TicketPicker({ tickets, loading, onSelect, onManual, onClose }: TicketP
 
 interface DriveTicketSettingsProps {
   current:  DriveTicket;
-  tickets:  WorkTicket[];
-  loading:  boolean;
   onSave:   (dt: DriveTicket) => void;
   onClose:  () => void;
 }
 
-function DriveTicketSettings({ current, tickets, loading, onSave, onClose }: DriveTicketSettingsProps) {
-  const [query,  setQuery]  = useState('');
-  const [chosen, setChosen] = useState<DriveTicket>(current);
+function DriveTicketSettings({ current, onSave, onClose }: DriveTicketSettingsProps) {
+  const [query,    setQuery]    = useState('');
+  const [chosen,   setChosen]   = useState<DriveTicket>(current);
+  const [tickets,  setTickets]  = useState<WorkTicket[]>([]);
+  const [loading,  setLoading]  = useState(false);
+  const [searched, setSearched] = useState(false);
+
+  // Auto-load Indirect division tickets on open
+  useEffect(() => {
+    setLoading(true);
+    setSearched(false);
+    apiFetch<{ work_tickets: WorkTicket[] }>('GET', '/time/work-tickets/search?division=Indirect')
+      .then(r => { setTickets(r.work_tickets || []); setSearched(true); })
+      .catch(() => setSearched(true))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSearch = () => {
+    setLoading(true);
+    apiFetch<{ work_tickets: WorkTicket[] }>('GET', `/time/work-tickets/search?q=${encodeURIComponent(query)}`)
+      .then(r => setTickets(r.work_tickets || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
 
   const filtered = query.trim()
     ? tickets.filter(t =>
@@ -370,23 +389,40 @@ function DriveTicketSettings({ current, tickets, loading, onSave, onClose }: Dri
           </div>
         )}
 
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', display: 'flex', gap: 8 }}>
           <input
             type="search"
-            placeholder="Search tickets…"
+            placeholder="Search all tickets…"
             value={query}
             onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleSearch(); }}
             autoFocus
             style={{
-              width: '100%', padding: '12px 14px', fontSize: 16,
+              flex: 1, padding: '12px 14px', fontSize: 16,
               border: '2px solid #cbd5e1', borderRadius: 10, outline: 'none',
               boxSizing: 'border-box',
             }}
           />
+          <button
+            onClick={handleSearch}
+            disabled={loading}
+            style={{
+              padding: '0 16px', background: '#1d4ed8', color: '#fff',
+              border: 'none', borderRadius: 10, fontWeight: 700, fontSize: 15,
+              cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            {loading ? '…' : 'Search'}
+          </button>
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
           {loading && <div style={{ padding: 24, textAlign: 'center', color: '#64748b' }}>Loading…</div>}
+          {!loading && searched && filtered.length === 0 && (
+            <div style={{ padding: 24, textAlign: 'center', color: '#94a3b8' }}>
+              No tickets found. Try searching by ticket # or name.
+            </div>
+          )}
           {filtered.map(t => (
             <button
               key={t.WorkTicketID}
@@ -537,10 +573,11 @@ export default function TimeTracking() {
   const handlePin = useCallback(async () => {
     setPinError(null);
     const pin = pinInput.trim();
-    if (pin.length < 4) { setPinError('Enter your 4-digit PIN'); return; }
+    if (!pin) { setPinError('Enter your PIN'); return; }
 
+    const pinLower = pin.toLowerCase();
     const match = crewMembers.find(m =>
-      m.EmployeePin && m.EmployeePin.trim() === pin
+      m.EmployeePin && m.EmployeePin.trim().toLowerCase() === pinLower
     );
     if (!match) {
       setPinError('PIN not recognised. Check with your supervisor.');
@@ -576,15 +613,9 @@ export default function TimeTracking() {
     setPhase('main');
   }, [pinInput, crewMembers, today]);
 
-  // Keypad press
-  const handleKeypadPress = (digit: string) => {
-    if (pinInput.length >= 4) return;
-    const next = pinInput + digit;
-    setPinInput(next);
-    if (next.length === 4) {
-      // auto-submit after a brief moment
-      setTimeout(() => handlePin(), 100);
-    }
+  // (keypad removed — PIN is free-text)
+  const handleKeypadPress = (_digit: string) => {
+    // no-op
   };
 
   // ── Clock in ──────────────────────────────────────────────────────────────
@@ -765,23 +796,30 @@ export default function TimeTracking() {
         <div style={{ marginBottom: 32, textAlign: 'center' }}>
           <div style={{ fontSize: 40, marginBottom: 8 }}>⏱️</div>
           <h1 style={{ color: '#fff', fontSize: 24, fontWeight: 700, margin: 0 }}>Time Tracking</h1>
-          <p style={{ color: '#64748b', fontSize: 14, marginTop: 6 }}>Enter your 4-digit PIN</p>
+          <p style={{ color: '#64748b', fontSize: 14, marginTop: 6 }}>Enter your Aspire PIN</p>
         </div>
 
-        {/* PIN display */}
-        <div style={{ display: 'flex', gap: 12, marginBottom: 28 }}>
-          {[0,1,2,3].map(i => (
-            <div key={i} style={{
-              width: 52, height: 52, borderRadius: 10,
-              background: i < pinInput.length ? '#22c55e' : '#1e293b',
-              border: '2px solid ' + (i < pinInput.length ? '#22c55e' : '#334155'),
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              {i < pinInput.length && (
-                <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#fff' }} />
-              )}
-            </div>
-          ))}
+        {/* PIN text input */}
+        <div style={{ width: '100%', maxWidth: 280, marginBottom: 16 }}>
+          <input
+            type="text"
+            autoCapitalize="none"
+            autoCorrect="off"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Your PIN"
+            value={pinInput}
+            onChange={e => setPinInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handlePin(); }}
+            disabled={crewLoading}
+            style={{
+              width: '100%', padding: '16px', borderRadius: 12,
+              background: '#1e293b', border: '2px solid #334155',
+              color: '#fff', fontSize: 18, textAlign: 'center',
+              outline: 'none', boxSizing: 'border-box',
+              letterSpacing: 2,
+            }}
+          />
         </div>
 
         {pinError && (
@@ -794,33 +832,19 @@ export default function TimeTracking() {
           </div>
         )}
 
-        {/* Keypad */}
-        <div style={{
-          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: 12, maxWidth: 280, width: '100%',
-        }}>
-          {['1','2','3','4','5','6','7','8','9','','0','⌫'].map((key, i) => (
-            <button
-              key={i}
-              onClick={() => {
-                if (key === '') return;
-                if (key === '⌫') { setPinInput(p => p.slice(0,-1)); return; }
-                handleKeypadPress(key);
-              }}
-              disabled={crewLoading || (key !== '⌫' && key !== '' && pinInput.length >= 4)}
-              style={{
-                height: 64, borderRadius: 12,
-                background: key === '' ? 'transparent' : '#1e293b',
-                border: key === '' ? 'none' : '1px solid #334155',
-                color: '#fff', fontSize: 22, fontWeight: 600,
-                cursor: key === '' ? 'default' : 'pointer',
-                opacity: crewLoading ? 0.5 : 1,
-              }}
-            >
-              {key}
-            </button>
-          ))}
-        </div>
+        <button
+          onClick={handlePin}
+          disabled={crewLoading || !pinInput.trim()}
+          style={{
+            width: '100%', maxWidth: 280, height: 56, borderRadius: 12,
+            background: pinInput.trim() ? '#22c55e' : '#334155',
+            border: 'none', color: '#fff', fontSize: 18, fontWeight: 700,
+            cursor: pinInput.trim() ? 'pointer' : 'default',
+            opacity: crewLoading ? 0.6 : 1,
+          }}
+        >
+          {crewLoading ? 'Loading…' : 'Sign In'}
+        </button>
 
         {crewLoading && (
           <div style={{ color: '#64748b', fontSize: 13, marginTop: 20 }}>Loading employee list…</div>
@@ -1175,8 +1199,6 @@ export default function TimeTracking() {
       {showDriveSettings && (
         <DriveTicketSettings
           current={driveTicket}
-          tickets={tickets}
-          loading={ticketsLoading}
           onSave={handleSaveDriveTicket}
           onClose={() => setShowDriveSettings(false)}
         />

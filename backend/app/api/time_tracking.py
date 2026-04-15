@@ -257,6 +257,23 @@ async def get_work_tickets(work_date: str = Query(...)):
         raise HTTPException(status_code=502, detail=f"Failed to fetch work tickets: {e}")
 
 
+@router.get("/work-tickets/search")
+async def search_work_tickets(
+    q:        str = Query(default=""),
+    division: str = Query(default=""),
+):
+    """
+    Search work tickets by keyword — no date filter.
+    Used for drive-ticket setup (Indirect division tickets aren't on today's schedule).
+    """
+    try:
+        tickets = await _aspire.search_work_tickets(query=q, division=division)
+        return {"work_tickets": tickets}
+    except Exception as e:
+        logger.error(f"search_work_tickets failed: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Failed to search work tickets: {e}")
+
+
 @router.get("/drive-ticket")
 async def get_drive_ticket(db: Database = Depends(get_db)):
     """Get the current monthly drive ticket from settings."""
