@@ -239,17 +239,21 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
             parent = dict(group_sorted[0])  # shallow copy — don't mutate original
             cos    = group_sorted[1:]
 
-            co_won    = sum(float(c.get("WonDollars")                  or 0) for c in cos)
-            co_est    = sum(float(c.get("EstimatedDollars")             or 0) for c in cos)
-            co_est_gm = sum(float(c.get("EstimatedGrossMarginDollars")  or 0) for c in cos)
-            co_act_rev = sum(float(c.get("ActualEarnedRevenue")         or 0) for c in cos)
-            co_act_gm  = sum(float(c.get("ActualGrossMarginDollars")    or 0) for c in cos)
+            co_won     = sum(float(c.get("WonDollars")                  or 0) for c in cos)
+            co_est     = sum(float(c.get("EstimatedDollars")             or 0) for c in cos)
+            co_est_gm  = sum(float(c.get("EstimatedGrossMarginDollars")  or 0) for c in cos)
+            co_act_rev = sum(float(c.get("ActualEarnedRevenue")          or 0) for c in cos)
+            co_act_gm  = sum(float(c.get("ActualGrossMarginDollars")     or 0) for c in cos)
+            co_est_hrs = sum(float(c.get("EstimatedLaborHours")          or 0) for c in cos)
+            co_act_hrs = sum(float(c.get("ActualLaborHours")             or 0) for c in cos)
 
             parent["WonDollars"]                  = float(parent.get("WonDollars")                  or 0) + co_won
             parent["EstimatedDollars"]            = float(parent.get("EstimatedDollars")            or 0) + co_est
             parent["EstimatedGrossMarginDollars"] = float(parent.get("EstimatedGrossMarginDollars") or 0) + co_est_gm
             parent["ActualEarnedRevenue"]         = float(parent.get("ActualEarnedRevenue")         or 0) + co_act_rev
             parent["ActualGrossMarginDollars"]    = float(parent.get("ActualGrossMarginDollars")    or 0) + co_act_gm
+            parent["EstimatedLaborHours"]         = float(parent.get("EstimatedLaborHours")         or 0) + co_est_hrs
+            parent["ActualLaborHours"]            = float(parent.get("ActualLaborHours")            or 0) + co_act_hrs
 
             # Recalculate margin % from updated totals
             new_est_rev = parent["EstimatedDollars"]
