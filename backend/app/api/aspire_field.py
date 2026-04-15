@@ -758,3 +758,45 @@ async def create_opportunity(
         "photos_uploaded":      photos_uploaded,
         "submitter":            submitter_name,
     }
+
+
+@router.get("/visit-notes/probe")
+async def probe_visit_notes(ticket_id: int = Query(default=16914)):
+    """Probe VisitNotes endpoint and WorkTicket PATCH to find customer-portal-visible note path."""
+    _check_credentials()
+    results = {}
+
+    # 1. Try GET VisitNotes
+    for ep in ["VisitNotes", "WorkTicketNotes", "PropertyNotes", "CustomerNotes"]:
+        try:
+            data = await _aspire._get(ep, {"$top": "3"})
+            items = _aspire._extract_list(data)
+            results[f"GET_{ep}"] = {
+                "status": "OK",
+                "count": len(items),
+                "fields": sorted(items[0].keys()) if items else [],
+                "sample": items[0] if items else {},
+            }
+        except Exception as e:
+            results[f"GET_{ep}"] = {"status": f"FAIL: {str(e)[:100]}"}
+
+    # 2. Try PATCH WorkTicket Notes field
+    for url_fmt in [f"WorkTickets({ticket_id})", f"WorkTickets/{ticket_id}"]:
+        for field in ["Notes", "ProductionNote", "CustomerNote", "PublicNote"]:
+            try:
+                await _aspire._patch(url_fmt, {field: "__probe_visit_note__"})
+                results[f"PATCH_{url_fmt}_{field}"] = "SUCCESS"
+            except Exception as e:
+                results[f"PATCH_{url_fmt}_{field}"] = f"FAIL: {str(e)[:80]}"
+
+    # 3. Try POST VisitNotes with minimal body
+    try:
+        r = await _aspire._post("VisitNotes", {
+            "WorkTicketID": ticket_id,
+            "Note": "__probe__",
+        })
+        results["POST_VisitNotes"] = f"SUCCESS: {r}"
+    except Exception as e:
+        results["POST_VisitNotes"] = f"FAIL: {str(e)[:120]}"
+
+    return results
