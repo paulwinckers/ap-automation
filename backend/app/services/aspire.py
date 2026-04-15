@@ -57,23 +57,41 @@ class AspireClient:
         self._http = httpx.AsyncClient(timeout=30.0)
 
     async def _get_token(self) -> str:
-        """Fetch a Bearer token via POST /Authorization (valid 24 hours)."""
+        """Fetch a Bearer token via POST /Authorization (valid 24 hours).
+        Retries once after 2 s on a 5xx response so brief Aspire auth blips
+        don't immediately fail the caller.  Cached token is kept if still valid.
+        """
+        import asyncio
+
         if self._token and time.time() < self._token_expires_at:
             return self._token
 
-        resp = await self._http.post(
-            f"{self.base_url}/Authorization",
-            json={
-                "ClientId": settings.ASPIRE_CLIENT_ID,
-                "Secret":   settings.ASPIRE_CLIENT_SECRET,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        self._token = data["Token"]
-        # Tokens are valid 24 hours; refresh after 23 to be safe
-        self._token_expires_at = time.time() + 23 * 3600
-        return self._token
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                resp = await self._http.post(
+                    f"{self.base_url}/Authorization",
+                    json={
+                        "ClientId": settings.ASPIRE_CLIENT_ID,
+                        "Secret":   settings.ASPIRE_CLIENT_SECRET,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                self._token = data["Token"]
+                # Tokens are valid 24 hours; refresh after 23 to be safe
+                self._token_expires_at = time.time() + 23 * 3600
+                return self._token
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                if exc.response.status_code < 500 or attempt == 1:
+                    raise  # 4xx (bad creds) or second failure → give up
+                logger.warning(
+                    f"Aspire auth returned {exc.response.status_code} — retrying in 2 s"
+                )
+                await asyncio.sleep(2)
+
+        raise last_exc  # type: ignore[misc]
 
     async def _get(self, path: str, params: dict = None) -> dict:
         token = await self._get_token()
