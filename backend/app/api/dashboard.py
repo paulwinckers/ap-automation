@@ -205,6 +205,77 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
             return False
         return float(o.get("ActualLaborHours") or 0) > 0
 
+    # ── Merge change orders into their parent opportunity ─────────────────────
+    def _is_change_order(o: dict) -> bool:
+        type_name = (o.get("OpportunityTypeName") or "").lower()
+        opp_name  = (o.get("OpportunityName")     or "").lower()
+        return "change order" in type_name or opp_name.startswith("change order")
+
+    def merge_change_orders(jobs: list) -> list:
+        """
+        Group jobs by OpportunityNumber. For each group that contains both a
+        parent and one-or-more change orders, add the CO dollars into the
+        parent row and attach summary metadata. Returns a flat list with COs
+        removed as standalone rows.
+        """
+        from collections import defaultdict
+        groups: dict = defaultdict(list)
+        no_number: list = []
+        for o in jobs:
+            num = o.get("OpportunityNumber")
+            if num is None:
+                no_number.append(o)
+            else:
+                groups[num].append(o)
+
+        merged: list = []
+        for num, group in groups.items():
+            parents = [o for o in group if not _is_change_order(o)]
+            cos     = [o for o in group if _is_change_order(o)]
+
+            if not parents:
+                # All are COs with no parent — keep as-is
+                merged.extend(group)
+                continue
+
+            # Use the first parent (there should only be one)
+            parent = dict(parents[0])  # shallow copy so we don't mutate the original
+
+            if cos:
+                co_won       = sum(float(c.get("WonDollars")                  or 0) for c in cos)
+                co_est       = sum(float(c.get("EstimatedDollars")             or 0) for c in cos)
+                co_est_gm    = sum(float(c.get("EstimatedGrossMarginDollars")  or 0) for c in cos)
+                co_act_rev   = sum(float(c.get("ActualEarnedRevenue")          or 0) for c in cos)
+                co_act_gm    = sum(float(c.get("ActualGrossMarginDollars")     or 0) for c in cos)
+
+                parent["WonDollars"]                  = float(parent.get("WonDollars")                 or 0) + co_won
+                parent["EstimatedDollars"]            = float(parent.get("EstimatedDollars")           or 0) + co_est
+                parent["EstimatedGrossMarginDollars"] = float(parent.get("EstimatedGrossMarginDollars") or 0) + co_est_gm
+                parent["ActualEarnedRevenue"]         = float(parent.get("ActualEarnedRevenue")        or 0) + co_act_rev
+                parent["ActualGrossMarginDollars"]    = float(parent.get("ActualGrossMarginDollars")   or 0) + co_act_gm
+
+                # Recalculate margin %
+                new_est_rev = parent["EstimatedDollars"]
+                new_act_rev = parent["ActualEarnedRevenue"]
+                parent["EstimatedGrossMarginPercent"] = (
+                    (parent["EstimatedGrossMarginDollars"] / new_est_rev * 100) if new_est_rev else None
+                )
+                parent["ActualGrossMarginPercent"] = (
+                    (parent["ActualGrossMarginDollars"] / new_act_rev * 100) if new_act_rev else None
+                )
+
+                parent["change_order_count"] = len(cos)
+                parent["change_order_total"] = co_won
+
+            merged.append(parent)
+            # Additional parents beyond the first (edge case) — keep separately
+            merged.extend(parents[1:])
+
+        merged.extend(no_number)
+        return merged
+
+    opps = merge_change_orders(opps)
+
     completed     = [o for o in opps if complete_in_year(o, year)]
     in_production = [o for o in opps if is_in_production(o)]
     in_queue      = [o for o in opps if is_in_queue(o)]

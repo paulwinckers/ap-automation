@@ -279,6 +279,9 @@ export interface ConstructionJob {
   OperationsManagerContactName: string | null;
   PropertyName: string | null;
   BranchName: string | null;
+  // Set when change orders have been rolled up into this parent row
+  change_order_count?: number;
+  change_order_total?: number;
 }
 
 export interface DivisionTotals {

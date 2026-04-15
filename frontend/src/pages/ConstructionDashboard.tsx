@@ -285,6 +285,21 @@ function useSorted(jobs: ConstructionJob[], defaultField: string) {
   return { sorted, sortField, sortDir, onSort };
 }
 
+// ── Change-order roll-up badge ────────────────────────────────────────────────
+
+function ContractedCell({ job }: { job: ConstructionJob }) {
+  return (
+    <Td align="right">
+      <span style={{ fontWeight: 400, color: '#6b7280' }}>{fmt$(job.WonDollars)}</span>
+      {job.change_order_count != null && job.change_order_count > 0 && (
+        <div style={{ fontSize: 11, color: '#7c3aed', marginTop: 2, whiteSpace: 'nowrap' }}>
+          +{fmt$(job.change_order_total)} CO ({job.change_order_count})
+        </div>
+      )}
+    </Td>
+  );
+}
+
 function HoursCell({ actual, estimated }: { actual: number | null | undefined; estimated: number | null | undefined }) {
   const over = (actual ?? 0) > (estimated ?? 0) && estimated != null && actual != null;
   return (
@@ -327,7 +342,7 @@ function CompletedTable({ jobs }: { jobs: ConstructionJob[] }) {
           {sorted.map((job, i) => (
             <tr key={job.OpportunityID} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
               <JobNameCell job={job} />
-              <Td align="right" muted>{fmt$(job.WonDollars)}</Td>
+              <ContractedCell job={job} />
               <Td align="right" bold>{fmt$(job.ActualEarnedRevenue)}</Td>
               <Td align="right" bold style={{ color: (job.ActualGrossMarginDollars ?? 0) < 0 ? '#dc2626' : '#374151' }}>
                 {fmt$(job.ActualGrossMarginDollars)}
@@ -382,7 +397,7 @@ function InProductionTable({ jobs }: { jobs: ConstructionJob[] }) {
           {sorted.map((job, i) => (
             <tr key={job.OpportunityID} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
               <JobNameCell job={job} />
-              <Td align="right" muted>{fmt$(job.WonDollars)}</Td>
+              <ContractedCell job={job} />
               <Td align="right" bold style={{ color: '#2563eb' }}>{fmt$(job.ActualEarnedRevenue)}</Td>
               <Td align="right" bold style={{ color: '#2563eb' }}>{fmt$(job.ActualGrossMarginDollars)}</Td>
               <Td align="right"><MarginDot pct={job.EstimatedGrossMarginPercent} /></Td>
@@ -436,7 +451,7 @@ function InQueueTable({ jobs }: { jobs: ConstructionJob[] }) {
               <JobNameCell job={job} />
               {/* Readiness: tags-based indicator — to be wired up once tag field names confirmed */}
               <Td><span style={{ color: '#9ca3af', fontSize: 12 }}>—</span></Td>
-              <Td align="right" bold>{fmt$(job.WonDollars)}</Td>
+              <ContractedCell job={job} />
               <Td align="right" muted>{fmt$(job.EstimatedDollars)}</Td>
               <Td align="right"><MarginDot pct={job.EstimatedGrossMarginPercent} /></Td>
               <Td align="right" muted>{fmtHrs(job.EstimatedLaborHours)}</Td>

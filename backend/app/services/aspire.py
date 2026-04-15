@@ -486,6 +486,7 @@ class AspireClient:
         select_fields = ",".join([
             "OpportunityID", "OpportunityName", "OpportunityNumber",
             "OpportunityStatusName", "JobStatusName",
+            "OpportunityTypeName",
             "DivisionName", "DivisionID",
             "WonDollars", "ActualEarnedRevenue",
             "ActualGrossMarginDollars", "ActualGrossMarginPercent",
