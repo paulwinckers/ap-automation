@@ -235,6 +235,87 @@ async def start_segment(body: SegmentStartBody, db: Database = Depends(get_db)):
     }
 
 
+class SegmentTimesBody(BaseModel):
+    start_time: Optional[str] = None   # HH:MM  (local time — converted to ISO with work_date)
+    end_time:   Optional[str] = None   # HH:MM  or null to clear
+    work_date:  str = ""               # YYYY-MM-DD (needed to build full ISO from HH:MM)
+
+
+class SessionTimesBody(BaseModel):
+    clock_in:  Optional[str] = None   # HH:MM
+    clock_out: Optional[str] = None   # HH:MM or null
+    work_date: str = ""               # YYYY-MM-DD
+
+
+def _hhmm_to_iso(hhmm: str, work_date: str) -> str:
+    """Convert HH:MM + YYYY-MM-DD to an ISO-8601 UTC string."""
+    # Treat the entered time as local — store as-is in ISO with date
+    # (same pattern as clock_in which is stored as UTC from _now_iso)
+    # We keep it simple: combine date + time → aware datetime
+    from datetime import datetime, timezone, timedelta
+    dt = datetime.strptime(f"{work_date}T{hhmm}:00", "%Y-%m-%dT%H:%M:%S")
+    # Store as UTC string (the UI already shows times in local via toLocaleTimeString)
+    return dt.replace(tzinfo=timezone.utc).isoformat()
+
+
+@router.patch("/segment/{segment_id}/times")
+async def update_segment_times(
+    segment_id: int,
+    body: SegmentTimesBody,
+    db: Database = Depends(get_db),
+):
+    """Update start_time and/or end_time on a segment. Times are HH:MM in local time."""
+    rows = await db._q("SELECT * FROM time_segments WHERE id = ?", [segment_id])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Segment not found")
+    seg = rows[0]
+
+    updates: dict = {}
+    if body.start_time and body.work_date:
+        updates["start_time"] = _hhmm_to_iso(body.start_time, body.work_date)
+    if body.end_time and body.work_date:
+        end_iso = _hhmm_to_iso(body.end_time, body.work_date)
+        updates["end_time"] = end_iso
+        # Recompute duration
+        start = updates.get("start_time") or seg["start_time"]
+        updates["duration_minutes"] = _duration_minutes(start, end_iso)
+
+    if not updates:
+        raise HTTPException(status_code=422, detail="No valid time fields provided")
+
+    fields = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [segment_id]
+    await db._x(f"UPDATE time_segments SET {fields} WHERE id = ?", values)
+
+    rows = await db._q("SELECT * FROM time_segments WHERE id = ?", [segment_id])
+    return {"segment": dict(rows[0])}
+
+
+@router.patch("/session/{session_id}/times")
+async def update_session_times(
+    session_id: int,
+    body: SessionTimesBody,
+    db: Database = Depends(get_db),
+):
+    """Update clock_in and/or clock_out on a session. Times are HH:MM in local time."""
+    session = await db.get_time_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    updates: dict = {}
+    if body.clock_in and body.work_date:
+        updates["clock_in"] = _hhmm_to_iso(body.clock_in, body.work_date)
+    if body.clock_out and body.work_date:
+        updates["clock_out"] = _hhmm_to_iso(body.clock_out, body.work_date)
+
+    if not updates:
+        raise HTTPException(status_code=422, detail="No valid time fields provided")
+
+    await db.update_time_session(session_id, updates)
+    session = await db.get_time_session(session_id)
+    return {"session": dict(session)}
+
+
 @router.patch("/segment/{segment_id}/end")
 async def end_segment(segment_id: int, db: Database = Depends(get_db)):
     """Manually end a specific segment."""

@@ -466,6 +466,99 @@ function DriveTicketSettings({ current, onSave, onClose }: DriveTicketSettingsPr
   );
 }
 
+// ── EditTimesModal — edit start + end on a completed segment ──────────────────
+function EditTimesModal({ title, initStart, initEnd, onSave, onClose }: {
+  title: string;
+  initStart: string;
+  initEnd:   string;
+  onSave: (start: string, end: string) => void;
+  onClose: () => void;
+}) {
+  const [start, setStart] = useState(initStart);
+  const [end,   setEnd]   = useState(initEnd);
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+      zIndex: 300, display: 'flex', alignItems: 'flex-end',
+    }}>
+      <div style={{
+        background: '#fff', width: '100%', borderRadius: '18px 18px 0 0',
+        padding: 24, paddingBottom: 36,
+      }}>
+        <div style={{ fontWeight: 700, fontSize: 17, marginBottom: 4 }}>✏️ Edit Times</div>
+        <div style={{ fontSize: 13, color: '#64748b', marginBottom: 20 }}>{title}</div>
+        <div style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
+          <label style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 6 }}>START</div>
+            <input type="time" value={start} onChange={e => setStart(e.target.value)}
+              style={{ width: '100%', fontSize: 22, padding: '10px 12px', borderRadius: 10,
+                border: '2px solid #cbd5e1', fontWeight: 700, boxSizing: 'border-box' }} />
+          </label>
+          <label style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 6 }}>END</div>
+            <input type="time" value={end} onChange={e => setEnd(e.target.value)}
+              style={{ width: '100%', fontSize: 22, padding: '10px 12px', borderRadius: 10,
+                border: '2px solid #cbd5e1', fontWeight: 700, boxSizing: 'border-box' }} />
+          </label>
+        </div>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button onClick={onClose} style={{
+            flex: 1, padding: 14, borderRadius: 12, border: '1.5px solid #cbd5e1',
+            background: '#fff', fontSize: 16, fontWeight: 600, cursor: 'pointer', color: '#475569',
+          }}>Cancel</button>
+          <button onClick={() => start && end && onSave(start, end)} disabled={!start || !end}
+            style={{
+              flex: 2, padding: 14, borderRadius: 12, border: 'none',
+              background: start && end ? '#0f172a' : '#e2e8f0',
+              color: start && end ? '#fff' : '#94a3b8',
+              fontSize: 16, fontWeight: 700, cursor: start && end ? 'pointer' : 'default',
+            }}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── EditSingleTimeModal — edit one time (clock-in or clock-out) ───────────────
+function EditSingleTimeModal({ title, initValue, onSave, onClose }: {
+  title: string;
+  initValue: string;
+  onSave: (hhmm: string) => void;
+  onClose: () => void;
+}) {
+  const [val, setVal] = useState(initValue);
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+      zIndex: 300, display: 'flex', alignItems: 'flex-end',
+    }}>
+      <div style={{
+        background: '#fff', width: '100%', borderRadius: '18px 18px 0 0',
+        padding: 24, paddingBottom: 36,
+      }}>
+        <div style={{ fontWeight: 700, fontSize: 17, marginBottom: 20 }}>✏️ {title}</div>
+        <input type="time" value={val} onChange={e => setVal(e.target.value)}
+          style={{ width: '100%', fontSize: 28, padding: '12px 16px', borderRadius: 12,
+            border: '2px solid #cbd5e1', fontWeight: 700, marginBottom: 24,
+            boxSizing: 'border-box', textAlign: 'center' }} />
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button onClick={onClose} style={{
+            flex: 1, padding: 14, borderRadius: 12, border: '1.5px solid #cbd5e1',
+            background: '#fff', fontSize: 16, fontWeight: 600, cursor: 'pointer', color: '#475569',
+          }}>Cancel</button>
+          <button onClick={() => val && onSave(val)} disabled={!val}
+            style={{
+              flex: 2, padding: 14, borderRadius: 12, border: 'none',
+              background: val ? '#0f172a' : '#e2e8f0',
+              color: val ? '#fff' : '#94a3b8',
+              fontSize: 16, fontWeight: 700, cursor: val ? 'pointer' : 'default',
+            }}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function TimeTracking() {
@@ -495,7 +588,9 @@ export default function TimeTracking() {
   const [showTicketPicker, setShowTicketPicker] = useState(false);
   const [pickerMode,       setPickerMode]       = useState<'start' | 'switch'>('start');
   const [showDriveSettings, setShowDriveSettings] = useState(false);
-  const [showHistory,      setShowHistory]      = useState(false);
+  const [showHistory,      setShowHistory]      = useState(true);
+  const [editSegment,      setEditSegment]      = useState<TimeSegment | null>(null);
+  const [editClockField,   setEditClockField]   = useState<'in' | 'out' | null>(null);
   const [actionLoading,    setActionLoading]    = useState(false);
   const [submitError,      setSubmitError]      = useState<string | null>(null);
   const [submitOk,         setSubmitOk]         = useState(false);
@@ -770,6 +865,83 @@ export default function TimeTracking() {
     }
   };
 
+  // ── Edit segment times ────────────────────────────────────────────────────
+  const handleSaveSegmentTimes = async (
+    segId: number,
+    startHHMM: string,
+    endHHMM: string,
+  ) => {
+    if (!session) return;
+    const workDate = session.work_date;
+    const allSegs  = segments.filter(s => s.id !== segId && s.end_time);
+
+    // Overlap check: new interval must not overlap any other completed segment
+    const toMs = (hhmm: string) => {
+      const [h, m] = hhmm.split(':').map(Number);
+      return h * 60 + m;
+    };
+    const newStart = toMs(startHHMM);
+    const newEnd   = toMs(endHHMM);
+    if (newEnd <= newStart) {
+      alert('End time must be after start time.');
+      return;
+    }
+    const isoToHHMM = (iso: string | null) => {
+      if (!iso) return null;
+      try { return new Date(iso).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit', hour12: false }); }
+      catch { return null; }
+    };
+    for (const s of allSegs) {
+      const sStart = isoToHHMM(s.start_time);
+      const sEnd   = isoToHHMM(s.end_time);
+      if (!sStart || !sEnd) continue;
+      const sS = toMs(sStart), sE = toMs(sEnd);
+      if (newStart < sE && newEnd > sS) {
+        alert(`Time overlaps with another ${s.segment_type} segment (${sStart}–${sEnd}). Please adjust.`);
+        return;
+      }
+    }
+    try {
+      const r = await apiFetch<{ segment: TimeSegment }>(
+        'PATCH', `/time/segment/${segId}/times`,
+        { start_time: startHHMM, end_time: endHHMM, work_date: workDate }
+      );
+      setSegments(prev => prev.map(s => s.id === segId ? r.segment : s));
+      setEditSegment(null);
+    } catch (e: unknown) {
+      alert(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  // ── Edit clock-in / clock-out ─────────────────────────────────────────────
+  const handleSaveClockTime = async (field: 'in' | 'out', hhmm: string) => {
+    if (!session) return;
+    const workDate = session.work_date;
+    const body = field === 'in'
+      ? { clock_in: hhmm, work_date: workDate }
+      : { clock_out: hhmm, work_date: workDate };
+
+    // Basic sanity: clock-out must be after clock-in
+    if (field === 'out' && session.clock_in) {
+      const isoToHHMM = (iso: string) => new Date(iso).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const inHHMM  = isoToHHMM(session.clock_in);
+      const toMs = (t: string) => { const [h,m] = t.split(':').map(Number); return h*60+m; };
+      if (toMs(hhmm) <= toMs(inHHMM)) {
+        alert('Clock-out must be after clock-in.');
+        return;
+      }
+    }
+    try {
+      const r = await apiFetch<{ session: TimeSession }>(
+        'PATCH', `/time/session/${session.id}/times`, body
+      );
+      setSession(r.session);
+      setEditClockField(null);
+    } catch (e: unknown) {
+      alert(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   // ── Sign out (clear localStorage) ────────────────────────────────────────
   const handleSignOut = () => {
     clearStoredSession();
@@ -934,14 +1106,21 @@ export default function TimeTracking() {
           <div style={{
             display: 'flex', gap: 16, marginTop: 12,
             padding: '10px 14px', background: '#1e293b', borderRadius: 10,
+            alignItems: 'center',
           }}>
-            <div style={{ color: '#94a3b8', fontSize: 13 }}>
-              In: <span style={{ color: '#fff', fontWeight: 600 }}>{fmtTime(session?.clock_in ?? null)}</span>
-            </div>
+            <button
+              onClick={() => setEditClockField('in')}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#94a3b8', fontSize: 13 }}
+            >
+              In: <span style={{ color: '#22c55e', fontWeight: 600, textDecoration: 'underline dotted' }}>{fmtTime(session?.clock_in ?? null)}</span>
+            </button>
             {isClockedOut && (
-              <div style={{ color: '#94a3b8', fontSize: 13 }}>
-                Out: <span style={{ color: '#fff', fontWeight: 600 }}>{fmtTime(session?.clock_out ?? null)}</span>
-              </div>
+              <button
+                onClick={() => setEditClockField('out')}
+                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#94a3b8', fontSize: 13 }}
+              >
+                Out: <span style={{ color: '#f87171', fontWeight: 600, textDecoration: 'underline dotted' }}>{fmtTime(session?.clock_out ?? null)}</span>
+              </button>
             )}
             <div style={{ color: '#94a3b8', fontSize: 13, marginLeft: 'auto' }}>
               Total: <span style={{ color: '#22c55e', fontWeight: 700 }}>{fmtDuration(totalMinutes)}</span>
@@ -1164,7 +1343,7 @@ export default function TimeTracking() {
                     padding: '12px 20px', borderBottom: '1px solid #f1f5f9',
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   }}>
-                    <div>
+                    <div style={{ flex: 1 }}>
                       <span style={{
                         display: 'inline-block', padding: '2px 8px', borderRadius: 12,
                         fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
@@ -1185,11 +1364,18 @@ export default function TimeTracking() {
                         {fmtTime(seg.start_time)} – {fmtTime(seg.end_time)}
                       </div>
                     </div>
-                    <div style={{
-                      fontWeight: 700, fontSize: 15, color: '#0f172a',
-                      minWidth: 50, textAlign: 'right',
-                    }}>
-                      {fmtDuration(seg.duration_minutes)}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ fontWeight: 700, fontSize: 15, color: '#0f172a', minWidth: 44, textAlign: 'right' }}>
+                        {fmtDuration(seg.duration_minutes)}
+                      </div>
+                      <button
+                        onClick={() => setEditSegment(seg)}
+                        title="Edit times"
+                        style={{
+                          background: '#f1f5f9', border: 'none', borderRadius: 8,
+                          padding: '6px 10px', cursor: 'pointer', fontSize: 16, color: '#475569',
+                        }}
+                      >✏️</button>
                     </div>
                   </div>
                 ))}
@@ -1198,6 +1384,45 @@ export default function TimeTracking() {
           </div>
         )}
       </div>
+
+      {/* ── Edit segment times modal ─────────────────────────────────────── */}
+      {editSegment && session && (() => {
+        const toHHMM = (iso: string | null) => {
+          if (!iso) return '';
+          try { return new Date(iso).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit', hour12: false }); }
+          catch { return ''; }
+        };
+        const initStart = toHHMM(editSegment.start_time);
+        const initEnd   = toHHMM(editSegment.end_time);
+        return (
+          <EditTimesModal
+            title={`Edit ${editSegment.segment_type} segment${editSegment.work_ticket_name ? ` — ${editSegment.work_ticket_name}` : ''}`}
+            initStart={initStart}
+            initEnd={initEnd}
+            onSave={(s, e) => handleSaveSegmentTimes(editSegment.id, s, e)}
+            onClose={() => setEditSegment(null)}
+          />
+        );
+      })()}
+
+      {/* ── Edit clock-in / clock-out modal ──────────────────────────────── */}
+      {editClockField && session && (() => {
+        const toHHMM = (iso: string | null) => {
+          if (!iso) return '';
+          try { return new Date(iso).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit', hour12: false }); }
+          catch { return ''; }
+        };
+        const isOut  = editClockField === 'out';
+        const initVal = toHHMM(isOut ? session.clock_out : session.clock_in);
+        return (
+          <EditSingleTimeModal
+            title={isOut ? 'Edit Clock-Out Time' : 'Edit Clock-In Time'}
+            initValue={initVal}
+            onSave={(hhmm) => handleSaveClockTime(editClockField, hhmm)}
+            onClose={() => setEditClockField(null)}
+          />
+        );
+      })()}
 
       {/* ── Modals ────────────────────────────────────────────────────────── */}
       {showTicketPicker && (
