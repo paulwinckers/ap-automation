@@ -306,6 +306,35 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
     }
 
 
+@router.get("/aspire/auth-probe")
+async def aspire_auth_probe():
+    """
+    Probe Aspire /Authorization directly and return the raw response body
+    regardless of status code — useful for diagnosing credential issues.
+    """
+    import httpx as _httpx
+    base = _aspire.base_url
+    try:
+        async with _httpx.AsyncClient(timeout=15) as c:
+            resp = await c.post(
+                f"{base}/Authorization",
+                json={
+                    "ClientId": settings.ASPIRE_CLIENT_ID,
+                    "Secret":   settings.ASPIRE_CLIENT_SECRET,
+                },
+            )
+        return {
+            "status_code":    resp.status_code,
+            "response_body":  resp.text[:2000],
+            "client_id_set":  bool(settings.ASPIRE_CLIENT_ID),
+            "secret_set":     bool(settings.ASPIRE_CLIENT_SECRET),
+            "client_id_len":  len(settings.ASPIRE_CLIENT_ID or ""),
+            "base_url":       base,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/aspire/discover")
 async def aspire_discover():
     """
