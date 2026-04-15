@@ -434,16 +434,20 @@ async def complete_work_ticket(
         ]
         if comment:
             note_lines += ["", comment]
+        if photo_urls:
+            note_lines += ["", "Photos:"]
+            for url in photo_urls:
+                note_lines.append(url)
         issue_notes = "\n".join(note_lines)
 
         today_dt = f"{date.today().isoformat()}T00:00:00Z"
         issue_body = {
-            "Subject":       f"Work ticket update — #{ticket_id}",
+            "Subject":       f"Visit note — {date.today().strftime('%b %d, %Y')}",
             "Notes":         issue_notes,
             "WorkTicketID":  ticket_id,
-            "PublicComment": False,
+            "PublicComment": True,   # makes this visible in the customer portal
             "DueDate":       today_dt,
-            "CompleteDate":  today_dt,   # marks the issue as complete immediately
+            "CompleteDate":  today_dt,
         }
         if submitter_contact_id:
             issue_body["AssignedTo"] = submitter_contact_id
