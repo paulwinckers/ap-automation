@@ -146,9 +146,18 @@ async def get_session(
 
 @router.post("/clock-in")
 async def clock_in(body: ClockInBody, db: Database = Depends(get_db)):
-    """Create a session (idempotent — returns existing session if already clocked in today)."""
+    """
+    Create or resume a session for the day.
+    - No session yet → create fresh one.
+    - Session exists, not clocked out → return it as-is.
+    - Session exists, clocked out → clear clock_out so they can continue.
+    """
     existing = await db.get_time_session_for_day(body.employee_id, body.work_date)
     if existing:
+        if existing.get("clock_out"):
+            # Re-open: clear clock_out so they can keep working
+            await db.update_time_session(existing["id"], {"clock_out": None})
+            existing = await db.get_time_session(existing["id"])
         segments = await db.get_time_segments(existing["id"])
         return {
             "session":  dict(existing),
@@ -258,16 +267,13 @@ async def get_work_tickets(work_date: str = Query(...)):
 
 
 @router.get("/work-tickets/search")
-async def search_work_tickets(
-    q:        str = Query(default=""),
-    division: str = Query(default=""),
-):
+async def search_work_tickets(q: str = Query(default="")):
     """
-    Search work tickets by keyword — no date filter.
-    Used for drive-ticket setup (Indirect division tickets aren't on today's schedule).
+    Search work tickets by keyword (ticket # or opportunity name).
+    Wide date window (±3 months) so monthly recurring tickets are always found.
     """
     try:
-        tickets = await _aspire.search_work_tickets(query=q, division=division)
+        tickets = await _aspire.search_work_tickets(query=q)
         return {"work_tickets": tickets}
     except Exception as e:
         logger.error(f"search_work_tickets failed: {e}", exc_info=True)

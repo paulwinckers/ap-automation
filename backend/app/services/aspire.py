@@ -954,77 +954,75 @@ class AspireClient:
             logger.error(f"get_crew_members_with_pin failed: {e}", exc_info=True)
             return []
 
-    async def search_work_tickets(self, query: str = "", division: str = "") -> list[dict]:
+    async def search_work_tickets(self, query: str = "") -> list[dict]:
         """
-        Search work tickets by keyword across OpportunityName / WorkTicketNumber.
-        Optionally filter by division name (e.g. 'Indirect').
-        No date filter — returns tickets from any time period.
-        Used for drive-ticket setup where the ticket may not be today-scheduled.
+        Search work tickets by ticket number or opportunity name.
+        Uses a broad date range (current month ± 3 months) so recurring
+        monthly tickets (e.g. drive time) are always found.
+        Falls back to today's tickets if the broad search fails.
         """
-        filters = []
-        if division:
-            filters.append(f"DivisionName eq '{division}'")
+        from datetime import date as _date, timedelta
+        today = _date.today()
+        # Wide window: 3 months back to 3 months forward
+        since = (today.replace(day=1) - timedelta(days=90)).strftime("%Y-%m-%d")
+        until = (today.replace(day=1) + timedelta(days=90)).strftime("%Y-%m-%d")
 
         params: dict = {
-            "$select": (
-                "WorkTicketID,WorkTicketNumber,OpportunityID,"
-                "WorkTicketStatusName,DivisionName,"
-                "HoursAct,HoursEst,ScheduledStartDate"
-            ),
-            "$top": "200",
-            "$orderby": "WorkTicketNumber desc",
+            "$select": "WorkTicketID,WorkTicketNumber,OpportunityID,WorkTicketStatusName,ScheduledStartDate",
+            "$filter": f"ScheduledStartDate ge {since} and ScheduledStartDate le {until}",
+            "$top": "500",
+            "$orderby": "ScheduledStartDate desc",
         }
-        if filters:
-            params["$filter"] = " and ".join(filters)
 
         try:
             result = await self._get("WorkTickets", params)
             tickets = self._extract_list(result)
 
-            # Fetch opportunity names for the returned tickets
+            # Fetch opportunity names
             opp_ids = list({t["OpportunityID"] for t in tickets if t.get("OpportunityID")})
             opp_map: dict[int, str] = {}
-            if opp_ids:
-                # Batch fetch up to 50 opportunity names
-                for chunk_start in range(0, min(len(opp_ids), 100), 50):
-                    chunk = opp_ids[chunk_start:chunk_start + 50]
-                    id_list = ",".join(str(i) for i in chunk)
-                    try:
-                        opp_result = await self._get("Opportunities", {
-                            "$select": "OpportunityID,OpportunityName,PropertyName",
-                            "$filter": f"OpportunityID in ({id_list})",
-                            "$top": "50",
-                        })
-                        for o in self._extract_list(opp_result):
-                            oid = o.get("OpportunityID")
-                            if oid:
-                                opp_map[int(oid)] = (
-                                    o.get("OpportunityName") or o.get("PropertyName") or ""
-                                )
-                    except Exception:
-                        pass
+            for chunk_start in range(0, len(opp_ids), 50):
+                chunk = opp_ids[chunk_start:chunk_start + 50]
+                id_list = ",".join(str(i) for i in chunk)
+                try:
+                    opp_result = await self._get("Opportunities", {
+                        "$select": "OpportunityID,OpportunityName,PropertyName",
+                        "$filter": f"OpportunityID in ({id_list})",
+                        "$top": "50",
+                    })
+                    for o in self._extract_list(opp_result):
+                        oid = o.get("OpportunityID")
+                        if oid:
+                            opp_map[int(oid)] = (
+                                o.get("OpportunityName") or o.get("PropertyName") or ""
+                            )
+                except Exception:
+                    pass
 
             out = []
             query_lower = query.strip().lower()
+            seen: set[int] = set()
             for t in tickets:
+                wt_id = t.get("WorkTicketID")
+                if wt_id in seen:
+                    continue
+                seen.add(wt_id)
                 opp_id = t.get("OpportunityID")
                 opp_name = opp_map.get(int(opp_id), "") if opp_id else ""
                 t["OpportunityName"] = opp_name
-                t["WorkTicketTitle"] = opp_name or f"Ticket #{t.get('WorkTicketNumber') or t.get('WorkTicketID')}"
+                t["WorkTicketTitle"] = opp_name or f"Ticket #{t.get('WorkTicketNumber') or wt_id}"
 
-                # Client-side keyword filter (OData 'contains' not always supported)
                 if query_lower:
                     searchable = " ".join([
                         opp_name,
                         str(t.get("WorkTicketNumber") or ""),
-                        str(t.get("WorkTicketID") or ""),
-                        t.get("DivisionName") or "",
+                        str(wt_id or ""),
                     ]).lower()
                     if query_lower not in searchable:
                         continue
                 out.append(t)
 
-            logger.info(f"search_work_tickets query={query!r} division={division!r} → {len(out)} results")
+            logger.info(f"search_work_tickets query={query!r} → {len(out)} results from {len(tickets)} fetched")
             return out
         except Exception as e:
             logger.error(f"search_work_tickets failed: {e}", exc_info=True)

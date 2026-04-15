@@ -329,11 +329,11 @@ function DriveTicketSettings({ current, onSave, onClose }: DriveTicketSettingsPr
   const [loading,  setLoading]  = useState(false);
   const [searched, setSearched] = useState(false);
 
-  // Auto-load Indirect division tickets on open
+  // Auto-load all tickets (±3 month window) on open
   useEffect(() => {
     setLoading(true);
     setSearched(false);
-    apiFetch<{ work_tickets: WorkTicket[] }>('GET', '/time/work-tickets/search?division=Indirect')
+    apiFetch<{ work_tickets: WorkTicket[] }>('GET', '/time/work-tickets/search')
       .then(r => { setTickets(r.work_tickets || []); setSearched(true); })
       .catch(() => setSearched(true))
       .finally(() => setLoading(false));
@@ -1094,9 +1094,23 @@ export default function TimeTracking() {
           </button>
         )}
 
-        {/* ── Submit to Aspire ──────────────────────────────────────────── */}
+        {/* ── Clocked-out controls ──────────────────────────────────────── */}
         {isClockedOut && !isSubmitted && (
           <>
+            {/* Clock back in */}
+            <button
+              onClick={handleClockIn}
+              disabled={actionLoading}
+              style={{
+                width: '100%', minHeight: 56, borderRadius: 14,
+                background: '#0f172a', border: '2px solid #22c55e', color: '#22c55e',
+                fontSize: 16, fontWeight: 700, cursor: 'pointer',
+                opacity: actionLoading ? 0.6 : 1,
+              }}
+            >
+              🟢 Clock Back In
+            </button>
+
             {submitError && (
               <div style={{
                 background: '#fee2e2', borderRadius: 10, padding: '12px 16px',
