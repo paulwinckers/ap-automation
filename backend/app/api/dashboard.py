@@ -1089,6 +1089,28 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
 
     activities = [a for a in raw if is_active(a)]
 
+    # ── Batch-fetch property names for all unique PropertyIDs ─────────────────
+    property_name_map: dict[int, str] = {}
+    prop_ids = list({a.get("PropertyID") for a in activities if a.get("PropertyID")})
+    if prop_ids:
+        # Aspire OData filter: PropertyID eq 1 or PropertyID eq 2 ...
+        chunk_size = 50
+        for i in range(0, len(prop_ids), chunk_size):
+            chunk = prop_ids[i:i + chunk_size]
+            id_filter = " or ".join(f"PropertyID eq {pid}" for pid in chunk)
+            try:
+                pres = await _aspire._get("Properties", {
+                    "$filter":  id_filter,
+                    "$select":  "PropertyID,PropertyName",
+                    "$top":     str(len(chunk)),
+                })
+                for p in _aspire._extract_list(pres):
+                    pid = p.get("PropertyID")
+                    if pid:
+                        property_name_map[pid] = p.get("PropertyName") or ""
+            except Exception as e:
+                logger.warning(f"Property name lookup failed: {e}")
+
     now = datetime.now(timezone.utc)
     week_end = now + timedelta(days=7)
 
@@ -1128,7 +1150,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "category":      a.get("ActivityCategoryName") or "",
             "notes":         (a.get("Notes") or "")[:200],   # truncate for perf
             "property_id":   a.get("PropertyID"),
-            "property_name": "",
+            "property_name": property_name_map.get(a.get("PropertyID"), ""),
             "due_date":      due_dt.date().isoformat()      if due_dt      else None,
             "start_date":    parse_dt(a.get("StartDate")).date().isoformat() if parse_dt(a.get("StartDate")) else None,
             "complete_date": parse_dt(a.get("CompleteDate")).date().isoformat() if parse_dt(a.get("CompleteDate")) else None,
