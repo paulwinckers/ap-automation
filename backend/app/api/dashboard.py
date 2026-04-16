@@ -1034,9 +1034,9 @@ async def debug_issue(issue_number: int):
     """Return raw Notes HTML + parsed fields for a specific Issue number."""
     import re as _re
     raw = await _aspire._get_all("Activities", {
-        "$select": "ActivityID,Subject,ActivityType,Status,Notes",
-        "$filter": f"CreatedDate ge 2026-01-01T00:00:00Z",
+        "$select": "ActivityID,Subject,ActivityType,Status,Notes,CreatedDate,ModifiedDate",
         "$top": "500",
+        "$orderby": "ModifiedDate desc",
     })
     matches = []
     for a in raw:
