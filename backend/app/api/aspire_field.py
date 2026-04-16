@@ -938,6 +938,143 @@ async def create_opportunity(
     }
 
 
+@router.post("/issue")
+async def create_field_issue(
+    submitter_name:   str               = Form(...),
+    property_id:      Optional[int]     = Form(default=None),
+    property_name:    Optional[str]     = Form(default=None),
+    subject:          str               = Form(...),
+    assigned_to_id:   Optional[int]     = Form(default=None),   # UserID
+    assigned_to_name: Optional[str]     = Form(default=None),
+    priority:         Optional[str]     = Form(default=None),   # High / Normal / Low
+    due_date:         Optional[str]     = Form(default=None),   # YYYY-MM-DD
+    notes:            str               = Form(default=""),
+    photos:           List[UploadFile]  = File(default=[]),
+):
+    """
+    Create a new Aspire Issue linked to a Property.
+    Photos are uploaded to R2 and their URLs embedded in the Notes field.
+    """
+    _check_credentials()
+
+    if len(photos) > MAX_FILES:
+        raise HTTPException(status_code=400, detail=f"Maximum {MAX_FILES} files allowed")
+
+    # ── Read & validate photos ────────────────────────────────────────────────
+    photo_data: list[tuple[str, bytes]] = []
+    for i, photo in enumerate(photos):
+        raw = await photo.read()
+        is_vid   = _is_video(photo.filename or "")
+        max_size = MAX_VIDEO_SIZE if is_vid else MAX_PHOTO_SIZE
+        if len(raw) > max_size:
+            label = "200 MB per video" if is_vid else "15 MB per photo"
+            raise HTTPException(status_code=413, detail=f"File {i+1} too large (max {label})")
+        photo_data.append((photo.filename or f"photo_{i+1}.jpg", raw))
+
+    # ── Upload photos to R2 ───────────────────────────────────────────────────
+    ONE_YEAR = 365 * 24 * 3600
+    photo_urls: list[str] = []
+    for fname, raw in photo_data:
+        result = await r2.upload_field_photo(
+            file_bytes=raw,
+            filename=fname,
+            submitter=submitter_name,
+            entity_type="issue",
+            entity_id=f"prop{property_id or 0}",
+            expires_in=ONE_YEAR,
+        )
+        if result:
+            _key, url = result
+            photo_urls.append(url)
+
+    # ── Build notes text ─────────────────────────────────────────────────────
+    lines = [
+        f"Submitted by: {submitter_name}",
+        f"Date: {date.today().isoformat()}",
+    ]
+    if property_name:
+        lines.append(f"Property: {property_name}")
+    if notes:
+        lines.append(f"\n{notes}")
+    if photo_urls:
+        lines.append("\nPhotos:")
+        lines.extend(f"  {url}" for url in photo_urls)
+    notes_text = "\n".join(lines)
+
+    # ── Resolve AssignedTo UserID ─────────────────────────────────────────────
+    assigned_uid = assigned_to_id
+    if not assigned_uid and assigned_to_name:
+        try:
+            employees = await _aspire.get_aspire_employees()
+            for emp in employees:
+                if emp.get("FullName", "").lower() == assigned_to_name.lower():
+                    uid = emp.get("UserID")
+                    if uid:
+                        assigned_uid = uid
+                    break
+        except Exception:
+            pass
+    if not assigned_uid:
+        assigned_uid = settings.ASPIRE_DEFAULT_USER_ID
+
+    # ── POST to Aspire Issues ─────────────────────────────────────────────────
+    def _as_dt(d: Optional[str]) -> Optional[str]:
+        if not d:
+            return None
+        return d if "T" in d else f"{d}T00:00:00"
+
+    issue_body: dict = {
+        "Subject":       subject,
+        "Notes":         notes_text,
+        "PublicComment": False,
+        "AssignedTo":    assigned_uid,
+    }
+    if property_id:
+        issue_body["PropertyID"] = property_id
+    if priority:
+        issue_body["Priority"] = priority
+    if due_date:
+        issue_body["DueDate"] = _as_dt(due_date)
+
+    logger.info(f"Issue POST body: {issue_body}")
+    try:
+        result = await _aspire.create_issue(issue_body)
+    except Exception as e:
+        logger.error(f"Issue creation failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to create issue in Aspire: {e}")
+
+    logger.info(f"Aspire create_issue response: {result}")
+
+    # Parse returned IssueID
+    if isinstance(result, (int, float)):
+        issue_id = int(result)
+    else:
+        issue_id = (
+            result.get("IssueID")
+            or result.get("Id")
+            or result.get("id")
+        )
+        try:
+            issue_id = int(issue_id) if issue_id is not None else None
+        except (ValueError, TypeError):
+            issue_id = None
+
+    logger.info(
+        f"New issue created: ID={issue_id} '{subject}' for property {property_id} "
+        f"by {submitter_name}, {len(photo_urls)} photo(s)"
+    )
+
+    return {
+        "success":        True,
+        "issue_id":       issue_id,
+        "subject":        subject,
+        "property_id":    property_id,
+        "property_name":  property_name,
+        "photos_uploaded": len(photo_urls),
+        "submitter":      submitter_name,
+    }
+
+
 @router.get("/visit-notes/probe")
 async def probe_visit_notes(ticket_id: int = Query(default=16914)):
     """Probe VisitNotes endpoint and WorkTicket PATCH to find customer-portal-visible note path."""

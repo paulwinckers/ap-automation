@@ -378,8 +378,49 @@ export async function getScheduledTickets(range: TicketRange, workDate?: string)
 
 export interface AspireEmployee {
   ContactID: number;
+  UserID?: number;
   FullName: string;
   Email?: string;
+}
+
+// ── Field Issue ───────────────────────────────────────────────────────────────
+
+export interface CreateIssueResponse {
+  success: boolean;
+  issue_id: number | null;
+  subject: string;
+  property_id: number | null;
+  property_name: string | null;
+  photos_uploaded: number;
+  submitter: string;
+}
+
+export interface FieldIssuePayload {
+  submitterName: string;
+  propertyId?: number;
+  propertyName?: string;
+  subject: string;
+  assignedToId?: number;
+  assignedToName?: string;
+  priority?: string;
+  dueDate?: string;
+  notes: string;
+  photos: File[];
+}
+
+export async function createFieldIssue(p: FieldIssuePayload): Promise<CreateIssueResponse> {
+  const form = new FormData();
+  form.append('submitter_name', p.submitterName);
+  if (p.propertyId)      form.append('property_id',      String(p.propertyId));
+  if (p.propertyName)    form.append('property_name',    p.propertyName);
+  form.append('subject', p.subject);
+  if (p.assignedToId)    form.append('assigned_to_id',   String(p.assignedToId));
+  if (p.assignedToName)  form.append('assigned_to_name', p.assignedToName);
+  if (p.priority)        form.append('priority',         p.priority);
+  if (p.dueDate)         form.append('due_date',         p.dueDate);
+  form.append('notes', p.notes);
+  for (const photo of p.photos) form.append('photos', photo);
+  return request<CreateIssueResponse>('POST', '/aspire/field/issue', form, true);
 }
 
 export async function getAspireEmployees(): Promise<AspireEmployee[]> {

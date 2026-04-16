@@ -12,6 +12,7 @@ const FIELD_LINKS = [
   { to: '/field',             icon: '🧾', label: 'Submit Receipt',       sub: 'Invoices, MC & expenses' },
   { to: '/field/work-ticket', icon: '✅', label: 'Schedule',             sub: 'View routes & complete tickets' },
   { to: '/field/opportunity', icon: '➕', label: 'New Opportunity',       sub: 'Create a job in Aspire' },
+  { to: '/field/issue',       icon: '⚠️', label: 'New Issue',              sub: 'Log a site issue' },
 ];
 
 const OFFICE_GROUPS = [
