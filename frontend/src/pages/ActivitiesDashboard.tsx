@@ -352,26 +352,23 @@ export default function ActivitiesDashboard() {
   const [data,          setData]          = useState<ActivitiesDashboardData | null>(null);
   const [loading,       setLoading]       = useState(true);
   const [error,         setError]         = useState<string | null>(null);
-  const [showCompleted,  setShowCompleted]  = useState(false);
-  const [includeEmails,  setIncludeEmails]  = useState(false);
-  const [completedIds,   setCompletedIds]   = useState<Set<number>>(new Set());
+  const [showCompleted,    setShowCompleted]    = useState(false);
+  const [completedIds,     setCompletedIds]     = useState<Set<number>>(new Set());
 
   // Filters
-  const [search,         setSearch]         = useState('');
-  const [filterType,     setFilterType]     = useState('All');
-  const [filterStatus,   setFilterStatus]   = useState('All');
-  const [filterPriority, setFilterPriority] = useState('All');
-  const [filterCategory, setFilterCategory] = useState('All');
-  const [filterCreatedBy,setFilterCreatedBy]= useState('All');
-  const [groupBy,        setGroupBy]        = useState<'type' | 'status' | 'flat'>('type');
+  const [search,           setSearch]           = useState('');
+  const [filterAssignedTo, setFilterAssignedTo] = useState('All');
+  const [filterPriority,   setFilterPriority]   = useState('All');
+  const [filterStatus,     setFilterStatus]     = useState('All');
+  const [groupBy,          setGroupBy]          = useState<'status' | 'flat'>('flat');
 
   useEffect(() => {
     setLoading(true); setError(null);
-    getActivitiesDashboard(showCompleted, includeEmails)
+    getActivitiesDashboard(showCompleted)
       .then(setData)
       .catch(e => setError((e as Error).message))
       .finally(() => setLoading(false));
-  }, [showCompleted, includeEmails]);
+  }, [showCompleted]);
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', flexDirection: 'column', gap: 12 }}>
@@ -389,7 +386,7 @@ export default function ActivitiesDashboard() {
     </div>
   );
 
-  const { activity_types, statuses, priorities, categories, created_by_list, activities } = data;
+  const { statuses, priorities, assigned_to_list, activities } = data;
 
   function handleCompleted(id: number) {
     setCompletedIds(s => new Set([...s, id]));
@@ -398,10 +395,9 @@ export default function ActivitiesDashboard() {
   const searchLower = search.trim().toLowerCase();
 
   const visible = activities.filter(a => !completedIds.has(a.id) &&
-    (filterType      === 'All' || a.activity_type === filterType) &&
-    (filterStatus    === 'All' || a.status        === filterStatus) &&
-    (filterPriority  === 'All' || a.priority      === filterPriority) &&
-    (filterCategory  === 'All' || a.category      === filterCategory) &&
+    (filterAssignedTo === 'All' || a.assigned_to.includes(filterAssignedTo)) &&
+    (filterStatus     === 'All' || a.status   === filterStatus) &&
+    (filterPriority   === 'All' || a.priority === filterPriority) &&
     (!searchLower || (
       a.subject.toLowerCase().includes(searchLower) ||
       a.property_name.toLowerCase().includes(searchLower) ||
@@ -431,65 +427,41 @@ export default function ActivitiesDashboard() {
         padding: '10px 28px',
         display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
       }}>
-        {/* Search */}
+        {/* Assigned To */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontSize: 14, color: '#9ca3af' }}>🔍</span>
-          <input
-            type="text" placeholder="Search subject, notes, category…"
-            value={search} onChange={e => setSearch(e.target.value)}
-            style={{
-              fontSize: 12, padding: '5px 10px', borderRadius: 6, outline: 'none', width: 220,
-              border: `1px solid ${search ? '#2563eb' : '#e5e7eb'}`,
-              background: search ? '#eff6ff' : '#fff', color: '#1f2937',
-            }}
-          />
-          {search && <button onClick={() => setSearch('')} style={{ fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>}
-        </div>
-
-        {/* Type */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Type:</label>
-          <select value={filterType} onChange={e => setFilterType(e.target.value)} style={SEL(filterType !== 'All')}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Assigned To:</label>
+          <select value={filterAssignedTo} onChange={e => setFilterAssignedTo(e.target.value)} style={SEL(filterAssignedTo !== 'All')}>
             <option value="All">All</option>
-            {activity_types.map(t => <option key={t} value={t}>{t}</option>)}
+            {assigned_to_list.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
         </div>
 
-        {/* Priority */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Priority:</label>
-          <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #e5e7eb' }}>
-            {(['All', 'High', 'Medium', 'Low'] as const).map((opt, i) => (
-              <button key={opt} onClick={() => setFilterPriority(opt)} style={{
-                padding: '5px 10px', fontSize: 12, border: 'none', cursor: 'pointer',
-                fontWeight: filterPriority === opt ? 700 : 400,
-                background: filterPriority === opt ? '#2563eb' : '#fff',
-                color:      filterPriority === opt ? '#fff'    : '#6b7280',
-                borderRight: i < 3 ? '1px solid #e5e7eb' : 'none',
-              }}>{opt}</button>
-            ))}
-          </div>
-        </div>
-
-        {/* Category */}
-        {categories.length > 0 && (
+        {/* Status */}
+        {statuses.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Category:</label>
-            <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} style={SEL(filterCategory !== 'All')}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Status:</label>
+            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={SEL(filterStatus !== 'All')}>
               <option value="All">All</option>
-              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              {statuses.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
         )}
 
-        {/* Created by */}
-        {created_by_list.length > 0 && (
+        {/* Priority */}
+        {priorities.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Created by:</label>
-            <select value={filterCreatedBy} onChange={e => setFilterCreatedBy(e.target.value)} style={SEL(filterCreatedBy !== 'All')}>
-              <option value="All">All</option>
-              {created_by_list.map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
+            <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Priority:</label>
+            <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #e5e7eb' }}>
+              {(['All', 'High', 'Medium', 'Low'] as const).map((opt, i) => (
+                <button key={opt} onClick={() => setFilterPriority(opt)} style={{
+                  padding: '5px 10px', fontSize: 12, border: 'none', cursor: 'pointer',
+                  fontWeight: filterPriority === opt ? 700 : 400,
+                  background: filterPriority === opt ? '#2563eb' : '#fff',
+                  color:      filterPriority === opt ? '#fff'    : '#6b7280',
+                  borderRight: i < 3 ? '1px solid #e5e7eb' : 'none',
+                }}>{opt}</button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -507,46 +479,41 @@ export default function ActivitiesDashboard() {
           {showCompleted ? '✓ Showing Completed' : 'Show Completed'}
         </button>
 
-        {/* Include emails toggle */}
-        <button
-          onClick={() => setIncludeEmails(s => !s)}
-          style={{
-            padding: '5px 12px', fontSize: 12, borderRadius: 6, cursor: 'pointer',
-            border: '1px solid #e5e7eb',
-            background: includeEmails ? '#7c3aed' : '#fff',
-            color:      includeEmails ? '#fff'    : '#6b7280',
-            fontWeight: includeEmails ? 700 : 400,
-          }}
-        >
-          {includeEmails ? '✓ Emails Shown' : 'Show Emails'}
-        </button>
-
-        {/* Group by */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Group by:</label>
-          <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #e5e7eb' }}>
-            {([['type', 'Type'], ['status', 'Status'], ['flat', 'None']] as const).map(([val, label], i) => (
-              <button key={val} onClick={() => setGroupBy(val)} style={{
-                padding: '5px 12px', fontSize: 12, border: 'none', cursor: 'pointer',
-                fontWeight: groupBy === val ? 700 : 400,
-                background: groupBy === val ? '#2563eb' : '#fff',
-                color:      groupBy === val ? '#fff'    : '#6b7280',
-                borderRight: i < 2 ? '1px solid #e5e7eb' : 'none',
-              }}>{label}</button>
-            ))}
+        {/* Group by + Search on the right */}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Group by:</label>
+            <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #e5e7eb' }}>
+              {([['status', 'Status'], ['flat', 'None']] as const).map(([val, label], i) => (
+                <button key={val} onClick={() => setGroupBy(val)} style={{
+                  padding: '5px 12px', fontSize: 12, border: 'none', cursor: 'pointer',
+                  fontWeight: groupBy === val ? 700 : 400,
+                  background: groupBy === val ? '#2563eb' : '#fff',
+                  color:      groupBy === val ? '#fff'    : '#6b7280',
+                  borderRight: i < 1 ? '1px solid #e5e7eb' : 'none',
+                }}>{label}</button>
+              ))}
+            </div>
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ fontSize: 14, color: '#9ca3af' }}>🔍</span>
+            <input
+              type="text" placeholder="Search…"
+              value={search} onChange={e => setSearch(e.target.value)}
+              style={{
+                fontSize: 12, padding: '5px 10px', borderRadius: 6, outline: 'none', width: 160,
+                border: `1px solid ${search ? '#2563eb' : '#e5e7eb'}`,
+                background: search ? '#eff6ff' : '#fff', color: '#1f2937',
+              }}
+            />
+            {search && <button onClick={() => setSearch('')} style={{ fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>}
+          </div>
+          <span style={{ fontSize: 11, color: '#9ca3af' }}>{visible.length} showing</span>
         </div>
-
-        <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 'auto' }}>{visible.length} showing</span>
       </div>
 
       {/* Content */}
       <div style={{ padding: '16px 28px 28px' }}>
-        {groupBy === 'type' && (
-          grouped('activity_type').map(([type, acts]) => (
-            <GroupSection key={type} title={type} activities={acts} showGroup="type" onCompleted={handleCompleted} />
-          ))
-        )}
         {groupBy === 'status' && (
           grouped('status').map(([status, acts]) => (
             <GroupSection key={status} title={status} activities={acts} showGroup="status" onCompleted={handleCompleted} />

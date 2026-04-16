@@ -1202,21 +1202,21 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     activity_types = sorted({s["activity_type"] for s in shaped if s["activity_type"] and s["activity_type"] != "Unknown"})
     statuses       = sorted({s["status"]         for s in shaped if s["status"]})
     priorities     = sorted({s["priority"]        for s in shaped if s["priority"]})
-    categories     = sorted({s["category"]        for s in shaped if s["category"]})
-    created_by_list= sorted({s["created_by"]      for s in shaped if s["created_by"]})
+    categories      = sorted({s["category"]   for s in shaped if s["category"]})
+    assigned_to_list= sorted({u for s in shaped for u in s["assigned_to"] if u})
 
     # Strip internal keys before returning
     def clean(a: dict) -> dict:
         return {k: v for k, v in a.items() if not k.startswith("_")}
 
     return {
-        "summary":        summary,
-        "activity_types": activity_types,
-        "statuses":       statuses,
-        "priorities":     priorities,
-        "categories":     categories,
-        "created_by_list":created_by_list,
-        "activities":     [clean(a) for a in shaped],
+        "summary":          summary,
+        "activity_types":   activity_types,
+        "statuses":         statuses,
+        "priorities":       priorities,
+        "categories":       categories,
+        "assigned_to_list": assigned_to_list,
+        "activities":       [clean(a) for a in shaped],
     }
 
 

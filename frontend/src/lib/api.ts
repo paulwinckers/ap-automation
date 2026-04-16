@@ -566,7 +566,7 @@ export interface ActivitiesDashboardData {
   statuses: string[];
   priorities: string[];
   categories: string[];
-  created_by_list: string[];
+  assigned_to_list: string[];
   activities: Activity[];
 }
 
