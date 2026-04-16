@@ -409,7 +409,7 @@ export default function ActivitiesDashboard() {
     </div>
   );
 
-  const { summary, activity_types, statuses, priorities, categories, created_by_list, activities } = data;
+  const { activity_types, statuses, priorities, categories, created_by_list, activities } = data;
 
   function handleCompleted(id: number) {
     setCompletedIds(s => new Set([...s, id]));
@@ -432,13 +432,6 @@ export default function ActivitiesDashboard() {
     ))
   );
 
-  // Status tiles — all statuses always shown
-  const statusTiles = statuses.map(st => ({
-    status: st,
-    count:  visible.filter(a => a.status === st).length,
-  }));
-  const allTileCount = visible.length;
-
   // Group visible activities
   function grouped(key: keyof Activity) {
     const map = new Map<string, Activity[]>();
@@ -452,66 +445,6 @@ export default function ActivitiesDashboard() {
 
   return (
     <div style={{ background: '#f8fafc', minHeight: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
-
-      {/* Header + status tiles */}
-      <div style={{ padding: '24px 28px 0' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 14 }}>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.4px' }}>
-            📅 Activities
-          </h1>
-          <span style={{ fontSize: 12, color: '#94a3b8' }}>
-            {showCompleted ? 'all activities' : 'open activities · excludes completed'}
-          </span>
-        </div>
-
-        {/* Summary tiles — one per status, always shown */}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 0 }}>
-          {/* All tile */}
-          {(() => {
-            const active = filterStatus === 'All';
-            return (
-              <button key="all" onClick={() => setFilterStatus('All')} style={{
-                flex: '1 1 110px', padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
-                textAlign: 'left', border: `2px solid ${active ? '#2563eb' : '#e5e7eb'}`,
-                background: active ? '#eff6ff' : '#fff', transition: 'all 0.12s',
-              }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: active ? '#2563eb' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>All</div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: active ? '#1d4ed8' : '#1f2937', lineHeight: 1 }}>{allTileCount}</div>
-                <div style={{ fontSize: 10, color: active ? '#3b82f6' : '#9ca3af', marginTop: 3 }}>
-                  {summary.overdue > 0 ? `${summary.overdue} overdue` : 'none overdue'}
-                </div>
-              </button>
-            );
-          })()}
-
-          {statusTiles.map(({ status, count }) => {
-            const active = filterStatus === status;
-            return (
-              <button key={status} onClick={() => setFilterStatus(active ? 'All' : status)} style={{
-                flex: '1 1 110px', padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
-                textAlign: 'left', border: `2px solid ${active ? '#2563eb' : '#e5e7eb'}`,
-                background: active ? '#eff6ff' : '#fff', transition: 'all 0.12s',
-              }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: active ? '#2563eb' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{status}</div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: active ? '#1d4ed8' : '#1f2937', lineHeight: 1 }}>{count}</div>
-                <div style={{ fontSize: 10, color: active ? '#3b82f6' : '#9ca3af', marginTop: 3 }}>activities</div>
-              </button>
-            );
-          })}
-
-          {/* Summary stats */}
-          {[
-            { label: 'Overdue',       value: summary.overdue,       color: summary.overdue > 0 ? '#dc2626' : '#16a34a' },
-            { label: 'Due This Week', value: summary.due_this_week, color: summary.due_this_week > 0 ? '#ea580c' : '#16a34a' },
-            { label: 'Milestones',    value: summary.milestones,    color: '#7c3aed' },
-          ].map(({ label, value, color }) => (
-            <div key={label} style={{ flex: '1 1 110px', padding: '10px 14px', borderRadius: 8, background: '#fff', border: '1px solid #e5e7eb' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
-              <div style={{ fontSize: 20, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
-            </div>
-          ))}
-        </div>
-      </div>
 
       {/* ── Sticky filter bar ── */}
       <div style={{
