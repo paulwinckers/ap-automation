@@ -1076,17 +1076,21 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     import re as _re
 
     def _parse_issue_html(html: str) -> dict:
-        """Extract Assigned To and comments from Aspire Issue HTML notes."""
-        result = {"assigned_to": [], "comments": []}
+        """Extract issue number, Assigned To, and comments from Aspire Issue HTML notes."""
+        result = {"issue_number": None, "assigned_to": [], "comments": []}
         if not html:
             return result
+        # Issue number — first link text inside the Issue # cell
+        m = _re.search(r'<b>Issue\s*#</b></td><td[^>]*><a[^>]*>(\d+)</a>', html, _re.IGNORECASE | _re.DOTALL)
+        if m:
+            result["issue_number"] = int(m.group(1))
         # Assigned To — may have multiple entries separated by <br/>
         m = _re.search(r'<b>Assigned To</b></td><td[^>]*>(.*?)</td>', html, _re.IGNORECASE | _re.DOTALL)
         if m:
-            raw_assigned = _re.sub(r'<[^>]+>', '', m.group(1)).strip()
+            raw_assigned = _re.sub(r'<[^>]+>', ' ', m.group(1)).strip()
             result["assigned_to"] = [x.strip() for x in _re.split(r'[\n,]+', raw_assigned) if x.strip()]
         # Comments — rows after "Issue Comment History" header
-        comment_section = _re.search(r'Issue Comment History</h3>(.*?)(?:</table>|$)', html, _re.IGNORECASE | _re.DOTALL)
+        comment_section = _re.search(r'Issue Comment History</h3>(.*)', html, _re.IGNORECASE | _re.DOTALL)
         if comment_section:
             rows = _re.findall(r'<tr>(.*?)</tr>', comment_section.group(1), _re.DOTALL)
             for row in rows:
@@ -1114,6 +1118,21 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         return True
 
     activities = [a for a in raw if is_active(a)]
+
+    # ── Deduplicate Issue emails — Aspire emits one record per comment added ──
+    # Parse issue number from each, keep the record with the highest ActivityID
+    # (most recent = has all comments so far).
+    seen_issue: dict[int, dict] = {}   # issue_number -> raw activity with highest ID
+    non_issue: list[dict] = []
+    for a in activities:
+        parsed_num = _parse_issue_html(a.get("Notes") or "").get("issue_number")
+        if parsed_num is not None:
+            existing = seen_issue.get(parsed_num)
+            if existing is None or (a.get("ActivityID") or 0) > (existing.get("ActivityID") or 0):
+                seen_issue[parsed_num] = a
+        else:
+            non_issue.append(a)
+    activities = list(seen_issue.values()) + non_issue
 
     # ── Batch-fetch property + opportunity names ──────────────────────────────
     async def _fetch_names(entity: str, id_field: str, name_field: str, ids: list) -> dict:
