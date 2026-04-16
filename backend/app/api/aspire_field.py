@@ -41,6 +41,109 @@ def _check_credentials():
         raise HTTPException(status_code=503, detail="Aspire credentials not configured")
 
 
+# ── Contact / Property lookup ─────────────────────────────────────────────────
+
+@router.get("/contact-lookup")
+async def contact_lookup(q: str = Query(..., min_length=2)):
+    """
+    Search for contacts by property name OR contact name.
+
+    Flow:
+      1. GET /PropertyContacts filtered on PropertyName OR ContactName —
+         returns the property↔contact links (including PrimaryContact flag)
+         with PropertyName already present.
+      2. Batch-fetch phone numbers from GET /Contacts for the matched ContactIDs.
+      3. Return results grouped by property, contacts sorted primary-first.
+    """
+    import asyncio
+    _check_credentials()
+
+    q_safe = q.replace("'", "''")
+
+    # ── Step 1: search PropertyContacts by property name OR contact name ──────
+    try:
+        res = await _aspire._get("PropertyContacts", {
+            "$filter":  (
+                f"contains(PropertyName,'{q_safe}') or "
+                f"contains(ContactName,'{q_safe}')"
+            ),
+            "$select":  "PropertyID,PropertyName,ContactID,ContactName,"
+                        "PrimaryContact,BillingContact",
+            "$orderby": "PropertyName asc",
+            "$top":     "100",
+        })
+        pc_rows = _aspire._extract_list(res)
+    except Exception as e:
+        logger.error(f"PropertyContacts search failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Aspire search failed: {e}")
+
+    if not pc_rows:
+        return {"query": q, "properties": []}
+
+    # ── Step 2: batch-fetch phone numbers for all matched contacts ────────────
+    contact_ids = list({row["ContactID"] for row in pc_rows if row.get("ContactID")})
+    phone_map: dict[int, dict] = {}
+    if contact_ids:
+        id_filter = " or ".join(f"ContactID eq {cid}" for cid in contact_ids[:50])
+        try:
+            cres = await _aspire._get("Contacts", {
+                "$filter": id_filter,
+                "$select": "ContactID,MobilePhone,OfficePhone,HomePhone,Email",
+                "$top":    "100",
+            })
+            for c in _aspire._extract_list(cres):
+                phone_map[c["ContactID"]] = c
+        except Exception as e:
+            logger.warning(f"Phone number fetch failed: {e}")
+
+    def _phones(cid: int) -> list[dict]:
+        c = phone_map.get(cid, {})
+        out = []
+        for label, key in [("Mobile", "MobilePhone"), ("Office", "OfficePhone"), ("Home", "HomePhone")]:
+            val = (c.get(key) or "").strip()
+            if val:
+                out.append({"label": label, "number": val})
+        return out
+
+    def _email(cid: int) -> str | None:
+        val = (phone_map.get(cid, {}).get("Email") or "").strip()
+        return val or None
+
+    # ── Step 3: group by property ─────────────────────────────────────────────
+    from collections import defaultdict
+    by_prop: dict[int, dict] = {}
+    prop_order: list[int] = []
+    for row in pc_rows:
+        pid = row.get("PropertyID")
+        if pid not in by_prop:
+            by_prop[pid] = {
+                "property_id":   pid,
+                "property_name": row.get("PropertyName") or "",
+                "contacts":      [],
+            }
+            prop_order.append(pid)
+        cid = row.get("ContactID")
+        by_prop[pid]["contacts"].append({
+            "id":      cid,
+            "name":    row.get("ContactName") or "",
+            "primary": bool(row.get("PrimaryContact")),
+            "billing": bool(row.get("BillingContact")),
+            "phones":  _phones(cid),
+            "email":   _email(cid),
+        })
+
+    # Sort contacts within each property: primary first, then billing, then name
+    for prop in by_prop.values():
+        prop["contacts"].sort(
+            key=lambda c: (not c["primary"], not c["billing"], c["name"].lower())
+        )
+
+    return {
+        "query":      q,
+        "properties": [by_prop[pid] for pid in prop_order],
+    }
+
+
 # ── Employees ────────────────────────────────────────────────────────────────
 
 @router.get("/employees")

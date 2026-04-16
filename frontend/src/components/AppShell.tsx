@@ -35,6 +35,7 @@ const NAV = [
     items: [
       { label: 'Crew Schedule',  path: '/ops/crew-schedule',  icon: '👥' },
       { label: 'Time Tracking',  path: '/ops/time-tracking',  icon: '⏱️' },
+      { label: 'Contacts',       path: '/ops/contacts',        icon: '📞' },
     ],
   },
 ];

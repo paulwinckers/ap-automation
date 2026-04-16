@@ -17,6 +17,7 @@ import EstimatingDashboard  from './pages/EstimatingDashboard';
 import ActivitiesDashboard  from './pages/ActivitiesDashboard';
 import CrewSchedule         from './pages/CrewSchedule';
 import TimeTracking         from './pages/TimeTracking';
+import PropertyLookup       from './pages/PropertyLookup';
 import Login                from './pages/Login';
 import Setup                from './pages/Setup';
 import UserAdmin            from './pages/UserAdmin';
@@ -58,6 +59,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/dashboards/activities"   element={<RequireAuth><Office><ActivitiesDashboard /></Office></RequireAuth>} />
         <Route path="/ops/crew-schedule"       element={<RequireAuth><Office><CrewSchedule /></Office></RequireAuth>} />
         <Route path="/ops/time-tracking"       element={<TimeTracking />} />
+        <Route path="/ops/contacts"            element={<RequireAuth><Office><PropertyLookup /></Office></RequireAuth>} />
 
         {/* Legacy URL redirects */}
         <Route path="/vendors"      element={<Navigate to="/ap/vendors"   replace />} />
