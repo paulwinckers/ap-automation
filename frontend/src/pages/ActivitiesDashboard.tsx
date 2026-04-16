@@ -407,6 +407,13 @@ export default function ActivitiesDashboard() {
   return (
     <div style={{ background: '#f8fafc', minHeight: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
 
+      {/* ── Page header ── */}
+      <div style={{ padding: '20px 28px 0' }}>
+        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#111827', letterSpacing: '-0.3px' }}>
+          Activity Summary
+        </h1>
+      </div>
+
       {/* ── Sticky filter bar ── */}
       <div style={{
         position: 'sticky', top: 0, zIndex: 20,
