@@ -1108,16 +1108,16 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             status = (a.get("Status") or "").strip().lower()
             if "complet" in status or "closed" in status or "cancel" in status:
                 return False
+        subject = (a.get("Subject") or "")
+        # Always drop Time Adjustment regardless of type
+        if _re.search(r'Time\s*Adjustment', subject, _re.IGNORECASE):
+            return False
         atype = (a.get("ActivityType") or "").strip().lower()
         if atype in ("activity", "appointment"):
             return False
         if atype == "email":
-            subject = (a.get("Subject") or "")
-            if not _re.search(r'Issue\s*#', subject, _re.IGNORECASE):
-                return False
-            if _re.search(r'Time\s*Adjustment', subject, _re.IGNORECASE):
-                return False
-            return True
+            # Keep only Issue-type emails
+            return bool(_re.search(r'Issue\s*#', subject, _re.IGNORECASE))
         return True
 
     activities = [a for a in raw if is_active(a)]
