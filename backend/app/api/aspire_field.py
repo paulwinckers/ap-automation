@@ -60,22 +60,27 @@ async def contact_lookup(q: str = Query(..., min_length=2)):
 
     q_safe = q.replace("'", "''")
 
-    # ── Step 1: search PropertyContacts by property name OR contact name ──────
+    # ── Step 1: search PropertyContacts — filter in Python ───────────────────
+    # PropertyContacts doesn't support contains() in $filter, so we fetch all
+    # and filter server-side. Use $top=2000 to get a full dataset.
     try:
         res = await _aspire._get("PropertyContacts", {
-            "$filter":  (
-                f"contains(PropertyName,'{q_safe}') or "
-                f"contains(ContactName,'{q_safe}')"
-            ),
             "$select":  "PropertyID,PropertyName,ContactID,ContactName,"
                         "PrimaryContact,BillingContact",
             "$orderby": "PropertyName asc",
-            "$top":     "100",
+            "$top":     "2000",
         })
-        pc_rows = _aspire._extract_list(res)
+        all_rows = _aspire._extract_list(res)
     except Exception as e:
-        logger.error(f"PropertyContacts search failed: {e}")
+        logger.error(f"PropertyContacts fetch failed: {e}")
         raise HTTPException(status_code=502, detail=f"Aspire search failed: {e}")
+
+    q_lower = q.lower()
+    pc_rows = [
+        row for row in all_rows
+        if q_lower in (row.get("PropertyName") or "").lower()
+        or q_lower in (row.get("ContactName")  or "").lower()
+    ]
 
     if not pc_rows:
         return {"query": q, "properties": []}
