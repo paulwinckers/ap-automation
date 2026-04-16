@@ -63,17 +63,25 @@ async def contact_lookup(q: str = Query(..., min_length=2)):
     # ── Step 1: search PropertyContacts — filter in Python ───────────────────
     # PropertyContacts doesn't support contains() in $filter, so we fetch all
     # and filter server-side. Use $top=2000 to get a full dataset.
-    try:
-        res = await _aspire._get("PropertyContacts", {
-            "$select":  "PropertyID,PropertyName,ContactID,ContactName,"
-                        "PrimaryContact,BillingContact",
-            "$orderby": "PropertyName asc",
-            "$top":     "2000",
-        })
-        all_rows = _aspire._extract_list(res)
-    except Exception as e:
-        logger.error(f"PropertyContacts fetch failed: {e}")
-        raise HTTPException(status_code=502, detail=f"Aspire search failed: {e}")
+    # Fetch in pages — PropertyContacts appears to cap at 500 per request
+    all_rows: list = []
+    for page in range(1, 10):  # max 10 pages = 5000 records
+        try:
+            res = await _aspire._get("PropertyContacts", {
+                "$top":        "500",
+                "$pageNumber": str(page),
+            })
+        except Exception as e:
+            if page == 1:
+                logger.error(f"PropertyContacts fetch failed: {e}")
+                raise HTTPException(status_code=502, detail=f"Aspire search failed: {e}")
+            break  # no more pages
+        rows = _aspire._extract_list(res)
+        if not rows:
+            break
+        all_rows.extend(rows)
+        if len(rows) < 500:
+            break  # last page
 
     q_lower = q.lower()
     pc_rows = [
