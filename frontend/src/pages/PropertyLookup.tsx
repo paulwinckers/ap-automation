@@ -26,6 +26,7 @@ interface ContactResult {
 interface PropertyResult {
   property_id: number;
   property_name: string;
+  address?: string | null;
   contacts: ContactResult[];
 }
 
@@ -142,6 +143,11 @@ function PropertyCard({ prop }: { prop: PropertyResult }) {
           <div style={{ fontWeight: 700, fontSize: 15, color: '#111827', marginBottom: 2 }}>
             🏠 {prop.property_name}
           </div>
+          {prop.address && (
+            <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 2 }}>
+              📍 {prop.address}
+            </div>
+          )}
           {primaryContact && primaryContact.phones.length > 0 && !expanded && (
             <div style={{ fontSize: 12, color: '#6b7280' }}>
               {primaryContact.name} · {primaryContact.phones[0].number}
