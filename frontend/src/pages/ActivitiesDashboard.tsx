@@ -13,24 +13,24 @@ function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function NotesCell({ notes }: { notes: string }) {
+function CommentsCell({ comments }: { comments: { meta: string; text: string }[] }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const plain = stripHtml(notes);
-  if (!plain) return <span style={{ color: '#d1d5db' }}>—</span>;
+  if (!comments.length) return <span style={{ color: '#d1d5db' }}>—</span>;
 
-  const preview = plain.length > 80 ? plain.slice(0, 80) + '…' : plain;
+  const latest = comments[comments.length - 1];
+  const preview = latest.text.length > 70 ? latest.text.slice(0, 70) + '…' : latest.text;
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div style={{ position: 'relative' }}>
       <span
-        onClick={() => setOpen(o => !o)}
-        style={{ fontSize: 11, color: '#374151', cursor: plain.length > 80 ? 'pointer' : 'default', lineHeight: 1.4 }}
-        title={plain.length > 80 ? 'Click to read full note' : undefined}
+        onClick={() => comments.length > 1 || latest.text.length > 70 ? setOpen(o => !o) : undefined}
+        style={{ fontSize: 11, color: '#374151', cursor: 'pointer', lineHeight: 1.4 }}
       >
         {preview}
-        {plain.length > 80 && (
-          <span style={{ color: '#2563eb', marginLeft: 4, fontWeight: 600 }}>···</span>
+        {(comments.length > 1 || latest.text.length > 70) && (
+          <span style={{ color: '#2563eb', marginLeft: 4, fontWeight: 600 }}>
+            {comments.length > 1 ? `+${comments.length - 1} more` : '···'}
+          </span>
         )}
       </span>
       {open && (
@@ -44,11 +44,16 @@ function NotesCell({ notes }: { notes: string }) {
             maxWidth: 560, width: '90%', maxHeight: '70vh', overflowY: 'auto',
             boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
           }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <span style={{ fontWeight: 700, fontSize: 14, color: '#111827' }}>Note</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <span style={{ fontWeight: 700, fontSize: 14, color: '#111827' }}>Comment History</span>
               <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#9ca3af' }}>✕</button>
             </div>
-            <p style={{ fontSize: 13, color: '#374151', lineHeight: 1.6, margin: 0, whiteSpace: 'pre-wrap' }}>{plain}</p>
+            {comments.map((c, i) => (
+              <div key={i} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: i < comments.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 4, whiteSpace: 'pre-line' }}>{c.meta}</div>
+                <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.5 }}>{c.text}</div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -157,16 +162,13 @@ function ActivityTable({ activities, showGroup, onCompleted }: { activities: Act
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
-            <SortTh field="subject"          align="left"   {...sp}>Subject</SortTh>
-            <SortTh field="property_name"    align="left"   {...sp}>Property</SortTh>
-            <SortTh field="opportunity_name" align="left"   {...sp}>Opportunity</SortTh>
-            <th style={{ ...TH_BASE, textAlign: 'left', color: '#6b7280' }}>Notes</th>
-            {showGroup !== 'type'   && <SortTh field="activity_type" align="left"   {...sp}>Type</SortTh>}
-            {showGroup !== 'status' && <SortTh field="status"        align="left"   {...sp}>Status</SortTh>}
-            <SortTh field="priority"         align="center" {...sp}>Priority</SortTh>
-            <SortTh field="created_by"       align="left"   {...sp}>Created By</SortTh>
-            <SortTh field="due_date"         align="right"  {...sp}>Due Date</SortTh>
-            <SortTh field="modified_date"    align="right"  {...sp}>Modified</SortTh>
+            <SortTh field="subject"       align="left"   {...sp}>Subject</SortTh>
+            <SortTh field="property_name" align="left"   {...sp}>Property</SortTh>
+            <th style={{ ...TH_BASE, textAlign: 'left', color: '#6b7280' }}>Assigned To</th>
+            <th style={{ ...TH_BASE, textAlign: 'left', color: '#6b7280' }}>Comments</th>
+            {showGroup !== 'status' && <SortTh field="status" align="left" {...sp}>Status</SortTh>}
+            <SortTh field="priority"      align="center" {...sp}>Priority</SortTh>
+            <SortTh field="due_date"      align="right"  {...sp}>Due Date</SortTh>
             <th style={{ ...TH_BASE, textAlign: 'center' }}></th>
           </tr>
         </thead>
@@ -195,10 +197,10 @@ function ActivityTable({ activities, showGroup, onCompleted }: { activities: Act
                       <span style={{ fontWeight: 600, fontSize: 12, color: '#111827' }}>{a.subject}</span>
                     )}
                   </div>
-                  {a.notes && (
+                  {a.comments.length > 0 && (
                     <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, maxWidth: 300,
                       overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                      {a.notes}
+                      {a.comments[a.comments.length - 1].text}
                     </div>
                   )}
                 </Td>
@@ -210,32 +212,18 @@ function ActivityTable({ activities, showGroup, onCompleted }: { activities: Act
                     <span style={{ color: '#d1d5db' }}>—</span>
                   )}
                 </Td>
-                {/* Opportunity */}
+                {/* Assigned To */}
                 <Td>
-                  {a.opportunity_name ? (
-                    a.opportunity_id ? (
-                      <a
-                        href={`https://cloud.youraspire.com/app/opportunities/details/${a.opportunity_id}`}
-                        target="_blank" rel="noopener noreferrer"
-                        style={{ fontSize: 11, color: '#2563eb', textDecoration: 'none', fontWeight: 500 }}
-                        onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
-                        onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
-                      >{a.opportunity_name}</a>
-                    ) : (
-                      <span style={{ fontSize: 11, color: '#374151' }}>{a.opportunity_name}</span>
-                    )
+                  {a.assigned_to.length > 0 ? (
+                    <span style={{ fontSize: 11, color: '#374151' }}>{a.assigned_to.join(', ')}</span>
                   ) : (
                     <span style={{ color: '#d1d5db' }}>—</span>
                   )}
                 </Td>
-                {/* Notes */}
+                {/* Comments */}
                 <Td style={{ maxWidth: 220 }}>
-                  <NotesCell notes={a.notes} />
+                  <CommentsCell comments={a.comments} />
                 </Td>
-                {/* Type (shown when not grouped by type) */}
-                {showGroup !== 'type' && (
-                  <Td><span style={{ fontSize: 11, color: '#475569' }}>{a.activity_type || '—'}</span></Td>
-                )}
                 {/* Status (shown when not grouped by status) */}
                 {showGroup !== 'status' && (
                   <Td><span style={{ fontSize: 11, color: '#6b7280' }}>{a.status || '—'}</span></Td>
@@ -252,10 +240,6 @@ function ActivityTable({ activities, showGroup, onCompleted }: { activities: Act
                     </span>
                   ) : <span style={{ color: '#d1d5db' }}>—</span>}
                 </Td>
-                {/* Category */}
-                <Td><span style={{ fontSize: 11, color: '#6b7280' }}>{a.category || '—'}</span></Td>
-                {/* Created by */}
-                <Td><span style={{ fontSize: 11, color: '#6b7280' }}>{a.created_by || '—'}</span></Td>
                 {/* Due date */}
                 <Td align="right">
                   <span style={{ color: duColor, fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>
@@ -268,10 +252,6 @@ function ActivityTable({ activities, showGroup, onCompleted }: { activities: Act
                   {a.due_date && (
                     <div style={{ fontSize: 10, color: duColor, marginTop: 1 }}>{urgencyLabel(a)}</div>
                   )}
-                </Td>
-                {/* Modified date */}
-                <Td align="right">
-                  <span style={{ fontSize: 11, color: '#9ca3af', whiteSpace: 'nowrap' }}>{fmtDate(a.modified_date)}</span>
                 </Td>
                 {/* Complete button */}
                 <Td align="center">
@@ -310,7 +290,7 @@ function ActivityTable({ activities, showGroup, onCompleted }: { activities: Act
         </tbody>
         <tfoot>
           <tr style={{ background: '#f8fafc', borderTop: '2px solid #e5e7eb' }}>
-            <td colSpan={10} style={{ padding: '6px 10px', fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
+            <td colSpan={8} style={{ padding: '6px 10px', fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
               {activities.length} activit{activities.length !== 1 ? 'ies' : 'y'}
             </td>
           </tr>
@@ -422,13 +402,11 @@ export default function ActivitiesDashboard() {
     (filterStatus    === 'All' || a.status        === filterStatus) &&
     (filterPriority  === 'All' || a.priority      === filterPriority) &&
     (filterCategory  === 'All' || a.category      === filterCategory) &&
-    (filterCreatedBy === 'All' || a.created_by    === filterCreatedBy) &&
     (!searchLower || (
       a.subject.toLowerCase().includes(searchLower) ||
-      a.notes.toLowerCase().includes(searchLower) ||
-      a.created_by.toLowerCase().includes(searchLower) ||
-      a.category.toLowerCase().includes(searchLower) ||
-      String(a.number ?? '').includes(searchLower)
+      a.property_name.toLowerCase().includes(searchLower) ||
+      a.assigned_to.join(' ').toLowerCase().includes(searchLower) ||
+      a.comments.map(c => c.text).join(' ').toLowerCase().includes(searchLower)
     ))
   );
 

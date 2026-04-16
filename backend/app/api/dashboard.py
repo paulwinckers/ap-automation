@@ -1073,19 +1073,44 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         logger.error(f"Activities fetch failed: {e}")
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
-    # Filter completed/cancelled unless show_completed=True
-    # Filter out Email type by default (proposal/system emails swamp the list)
+    import re as _re
+
+    def _parse_issue_html(html: str) -> dict:
+        """Extract Assigned To and comments from Aspire Issue HTML notes."""
+        result = {"assigned_to": [], "comments": []}
+        if not html:
+            return result
+        # Assigned To — may have multiple entries separated by <br/>
+        m = _re.search(r'<b>Assigned To</b></td><td[^>]*>(.*?)</td>', html, _re.IGNORECASE | _re.DOTALL)
+        if m:
+            raw_assigned = _re.sub(r'<[^>]+>', '', m.group(1)).strip()
+            result["assigned_to"] = [x.strip() for x in _re.split(r'[\n,]+', raw_assigned) if x.strip()]
+        # Comments — rows after "Issue Comment History" header
+        comment_section = _re.search(r'Issue Comment History</h3>(.*?)(?:</table>|$)', html, _re.IGNORECASE | _re.DOTALL)
+        if comment_section:
+            rows = _re.findall(r'<tr>(.*?)</tr>', comment_section.group(1), _re.DOTALL)
+            for row in rows:
+                cells = _re.findall(r'<td[^>]*>(.*?)</td>', row, _re.DOTALL)
+                if len(cells) >= 2:
+                    meta = _re.sub(r'<[^>]+>', ' ', cells[0]).strip()
+                    comment = _re.sub(r'<[^>]+>', '', cells[1]).strip()
+                    if comment and 'Comment' not in meta:  # skip header row
+                        result["comments"].append({"meta": meta, "text": comment})
+        return result
+
+    # Filter: keep Issues (Email with "Issue" in subject), drop plain emails/appointments/activity
     def is_active(a: dict) -> bool:
-        if show_completed:
-            pass  # don't filter by status
-        else:
+        if not show_completed:
             status = (a.get("Status") or "").strip().lower()
             if "complet" in status or "closed" in status or "cancel" in status:
                 return False
-        if not include_emails and (a.get("ActivityType") or "").strip().lower() == "email":
+        atype = (a.get("ActivityType") or "").strip().lower()
+        if atype in ("activity", "appointment"):
             return False
-        if (a.get("ActivityType") or "").strip().lower() in ("activity", "appointment"):
-            return False
+        if atype == "email":
+            # Keep only Issue-type emails (Subject contains "Issue #")
+            subject = (a.get("Subject") or "")
+            return bool(_re.search(r'Issue\s*#', subject, _re.IGNORECASE))
         return True
 
     activities = [a for a in raw if is_active(a)]
@@ -1111,13 +1136,8 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 logger.warning(f"{entity} name lookup failed: {e}")
         return result
 
-    prop_ids = list({a.get("PropertyID")   for a in activities if a.get("PropertyID")})
-    opp_ids  = list({a.get("OpportunityID") for a in activities if a.get("OpportunityID")})
-
-    property_name_map, opportunity_name_map = await asyncio.gather(
-        _fetch_names("Properties",   "PropertyID",   "PropertyName",   prop_ids),
-        _fetch_names("Opportunities","OpportunityID","OpportunityName", opp_ids),
-    )
+    prop_ids = list({a.get("PropertyID") for a in activities if a.get("PropertyID")})
+    property_name_map = await _fetch_names("Properties", "PropertyID", "PropertyName", prop_ids)
 
     now = datetime.now(timezone.utc)
     week_end = now + timedelta(days=7)
@@ -1144,9 +1164,9 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     for a in activities:
         due_dt     = parse_dt(a.get("DueDate"))
         created_dt = parse_dt(a.get("CreatedDate"))
-        modified_dt= parse_dt(a.get("ModifiedDate"))
         urg        = urgency(due_dt)
         due_days   = int((due_dt - now).days) if due_dt else None
+        parsed     = _parse_issue_html(a.get("Notes") or "")
 
         shaped.append({
             "id":            a.get("ActivityID"),
@@ -1156,17 +1176,13 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "status":        a.get("Status") or "",
             "priority":      a.get("Priority") or "",
             "category":      a.get("ActivityCategoryName") or "",
-            "notes":         a.get("Notes") or "",
+            "assigned_to":   parsed["assigned_to"],
+            "comments":      parsed["comments"],
             "property_id":   a.get("PropertyID"),
             "property_name": property_name_map.get(a.get("PropertyID"), ""),
-            "opportunity_name": opportunity_name_map.get(a.get("OpportunityID"), ""),
             "due_date":      due_dt.date().isoformat()      if due_dt      else None,
-            "start_date":    parse_dt(a.get("StartDate")).date().isoformat() if parse_dt(a.get("StartDate")) else None,
             "complete_date": parse_dt(a.get("CompleteDate")).date().isoformat() if parse_dt(a.get("CompleteDate")) else None,
             "created_date":  created_dt.date().isoformat()  if created_dt  else None,
-            "modified_date": modified_dt.date().isoformat() if modified_dt else None,
-            "created_by":    a.get("CreatedByUserName") or "",
-            "completed_by":  a.get("CompletedByUserName") or "",
             "opportunity_id":a.get("OpportunityID"),
             "work_ticket_id":a.get("WorkTicketID"),
             "is_milestone":  bool(a.get("IsMileStone")),
