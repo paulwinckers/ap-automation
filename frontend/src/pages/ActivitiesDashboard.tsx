@@ -254,9 +254,9 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
                 </Td>
                 {/* Open in Aspire */}
                 <Td align="center">
-                  {a.issue_number && (
+                  {a.id && (
                     <a
-                      href={`https://cloud.youraspire.com/app/activities/details/${a.issue_number}`}
+                      href={`https://cloud.youraspire.com/app/activities/details/${a.id}`}
                       target="_blank" rel="noopener noreferrer"
                       style={{
                         fontSize: 11, padding: '3px 8px', borderRadius: 5,
