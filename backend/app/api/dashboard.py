@@ -1035,14 +1035,16 @@ async def debug_issue(issue_number: int):
     import re as _re
     raw = await _aspire._get_all("Activities", {
         "$select": "ActivityID,Subject,ActivityType,Status,Notes",
-        "$filter": f"CreatedDate ge 2026-01-01T00:00:00Z and ActivityType eq 'Email'",
+        "$filter": f"CreatedDate ge 2026-01-01T00:00:00Z",
         "$top": "500",
     })
     matches = []
     for a in raw:
         html = a.get("Notes") or ""
+        # Also check subject for the issue number as fallback
+        subject_match = f"Issue #{issue_number}" in (a.get("Subject") or "")
         m = _re.search(r'<b>Issue\s*#</b></td><td[^>]*><a[^>]*>(\d+)</a>', html, _re.IGNORECASE | _re.DOTALL)
-        if m and int(m.group(1)) == issue_number:
+        if (m and int(m.group(1)) == issue_number) or subject_match:
             # Extract status cell raw
             s = _re.search(r'<b>Status</b></td><td[^>]*>(.*?)</td>', html, _re.IGNORECASE | _re.DOTALL)
             raw_status_html = s.group(1) if s else "(not found)"
