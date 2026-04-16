@@ -1060,7 +1060,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 "ActivityID,ActivityNumber,Subject,ActivityType,Status,Priority,"
                 "Notes,StartDate,EndDate,DueDate,CompleteDate,CreatedDate,ModifiedDate,"
                 "CreatedByUserName,CompletedByUserName,"
-                "PropertyID,PropertyName,OpportunityID,WorkTicketID,"
+                "PropertyID,OpportunityID,WorkTicketID,"
                 "ActivityCategoryName,IsMileStone,Private"
             ),
             "$filter": "CreatedDate ge 2026-01-01T00:00:00Z",
@@ -1128,7 +1128,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "category":      a.get("ActivityCategoryName") or "",
             "notes":         (a.get("Notes") or "")[:200],   # truncate for perf
             "property_id":   a.get("PropertyID"),
-            "property_name": a.get("PropertyName") or "",
+            "property_name": "",
             "due_date":      due_dt.date().isoformat()      if due_dt      else None,
             "start_date":    parse_dt(a.get("StartDate")).date().isoformat() if parse_dt(a.get("StartDate")) else None,
             "complete_date": parse_dt(a.get("CompleteDate")).date().isoformat() if parse_dt(a.get("CompleteDate")) else None,
