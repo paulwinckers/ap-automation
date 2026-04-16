@@ -546,6 +546,8 @@ export interface Activity {
   priority: string;
   category: string;
   notes: string;
+  property_id: number | null;
+  property_name: string;
   due_date: string | null;
   start_date: string | null;
   complete_date: string | null;
@@ -570,8 +572,8 @@ export interface ActivitiesDashboardData {
   activities: Activity[];
 }
 
-export async function getActivitiesDashboard(showCompleted = false): Promise<ActivitiesDashboardData> {
-  return request<ActivitiesDashboardData>('GET', `/dashboard/activities?show_completed=${showCompleted}`);
+export async function getActivitiesDashboard(showCompleted = false, includeEmails = false): Promise<ActivitiesDashboardData> {
+  return request<ActivitiesDashboardData>('GET', `/dashboard/activities?show_completed=${showCompleted}&include_emails=${includeEmails}`);
 }
 
 // ── User management (admin only) ─────────────────────────────────────────────

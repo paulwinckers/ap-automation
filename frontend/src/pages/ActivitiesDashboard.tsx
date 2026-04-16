@@ -108,13 +108,14 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
         <thead>
           <tr>
             <SortTh field="subject"       align="left"   {...sp}>Subject</SortTh>
+            <SortTh field="property_name" align="left"   {...sp}>Property</SortTh>
             {showGroup !== 'type'   && <SortTh field="activity_type" align="left"   {...sp}>Type</SortTh>}
             {showGroup !== 'status' && <SortTh field="status"        align="left"   {...sp}>Status</SortTh>}
             <SortTh field="priority"      align="center" {...sp}>Priority</SortTh>
             <SortTh field="category"      align="left"   {...sp}>Category</SortTh>
             <SortTh field="created_by"    align="left"   {...sp}>Created By</SortTh>
             <SortTh field="due_date"      align="right"  {...sp}>Due Date</SortTh>
-            <SortTh field="created_date"  align="right"  {...sp}>Created</SortTh>
+            <SortTh field="modified_date" align="right"  {...sp}>Modified</SortTh>
           </tr>
         </thead>
         <tbody>
@@ -147,6 +148,14 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
                       overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
                       {a.notes}
                     </div>
+                  )}
+                </Td>
+                {/* Property */}
+                <Td>
+                  {a.property_name ? (
+                    <span style={{ fontSize: 11, color: '#374151', fontWeight: 500 }}>{a.property_name}</span>
+                  ) : (
+                    <span style={{ color: '#d1d5db' }}>—</span>
                   )}
                 </Td>
                 {/* Type (shown when not grouped by type) */}
@@ -186,9 +195,9 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
                     <div style={{ fontSize: 10, color: duColor, marginTop: 1 }}>{urgencyLabel(a)}</div>
                   )}
                 </Td>
-                {/* Created date */}
+                {/* Modified date */}
                 <Td align="right">
-                  <span style={{ fontSize: 11, color: '#9ca3af', whiteSpace: 'nowrap' }}>{fmtDate(a.created_date)}</span>
+                  <span style={{ fontSize: 11, color: '#9ca3af', whiteSpace: 'nowrap' }}>{fmtDate(a.modified_date)}</span>
                 </Td>
               </tr>
             );
@@ -266,7 +275,8 @@ export default function ActivitiesDashboard() {
   const [data,          setData]          = useState<ActivitiesDashboardData | null>(null);
   const [loading,       setLoading]       = useState(true);
   const [error,         setError]         = useState<string | null>(null);
-  const [showCompleted, setShowCompleted] = useState(false);
+  const [showCompleted,  setShowCompleted]  = useState(false);
+  const [includeEmails,  setIncludeEmails]  = useState(false);
 
   // Filters
   const [search,         setSearch]         = useState('');
@@ -279,11 +289,11 @@ export default function ActivitiesDashboard() {
 
   useEffect(() => {
     setLoading(true); setError(null);
-    getActivitiesDashboard(showCompleted)
+    getActivitiesDashboard(showCompleted, includeEmails)
       .then(setData)
       .catch(e => setError((e as Error).message))
       .finally(() => setLoading(false));
-  }, [showCompleted]);
+  }, [showCompleted, includeEmails]);
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', flexDirection: 'column', gap: 12 }}>
@@ -482,6 +492,20 @@ export default function ActivitiesDashboard() {
           }}
         >
           {showCompleted ? '✓ Showing Completed' : 'Show Completed'}
+        </button>
+
+        {/* Include emails toggle */}
+        <button
+          onClick={() => setIncludeEmails(s => !s)}
+          style={{
+            padding: '5px 12px', fontSize: 12, borderRadius: 6, cursor: 'pointer',
+            border: '1px solid #e5e7eb',
+            background: includeEmails ? '#7c3aed' : '#fff',
+            color:      includeEmails ? '#fff'    : '#6b7280',
+            fontWeight: includeEmails ? 700 : 400,
+          }}
+        >
+          {includeEmails ? '✓ Emails Shown' : 'Show Emails'}
         </button>
 
         {/* Group by */}

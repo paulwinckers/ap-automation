@@ -1049,7 +1049,7 @@ async def activities_probe():
 
 
 @router.get("/activities")
-async def get_activities_dashboard(show_completed: bool = False):
+async def get_activities_dashboard(show_completed: bool = False, include_emails: bool = False):
     from datetime import datetime, timezone, timedelta
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Aspire credentials not configured")
@@ -1060,11 +1060,12 @@ async def get_activities_dashboard(show_completed: bool = False):
                 "ActivityID,ActivityNumber,Subject,ActivityType,Status,Priority,"
                 "Notes,StartDate,EndDate,DueDate,CompleteDate,CreatedDate,ModifiedDate,"
                 "CreatedByUserName,CompletedByUserName,"
-                "PropertyID,OpportunityID,WorkTicketID,"
+                "PropertyID,PropertyName,OpportunityID,WorkTicketID,"
                 "ActivityCategoryName,IsMileStone,Private"
             ),
+            "$filter": "CreatedDate ge 2026-01-01T00:00:00Z",
             "$top": "500",
-            "$orderby": "DueDate asc",
+            "$orderby": "ModifiedDate desc",
         })
         logger.info(f"Activities dashboard: fetched {len(raw)} total from Aspire")
     except Exception as e:
@@ -1072,11 +1073,17 @@ async def get_activities_dashboard(show_completed: bool = False):
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
     # Filter completed/cancelled unless show_completed=True
+    # Filter out Email type by default (proposal/system emails swamp the list)
     def is_active(a: dict) -> bool:
         if show_completed:
-            return True
-        status = (a.get("Status") or "").strip().lower()
-        return "complet" not in status and "closed" not in status and "cancel" not in status
+            pass  # don't filter by status
+        else:
+            status = (a.get("Status") or "").strip().lower()
+            if "complet" in status or "closed" in status or "cancel" in status:
+                return False
+        if not include_emails and (a.get("ActivityType") or "").strip().lower() == "email":
+            return False
+        return True
 
     activities = [a for a in raw if is_active(a)]
 
@@ -1118,6 +1125,8 @@ async def get_activities_dashboard(show_completed: bool = False):
             "priority":      a.get("Priority") or "",
             "category":      a.get("ActivityCategoryName") or "",
             "notes":         (a.get("Notes") or "")[:200],   # truncate for perf
+            "property_id":   a.get("PropertyID"),
+            "property_name": a.get("PropertyName") or "",
             "due_date":      due_dt.date().isoformat()      if due_dt      else None,
             "start_date":    parse_dt(a.get("StartDate")).date().isoformat() if parse_dt(a.get("StartDate")) else None,
             "complete_date": parse_dt(a.get("CompleteDate")).date().isoformat() if parse_dt(a.get("CompleteDate")) else None,
