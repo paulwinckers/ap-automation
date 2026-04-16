@@ -5,7 +5,7 @@
  */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { getActivitiesDashboard, completeActivity, Activity, ActivitiesDashboardData } from '../lib/api';
+import { getActivitiesDashboard, Activity, ActivitiesDashboardData } from '../lib/api';
 
 // ── Notes popup ───────────────────────────────────────────────────────────────
 
@@ -152,10 +152,9 @@ function Td({ children, align = 'left', style }: {
 
 // ── Activity table ────────────────────────────────────────────────────────────
 
-function ActivityTable({ activities, showGroup, onCompleted }: { activities: Activity[]; showGroup?: string; onCompleted?: (id: number) => void }) {
+function ActivityTable({ activities, showGroup }: { activities: Activity[]; showGroup?: string }) {
   const { sorted, sortField, sortDir, onSort } = useSorted(activities, 'due_date');
   const sp = { sortField, sortDir, onSort };
-  const [completing, setCompleting] = useState<number | null>(null);
 
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -253,29 +252,22 @@ function ActivityTable({ activities, showGroup, onCompleted }: { activities: Act
                     <div style={{ fontSize: 10, color: duColor, marginTop: 1 }}>{urgencyLabel(a)}</div>
                   )}
                 </Td>
-                {/* Complete button */}
+                {/* Open in Aspire */}
                 <Td align="center">
-                  <button
-                    disabled={completing === a.id}
-                    onClick={async () => {
-                      if (!confirm(`Mark "${a.subject}" as completed?`)) return;
-                      setCompleting(a.id);
-                      try {
-                        await completeActivity(a.id);
-                        onCompleted?.(a.id);
-                      } catch { alert('Failed to complete activity'); }
-                      finally { setCompleting(null); }
-                    }}
-                    style={{
-                      fontSize: 11, padding: '3px 8px', borderRadius: 5, cursor: 'pointer',
-                      border: '1px solid #d1d5db',
-                      background: completing === a.id ? '#f3f4f6' : '#f0fdf4',
-                      color: completing === a.id ? '#9ca3af' : '#16a34a',
-                      fontWeight: 600, whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {completing === a.id ? '…' : '✓ Done'}
-                  </button>
+                  {a.issue_number && (
+                    <a
+                      href={`https://cloud.youraspire.com/app/activities/details/${a.issue_number}`}
+                      target="_blank" rel="noopener noreferrer"
+                      style={{
+                        fontSize: 11, padding: '3px 8px', borderRadius: 5,
+                        border: '1px solid #d1d5db', background: '#f8fafc',
+                        color: '#2563eb', fontWeight: 600, whiteSpace: 'nowrap',
+                        textDecoration: 'none', display: 'inline-block',
+                      }}
+                    >
+                      Open ↗
+                    </a>
+                  )}
                 </Td>
               </tr>
             );
@@ -302,8 +294,8 @@ function ActivityTable({ activities, showGroup, onCompleted }: { activities: Act
 
 // ── Collapsible group section ─────────────────────────────────────────────────
 
-function GroupSection({ title, activities, showGroup, onCompleted }: {
-  title: string; activities: Activity[]; showGroup: string; onCompleted?: (id: number) => void;
+function GroupSection({ title, activities, showGroup }: {
+  title: string; activities: Activity[]; showGroup: string;
 }) {
   const [open, setOpen] = useState(false);
   if (activities.length === 0) return null;
@@ -331,7 +323,7 @@ function GroupSection({ title, activities, showGroup, onCompleted }: {
           <span style={{ fontSize: 12, color: '#6b7280' }}>{activities.length} activit{activities.length !== 1 ? 'ies' : 'y'}</span>
         </div>
       </button>
-      {open && <ActivityTable activities={activities} showGroup={showGroup} onCompleted={onCompleted} />}
+      {open && <ActivityTable activities={activities} showGroup={showGroup} />}
     </div>
   );
 }
@@ -353,7 +345,6 @@ export default function ActivitiesDashboard() {
   const [loading,       setLoading]       = useState(true);
   const [error,         setError]         = useState<string | null>(null);
   const [showCompleted,    setShowCompleted]    = useState(false);
-  const [completedIds,     setCompletedIds]     = useState<Set<number>>(new Set());
 
   // Filters
   const [search,           setSearch]           = useState('');
@@ -388,13 +379,9 @@ export default function ActivitiesDashboard() {
 
   const { statuses, priorities, assigned_to_list, activities } = data;
 
-  function handleCompleted(id: number) {
-    setCompletedIds(s => new Set([...s, id]));
-  }
-
   const searchLower = search.trim().toLowerCase();
 
-  const visible = activities.filter(a => !completedIds.has(a.id) &&
+  const visible = activities.filter(a =>
     (filterAssignedTo === 'All' || a.assigned_to.includes(filterAssignedTo)) &&
     (filterStatus     === 'All' || a.status   === filterStatus) &&
     (filterPriority   === 'All' || a.priority === filterPriority) &&
@@ -516,12 +503,12 @@ export default function ActivitiesDashboard() {
       <div style={{ padding: '16px 28px 28px' }}>
         {groupBy === 'status' && (
           grouped('status').map(([status, acts]) => (
-            <GroupSection key={status} title={status} activities={acts} showGroup="status" onCompleted={handleCompleted} />
+            <GroupSection key={status} title={status} activities={acts} showGroup="status" />
           ))
         )}
         {groupBy === 'flat' && (
           <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
-            <ActivityTable activities={visible} showGroup="flat" onCompleted={handleCompleted} />
+            <ActivityTable activities={visible} showGroup="flat" />
           </div>
         )}
       </div>

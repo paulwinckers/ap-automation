@@ -545,6 +545,7 @@ export interface Activity {
   status: string;
   priority: string;
   category: string;
+  issue_number: number | null;
   assigned_to: string[];
   comments: { meta: string; text: string }[];
   property_id: number | null;
@@ -568,10 +569,6 @@ export interface ActivitiesDashboardData {
   categories: string[];
   assigned_to_list: string[];
   activities: Activity[];
-}
-
-export async function completeActivity(id: number): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>('PATCH', `/dashboard/activities/${id}/complete`);
 }
 
 export async function getActivitiesDashboard(showCompleted = false, includeEmails = false): Promise<ActivitiesDashboardData> {

@@ -1189,7 +1189,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
 
         shaped.append({
             "id":            a.get("ActivityID"),
-            "number":        a.get("ActivityNumber"),
+            "issue_number":  parsed.get("issue_number"),
             "subject":       a.get("Subject") or "(no subject)",
             "activity_type": a.get("ActivityType") or "Unknown",
             "status":        a.get("Status") or "",
@@ -1239,19 +1239,3 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     }
 
 
-@router.patch("/activities/{activity_id}/complete")
-async def complete_activity(activity_id: int):
-    """Mark an Aspire activity as Completed with today's date."""
-    from datetime import datetime, timezone
-    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
-        raise HTTPException(status_code=503, detail="Aspire credentials not configured")
-    try:
-        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        result = await _aspire._patch(f"Activities({activity_id})", {
-            "Status":       "Completed",
-            "CompleteDate": now_iso,
-        })
-        return {"ok": True, "activity_id": activity_id}
-    except Exception as e:
-        logger.error(f"Complete activity {activity_id} failed: {e}")
-        raise HTTPException(status_code=502, detail=str(e))
