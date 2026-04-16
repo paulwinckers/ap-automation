@@ -26,6 +26,82 @@ const MAX_PX     = 1600;
 
 const PRIORITIES = ['High', 'Normal', 'Low'] as const;
 
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function addDays(n: number) {
+  const d = new Date(); d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function fmtDate(s: string) {
+  if (!s) return '';
+  try { return new Date(s + 'T12:00:00').toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }); }
+  catch { return s; }
+}
+
+// ── Date Picker ───────────────────────────────────────────────────────────────
+
+const QUICK_DATES = [
+  { label: 'Today',   value: () => todayStr() },
+  { label: '+1 wk',  value: () => addDays(7) },
+  { label: '+2 wks', value: () => addDays(14) },
+  { label: '+1 mo',  value: () => addDays(30) },
+];
+
+function DatePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 8 }}>
+        Due Date
+      </label>
+
+      {/* Quick-pick chips */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+        {QUICK_DATES.map(q => {
+          const v = q.value();
+          const active = value === v;
+          return (
+            <button
+              key={q.label} type="button"
+              onClick={() => onChange(v)}
+              style={{
+                padding: '7px 14px', borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                border: `1.5px solid ${active ? GREEN : BORDER}`,
+                background: active ? GREEN : '#1e293b',
+                color: active ? '#fff' : '#94a3b8',
+                whiteSpace: 'nowrap',
+              }}
+            >{q.label}</button>
+          );
+        })}
+      </div>
+
+      {/* Native picker (opens system UI on mobile) */}
+      <input
+        type="date"
+        value={value}
+        min={todayStr()}
+        onChange={e => onChange(e.target.value)}
+        style={{
+          width: '100%', boxSizing: 'border-box', padding: '12px 14px',
+          borderRadius: 10, border: `1.5px solid ${BORDER}`,
+          background: '#1e293b', color: value ? '#f8fafc' : '#64748b',
+          fontSize: 16, outline: 'none', colorScheme: 'dark',
+        }}
+        onFocus={e => (e.currentTarget.style.borderColor = GREEN)}
+        onBlur={e  => (e.currentTarget.style.borderColor = BORDER)}
+      />
+
+      {/* Human-readable label */}
+      {value && (
+        <div style={{ marginTop: 6, fontSize: 12, color: '#22c55e', textAlign: 'center', fontWeight: 600 }}>
+          📅 {fmtDate(value)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Image compression ─────────────────────────────────────────────────────────
 
 function compressImage(f: File): Promise<File> {
@@ -308,11 +384,7 @@ function StepDetails({
           </div>
         </div>
 
-        <FieldInput
-          label="Due Date" type="date"
-          value={dueDate} onChange={setDueDate}
-          placeholder=""
-        />
+        <DatePicker value={dueDate} onChange={setDueDate} />
 
         <BackBtn onClick={onBack} />
         <NextBtn onClick={onNext} disabled={!subject.trim()} />
@@ -532,7 +604,7 @@ export default function FieldIssue() {
   const [assignedToId,    setAssignedToId]    = useState<number | null>(null);
   const [assignedToName,  setAssignedToName]  = useState('');
   const [priority,        setPriority]        = useState('Normal');
-  const [dueDate,         setDueDate]         = useState('');
+  const [dueDate,         setDueDate]         = useState(() => addDays(14));
 
   // Step 3
   const [notes,         setNotes]         = useState('');
