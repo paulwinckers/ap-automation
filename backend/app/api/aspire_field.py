@@ -58,46 +58,56 @@ async def contact_lookup(q: str = Query(..., min_length=2)):
     import asyncio
     _check_credentials()
 
+    import asyncio
     q_safe = q.replace("'", "''")
 
-    # ── Step 1: search PropertyContacts — filter in Python ───────────────────
-    # PropertyContacts doesn't support contains() in $filter, so we fetch all
-    # and filter server-side. Use $top=2000 to get a full dataset.
-    # Fetch in pages — PropertyContacts appears to cap at 500 per request
-    all_rows: list = []
-    for page in range(1, 10):  # max 10 pages = 5000 records
+    # ── Two parallel searches ─────────────────────────────────────────────────
+    # 1. Properties by name → expand PropertyContacts for the linked contacts
+    # 2. Contacts by first/last name → for direct people lookups
+    # PropertyContacts endpoint rejects all query params, so we go via Properties.
+
+    async def _by_property():
         try:
-            res = await _aspire._get("PropertyContacts", {
-                "$top":        "500",
-                "$pageNumber": str(page),
+            res = await _aspire._get("Properties", {
+                "$filter":  f"contains(PropertyName,'{q_safe}')",
+                "$select":  "PropertyID,PropertyName",
+                "$expand":  "PropertyContacts",
+                "$top":     "20",
             })
+            return _aspire._extract_list(res)
         except Exception as e:
-            if page == 1:
-                logger.error(f"PropertyContacts fetch failed: {e}")
-                raise HTTPException(status_code=502, detail=f"Aspire search failed: {e}")
-            break  # no more pages
-        rows = _aspire._extract_list(res)
-        if not rows:
-            break
-        all_rows.extend(rows)
-        if len(rows) < 500:
-            break  # last page
+            logger.warning(f"Property search failed: {e}")
+            return []
 
-    q_lower = q.lower()
-    pc_rows = [
-        row for row in all_rows
-        if q_lower in (row.get("PropertyName") or "").lower()
-        or q_lower in (row.get("ContactName")  or "").lower()
-    ]
+    async def _by_contact():
+        try:
+            res = await _aspire._get("Contacts", {
+                "$filter": (
+                    f"contains(LastName,'{q_safe}') or "
+                    f"contains(FirstName,'{q_safe}')"
+                ),
+                "$select": "ContactID,FirstName,LastName,CompanyName,"
+                           "ContactTypeName,MobilePhone,OfficePhone,HomePhone,Email",
+                "$top":    "20",
+            })
+            return _aspire._extract_list(res)
+        except Exception as e:
+            logger.warning(f"Contact name search failed: {e}")
+            return []
 
-    if not pc_rows:
-        return {"query": q, "properties": []}
+    props_raw, contacts_raw = await asyncio.gather(_by_property(), _by_contact())
 
-    # ── Step 2: batch-fetch phone numbers for all matched contacts ────────────
-    contact_ids = list({row["ContactID"] for row in pc_rows if row.get("ContactID")})
+    # ── Batch-fetch phones for contacts found via property expand ─────────────
+    prop_contact_ids: list[int] = []
+    for p in props_raw:
+        for pc in (p.get("PropertyContacts") or []):
+            cid = pc.get("ContactID")
+            if cid and cid not in prop_contact_ids:
+                prop_contact_ids.append(cid)
+
     phone_map: dict[int, dict] = {}
-    if contact_ids:
-        id_filter = " or ".join(f"ContactID eq {cid}" for cid in contact_ids[:50])
+    if prop_contact_ids:
+        id_filter = " or ".join(f"ContactID eq {cid}" for cid in prop_contact_ids[:50])
         try:
             cres = await _aspire._get("Contacts", {
                 "$filter": id_filter,
@@ -108,6 +118,14 @@ async def contact_lookup(q: str = Query(..., min_length=2)):
                 phone_map[c["ContactID"]] = c
         except Exception as e:
             logger.warning(f"Phone number fetch failed: {e}")
+
+    # Also index the direct contact results into phone_map
+    for c in contacts_raw:
+        if c.get("ContactID") and c["ContactID"] not in phone_map:
+            phone_map[c["ContactID"]] = c
+
+    if not props_raw and not contacts_raw:
+        return {"query": q, "properties": []}
 
     def _phones(cid: int) -> list[dict]:
         c = phone_map.get(cid, {})
@@ -122,34 +140,64 @@ async def contact_lookup(q: str = Query(..., min_length=2)):
         val = (phone_map.get(cid, {}).get("Email") or "").strip()
         return val or None
 
-    # ── Step 3: group by property ─────────────────────────────────────────────
-    from collections import defaultdict
+    # ── Group property results by property ───────────────────────────────────
     by_prop: dict[int, dict] = {}
     prop_order: list[int] = []
-    for row in pc_rows:
-        pid = row.get("PropertyID")
-        if pid not in by_prop:
-            by_prop[pid] = {
-                "property_id":   pid,
-                "property_name": row.get("PropertyName") or "",
-                "contacts":      [],
-            }
-            prop_order.append(pid)
-        cid = row.get("ContactID")
-        by_prop[pid]["contacts"].append({
-            "id":      cid,
-            "name":    row.get("ContactName") or "",
-            "primary": bool(row.get("PrimaryContact")),
-            "billing": bool(row.get("BillingContact")),
-            "phones":  _phones(cid),
-            "email":   _email(cid),
-        })
+    seen_contact_ids: set[int] = set()
 
-    # Sort contacts within each property: primary first, then billing, then name
+    for p in props_raw:
+        pid  = p.get("PropertyID")
+        name = p.get("PropertyName") or ""
+        if pid not in by_prop:
+            by_prop[pid] = {"property_id": pid, "property_name": name, "contacts": []}
+            prop_order.append(pid)
+        for pc in (p.get("PropertyContacts") or []):
+            cid = pc.get("ContactID")
+            if not cid:
+                continue
+            seen_contact_ids.add(cid)
+            by_prop[pid]["contacts"].append({
+                "id":      cid,
+                "name":    pc.get("ContactName") or "",
+                "primary": bool(pc.get("PrimaryContact")),
+                "billing": bool(pc.get("BillingContact")),
+                "phones":  _phones(cid),
+                "email":   _email(cid),
+            })
+
     for prop in by_prop.values():
         prop["contacts"].sort(
             key=lambda c: (not c["primary"], not c["billing"], c["name"].lower())
         )
+
+    # ── Append direct contact matches not already in property results ─────────
+    for c in contacts_raw:
+        cid = c.get("ContactID")
+        if not cid or cid in seen_contact_ids:
+            continue
+        phones = _phones(cid)
+        if not phones:
+            continue
+        first = (c.get("FirstName") or "").strip()
+        last  = (c.get("LastName")  or "").strip()
+        cname = f"{first} {last}".strip() or "(no name)"
+        company = (c.get("CompanyName") or "").strip()
+        # Surface as a pseudo-property using company name or contact name
+        display = company or cname
+        pid = f"contact-{cid}"  # synthetic key
+        by_prop[pid] = {
+            "property_id":   None,
+            "property_name": display,
+            "contacts": [{
+                "id":      cid,
+                "name":    cname,
+                "primary": True,
+                "billing": False,
+                "phones":  phones,
+                "email":   _email(cid),
+            }],
+        }
+        prop_order.append(pid)
 
     return {
         "query":      q,
