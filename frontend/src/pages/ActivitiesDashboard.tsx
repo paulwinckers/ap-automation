@@ -351,7 +351,7 @@ export default function ActivitiesDashboard() {
   const [filterAssignedTo, setFilterAssignedTo] = useState('All');
   const [filterPriority,   setFilterPriority]   = useState('All');
   const [filterStatus,     setFilterStatus]     = useState('All');
-  const [groupBy,          setGroupBy]          = useState<'status' | 'flat'>('flat');
+  const [groupBy,          setGroupBy]          = useState<'status' | 'employee' | 'flat'>('flat');
 
   useEffect(() => {
     setLoading(true); setError(null);
@@ -478,13 +478,13 @@ export default function ActivitiesDashboard() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Group by:</label>
             <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #e5e7eb' }}>
-              {([['status', 'Status'], ['flat', 'None']] as const).map(([val, label], i) => (
+              {([['status', 'Status'], ['employee', 'Employee'], ['flat', 'None']] as const).map(([val, label], i) => (
                 <button key={val} onClick={() => setGroupBy(val)} style={{
                   padding: '5px 12px', fontSize: 12, border: 'none', cursor: 'pointer',
                   fontWeight: groupBy === val ? 700 : 400,
                   background: groupBy === val ? '#2563eb' : '#fff',
                   color:      groupBy === val ? '#fff'    : '#6b7280',
-                  borderRight: i < 1 ? '1px solid #e5e7eb' : 'none',
+                  borderRight: i < 2 ? '1px solid #e5e7eb' : 'none',
                 }}>{label}</button>
               ))}
             </div>
@@ -513,6 +513,25 @@ export default function ActivitiesDashboard() {
             <GroupSection key={status} title={status} activities={acts} showGroup="status" />
           ))
         )}
+        {groupBy === 'employee' && (() => {
+          // Build per-employee groups — activity appears in each assignee's group
+          const empMap = new Map<string, Activity[]>();
+          for (const a of visible) {
+            const names = a.assigned_to.length > 0 ? a.assigned_to : ['Unassigned'];
+            for (const name of names) {
+              if (!empMap.has(name)) empMap.set(name, []);
+              empMap.get(name)!.push(a);
+            }
+          }
+          const sorted = [...empMap.entries()].sort((a, b) => {
+            if (a[0] === 'Unassigned') return 1;
+            if (b[0] === 'Unassigned') return -1;
+            return a[0].localeCompare(b[0]);
+          });
+          return sorted.map(([name, acts]) => (
+            <GroupSection key={name} title={name} activities={acts} showGroup="employee" />
+          ));
+        })()}
         {groupBy === 'flat' && (
           <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
             <ActivityTable activities={visible} showGroup="flat" />
