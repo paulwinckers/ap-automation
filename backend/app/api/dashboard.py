@@ -1029,6 +1029,33 @@ async def get_sales_revenue():
 
 # ── Activities Dashboard ───────────────────────────────────────────────────────
 
+@router.get("/activities/debug-issue/{issue_number}")
+async def debug_issue(issue_number: int):
+    """Return raw Notes HTML + parsed fields for a specific Issue number."""
+    import re as _re
+    raw = await _aspire._get_all("Activities", {
+        "$select": "ActivityID,Subject,ActivityType,Status,Notes",
+        "$filter": f"CreatedDate ge 2026-01-01T00:00:00Z and ActivityType eq 'Email'",
+        "$top": "500",
+    })
+    matches = []
+    for a in raw:
+        html = a.get("Notes") or ""
+        m = _re.search(r'<b>Issue\s*#</b></td><td[^>]*><a[^>]*>(\d+)</a>', html, _re.IGNORECASE | _re.DOTALL)
+        if m and int(m.group(1)) == issue_number:
+            # Extract status cell raw
+            s = _re.search(r'<b>Status</b></td><td[^>]*>(.*?)</td>', html, _re.IGNORECASE | _re.DOTALL)
+            raw_status_html = s.group(1) if s else "(not found)"
+            matches.append({
+                "activity_id": a.get("ActivityID"),
+                "subject": a.get("Subject"),
+                "api_status": a.get("Status"),
+                "raw_status_html": raw_status_html,
+                "notes_snippet": html[:2000],
+            })
+    return {"issue_number": issue_number, "matches": matches}
+
+
 @router.get("/activities/probe")
 async def activities_probe():
     result = {}
