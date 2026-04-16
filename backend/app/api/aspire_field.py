@@ -70,10 +70,6 @@ async def contact_lookup(q: str = Query(..., min_length=2)):
         try:
             res = await _aspire._get("Properties", {
                 "$filter":  f"contains(PropertyName,'{q_safe}')",
-                "$select":  "PropertyID,PropertyName,"
-                            "PropertyAddressLine1,PropertyAddressCity,"
-                            "PropertyAddressStateProvinceCode,PropertyAddressZipCode,"
-                            "PropertyContacts",
                 "$expand":  "PropertyContacts",
                 "$top":     "20",
             })
