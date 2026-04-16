@@ -1083,6 +1083,8 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 return False
         if not include_emails and (a.get("ActivityType") or "").strip().lower() == "email":
             return False
+        if (a.get("ActivityType") or "").strip().lower() == "activity":
+            return False
         return True
 
     activities = [a for a in raw if is_active(a)]
