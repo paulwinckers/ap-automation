@@ -1159,7 +1159,21 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 seen_issue[parsed_num] = a
         else:
             non_issue.append(a)
-    activities = list(seen_issue.values()) + non_issue
+
+    # Also deduplicate non-issue activities by (subject, due_date, property_id)
+    # Aspire can emit multiple identical records; keep the highest ActivityID.
+    seen_non_issue: dict[tuple, dict] = {}
+    for a in non_issue:
+        key = (
+            (a.get("Subject") or "").strip().lower(),
+            a.get("DueDate") or "",
+            a.get("PropertyID") or 0,
+        )
+        existing = seen_non_issue.get(key)
+        if existing is None or (a.get("ActivityID") or 0) > (existing.get("ActivityID") or 0):
+            seen_non_issue[key] = a
+
+    activities = list(seen_issue.values()) + list(seen_non_issue.values())
 
     # ── Batch-fetch property + opportunity names ──────────────────────────────
     async def _fetch_names(entity: str, id_field: str, name_field: str, ids: list) -> dict:
