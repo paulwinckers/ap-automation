@@ -546,6 +546,7 @@ export interface Activity {
   priority: string;
   category: string;
   issue_number: number | null;
+  issue_url: string | null;
   assigned_to: string[];
   comments: { meta: string; text: string }[];
   property_id: number | null;

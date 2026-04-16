@@ -1077,13 +1077,14 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
 
     def _parse_issue_html(html: str) -> dict:
         """Extract issue fields and comments from Aspire Issue HTML notes."""
-        result = {"issue_number": None, "assigned_to": [], "status": "", "priority": "", "comments": []}
+        result = {"issue_number": None, "issue_url": None, "assigned_to": [], "status": "", "priority": "", "comments": []}
         if not html:
             return result
-        # Issue number
-        m = _re.search(r'<b>Issue\s*#</b></td><td[^>]*><a[^>]*>(\d+)</a>', html, _re.IGNORECASE | _re.DOTALL)
+        # Issue number + direct URL from the embedded <a href="...">
+        m = _re.search(r'<b>Issue\s*#</b></td><td[^>]*><a\s+href="([^"]+)"[^>]*>(\d+)</a>', html, _re.IGNORECASE | _re.DOTALL)
         if m:
-            result["issue_number"] = int(m.group(1))
+            result["issue_url"]    = m.group(1)
+            result["issue_number"] = int(m.group(2))
         # Generic key→value extractor for the header table rows
         def _cell(label: str) -> str:
             m2 = _re.search(rf'<b>{label}</b></td><td[^>]*>(.*?)</td>', html, _re.IGNORECASE | _re.DOTALL)
@@ -1287,6 +1288,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         shaped.append({
             "id":            aid,
             "issue_number":  parsed.get("issue_number"),
+            "issue_url":     parsed.get("issue_url"),
             "subject":       a.get("Subject") or "(no subject)",
             "activity_type": a.get("ActivityType") or "Unknown",
             "status":        parsed.get("status") or a.get("Status") or "",
