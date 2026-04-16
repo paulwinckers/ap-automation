@@ -112,7 +112,8 @@ function ContactCard({ contact }: { contact: ContactResult }) {
 // ── Property card ─────────────────────────────────────────────────────────────
 
 function PropertyCard({ prop }: { prop: PropertyResult }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const isProperty = prop.property_id !== null;
   const primaryContact = prop.contacts.find(c => c.primary);
 
   return (
@@ -140,15 +141,25 @@ function PropertyCard({ prop }: { prop: PropertyResult }) {
           display: 'inline-block', transition: 'transform 0.15s', flexShrink: 0,
         }}>▶</span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: '#111827', marginBottom: 2 }}>
-            🏠 {prop.property_name}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 700, fontSize: 15, color: '#111827' }}>
+              {isProperty ? '🏠' : '👤'} {prop.property_name}
+            </span>
+            <span style={{
+              fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999,
+              background: isProperty ? '#dbeafe' : '#f3f4f6',
+              color: isProperty ? '#1d4ed8' : '#6b7280',
+              flexShrink: 0,
+            }}>
+              {isProperty ? 'Property' : 'Contact'}
+            </span>
           </div>
           {prop.address && (
             <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 2 }}>
               📍 {prop.address}
             </div>
           )}
-          {primaryContact && primaryContact.phones.length > 0 && !expanded && (
+          {primaryContact && primaryContact.phones.length > 0 && (
             <div style={{ fontSize: 12, color: '#6b7280' }}>
               {primaryContact.name} · {primaryContact.phones[0].number}
             </div>
