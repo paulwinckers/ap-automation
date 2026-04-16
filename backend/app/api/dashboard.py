@@ -1112,9 +1112,12 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         if atype in ("activity", "appointment"):
             return False
         if atype == "email":
-            # Keep only Issue-type emails (Subject contains "Issue #")
             subject = (a.get("Subject") or "")
-            return bool(_re.search(r'Issue\s*#', subject, _re.IGNORECASE))
+            if not _re.search(r'Issue\s*#', subject, _re.IGNORECASE):
+                return False
+            if _re.search(r'Time\s*Adjustment', subject, _re.IGNORECASE):
+                return False
+            return True
         return True
 
     activities = [a for a in raw if is_active(a)]
