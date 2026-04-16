@@ -70,7 +70,10 @@ async def contact_lookup(q: str = Query(..., min_length=2)):
         try:
             res = await _aspire._get("Properties", {
                 "$filter":  f"contains(PropertyName,'{q_safe}')",
-                "$select":  "PropertyID,PropertyName",
+                "$select":  "PropertyID,PropertyName,"
+                            "PropertyAddressLine1,PropertyAddressCity,"
+                            "PropertyAddressStateProvinceCode,PropertyAddressZipCode,"
+                            "PropertyContacts",
                 "$expand":  "PropertyContacts",
                 "$top":     "20",
             })
@@ -149,7 +152,19 @@ async def contact_lookup(q: str = Query(..., min_length=2)):
         pid  = p.get("PropertyID")
         name = p.get("PropertyName") or ""
         if pid not in by_prop:
-            by_prop[pid] = {"property_id": pid, "property_name": name, "contacts": []}
+            addr_parts = [
+                p.get("PropertyAddressLine1") or "",
+                p.get("PropertyAddressCity")  or "",
+                p.get("PropertyAddressStateProvinceCode") or "",
+                p.get("PropertyAddressZipCode") or "",
+            ]
+            address = ", ".join(x for x in addr_parts if x) or None
+            by_prop[pid] = {
+                "property_id":   pid,
+                "property_name": name,
+                "address":       address,
+                "contacts":      [],
+            }
             prop_order.append(pid)
         for pc in (p.get("PropertyContacts") or []):
             cid = pc.get("ContactID")
