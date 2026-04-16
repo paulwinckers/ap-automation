@@ -1091,8 +1091,19 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         # Assigned To (may have <br/> between names)
         raw_assigned = _cell("Assigned To")
         result["assigned_to"] = [x.strip() for x in _re.split(r'[\n,]+', raw_assigned) if x.strip()]
-        result["status"]   = _cell("Status")
+        # Status — only present in HTML when non-Open; default to "Open"
+        result["status"]   = _cell("Status") or "Open"
         result["priority"] = _cell("Priority")
+        # Due Date — parse from HTML (MM/DD/YY) since API DueDate is null for email activities
+        raw_due = _cell("Due Date")
+        if raw_due:
+            try:
+                from datetime import datetime as _dt
+                result["due_date_str"] = _dt.strptime(raw_due.strip(), "%m/%d/%y").strftime("%Y-%m-%d")
+            except Exception:
+                result["due_date_str"] = None
+        else:
+            result["due_date_str"] = None
         # Comments — rows after "Issue Comment History" header
         comment_section = _re.search(r'Issue Comment History</h3>(.*)', html, _re.IGNORECASE | _re.DOTALL)
         if comment_section:
@@ -1141,7 +1152,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     seen_issue: dict[int, dict] = {}   # issue_number -> raw activity with highest ID
     non_issue: list[dict] = []
     for a in activities:
-        parsed_num = _parse_issue_html(a.get("Notes") or "").get("issue_number")
+        parsed_num = _parsed_cache.get(a.get("ActivityID"), {}).get("issue_number")
         if parsed_num is not None:
             existing = seen_issue.get(parsed_num)
             if existing is None or (a.get("ActivityID") or 0) > (existing.get("ActivityID") or 0):
@@ -1171,8 +1182,46 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 logger.warning(f"{entity} name lookup failed: {e}")
         return result
 
+    # Primary: activities with PropertyID directly
     prop_ids = list({a.get("PropertyID") for a in activities if a.get("PropertyID")})
     property_name_map = await _fetch_names("Properties", "PropertyID", "PropertyName", prop_ids)
+
+    # Secondary: for Issue activities with no PropertyID, look up via WorkTicketID → WorkTicket.PropertyID
+    missing_prop = [a for a in activities if not a.get("PropertyID") and a.get("WorkTicketID")]
+    if missing_prop:
+        wt_ids = list({a["WorkTicketID"] for a in missing_prop})
+        # Build WorkTicketID → PropertyID map via WorkTickets endpoint
+        wt_prop_map: dict[int, int] = {}
+        chunk_size = 50
+        for i in range(0, len(wt_ids), chunk_size):
+            chunk = wt_ids[i:i + chunk_size]
+            id_filter = " or ".join(f"WorkTicketID eq {wid}" for wid in chunk)
+            try:
+                res = await _aspire._get("WorkTickets", {
+                    "$filter": id_filter,
+                    "$select": "WorkTicketID,PropertyID",
+                    "$top": str(len(chunk)),
+                })
+                for rec in _aspire._extract_list(res):
+                    wid = rec.get("WorkTicketID")
+                    pid = rec.get("PropertyID")
+                    if wid and pid:
+                        wt_prop_map[wid] = pid
+            except Exception as e:
+                logger.warning(f"WorkTickets name lookup failed: {e}")
+        # Fetch any new PropertyIDs we found
+        new_prop_ids = list({pid for pid in wt_prop_map.values() if pid not in property_name_map})
+        if new_prop_ids:
+            extra = await _fetch_names("Properties", "PropertyID", "PropertyName", new_prop_ids)
+            property_name_map.update(extra)
+        # Map ActivityID → PropertyID via WorkTicket
+        act_to_prop: dict[int, int] = {}
+        for a in missing_prop:
+            pid = wt_prop_map.get(a["WorkTicketID"])
+            if pid:
+                act_to_prop[a["ActivityID"]] = pid
+    else:
+        act_to_prop = {}
 
     now = datetime.now(timezone.utc)
     week_end = now + timedelta(days=7)
@@ -1202,9 +1251,27 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         urg        = urgency(due_dt)
         due_days   = int((due_dt - now).days) if due_dt else None
         parsed     = _parsed_cache.get(a.get("ActivityID")) or _parse_issue_html(a.get("Notes") or "")
+        # Due date: prefer API field, fall back to HTML-parsed date
+        effective_due = due_dt.date().isoformat() if due_dt else parsed.get("due_date_str")
+        if effective_due and not due_dt:
+            # Recalculate urgency from parsed date
+            try:
+                from datetime import date as _date
+                d = (_date.fromisoformat(effective_due) - now.date()).days
+                urg = "overdue" if d < 0 else "urgent" if d <= 7 else "soon" if d <= 30 else "ok"
+                due_days = d
+            except Exception:
+                pass
+
+        aid = a.get("ActivityID")
+        # Resolve property: direct PropertyID, or via WorkTicket fallback
+        direct_pid  = a.get("PropertyID")
+        fallback_pid = act_to_prop.get(aid) if not direct_pid else None
+        resolved_pid = direct_pid or fallback_pid
+        prop_name = property_name_map.get(resolved_pid, "") if resolved_pid else ""
 
         shaped.append({
-            "id":            a.get("ActivityID"),
+            "id":            aid,
             "issue_number":  parsed.get("issue_number"),
             "subject":       a.get("Subject") or "(no subject)",
             "activity_type": a.get("ActivityType") or "Unknown",
@@ -1213,9 +1280,9 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "category":      a.get("ActivityCategoryName") or "",
             "assigned_to":   parsed["assigned_to"],
             "comments":      parsed["comments"],
-            "property_id":   a.get("PropertyID"),
-            "property_name": property_name_map.get(a.get("PropertyID"), ""),
-            "due_date":      due_dt.date().isoformat()      if due_dt      else None,
+            "property_id":   resolved_pid,
+            "property_name": prop_name,
+            "due_date":      effective_due,
             "complete_date": parse_dt(a.get("CompleteDate")).date().isoformat() if parse_dt(a.get("CompleteDate")) else None,
             "created_date":  created_dt.date().isoformat()  if created_dt  else None,
             "opportunity_id":a.get("OpportunityID"),
@@ -1224,7 +1291,9 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "days_until_due":due_days,
             "urgency":       urg,
             "_is_overdue":   urg == "overdue",
-            "_due_this_week":due_dt is not None and now <= due_dt <= week_end,
+            "_due_this_week":effective_due is not None and (
+                urg in ("overdue", "urgent")
+            ),
         })
 
     summary = {
