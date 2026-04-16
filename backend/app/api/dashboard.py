@@ -1121,7 +1121,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         # Assigned To (may have <br/> between names)
         raw_assigned = _cell("Assigned To")
         result["assigned_to"] = [x.strip() for x in _re.split(r'[\n,]+', raw_assigned) if x.strip()]
-        # Status — only present in HTML when non-Open; default to "Open"
+        # Status — may be in header table, or only in comment audit trail
         result["status"]   = _cell("Status") or "Open"
         result["priority"] = _cell("Priority")
         # Due Date — parse from HTML (MM/DD/YY) since API DueDate is null for email activities
@@ -1143,8 +1143,14 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 if len(cells) >= 2:
                     meta = _re.sub(r'<[^>]+>', ' ', cells[0]).strip()
                     comment = _re.sub(r'<[^>]+>', '', cells[1]).strip()
-                    if comment and 'Comment' not in meta:
-                        result["comments"].append({"meta": meta, "text": comment})
+                    # Skip table header rows (meta="Created Date/By", text="Comment")
+                    if not comment or comment == 'Comment' or meta == 'Created Date/By':
+                        continue
+                    result["comments"].append({"meta": meta, "text": comment})
+                    # Detect status changes in audit trail: "ChangesStatus | 'Old' to 'New'"
+                    sm = _re.search(r"ChangesStatus\s*\|\s*'[^']*'\s*to\s*'([^']+)'", comment, _re.IGNORECASE)
+                    if sm:
+                        result["status"] = sm.group(1).strip()
         return result
 
     # Pre-parse HTML so we can filter on parsed status
