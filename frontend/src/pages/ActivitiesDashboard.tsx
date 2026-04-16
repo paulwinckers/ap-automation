@@ -340,23 +340,65 @@ const SEL = (active: boolean): React.CSSProperties => ({
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+const PREFS_KEY = 'activities_prefs_v1';
+
+function loadPrefs() {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function savePrefs(prefs: object) {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch {}
+}
+
+/** Best-effort match of the logged-in user's name against Aspire assigned-to names. */
+function guessMyName(list: string[]): string {
+  try {
+    const user = JSON.parse(localStorage.getItem('ap_user') || '{}');
+    const full = (user.name || '').trim().toLowerCase();
+    if (!full) return 'All';
+    // Exact match first, then last-name match
+    return list.find(n => n.toLowerCase() === full)
+      ?? list.find(n => full.split(' ').some((part: string) => n.toLowerCase().includes(part)))
+      ?? 'All';
+  } catch { return 'All'; }
+}
+
 export default function ActivitiesDashboard() {
+  const saved = loadPrefs();
+
   const [data,          setData]          = useState<ActivitiesDashboardData | null>(null);
   const [loading,       setLoading]       = useState(true);
   const [error,         setError]         = useState<string | null>(null);
-  const [showCompleted,    setShowCompleted]    = useState(false);
+  const [showCompleted,    setShowCompleted]    = useState<boolean>(saved?.showCompleted ?? false);
 
-  // Filters
-  const [search,           setSearch]           = useState('');
-  const [filterAssignedTo, setFilterAssignedTo] = useState('All');
-  const [filterPriority,   setFilterPriority]   = useState('All');
-  const [filterStatus,     setFilterStatus]     = useState('All');
-  const [groupBy,          setGroupBy]          = useState<'status' | 'employee' | 'flat'>('flat');
+  // Filters — initialise from saved prefs
+  const [search,           setSearch]           = useState<string>(saved?.search ?? '');
+  const [filterAssignedTo, setFilterAssignedTo] = useState<string>(saved?.filterAssignedTo ?? 'All');
+  const [filterPriority,   setFilterPriority]   = useState<string>(saved?.filterPriority ?? 'All');
+  const [filterStatus,     setFilterStatus]     = useState<string>(saved?.filterStatus ?? 'All');
+  const [groupBy,          setGroupBy]          = useState<'status' | 'employee' | 'flat'>(saved?.groupBy ?? 'flat');
+  const [prefsReady,       setPrefsReady]       = useState<boolean>(!!saved);
+
+  // Persist prefs on every change
+  useEffect(() => {
+    savePrefs({ showCompleted, search, filterAssignedTo, filterPriority, filterStatus, groupBy });
+  }, [showCompleted, search, filterAssignedTo, filterPriority, filterStatus, groupBy]);
 
   useEffect(() => {
     setLoading(true); setError(null);
     getActivitiesDashboard(showCompleted)
-      .then(setData)
+      .then(d => {
+        setData(d);
+        // First-ever visit (no saved prefs): default Assigned To to the logged-in user
+        if (!prefsReady) {
+          const myName = guessMyName(d.assigned_to_list);
+          if (myName !== 'All') setFilterAssignedTo(myName);
+          setPrefsReady(true);
+        }
+      })
       .catch(e => setError((e as Error).message))
       .finally(() => setLoading(false));
   }, [showCompleted]);
@@ -503,6 +545,19 @@ export default function ActivitiesDashboard() {
             {search && <button onClick={() => setSearch('')} style={{ fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>}
           </div>
           <span style={{ fontSize: 11, color: '#9ca3af' }}>{visible.length} showing</span>
+          <button
+            title="Reset filters to my defaults"
+            onClick={() => {
+              const myName = guessMyName(assigned_to_list);
+              setFilterAssignedTo(myName);
+              setFilterStatus('All');
+              setFilterPriority('All');
+              setGroupBy('flat');
+              setSearch('');
+              setShowCompleted(false);
+            }}
+            style={{ fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
+          >↺ Reset</button>
         </div>
       </div>
 
