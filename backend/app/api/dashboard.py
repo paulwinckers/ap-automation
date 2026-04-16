@@ -1076,19 +1076,23 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     import re as _re
 
     def _parse_issue_html(html: str) -> dict:
-        """Extract issue number, Assigned To, and comments from Aspire Issue HTML notes."""
-        result = {"issue_number": None, "assigned_to": [], "comments": []}
+        """Extract issue fields and comments from Aspire Issue HTML notes."""
+        result = {"issue_number": None, "assigned_to": [], "status": "", "priority": "", "comments": []}
         if not html:
             return result
-        # Issue number — first link text inside the Issue # cell
+        # Issue number
         m = _re.search(r'<b>Issue\s*#</b></td><td[^>]*><a[^>]*>(\d+)</a>', html, _re.IGNORECASE | _re.DOTALL)
         if m:
             result["issue_number"] = int(m.group(1))
-        # Assigned To — may have multiple entries separated by <br/>
-        m = _re.search(r'<b>Assigned To</b></td><td[^>]*>(.*?)</td>', html, _re.IGNORECASE | _re.DOTALL)
-        if m:
-            raw_assigned = _re.sub(r'<[^>]+>', ' ', m.group(1)).strip()
-            result["assigned_to"] = [x.strip() for x in _re.split(r'[\n,]+', raw_assigned) if x.strip()]
+        # Generic key→value extractor for the header table rows
+        def _cell(label: str) -> str:
+            m2 = _re.search(rf'<b>{label}</b></td><td[^>]*>(.*?)</td>', html, _re.IGNORECASE | _re.DOTALL)
+            return _re.sub(r'<[^>]+>', ' ', m2.group(1)).strip() if m2 else ""
+        # Assigned To (may have <br/> between names)
+        raw_assigned = _cell("Assigned To")
+        result["assigned_to"] = [x.strip() for x in _re.split(r'[\n,]+', raw_assigned) if x.strip()]
+        result["status"]   = _cell("Status")
+        result["priority"] = _cell("Priority")
         # Comments — rows after "Issue Comment History" header
         comment_section = _re.search(r'Issue Comment History</h3>(.*)', html, _re.IGNORECASE | _re.DOTALL)
         if comment_section:
@@ -1098,26 +1102,35 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 if len(cells) >= 2:
                     meta = _re.sub(r'<[^>]+>', ' ', cells[0]).strip()
                     comment = _re.sub(r'<[^>]+>', '', cells[1]).strip()
-                    if comment and 'Comment' not in meta:  # skip header row
+                    if comment and 'Comment' not in meta:
                         result["comments"].append({"meta": meta, "text": comment})
         return result
 
+    # Pre-parse HTML so we can filter on parsed status
+    _parsed_cache: dict[int, dict] = {}
+    for a in raw:
+        aid = a.get("ActivityID")
+        if aid:
+            _parsed_cache[aid] = _parse_issue_html(a.get("Notes") or "")
+
     # Filter: keep Issues (Email with "Issue" in subject), drop plain emails/appointments/activity
     def is_active(a: dict) -> bool:
-        if not show_completed:
-            status = (a.get("Status") or "").strip().lower()
-            if "complet" in status or "closed" in status or "cancel" in status:
-                return False
         subject = (a.get("Subject") or "")
-        # Always drop Time Adjustment regardless of type
+        # Always drop Time Adjustment
         if _re.search(r'Time\s*Adjustment', subject, _re.IGNORECASE):
             return False
         atype = (a.get("ActivityType") or "").strip().lower()
         if atype in ("activity", "appointment"):
             return False
-        if atype == "email":
-            # Keep only Issue-type emails
-            return bool(_re.search(r'Issue\s*#', subject, _re.IGNORECASE))
+        if atype == "email" and not _re.search(r'Issue\s*#', subject, _re.IGNORECASE):
+            return False
+        # Filter completed — check both API status field and parsed HTML status
+        if not show_completed:
+            api_status = (a.get("Status") or "").strip().lower()
+            parsed_status = (_parsed_cache.get(a.get("ActivityID"), {}).get("status") or "").strip().lower()
+            combined = api_status + " " + parsed_status
+            if "complet" in combined or "closed" in combined or "cancel" in combined:
+                return False
         return True
 
     activities = [a for a in raw if is_active(a)]
@@ -1188,15 +1201,15 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         created_dt = parse_dt(a.get("CreatedDate"))
         urg        = urgency(due_dt)
         due_days   = int((due_dt - now).days) if due_dt else None
-        parsed     = _parse_issue_html(a.get("Notes") or "")
+        parsed     = _parsed_cache.get(a.get("ActivityID")) or _parse_issue_html(a.get("Notes") or "")
 
         shaped.append({
             "id":            a.get("ActivityID"),
             "issue_number":  parsed.get("issue_number"),
             "subject":       a.get("Subject") or "(no subject)",
             "activity_type": a.get("ActivityType") or "Unknown",
-            "status":        a.get("Status") or "",
-            "priority":      a.get("Priority") or "",
+            "status":        parsed.get("status") or a.get("Status") or "",
+            "priority":      parsed.get("priority") or a.get("Priority") or "",
             "category":      a.get("ActivityCategoryName") or "",
             "assigned_to":   parsed["assigned_to"],
             "comments":      parsed["comments"],
