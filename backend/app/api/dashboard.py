@@ -1051,6 +1051,7 @@ async def activities_probe():
 @router.get("/activities")
 async def get_activities_dashboard(show_completed: bool = False, include_emails: bool = False):
     from datetime import datetime, timezone, timedelta
+    import asyncio
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Aspire credentials not configured")
 
@@ -1089,27 +1090,34 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
 
     activities = [a for a in raw if is_active(a)]
 
-    # ── Batch-fetch property names for all unique PropertyIDs ─────────────────
-    property_name_map: dict[int, str] = {}
-    prop_ids = list({a.get("PropertyID") for a in activities if a.get("PropertyID")})
-    if prop_ids:
-        # Aspire OData filter: PropertyID eq 1 or PropertyID eq 2 ...
+    # ── Batch-fetch property + opportunity names ──────────────────────────────
+    async def _fetch_names(entity: str, id_field: str, name_field: str, ids: list) -> dict:
+        result: dict[int, str] = {}
         chunk_size = 50
-        for i in range(0, len(prop_ids), chunk_size):
-            chunk = prop_ids[i:i + chunk_size]
-            id_filter = " or ".join(f"PropertyID eq {pid}" for pid in chunk)
+        for i in range(0, len(ids), chunk_size):
+            chunk = ids[i:i + chunk_size]
+            id_filter = " or ".join(f"{id_field} eq {eid}" for eid in chunk)
             try:
-                pres = await _aspire._get("Properties", {
-                    "$filter":  id_filter,
-                    "$select":  "PropertyID,PropertyName",
-                    "$top":     str(len(chunk)),
+                res = await _aspire._get(entity, {
+                    "$filter": id_filter,
+                    "$select": f"{id_field},{name_field}",
+                    "$top":    str(len(chunk)),
                 })
-                for p in _aspire._extract_list(pres):
-                    pid = p.get("PropertyID")
-                    if pid:
-                        property_name_map[pid] = p.get("PropertyName") or ""
+                for rec in _aspire._extract_list(res):
+                    eid = rec.get(id_field)
+                    if eid:
+                        result[eid] = rec.get(name_field) or ""
             except Exception as e:
-                logger.warning(f"Property name lookup failed: {e}")
+                logger.warning(f"{entity} name lookup failed: {e}")
+        return result
+
+    prop_ids = list({a.get("PropertyID")   for a in activities if a.get("PropertyID")})
+    opp_ids  = list({a.get("OpportunityID") for a in activities if a.get("OpportunityID")})
+
+    property_name_map, opportunity_name_map = await asyncio.gather(
+        _fetch_names("Properties",   "PropertyID",   "PropertyName",   prop_ids),
+        _fetch_names("Opportunities","OpportunityID","OpportunityName", opp_ids),
+    )
 
     now = datetime.now(timezone.utc)
     week_end = now + timedelta(days=7)
@@ -1148,9 +1156,10 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "status":        a.get("Status") or "",
             "priority":      a.get("Priority") or "",
             "category":      a.get("ActivityCategoryName") or "",
-            "notes":         (a.get("Notes") or "")[:200],   # truncate for perf
+            "notes":         a.get("Notes") or "",
             "property_id":   a.get("PropertyID"),
             "property_name": property_name_map.get(a.get("PropertyID"), ""),
+            "opportunity_name": opportunity_name_map.get(a.get("OpportunityID"), ""),
             "due_date":      due_dt.date().isoformat()      if due_dt      else None,
             "start_date":    parse_dt(a.get("StartDate")).date().isoformat() if parse_dt(a.get("StartDate")) else None,
             "complete_date": parse_dt(a.get("CompleteDate")).date().isoformat() if parse_dt(a.get("CompleteDate")) else None,
@@ -1193,3 +1202,21 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         "created_by_list":created_by_list,
         "activities":     [clean(a) for a in shaped],
     }
+
+
+@router.patch("/activities/{activity_id}/complete")
+async def complete_activity(activity_id: int):
+    """Mark an Aspire activity as Completed with today's date."""
+    from datetime import datetime, timezone
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire credentials not configured")
+    try:
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        result = await _aspire._patch(f"Activities({activity_id})", {
+            "Status":       "Completed",
+            "CompleteDate": now_iso,
+        })
+        return {"ok": True, "activity_id": activity_id}
+    except Exception as e:
+        logger.error(f"Complete activity {activity_id} failed: {e}")
+        raise HTTPException(status_code=502, detail=str(e))

@@ -548,6 +548,7 @@ export interface Activity {
   notes: string;
   property_id: number | null;
   property_name: string;
+  opportunity_name: string;
   due_date: string | null;
   start_date: string | null;
   complete_date: string | null;
@@ -570,6 +571,10 @@ export interface ActivitiesDashboardData {
   categories: string[];
   created_by_list: string[];
   activities: Activity[];
+}
+
+export async function completeActivity(id: number): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('PATCH', `/dashboard/activities/${id}/complete`);
 }
 
 export async function getActivitiesDashboard(showCompleted = false, includeEmails = false): Promise<ActivitiesDashboardData> {

@@ -4,8 +4,57 @@
  * Route: /dashboards/activities
  */
 
-import React, { useEffect, useState } from 'react';
-import { getActivitiesDashboard, Activity, ActivitiesDashboardData } from '../lib/api';
+import React, { useEffect, useState, useRef } from 'react';
+import { getActivitiesDashboard, completeActivity, Activity, ActivitiesDashboardData } from '../lib/api';
+
+// ── Notes popup ───────────────────────────────────────────────────────────────
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function NotesCell({ notes }: { notes: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const plain = stripHtml(notes);
+  if (!plain) return <span style={{ color: '#d1d5db' }}>—</span>;
+
+  const preview = plain.length > 80 ? plain.slice(0, 80) + '…' : plain;
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <span
+        onClick={() => setOpen(o => !o)}
+        style={{ fontSize: 11, color: '#374151', cursor: plain.length > 80 ? 'pointer' : 'default', lineHeight: 1.4 }}
+        title={plain.length > 80 ? 'Click to read full note' : undefined}
+      >
+        {preview}
+        {plain.length > 80 && (
+          <span style={{ color: '#2563eb', marginLeft: 4, fontWeight: 600 }}>···</span>
+        )}
+      </span>
+      {open && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 1000,
+          background: 'rgba(0,0,0,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => setOpen(false)}>
+          <div style={{
+            background: '#fff', borderRadius: 12, padding: '20px 24px',
+            maxWidth: 560, width: '90%', maxHeight: '70vh', overflowY: 'auto',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <span style={{ fontWeight: 700, fontSize: 14, color: '#111827' }}>Note</span>
+              <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#9ca3af' }}>✕</button>
+            </div>
+            <p style={{ fontSize: 13, color: '#374151', lineHeight: 1.6, margin: 0, whiteSpace: 'pre-wrap' }}>{plain}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -98,24 +147,27 @@ function Td({ children, align = 'left', style }: {
 
 // ── Activity table ────────────────────────────────────────────────────────────
 
-function ActivityTable({ activities, showGroup }: { activities: Activity[]; showGroup?: string }) {
+function ActivityTable({ activities, showGroup, onCompleted }: { activities: Activity[]; showGroup?: string; onCompleted?: (id: number) => void }) {
   const { sorted, sortField, sortDir, onSort } = useSorted(activities, 'due_date');
   const sp = { sortField, sortDir, onSort };
+  const [completing, setCompleting] = useState<number | null>(null);
 
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
-            <SortTh field="subject"       align="left"   {...sp}>Subject</SortTh>
-            <SortTh field="property_name" align="left"   {...sp}>Property</SortTh>
+            <SortTh field="subject"          align="left"   {...sp}>Subject</SortTh>
+            <SortTh field="property_name"    align="left"   {...sp}>Property</SortTh>
+            <SortTh field="opportunity_name" align="left"   {...sp}>Opportunity</SortTh>
+            <th style={{ ...TH_BASE, textAlign: 'left', color: '#6b7280' }}>Notes</th>
             {showGroup !== 'type'   && <SortTh field="activity_type" align="left"   {...sp}>Type</SortTh>}
             {showGroup !== 'status' && <SortTh field="status"        align="left"   {...sp}>Status</SortTh>}
-            <SortTh field="priority"      align="center" {...sp}>Priority</SortTh>
-            <SortTh field="category"      align="left"   {...sp}>Category</SortTh>
-            <SortTh field="created_by"    align="left"   {...sp}>Created By</SortTh>
-            <SortTh field="due_date"      align="right"  {...sp}>Due Date</SortTh>
-            <SortTh field="modified_date" align="right"  {...sp}>Modified</SortTh>
+            <SortTh field="priority"         align="center" {...sp}>Priority</SortTh>
+            <SortTh field="created_by"       align="left"   {...sp}>Created By</SortTh>
+            <SortTh field="due_date"         align="right"  {...sp}>Due Date</SortTh>
+            <SortTh field="modified_date"    align="right"  {...sp}>Modified</SortTh>
+            <th style={{ ...TH_BASE, textAlign: 'center' }}></th>
           </tr>
         </thead>
         <tbody>
@@ -158,6 +210,28 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
                     <span style={{ color: '#d1d5db' }}>—</span>
                   )}
                 </Td>
+                {/* Opportunity */}
+                <Td>
+                  {a.opportunity_name ? (
+                    a.opportunity_id ? (
+                      <a
+                        href={`https://cloud.youraspire.com/app/opportunities/details/${a.opportunity_id}`}
+                        target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 11, color: '#2563eb', textDecoration: 'none', fontWeight: 500 }}
+                        onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+                        onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+                      >{a.opportunity_name}</a>
+                    ) : (
+                      <span style={{ fontSize: 11, color: '#374151' }}>{a.opportunity_name}</span>
+                    )
+                  ) : (
+                    <span style={{ color: '#d1d5db' }}>—</span>
+                  )}
+                </Td>
+                {/* Notes */}
+                <Td style={{ maxWidth: 220 }}>
+                  <NotesCell notes={a.notes} />
+                </Td>
                 {/* Type (shown when not grouped by type) */}
                 {showGroup !== 'type' && (
                   <Td><span style={{ fontSize: 11, color: '#475569' }}>{a.activity_type || '—'}</span></Td>
@@ -199,6 +273,30 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
                 <Td align="right">
                   <span style={{ fontSize: 11, color: '#9ca3af', whiteSpace: 'nowrap' }}>{fmtDate(a.modified_date)}</span>
                 </Td>
+                {/* Complete button */}
+                <Td align="center">
+                  <button
+                    disabled={completing === a.id}
+                    onClick={async () => {
+                      if (!confirm(`Mark "${a.subject}" as completed?`)) return;
+                      setCompleting(a.id);
+                      try {
+                        await completeActivity(a.id);
+                        onCompleted?.(a.id);
+                      } catch { alert('Failed to complete activity'); }
+                      finally { setCompleting(null); }
+                    }}
+                    style={{
+                      fontSize: 11, padding: '3px 8px', borderRadius: 5, cursor: 'pointer',
+                      border: '1px solid #d1d5db',
+                      background: completing === a.id ? '#f3f4f6' : '#f0fdf4',
+                      color: completing === a.id ? '#9ca3af' : '#16a34a',
+                      fontWeight: 600, whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {completing === a.id ? '…' : '✓ Done'}
+                  </button>
+                </Td>
               </tr>
             );
           })}
@@ -212,10 +310,9 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
         </tbody>
         <tfoot>
           <tr style={{ background: '#f8fafc', borderTop: '2px solid #e5e7eb' }}>
-            <td colSpan={7} style={{ padding: '6px 10px', fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
+            <td colSpan={10} style={{ padding: '6px 10px', fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
               {activities.length} activit{activities.length !== 1 ? 'ies' : 'y'}
             </td>
-            <td colSpan={2} />
           </tr>
         </tfoot>
       </table>
@@ -225,8 +322,8 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
 
 // ── Collapsible group section ─────────────────────────────────────────────────
 
-function GroupSection({ title, activities, showGroup }: {
-  title: string; activities: Activity[]; showGroup: string;
+function GroupSection({ title, activities, showGroup, onCompleted }: {
+  title: string; activities: Activity[]; showGroup: string; onCompleted?: (id: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   if (activities.length === 0) return null;
@@ -254,7 +351,7 @@ function GroupSection({ title, activities, showGroup }: {
           <span style={{ fontSize: 12, color: '#6b7280' }}>{activities.length} activit{activities.length !== 1 ? 'ies' : 'y'}</span>
         </div>
       </button>
-      {open && <ActivityTable activities={activities} showGroup={showGroup} />}
+      {open && <ActivityTable activities={activities} showGroup={showGroup} onCompleted={onCompleted} />}
     </div>
   );
 }
@@ -277,6 +374,7 @@ export default function ActivitiesDashboard() {
   const [error,         setError]         = useState<string | null>(null);
   const [showCompleted,  setShowCompleted]  = useState(false);
   const [includeEmails,  setIncludeEmails]  = useState(false);
+  const [completedIds,   setCompletedIds]   = useState<Set<number>>(new Set());
 
   // Filters
   const [search,         setSearch]         = useState('');
@@ -313,9 +411,13 @@ export default function ActivitiesDashboard() {
 
   const { summary, activity_types, statuses, priorities, categories, created_by_list, activities } = data;
 
+  function handleCompleted(id: number) {
+    setCompletedIds(s => new Set([...s, id]));
+  }
+
   const searchLower = search.trim().toLowerCase();
 
-  const visible = activities.filter(a =>
+  const visible = activities.filter(a => !completedIds.has(a.id) &&
     (filterType      === 'All' || a.activity_type === filterType) &&
     (filterStatus    === 'All' || a.status        === filterStatus) &&
     (filterPriority  === 'All' || a.priority      === filterPriority) &&
@@ -531,17 +633,17 @@ export default function ActivitiesDashboard() {
       <div style={{ padding: '16px 28px 28px' }}>
         {groupBy === 'type' && (
           grouped('activity_type').map(([type, acts]) => (
-            <GroupSection key={type} title={type} activities={acts} showGroup="type" />
+            <GroupSection key={type} title={type} activities={acts} showGroup="type" onCompleted={handleCompleted} />
           ))
         )}
         {groupBy === 'status' && (
           grouped('status').map(([status, acts]) => (
-            <GroupSection key={status} title={status} activities={acts} showGroup="status" />
+            <GroupSection key={status} title={status} activities={acts} showGroup="status" onCompleted={handleCompleted} />
           ))
         )}
         {groupBy === 'flat' && (
           <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
-            <ActivityTable activities={visible} showGroup="flat" />
+            <ActivityTable activities={visible} showGroup="flat" onCompleted={handleCompleted} />
           </div>
         )}
       </div>
