@@ -247,14 +247,39 @@ class SessionTimesBody(BaseModel):
     work_date: str = ""               # YYYY-MM-DD
 
 
-def _hhmm_to_iso(hhmm: str, work_date: str) -> str:
-    """Convert HH:MM + YYYY-MM-DD to an ISO-8601 UTC string."""
-    # Treat the entered time as local — store as-is in ISO with date
-    # (same pattern as clock_in which is stored as UTC from _now_iso)
-    # We keep it simple: combine date + time → aware datetime
-    from datetime import datetime, timezone, timedelta
-    dt = datetime.strptime(f"{work_date}T{hhmm}:00", "%Y-%m-%dT%H:%M:%S")
-    # Store as UTC string (the UI already shows times in local via toLocaleTimeString)
+COMPANY_TZ = "America/Toronto"   # Eastern Time — adjust if company moves
+
+def _utc_iso_to_local(iso: str) -> str:
+    """
+    Convert a UTC ISO-8601 string (how we store times) to a local datetime
+    string in the company timezone, suitable for Aspire API fields like
+    ClockInTime / StartTime (which expect local time, not UTC).
+    Returns "YYYY-MM-DDTHH:MM:SS" (no timezone suffix).
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        local_dt = dt.astimezone(ZoneInfo(COMPANY_TZ))
+        return local_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        # Fallback: return as-is
+        return iso
+
+
+def _hhmm_to_iso(val: str, work_date: str) -> str:
+    """
+    Accept either:
+      - A full UTC ISO string (already converted by the browser) → return as-is
+      - An HH:MM string (legacy / fallback) → combine with work_date, treat as UTC
+    The frontend should always send a full ISO string; the HH:MM path is kept
+    for backwards compatibility only.
+    """
+    if val and 'T' in val:
+        return val  # Already a proper ISO string from the browser
+    from datetime import datetime, timezone
+    dt = datetime.strptime(f"{work_date}T{val}:00", "%Y-%m-%dT%H:%M:%S")
     return dt.replace(tzinfo=timezone.utc).isoformat()
 
 
@@ -427,8 +452,8 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
             result = await _aspire.post_work_ticket_time(
                 work_ticket_id=int(wt_id),
                 contact_id=contact_id,
-                start_time=seg["start_time"],
-                end_time=seg["end_time"],
+                start_time=_utc_iso_to_local(seg["start_time"]),
+                end_time=_utc_iso_to_local(seg["end_time"]),
             )
             wtt_id = (
                 result.get("WorkTicketTimeID")
@@ -454,8 +479,8 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
         result = await _aspire.post_clock_time(
             contact_id=contact_id,
             date=work_date,
-            clock_in_time=session["clock_in"],
-            clock_out_time=session["clock_out"],
+            clock_in_time=_utc_iso_to_local(session["clock_in"]),
+            clock_out_time=_utc_iso_to_local(session["clock_out"]),
             break_time=session.get("break_minutes") or 0,
         )
         clock_id = (

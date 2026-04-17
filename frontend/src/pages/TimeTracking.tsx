@@ -81,6 +81,18 @@ function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * Convert an HH:MM string (in the browser's local timezone) + a YYYY-MM-DD
+ * work date into a proper UTC ISO-8601 string.
+ * Using new Date(y, m-1, d, h, min) always interprets args as LOCAL time,
+ * then .toISOString() converts correctly to UTC.
+ */
+function localHHMMtoUTCIso(hhmm: string, workDate: string): string {
+  const [year, month, day]   = workDate.split('-').map(Number);
+  const [hours, minutes]     = hhmm.split(':').map(Number);
+  return new Date(year, month - 1, day, hours, minutes, 0, 0).toISOString();
+}
+
 function loadStoredSession(): StoredSession | null {
   try {
     const raw = localStorage.getItem(LS_KEY);
@@ -904,7 +916,11 @@ export default function TimeTracking() {
     try {
       const r = await apiFetch<{ segment: TimeSegment }>(
         'PATCH', `/time/segment/${segId}/times`,
-        { start_time: startHHMM, end_time: endHHMM, work_date: workDate }
+        {
+          start_time: localHHMMtoUTCIso(startHHMM, workDate),
+          end_time:   localHHMMtoUTCIso(endHHMM,   workDate),
+          work_date:  workDate,
+        }
       );
       setSegments(prev => prev.map(s => s.id === segId ? r.segment : s));
       setEditSegment(null);
@@ -918,8 +934,8 @@ export default function TimeTracking() {
     if (!session) return;
     const workDate = session.work_date;
     const body = field === 'in'
-      ? { clock_in: hhmm, work_date: workDate }
-      : { clock_out: hhmm, work_date: workDate };
+      ? { clock_in: localHHMMtoUTCIso(hhmm, workDate), work_date: workDate }
+      : { clock_out: localHHMMtoUTCIso(hhmm, workDate), work_date: workDate };
 
     // Basic sanity: clock-out must be after clock-in
     if (field === 'out' && session.clock_in) {
