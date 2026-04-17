@@ -1617,15 +1617,15 @@ export default function TimeTracking() {
             )}
             <button
               onClick={handleSubmit}
-              disabled={actionLoading || submitOk}
+              disabled={actionLoading || submitOk || session?.status === 'submitted'}
               style={{
                 width: '100%', minHeight: 70, borderRadius: 14,
                 background: '#7c3aed', border: 'none', color: '#fff',
                 fontSize: 18, fontWeight: 700, cursor: 'pointer',
-                opacity: actionLoading || submitOk ? 0.6 : 1,
+                opacity: actionLoading || submitOk || session?.status === 'submitted' ? 0.6 : 1,
               }}
             >
-              {actionLoading ? 'Submitting…' : '📤 Submit to Aspire'}
+              {actionLoading ? 'Submitting…' : session?.status === 'submitted' ? '✅ Already Submitted' : '📤 Submit to Aspire'}
             </button>
           </>
         )}

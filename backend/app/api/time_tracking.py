@@ -563,6 +563,11 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
             status_code=422, detail="Cannot submit — employee has not clocked out yet"
         )
 
+    # ── Immediate lock — prevents duplicate concurrent submissions ────────────
+    # Mark as submitted right away so a second request sees "already_submitted".
+    # Reverted to "error" below if anything fails.
+    await db.update_time_session(session_id, {"status": "submitted"})
+
     segments               = await db.get_time_segments(session_id)
     contact_id             = session["employee_id"]
     work_date              = session["work_date"]
@@ -582,6 +587,24 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
         [s for s in segments if s.get("end_time")],
         key=lambda s: s["start_time"],
     )
+
+    # ── Clamp clock window to cover all segments ──────────────────────────────
+    # If segments extend outside the stored clock_in/clock_out (e.g. manually
+    # edited), widen the clock window so the ClockTime encompasses all WTTs
+    # and Aspire sees net = 0.
+    if completed:
+        first_seg_start = completed[0]["start_time"]
+        last_seg_end    = completed[-1]["end_time"]
+        if first_seg_start < clock_in_iso:
+            logger.info(
+                f"Clamping clock_in from {clock_in_iso} → {first_seg_start} to cover segments"
+            )
+            clock_in_iso = first_seg_start
+        if last_seg_end and last_seg_end > clock_out_iso:
+            logger.info(
+                f"Clamping clock_out from {clock_out_iso} → {last_seg_end} to cover segments"
+            )
+            clock_out_iso = last_seg_end
 
     # ── Build full timeline entries (segments + gaps + lunch) ─────────────────
     #
@@ -670,6 +693,30 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
 
     # ── Step 1: POST all timeline entries to WorkTicketTimes ─────────────────
     for entry in timeline:
+        # Skip zero-duration entries (rounding artifacts from segment editing)
+        dur = _duration_minutes(entry["start_time"], entry["end_time"])
+        if dur < _GAP_THRESHOLD_MINUTES:
+            logger.info(
+                f"Skipping zero-duration entry ({dur}m): "
+                f"label={entry['label']} wt={entry['work_ticket_id']}"
+            )
+            continue
+
+        # Skip segments already posted to Aspire (idempotency on retry)
+        if entry.get("segment_id"):
+            existing_rows = await db._q(
+                "SELECT aspire_wtt_id FROM time_segments WHERE id = ?",
+                [entry["segment_id"]],
+            )
+            if existing_rows and existing_rows[0].get("aspire_wtt_id"):
+                existing_wtt = existing_rows[0]["aspire_wtt_id"]
+                logger.info(
+                    f"Segment {entry['segment_id']} already posted "
+                    f"(wtt_id={existing_wtt}), skipping"
+                )
+                wtt_ids.append(existing_wtt)
+                continue
+
         try:
             result = await _aspire.post_work_ticket_time(
                 work_ticket_id=entry["work_ticket_id"],
@@ -736,6 +783,7 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
 
     # ── Step 3: Mark status ───────────────────────────────────────────────────
     if errors:
+        # Revert the early lock so the user can retry
         await db.update_time_session(session_id, {"status": "error"})
         raise HTTPException(
             status_code=502,
