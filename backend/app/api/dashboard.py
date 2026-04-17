@@ -560,7 +560,8 @@ async def get_estimating_dashboard():
                 "SalesRepContactName,SalesRepContactID,"
                 "OpportunityStatusName,OpportunityStatusID,"
                 "OpportunityType,SalesTypeName,SalesTypeID,"
-                "EstimatedDollars,BidDueDate,StartDate,CreatedDateTime,ModifiedDate,WonDate,LostDate"
+                "EstimatedDollars,BidDueDate,StartDate,CreatedDateTime,ModifiedDate,WonDate,LostDate,"
+                "ProposedDate,AnticipatedCloseDate"
             ),
             "$filter": "OpportunityStatusName ne 'Won' and OpportunityStatusName ne 'Lost'",
             "$top": "500",
@@ -648,16 +649,63 @@ async def get_estimating_dashboard():
             return "soon"
         return "ok"
 
+    # ── Staleness thresholds ──────────────────────────────────────────────────
+    TIER1_LIMIT    = 14   # days: Tier 1 turnaround must be ≤ this
+    STANDARD_LIMIT = 28   # days: standard turnaround must be ≤ this
+    WARNING_BUFFER = 3    # days before limit → show warning
+
     # ── Shape each opportunity ────────────────────────────────────────────────
     shaped = []
     for o in opps:
-        due_dt     = parse_date(o.get("BidDueDate"))
-        created_dt = parse_date(o.get("CreatedDateTime"))
-        urg        = urgency(due_dt)
-        due_days   = days_until(due_dt)
-
+        due_dt          = parse_date(o.get("BidDueDate"))
+        created_dt      = parse_date(o.get("CreatedDateTime"))
+        proposed_dt     = parse_date(o.get("ProposedDate"))
         start_dt        = parse_date(o.get("StartDate"))
         last_modified_dt = parse_date(o.get("ModifiedDate"))
+
+        urg      = urgency(due_dt)
+        due_days = days_until(due_dt)
+        is_tier1 = (o.get("PropertyName") or "").strip().lower() in tier1_names
+        limit    = TIER1_LIMIT if is_tier1 else STANDARD_LIMIT
+        days_open = days_since(created_dt)
+
+        # ── Staleness alerts ──────────────────────────────────────────────────
+        alerts: list[str] = []
+        alert_level = "ok"   # ok | warning | overdue
+
+        if proposed_dt is None:
+            # Not yet delivered to client
+            if days_open > limit:
+                alerts.append(
+                    f"Turnaround overdue: open {days_open}d (limit {limit}d)"
+                )
+                alert_level = "overdue"
+            elif days_open >= limit - WARNING_BUFFER:
+                alerts.append(
+                    f"Turnaround due soon: open {days_open}d (limit {limit}d)"
+                )
+                alert_level = "warning"
+
+            # Bid due date alerts (independent of turnaround)
+            if due_dt is not None:
+                bid_days = days_until(due_dt)
+                if bid_days is not None and bid_days < 0:
+                    alerts.append(
+                        f"Bid due date passed {abs(bid_days)}d ago — not yet proposed"
+                    )
+                    alert_level = "overdue"
+                elif bid_days is not None and 0 <= bid_days <= 3:
+                    alerts.append(
+                        f"Bid due in {bid_days}d — not yet proposed"
+                    )
+                    if alert_level == "ok":
+                        alert_level = "warning"
+
+        turnaround_days = (
+            (proposed_dt - created_dt).days
+            if proposed_dt and created_dt else None
+        )
+
         shaped.append({
             "id":                 o.get("OpportunityID"),
             "opp_number":         o.get("OpportunityNumber"),
@@ -667,28 +715,38 @@ async def get_estimating_dashboard():
             "opp_type":           o.get("OpportunityType") or "Unknown",
             "sales_type":         o.get("SalesTypeName") or "",
             "status":             o.get("OpportunityStatusName") or "",
-            "created_date":       (created_dt.date().isoformat()      if created_dt      else None),
-            "due_date":           (due_dt.date().isoformat()          if due_dt          else None),
-            "start_date":         (start_dt.date().isoformat()        if start_dt        else None),
+            "created_date":       (created_dt.date().isoformat()       if created_dt       else None),
+            "due_date":           (due_dt.date().isoformat()           if due_dt           else None),
+            "proposed_date":      (proposed_dt.date().isoformat()      if proposed_dt      else None),
+            "start_date":         (start_dt.date().isoformat()         if start_dt         else None),
             "last_activity_date": (last_modified_dt.date().isoformat() if last_modified_dt else None),
-            "estimated_value": float(o.get("EstimatedDollars") or 0),
-            "days_old":        days_since(created_dt),
-            "days_until_due":  due_days,
-            "urgency":         urg,
-            "is_tier1":        (o.get("PropertyName") or "").strip().lower() in tier1_names,
-            "_salesperson":    (o.get("SalesRepContactName") or "Unassigned").strip(),
-            "_stage":          o.get("OpportunityStatusName") or "Unknown",
-            "_is_overdue":     urg == "overdue",
-            "_due_this_week":  due_dt is not None and now <= due_dt <= week_end,
+            "estimated_value":    float(o.get("EstimatedDollars") or 0),
+            "days_old":           days_open,
+            "days_until_due":     due_days,
+            "turnaround_days":    turnaround_days,
+            "turnaround_limit":   limit,
+            "urgency":            urg,
+            "alert_level":        alert_level,
+            "alerts":             alerts,
+            "is_tier1":           is_tier1,
+            "_salesperson":       (o.get("SalesRepContactName") or "Unassigned").strip(),
+            "_salesperson_id":    o.get("SalesRepContactID"),
+            "_stage":             o.get("OpportunityStatusName") or "Unknown",
+            "_is_overdue":        urg == "overdue",
+            "_due_this_week":     due_dt is not None and now <= due_dt <= week_end,
+            "_has_alert":         alert_level in ("warning", "overdue"),
         })
 
     # ── Summary stats ─────────────────────────────────────────────────────────
     summary = {
-        "total":         len(shaped),
-        "total_value":   sum(s["estimated_value"] for s in shaped),
-        "overdue":       sum(1 for s in shaped if s["_is_overdue"]),
-        "due_this_week": sum(1 for s in shaped if s["_due_this_week"]),
-        "tier1_count":   sum(1 for s in shaped if s["is_tier1"]),
+        "total":                  len(shaped),
+        "total_value":            sum(s["estimated_value"] for s in shaped),
+        "overdue":                sum(1 for s in shaped if s["_is_overdue"]),
+        "due_this_week":          sum(1 for s in shaped if s["_due_this_week"]),
+        "tier1_count":            sum(1 for s in shaped if s["is_tier1"]),
+        "alert_overdue":          sum(1 for s in shaped if s["alert_level"] == "overdue"),
+        "alert_warning":          sum(1 for s in shaped if s["alert_level"] == "warning"),
+        "tier1_overdue":          sum(1 for s in shaped if s["is_tier1"] and s["alert_level"] == "overdue"),
     }
 
     # ── Unique sales types, phases and divisions (sorted, blanks excluded) ────
@@ -717,11 +775,13 @@ async def get_estimating_dashboard():
             for stage, stage_opps in sorted(by_stage.items())
         ]
         return {
-            "name":        name,
-            "total":       len(opps_list),
-            "total_value": sum(o["estimated_value"] for o in opps_list),
-            "overdue":     sum(1 for o in opps_list if o["_is_overdue"]),
-            "stages":      stages,
+            "name":          name,
+            "total":         len(opps_list),
+            "total_value":   sum(o["estimated_value"] for o in opps_list),
+            "overdue":       sum(1 for o in opps_list if o["_is_overdue"]),
+            "alert_overdue": sum(1 for o in opps_list if o["alert_level"] == "overdue"),
+            "alert_warning": sum(1 for o in opps_list if o["alert_level"] == "warning"),
+            "stages":        stages,
         }
 
     # Sort alphabetically; put "Unassigned" last
@@ -737,6 +797,235 @@ async def get_estimating_dashboard():
         "phases":      phases,
         "divisions":   divisions,
         "salespeople": salespeople,
+    }
+
+
+# ── Estimating Digest Email ───────────────────────────────────────────────────
+
+@router.post("/estimating/send-digest")
+async def send_estimating_digest():
+    """
+    Send each salesperson a personalised HTML email listing their overdue /
+    at-risk open estimates.  Only salespeople with at least one alert get an email.
+
+    Rules:
+      • Tier 1 property → turnaround limit 14 days
+      • All others      → turnaround limit 28 days
+      • Warning zone    → within 3 days of the limit
+      • Bid due soon    → BidDueDate ≤ 3 days away, not yet proposed
+      • Bid overdue     → BidDueDate passed, not yet proposed
+    """
+    from datetime import datetime, timezone, timedelta
+    from app.services.email_intake import GraphClient
+    from app.core.config import settings as cfg
+
+    if not cfg.ASPIRE_CLIENT_ID or not cfg.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire credentials not configured")
+
+    TIER1_LIMIT    = 14
+    STANDARD_LIMIT = 28
+    WARNING_BUFFER = 3
+
+    now = datetime.now(timezone.utc)
+
+    def parse_dt(s):
+        if not s:
+            return None
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+        except Exception:
+            return None
+
+    import asyncio
+
+    # Fetch opportunities + Tier1 set + employee emails in parallel
+    async def _fetch_opps():
+        return await _aspire._get_all("Opportunities", {
+            "$select": (
+                "OpportunityID,OpportunityNumber,OpportunityName,PropertyName,"
+                "SalesRepContactName,SalesRepContactID,"
+                "OpportunityStatusName,EstimatedDollars,"
+                "BidDueDate,CreatedDateTime,ProposedDate,ModifiedDate"
+            ),
+            "$filter": "OpportunityStatusName ne 'Won' and OpportunityStatusName ne 'Lost'",
+            "$top": "500",
+            "$orderby": "CreatedDateTime desc",
+        })
+
+    async def _fetch_tier1():
+        try:
+            props = await _aspire._get_all("Properties", {"$top": "500"})
+        except Exception:
+            return set()
+        names: set[str] = set()
+        for p in props:
+            for tag in (p.get("PropertyTags") or []):
+                tag_str = (tag.get("TagName") or str(tag)) if isinstance(tag, dict) else str(tag)
+                if "tier 1" in tag_str.lower():
+                    pname = (p.get("PropertyName") or "").strip()
+                    if pname:
+                        names.add(pname.lower())
+                    break
+        return names
+
+    async def _fetch_emails():
+        try:
+            employees = await _aspire.get_aspire_employees()
+            return {
+                str(e.get("ContactID")): e.get("Email") or ""
+                for e in employees
+                if e.get("ContactID")
+            }
+        except Exception as e:
+            logger.warning(f"Could not fetch employee emails: {e}")
+            return {}
+
+    raw_opps, tier1_names, contact_emails = await asyncio.gather(
+        _fetch_opps(), _fetch_tier1(), _fetch_emails()
+    )
+
+    # ── Compute alerts per opportunity ────────────────────────────────────────
+    flagged_by_person: dict[str, dict] = {}  # name → {email, opps: []}
+
+    for o in raw_opps:
+        status = (o.get("OpportunityStatusName") or "").lower()
+        if "won" in status or "lost" in status:
+            continue
+        if not (o.get("PropertyName") or "").strip():
+            continue
+
+        created_dt  = parse_dt(o.get("CreatedDateTime"))
+        proposed_dt = parse_dt(o.get("ProposedDate"))
+        due_dt      = parse_dt(o.get("BidDueDate"))
+        is_tier1    = (o.get("PropertyName") or "").strip().lower() in tier1_names
+        limit       = TIER1_LIMIT if is_tier1 else STANDARD_LIMIT
+        days_open   = max(0, (now - created_dt).days) if created_dt else 0
+
+        alerts: list[str] = []
+        if proposed_dt is None:
+            if days_open > limit:
+                alerts.append(f"⛔ Turnaround overdue — open {days_open} days (limit {limit}d)")
+            elif days_open >= limit - WARNING_BUFFER:
+                alerts.append(f"⚠️ Turnaround due soon — open {days_open} days (limit {limit}d)")
+            if due_dt:
+                bid_days = (due_dt - now).days
+                if bid_days < 0:
+                    alerts.append(f"⛔ Bid due date passed {abs(bid_days)} day(s) ago — not yet proposed")
+                elif 0 <= bid_days <= 3:
+                    alerts.append(f"⚠️ Bid due in {bid_days} day(s) — not yet proposed")
+
+        if not alerts:
+            continue
+
+        sp_name = (o.get("SalesRepContactName") or "Unassigned").strip()
+        sp_id   = str(o.get("SalesRepContactID") or "")
+        sp_email = contact_emails.get(sp_id, "")
+
+        if sp_name not in flagged_by_person:
+            flagged_by_person[sp_name] = {"email": sp_email, "opps": []}
+
+        flagged_by_person[sp_name]["opps"].append({
+            "name":       o.get("OpportunityName") or "(no name)",
+            "property":   o.get("PropertyName") or "",
+            "number":     o.get("OpportunityNumber") or "",
+            "value":      float(o.get("EstimatedDollars") or 0),
+            "days_open":  days_open,
+            "due_date":   due_dt.date().isoformat() if due_dt else None,
+            "is_tier1":   is_tier1,
+            "alerts":     alerts,
+        })
+
+    if not flagged_by_person:
+        return {"ok": True, "sent": 0, "message": "No alerts — all estimates on track!"}
+
+    # ── Send one email per salesperson ────────────────────────────────────────
+    if not cfg.MS_TENANT_ID or not cfg.MS_CLIENT_ID or not cfg.MS_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Microsoft Graph credentials not configured")
+
+    graph = GraphClient(
+        tenant_id=cfg.MS_TENANT_ID,
+        client_id=cfg.MS_CLIENT_ID,
+        client_secret=cfg.MS_CLIENT_SECRET,
+    )
+    mailbox = cfg.MS_AP_INBOX
+    sent: list[str] = []
+    skipped: list[str] = []
+
+    today_str = now.strftime("%B %d, %Y")
+
+    for sp_name, data in flagged_by_person.items():
+        sp_email = data["email"]
+        if not sp_email:
+            skipped.append(sp_name)
+            logger.warning(f"Digest: no email found for salesperson '{sp_name}' — skipping")
+            continue
+
+        opps = data["opps"]
+        overdue_count = sum(1 for o in opps if any("⛔" in a for a in o["alerts"]))
+        warning_count = len(opps) - overdue_count
+
+        # Build rows HTML
+        rows_html = ""
+        for opp in sorted(opps, key=lambda x: -x["days_open"]):
+            tier1_badge = '<span style="background:#d97706;color:#fff;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:700;margin-left:6px">T1</span>' if opp["is_tier1"] else ""
+            alerts_html = "".join(f'<div style="margin-top:4px;font-size:13px">{a}</div>' for a in opp["alerts"])
+            due_str = f'<span style="color:#6b7280;font-size:12px">  ·  Due {opp["due_date"]}</span>' if opp["due_date"] else ""
+            value_str = f'${opp["value"]:,.0f}' if opp["value"] else "—"
+            rows_html += f"""
+            <tr>
+              <td style="padding:12px 16px;border-bottom:1px solid #f3f4f6;vertical-align:top">
+                <div style="font-weight:600;color:#111">{opp['property']}{tier1_badge}</div>
+                <div style="color:#374151;font-size:13px;margin-top:2px">{opp['name']}{due_str}</div>
+                {alerts_html}
+              </td>
+              <td style="padding:12px 16px;border-bottom:1px solid #f3f4f6;text-align:right;white-space:nowrap;vertical-align:top">
+                <div style="font-weight:600">{value_str}</div>
+                <div style="color:#6b7280;font-size:12px">{opp['days_open']}d open</div>
+              </td>
+            </tr>"""
+
+        body_html = f"""
+        <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
+          <div style="background:#0f172a;padding:20px 24px;border-radius:8px 8px 0 0">
+            <h2 style="margin:0;color:#fff;font-size:18px">📋 Estimating Digest — {today_str}</h2>
+            <p style="margin:4px 0 0;color:#94a3b8;font-size:13px">Hi {sp_name.split()[0]}, here are your estimates that need attention</p>
+          </div>
+          <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;padding:16px 24px">
+            <div style="display:flex;gap:12px;margin-bottom:16px">
+              {"" if not overdue_count else f'<span style="background:#fee2e2;color:#dc2626;padding:4px 12px;border-radius:20px;font-size:13px;font-weight:600">⛔ {overdue_count} Overdue</span>'}
+              {"" if not warning_count else f'<span style="background:#fef3c7;color:#d97706;padding:4px 12px;border-radius:20px;font-size:13px;font-weight:600">⚠️ {warning_count} Warning</span>'}
+            </div>
+            <table style="width:100%;border-collapse:collapse">
+              {rows_html}
+            </table>
+            <p style="margin:16px 0 0;color:#9ca3af;font-size:12px">
+              Turnaround targets: Tier 1 ≤ 14 days · Standard ≤ 28 days<br>
+              This digest is sent automatically each morning.
+            </p>
+          </div>
+        </div>"""
+
+        try:
+            await graph.send_email(
+                mailbox=mailbox,
+                to_addresses=[sp_email],
+                subject=f"📋 Estimating Digest {today_str} — {len(opps)} estimate(s) need attention",
+                body_html=body_html,
+            )
+            sent.append(sp_name)
+            logger.info(f"Digest sent to {sp_name} <{sp_email}> ({len(opps)} alerts)")
+        except Exception as e:
+            logger.error(f"Digest email failed for {sp_name} <{sp_email}>: {e}")
+            skipped.append(sp_name)
+
+    return {
+        "ok":      True,
+        "sent":    len(sent),
+        "skipped": len(skipped),
+        "recipients": sent,
+        "no_email":   skipped,
+        "total_flagged_opps": sum(len(d["opps"]) for d in flagged_by_person.values()),
     }
 
 

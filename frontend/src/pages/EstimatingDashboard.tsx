@@ -7,6 +7,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   getEstimatingDashboard,
+  sendEstimatingDigest,
   EstimatingDashboardData,
   EstimatingOpp,
   EstimatingSalesperson,
@@ -117,6 +118,73 @@ function Td({ children, align = 'left', style }: {
   );
 }
 
+// ── Alert banner ──────────────────────────────────────────────────────────────
+
+function AlertBanner({ overdue, warning, tier1Overdue }: {
+  overdue: number; warning: number; tier1Overdue: number;
+}) {
+  const [sending, setSending] = useState(false);
+  const [sent,    setSent]    = useState<string | null>(null);
+
+  const handleDigest = async () => {
+    if (!window.confirm('Send digest emails to all salespeople with flagged estimates?')) return;
+    setSending(true);
+    setSent(null);
+    try {
+      const res = await sendEstimatingDigest();
+      setSent(`✅ Sent to ${res.sent} salesperson(s): ${res.recipients.join(', ')}`);
+    } catch (e: unknown) {
+      setSent(`❌ Failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div style={{
+      margin: '0 28px 12px',
+      background: overdue > 0 ? '#fff1f2' : '#fffbeb',
+      border: `1px solid ${overdue > 0 ? '#fca5a5' : '#fde68a'}`,
+      borderRadius: 8, padding: '10px 16px',
+      display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+    }}>
+      <span style={{ fontSize: 14 }}>{overdue > 0 ? '⛔' : '⚠️'}</span>
+      {overdue > 0 && (
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#dc2626' }}>
+          {overdue} estimate{overdue !== 1 ? 's' : ''} overdue
+        </span>
+      )}
+      {warning > 0 && (
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#d97706' }}>
+          {warning} approaching limit
+        </span>
+      )}
+      {tier1Overdue > 0 && (
+        <span style={{
+          background: '#dc2626', color: '#fff',
+          fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 20,
+        }}>
+          {tier1Overdue} Tier 1 overdue
+        </span>
+      )}
+      <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+        <button
+          onClick={handleDigest}
+          disabled={sending}
+          style={{
+            padding: '5px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
+            background: '#0f172a', color: '#fff', fontSize: 12, fontWeight: 600,
+            opacity: sending ? 0.6 : 1,
+          }}
+        >
+          {sending ? 'Sending…' : '📧 Send Digest Now'}
+        </button>
+        {sent && <span style={{ fontSize: 11, color: '#374151' }}>{sent}</span>}
+      </div>
+    </div>
+  );
+}
+
 // ── Opportunity table ─────────────────────────────────────────────────────────
 
 function OppTable({ opps, showSalesperson = false }: { opps: EstimatingOpp[]; showSalesperson?: boolean }) {
@@ -149,14 +217,20 @@ function OppTable({ opps, showSalesperson = false }: { opps: EstimatingOpp[]; sh
           {sorted.map((o, i) => {
             const duColor = URGENCY_COLOR[o.urgency] ?? '#9ca3af';
             const isContract = o.opp_type === 'Contract';
-            const rowBg = o.is_tier1
+            const alertBorder =
+              o.alert_level === 'overdue'  ? '4px solid #dc2626' :
+              o.alert_level === 'warning'  ? '4px solid #f59e0b' :
+              o.is_tier1                   ? '4px solid #d97706' :
+                                             '4px solid transparent';
+            const rowBg = o.alert_level === 'overdue'
+              ? (i % 2 === 0 ? '#fff1f2' : '#ffe4e6')
+              : o.alert_level === 'warning'
+              ? (i % 2 === 0 ? '#fffbeb' : '#fef3c7')
+              : o.is_tier1
               ? (i % 2 === 0 ? '#fffbeb' : '#fef3c7')
               : (i % 2 === 0 ? '#fff' : '#f9fafb');
             return (
-              <tr key={o.id} style={{
-                background: rowBg,
-                borderLeft: o.is_tier1 ? '4px solid #d97706' : '4px solid transparent',
-              }}>
+              <tr key={o.id} style={{ background: rowBg, borderLeft: alertBorder }}>
                 {/* Property (bold) then #Num – Opp Name as link */}
                 <Td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
@@ -232,9 +306,23 @@ function OppTable({ opps, showSalesperson = false }: { opps: EstimatingOpp[]; sh
                 <Td align="right">
                   <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtDate(o.last_activity_date)}</span>
                 </Td>
-                {/* Age */}
+                {/* Age + alert pill */}
                 <Td align="right">
-                  <span style={{ fontSize: 11, color: '#9ca3af' }}>{o.days_old}d</span>
+                  <span style={{
+                    display: 'inline-block',
+                    fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
+                    background:
+                      o.alert_level === 'overdue' ? '#fee2e2' :
+                      o.alert_level === 'warning' ? '#fef3c7' : '#f3f4f6',
+                    color:
+                      o.alert_level === 'overdue' ? '#dc2626' :
+                      o.alert_level === 'warning' ? '#d97706' : '#6b7280',
+                  }}>{o.days_old}d</span>
+                  {o.alerts.length > 0 && (
+                    <div style={{ fontSize: 10, color: o.alert_level === 'overdue' ? '#dc2626' : '#d97706', marginTop: 2, maxWidth: 120, textAlign: 'right' }}>
+                      {o.alerts[0].replace(/^[⛔⚠️]\s*/, '')}
+                    </div>
+                  )}
                 </Td>
               </tr>
             );
@@ -590,6 +678,12 @@ export default function EstimatingDashboard() {
               {data.summary.tier1_count}
             </span>
           )}
+          {(data?.summary.tier1_overdue ?? 0) > 0 && (
+            <span style={{
+              width: 8, height: 8, borderRadius: '50%',
+              background: '#dc2626', display: 'inline-block',
+            }} title={`${data!.summary.tier1_overdue} Tier 1 overdue`} />
+          )}
         </button>
 
         {/* Salesperson */}
@@ -662,6 +756,15 @@ export default function EstimatingDashboard() {
 
         <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 'auto' }}>{visibleCount} showing</span>
       </div>
+
+      {/* ── Alert banner ──────────────────────────────────────────────────── */}
+      {data && (data.summary.alert_overdue > 0 || data.summary.alert_warning > 0) && (
+        <AlertBanner
+          overdue={data.summary.alert_overdue}
+          warning={data.summary.alert_warning}
+          tier1Overdue={data.summary.tier1_overdue}
+        />
+      )}
 
       {/* Content — grouped by salesperson / status / flat */}
       <div style={{ padding: '16px 28px 28px' }}>

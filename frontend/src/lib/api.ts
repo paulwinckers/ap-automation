@@ -542,12 +542,17 @@ export interface EstimatingOpp {
   status: string;
   created_date: string | null;
   due_date: string | null;
+  proposed_date: string | null;
   start_date: string | null;
   last_activity_date: string | null;
   estimated_value: number;
   days_old: number;
   days_until_due: number | null;
+  turnaround_days: number | null;
+  turnaround_limit: number;
   urgency: 'overdue' | 'urgent' | 'soon' | 'ok' | 'no-date';
+  alert_level: 'ok' | 'warning' | 'overdue';
+  alerts: string[];
   is_tier1: boolean;
 }
 
@@ -561,15 +566,30 @@ export interface EstimatingSalesperson {
   total: number;
   total_value: number;
   overdue: number;
+  alert_overdue: number;
+  alert_warning: number;
   stages: EstimatingStage[];
 }
 
 export interface EstimatingDashboardData {
-  summary: { total: number; total_value: number; overdue: number; due_this_week: number; tier1_count: number };
+  summary: {
+    total: number;
+    total_value: number;
+    overdue: number;
+    due_this_week: number;
+    tier1_count: number;
+    alert_overdue: number;
+    alert_warning: number;
+    tier1_overdue: number;
+  };
   sales_types: string[];
   phases: string[];
   divisions: string[];
   salespeople: EstimatingSalesperson[];
+}
+
+export async function sendEstimatingDigest(): Promise<{ ok: boolean; sent: number; recipients: string[] }> {
+  return request('POST', '/dashboard/estimating/send-digest');
 }
 
 export async function getEstimatingDashboard(): Promise<EstimatingDashboardData> {
