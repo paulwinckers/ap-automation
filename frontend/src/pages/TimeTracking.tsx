@@ -60,6 +60,7 @@ interface WorkTicket {
   OpportunityName:  string;
   PropertyName:     string;
   ScheduledDate:    string | null;
+  HoursEst:         number | null;
   _RouteName:       string;
 }
 
@@ -1491,11 +1492,28 @@ export default function TimeTracking() {
                     {openSegment.work_ticket_name}
                   </div>
                 )}
-                {openSegment.work_ticket_num && (
-                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
-                    #{openSegment.work_ticket_num}
-                  </div>
-                )}
+                {(() => {
+                  const t = tickets.find(t => t.WorkTicketID === openSegment.work_ticket_id);
+                  return t ? (
+                    <>
+                      {t.PropertyName && (
+                        <div style={{ fontSize: 13, color: '#475569', marginTop: 2, fontWeight: 500 }}>
+                          {t.PropertyName}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 3, display: 'flex', gap: 8 }}>
+                        {openSegment.work_ticket_num && <span>#{openSegment.work_ticket_num}</span>}
+                        {t.HoursEst != null && (
+                          <span>· Est {fmtDuration(Math.round(t.HoursEst * 60))}</span>
+                        )}
+                      </div>
+                    </>
+                  ) : openSegment.work_ticket_num ? (
+                    <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                      #{openSegment.work_ticket_num}
+                    </div>
+                  ) : null;
+                })()}
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 28, fontWeight: 700, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
@@ -1651,6 +1669,14 @@ export default function TimeTracking() {
                           {seg.work_ticket_name}
                         </div>
                       )}
+                      {(() => {
+                        const t = tickets.find(t => t.WorkTicketID === seg.work_ticket_id);
+                        return t?.PropertyName ? (
+                          <div style={{ fontSize: 12, color: '#475569', marginTop: 1 }}>
+                            {t.PropertyName}
+                          </div>
+                        ) : null;
+                      })()}
                       <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
                         {fmtTime(seg.start_time)} – {fmtTime(seg.end_time)}
                       </div>
