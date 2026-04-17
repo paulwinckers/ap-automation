@@ -936,9 +936,11 @@ class AspireClient:
             "ClockEndDateTime":   clock_out_time,
             "BreakTime":          break_time,
         }
+        # Aspire requires RouteID OR CrewLeaderContactID — not both.
+        # Prefer RouteID since it uniquely identifies the route + crew lead.
         if route_id is not None:
             body["RouteID"] = route_id
-        if crew_leader_contact_id is not None:
+        elif crew_leader_contact_id is not None:
             body["CrewLeaderContactID"] = crew_leader_contact_id
         logger.info(
             f"POST /ClockTimes ContactID={contact_id} RouteID={route_id} "
