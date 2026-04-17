@@ -500,15 +500,30 @@ async def estimating_tags_probe():
     the raw Tags value so we can see exactly how Aspire structures the field.
     """
     try:
-        # Fetch without $select to discover all available field names
-        props = await _aspire._get_all("Properties", {"$top": "5"})
+        props = await _aspire._get_all("Properties", {
+            "$select": "PropertyName,PropertyTags",
+            "$top": "500",
+        })
     except Exception as e:
         return {"error": str(e)}
 
+    with_tags = [p for p in props if p.get("PropertyTags")]
+    tier1_matches = []
+    for p in props:
+        for tag in (p.get("PropertyTags") or []):
+            tag_str = str(tag).lower()
+            if "tier 1" in tag_str:
+                tier1_matches.append(p.get("PropertyName"))
+                break
     return {
-        "total_fetched": len(props),
-        "first_property_all_fields": props[0] if props else None,
-        "all_field_names": sorted(props[0].keys()) if props else [],
+        "total_properties_fetched": len(props),
+        "properties_with_tags": len(with_tags),
+        "tier1_matches": len(tier1_matches),
+        "tier1_property_names": tier1_matches,
+        "sample_tagged_properties": [
+            {"PropertyName": p.get("PropertyName"), "PropertyTags": p.get("PropertyTags")}
+            for p in with_tags[:5]
+        ],
     }
 
 
@@ -555,10 +570,12 @@ async def get_estimating_dashboard():
         })
 
     async def _fetch_tier1_names() -> set[str]:
-        """Return lowercase property names that carry a 'Tier 1' tag."""
+        """Return lowercase property names that carry a 'Tier 1' tag.
+        Aspire returns PropertyTags as a list of objects or strings.
+        """
         try:
             props = await _aspire._get_all("Properties", {
-                "$select": "PropertyName,Tags",
+                "$select": "PropertyName,PropertyTags",
                 "$top": "500",
             })
         except Exception as e:
@@ -566,16 +583,17 @@ async def get_estimating_dashboard():
             return set()
         names: set[str] = set()
         for p in props:
-            raw_tags = p.get("Tags") or ""
-            # Tags may come back as a comma-separated string or a list
-            if isinstance(raw_tags, list):
-                tags_lower = " ".join(str(t) for t in raw_tags).lower()
-            else:
-                tags_lower = str(raw_tags).lower()
-            if "tier 1" in tags_lower:
-                pname = (p.get("PropertyName") or "").strip()
-                if pname:
-                    names.add(pname.lower())
+            for tag in (p.get("PropertyTags") or []):
+                # tag may be a string, or a dict like {"TagName": "Tier 1", ...}
+                tag_str = (
+                    tag.get("TagName") or tag.get("Name") or str(tag)
+                    if isinstance(tag, dict) else str(tag)
+                )
+                if "tier 1" in tag_str.lower():
+                    pname = (p.get("PropertyName") or "").strip()
+                    if pname:
+                        names.add(pname.lower())
+                    break
         logger.info(f"Tier 1 properties found: {len(names)}")
         return names
 
