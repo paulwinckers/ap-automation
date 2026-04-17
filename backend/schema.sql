@@ -259,3 +259,9 @@ CREATE TABLE IF NOT EXISTS time_segments (
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_time_segments_session ON time_segments(session_id);
+
+-- ── Time Tracking — route columns (migration) ─────────────────────────────────
+ALTER TABLE time_sessions ADD COLUMN route_id INTEGER;
+ALTER TABLE time_sessions ADD COLUMN route_name TEXT;
+ALTER TABLE time_sessions ADD COLUMN crew_leader_contact_id INTEGER;
+ALTER TABLE time_sessions ADD COLUMN crew_leader_name TEXT;

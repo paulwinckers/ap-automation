@@ -807,12 +807,22 @@ class Database:
     # ── Time tracking ─────────────────────────────────────────────────────────
 
     async def create_time_session(
-        self, work_date: str, employee_id: int, employee_name: str
+        self,
+        work_date: str,
+        employee_id: int,
+        employee_name: str,
+        route_id: Optional[int] = None,
+        route_name: Optional[str] = None,
+        crew_leader_contact_id: Optional[int] = None,
+        crew_leader_name: Optional[str] = None,
     ) -> int:
         return await self._x(
-            """INSERT INTO time_sessions (work_date, employee_id, employee_name, clock_in)
-               VALUES (?, ?, ?, datetime('now'))""",
-            [work_date, employee_id, employee_name],
+            """INSERT INTO time_sessions
+               (work_date, employee_id, employee_name, clock_in,
+                route_id, route_name, crew_leader_contact_id, crew_leader_name)
+               VALUES (?, ?, ?, datetime('now'), ?, ?, ?, ?)""",
+            [work_date, employee_id, employee_name,
+             route_id, route_name, crew_leader_contact_id, crew_leader_name],
         )
 
     async def get_time_session(self, session_id: int) -> Optional[dict]:

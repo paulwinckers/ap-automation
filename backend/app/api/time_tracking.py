@@ -56,6 +56,22 @@ async def _get_crew_members() -> list[dict]:
     return _crew_cache
 
 
+# ── Routes cache (10 min) ─────────────────────────────────────────────────────
+_routes_cache: list[dict] = []
+_routes_cache_ts: float = 0.0
+_ROUTES_TTL = 600  # 10 minutes
+
+
+async def _get_routes() -> list[dict]:
+    global _routes_cache, _routes_cache_ts
+    if _routes_cache and (time.time() - _routes_cache_ts) < _ROUTES_TTL:
+        return _routes_cache
+    routes = await _aspire.get_aspire_routes(active_only=True)
+    _routes_cache = routes
+    _routes_cache_ts = time.time()
+    return _routes_cache
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _now_iso() -> str:
@@ -93,9 +109,13 @@ def _duration_minutes(start_iso: str, end_iso: str) -> int:
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
 class ClockInBody(BaseModel):
-    employee_id:   int
-    employee_name: str
-    work_date:     str  # YYYY-MM-DD
+    employee_id:            int
+    employee_name:          str
+    work_date:              str              # YYYY-MM-DD
+    route_id:               Optional[int]  = None
+    route_name:             Optional[str]  = None
+    crew_leader_contact_id: Optional[int]  = None
+    crew_leader_name:       Optional[str]  = None
 
 
 class ClockOutBody(BaseModel):
@@ -144,11 +164,78 @@ async def get_session(
     return {"session": dict(session), "segments": [dict(s) for s in segments]}
 
 
+@router.get("/routes")
+async def get_routes():
+    """Return active Aspire routes (cached 10 min). Used by the route picker."""
+    try:
+        routes = await _get_routes()
+        return {"routes": routes}
+    except Exception as e:
+        logger.error(f"get_routes failed: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Failed to fetch routes: {e}")
+
+
+@router.get("/my-route")
+async def get_my_route(
+    employee_id: int = Query(...),
+    work_date:   str = Query(...),
+    db: Database = Depends(get_db),
+):
+    """
+    Look up this employee's assigned route for the given date.
+    1. Query crew_assignments table → get route_name
+    2. Fetch Aspire routes → find matching route → return RouteID + CrewLeaderContactID
+    Returns null route if no assignment found.
+    """
+    rows = await db._q(
+        "SELECT * FROM crew_assignments WHERE employee_id = ? AND work_date = ? LIMIT 1",
+        [employee_id, work_date],
+    )
+    if not rows:
+        return {"route": None, "auto_detected": False}
+
+    assigned_route_name = rows[0]["route_name"]
+
+    try:
+        routes = await _get_routes()
+    except Exception:
+        routes = []
+
+    # Match by name (case-insensitive)
+    matched = next(
+        (r for r in routes if (r.get("RouteName") or "").strip().lower()
+         == assigned_route_name.strip().lower()),
+        None,
+    )
+
+    if matched:
+        return {
+            "route": {
+                "route_id":               matched["RouteID"],
+                "route_name":             matched.get("RouteName"),
+                "crew_leader_contact_id": matched.get("CrewLeaderContactID"),
+                "crew_leader_name":       matched.get("CrewLeaderContactName"),
+            },
+            "auto_detected": True,
+        }
+
+    # Assignment exists but couldn't match to Aspire route — return name only
+    return {
+        "route": {
+            "route_id":               None,
+            "route_name":             assigned_route_name,
+            "crew_leader_contact_id": None,
+            "crew_leader_name":       None,
+        },
+        "auto_detected": True,
+    }
+
+
 @router.post("/clock-in")
 async def clock_in(body: ClockInBody, db: Database = Depends(get_db)):
     """
     Create or resume a session for the day.
-    - No session yet → create fresh one.
+    - No session yet → create fresh one (with route info if provided).
     - Session exists, not clocked out → return it as-is.
     - Session exists, clocked out → clear clock_out so they can continue.
     """
@@ -157,6 +244,19 @@ async def clock_in(body: ClockInBody, db: Database = Depends(get_db)):
         if existing.get("clock_out"):
             # Re-open: clear clock_out so they can keep working
             await db.update_time_session(existing["id"], {"clock_out": None})
+            existing = await db.get_time_session(existing["id"])
+        # Update route info if newly provided (e.g. re-opening with a different route)
+        route_updates = {}
+        if body.route_id is not None and not existing.get("route_id"):
+            route_updates["route_id"] = body.route_id
+        if body.route_name and not existing.get("route_name"):
+            route_updates["route_name"] = body.route_name
+        if body.crew_leader_contact_id is not None and not existing.get("crew_leader_contact_id"):
+            route_updates["crew_leader_contact_id"] = body.crew_leader_contact_id
+        if body.crew_leader_name and not existing.get("crew_leader_name"):
+            route_updates["crew_leader_name"] = body.crew_leader_name
+        if route_updates:
+            await db.update_time_session(existing["id"], route_updates)
             existing = await db.get_time_session(existing["id"])
         segments = await db.get_time_segments(existing["id"])
         return {
@@ -169,6 +269,10 @@ async def clock_in(body: ClockInBody, db: Database = Depends(get_db)):
         work_date=body.work_date,
         employee_id=body.employee_id,
         employee_name=body.employee_name,
+        route_id=body.route_id,
+        route_name=body.route_name,
+        crew_leader_contact_id=body.crew_leader_contact_id,
+        crew_leader_name=body.crew_leader_name,
     )
     session = await db.get_time_session(session_id)
     return {"session": dict(session), "segments": [], "created": True}
@@ -431,9 +535,11 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
             status_code=422, detail="Cannot submit — employee has not clocked out yet"
         )
 
-    segments = await db.get_time_segments(session_id)
+    segments    = await db.get_time_segments(session_id)
     contact_id  = session["employee_id"]
     work_date   = session["work_date"]
+    route_id    = session.get("route_id")
+    crew_leader_contact_id = session.get("crew_leader_contact_id")
     errors: list[str] = []
     wtt_ids: list[str] = []
 
@@ -454,6 +560,7 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
                 contact_id=contact_id,
                 start_time=_utc_iso_to_local(seg["start_time"]),
                 end_time=_utc_iso_to_local(seg["end_time"]),
+                route_id=route_id,
             )
             wtt_id = (
                 result.get("WorkTicketTimeID")
@@ -482,6 +589,8 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
             clock_in_time=_utc_iso_to_local(session["clock_in"]),
             clock_out_time=_utc_iso_to_local(session["clock_out"]),
             break_time=session.get("break_minutes") or 0,
+            route_id=route_id,
+            crew_leader_contact_id=crew_leader_contact_id,
         )
         clock_id = (
             result.get("ClockTimeID")

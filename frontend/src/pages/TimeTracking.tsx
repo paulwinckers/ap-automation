@@ -23,17 +23,21 @@ interface CrewMember {
 }
 
 interface TimeSession {
-  id:            number;
-  work_date:     string;
-  employee_id:   number;
-  employee_name: string;
-  clock_in:      string | null;
-  clock_out:     string | null;
-  break_minutes: number;
-  status:        'draft' | 'submitted' | 'error';
-  submitted_at:  string | null;
-  notes:         string | null;
-  created_at:    string;
+  id:                     number;
+  work_date:              string;
+  employee_id:            number;
+  employee_name:          string;
+  clock_in:               string | null;
+  clock_out:              string | null;
+  break_minutes:          number;
+  status:                 'draft' | 'submitted' | 'error';
+  submitted_at:           string | null;
+  notes:                  string | null;
+  created_at:             string;
+  route_id:               number | null;
+  route_name:             string | null;
+  crew_leader_contact_id: number | null;
+  crew_leader_name:       string | null;
 }
 
 interface TimeSegment {
@@ -66,13 +70,31 @@ interface DriveTicket {
   ticket_month: string | null;
 }
 
+interface RouteInfo {
+  route_id:               number | null;
+  route_name:             string | null;
+  crew_leader_contact_id: number | null;
+  crew_leader_name:       string | null;
+}
+
+interface AspireRoute {
+  RouteID:                 number;
+  RouteName:               string | null;
+  CrewLeaderContactID:     number | null;
+  CrewLeaderContactName:   string | null;
+}
+
 // ── Local-storage session state ───────────────────────────────────────────────
 
 interface StoredSession {
-  employee_id:   number;
-  employee_name: string;
-  session_id:    number | null;
-  work_date:     string;
+  employee_id:            number;
+  employee_name:          string;
+  session_id:             number | null;
+  work_date:              string;
+  route_id?:              number | null;
+  route_name?:            string | null;
+  crew_leader_contact_id?: number | null;
+  crew_leader_name?:      string | null;
 }
 
 const LS_KEY = 'time_tracking_session';
@@ -577,12 +599,18 @@ export default function TimeTracking() {
   const today = todayISO();
 
   // ── Auth state
-  const [phase,        setPhase]        = useState<'pin' | 'main'>('pin');
+  const [phase,        setPhase]        = useState<'pin' | 'route' | 'main'>('pin');
   const [pinInput,     setPinInput]      = useState('');
   const [pinError,     setPinError]      = useState<string | null>(null);
   const [crewMembers,  setCrewMembers]   = useState<CrewMember[]>([]);
   const [crewLoading,  setCrewLoading]   = useState(false);
   const [employee,     setEmployee]      = useState<CrewMember | null>(null);
+
+  // ── Route state
+  const [routeInfo,         setRouteInfo]         = useState<RouteInfo | null>(null);
+  const [routeAutoDetected, setRouteAutoDetected] = useState(false);
+  const [allRoutes,         setAllRoutes]         = useState<AspireRoute[]>([]);
+  const [routeLoading,      setRouteLoading]      = useState(false);
 
   // ── Session state
   const [session,  setSession]  = useState<TimeSession | null>(null);
@@ -637,6 +665,15 @@ export default function TimeTracking() {
           if (r.session) {
             setSession(r.session);
             setSegments(r.segments);
+            // Restore route info from session
+            if (r.session.route_id || r.session.route_name) {
+              setRouteInfo({
+                route_id:               r.session.route_id,
+                route_name:             r.session.route_name,
+                crew_leader_contact_id: r.session.crew_leader_contact_id,
+                crew_leader_name:       r.session.crew_leader_name,
+              });
+            }
             // Restore employee from stored name — full object fetched after crew loads
             setEmployee({
               ContactID:   stored.employee_id,
@@ -704,6 +741,21 @@ export default function TimeTracking() {
       if (r.session) {
         setSession(r.session);
         setSegments(r.segments);
+        // If session already has a route, restore it and skip route phase
+        if (r.session.route_id || r.session.route_name) {
+          setRouteInfo({
+            route_id:               r.session.route_id,
+            route_name:             r.session.route_name,
+            crew_leader_contact_id: r.session.crew_leader_contact_id,
+            crew_leader_name:       r.session.crew_leader_name,
+          });
+          saveStoredSession({
+            employee_id: match.ContactID, employee_name: match.FullName,
+            session_id: r.session.id, work_date: today,
+          });
+          setPhase('main');
+          return;
+        }
       }
     } catch (e) {
       console.error('session fetch:', e);
@@ -717,7 +769,28 @@ export default function TimeTracking() {
       session_id:    null,
       work_date:     today,
     });
-    setPhase('main');
+
+    // Fetch route assignment and all routes in parallel, then go to route phase
+    setRouteLoading(true);
+    try {
+      const [myRouteRes, routesRes] = await Promise.all([
+        apiFetch<{ route: RouteInfo | null; auto_detected: boolean }>(
+          'GET', `/time/my-route?employee_id=${match.ContactID}&work_date=${today}`
+        ),
+        apiFetch<{ routes: AspireRoute[] }>('GET', '/time/routes'),
+      ]);
+      setAllRoutes(routesRes.routes ?? []);
+      if (myRouteRes.route) {
+        setRouteInfo(myRouteRes.route);
+        setRouteAutoDetected(myRouteRes.auto_detected);
+      }
+    } catch (e) {
+      console.error('route fetch:', e);
+    } finally {
+      setRouteLoading(false);
+    }
+
+    setPhase('route');
   }, [pinInput, crewMembers, today]);
 
   // (keypad removed — PIN is free-text)
@@ -732,7 +805,15 @@ export default function TimeTracking() {
     try {
       const r = await apiFetch<{ session: TimeSession; segments: TimeSegment[] }>(
         'POST', '/time/clock-in',
-        { employee_id: employee.ContactID, employee_name: employee.FullName, work_date: today }
+        {
+          employee_id:            employee.ContactID,
+          employee_name:          employee.FullName,
+          work_date:              today,
+          route_id:               routeInfo?.route_id ?? null,
+          route_name:             routeInfo?.route_name ?? null,
+          crew_leader_contact_id: routeInfo?.crew_leader_contact_id ?? null,
+          crew_leader_name:       routeInfo?.crew_leader_name ?? null,
+        }
       );
       setSession(r.session);
       setSegments(r.segments);
@@ -966,6 +1047,8 @@ export default function TimeTracking() {
     setEmployee(null);
     setSession(null);
     setSegments([]);
+    setRouteInfo(null);
+    setRouteAutoDetected(false);
     setSubmitOk(false);
     setSubmitError(null);
   };
@@ -1042,6 +1125,139 @@ export default function TimeTracking() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // RENDER — Route selection screen
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (phase === 'route') {
+    const confirmed = routeInfo !== null;
+    return (
+      <div style={{
+        minHeight: '100vh', background: '#0f172a',
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        justifyContent: 'center', padding: 24,
+      }}>
+        <div style={{ marginBottom: 28, textAlign: 'center' }}>
+          <div style={{ fontSize: 36, marginBottom: 8 }}>🗺️</div>
+          <h1 style={{ color: '#fff', fontSize: 22, fontWeight: 700, margin: 0 }}>
+            {employee?.FullName}
+          </h1>
+          <p style={{ color: '#64748b', fontSize: 13, marginTop: 4 }}>
+            {fmtDate(today)}
+          </p>
+        </div>
+
+        {routeLoading ? (
+          <div style={{ color: '#64748b', fontSize: 15 }}>Looking up your route…</div>
+        ) : routeAutoDetected && routeInfo ? (
+          /* ── Auto-detected route ────────────────────────────────────── */
+          <div style={{ width: '100%', maxWidth: 340 }}>
+            <div style={{
+              background: '#1e293b', borderRadius: 14, padding: 20, marginBottom: 16,
+            }}>
+              <div style={{ color: '#94a3b8', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+                Your assigned route
+              </div>
+              <div style={{ color: '#22c55e', fontSize: 22, fontWeight: 700 }}>
+                {routeInfo.route_name ?? 'Unknown Route'}
+              </div>
+              {routeInfo.crew_leader_name && (
+                <div style={{ color: '#64748b', fontSize: 13, marginTop: 4 }}>
+                  Crew Lead: {routeInfo.crew_leader_name}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setPhase('main')}
+              style={{
+                width: '100%', padding: 18, borderRadius: 12, border: 'none',
+                background: '#22c55e', color: '#fff', fontSize: 18, fontWeight: 700,
+                cursor: 'pointer', marginBottom: 12,
+              }}
+            >
+              ✓ Confirm Route
+            </button>
+            <button
+              onClick={() => setRouteAutoDetected(false)}
+              style={{
+                width: '100%', padding: 14, borderRadius: 12,
+                background: 'none', border: '1.5px solid #334155',
+                color: '#94a3b8', fontSize: 15, cursor: 'pointer',
+              }}
+            >
+              Choose a different route
+            </button>
+          </div>
+        ) : (
+          /* ── Manual route picker ────────────────────────────────────── */
+          <div style={{ width: '100%', maxWidth: 340 }}>
+            <div style={{ color: '#94a3b8', fontSize: 14, marginBottom: 12, textAlign: 'center' }}>
+              {routeInfo ? 'Select your route:' : 'No route assigned — select your route:'}
+            </div>
+            <div style={{
+              background: '#1e293b', borderRadius: 14, overflow: 'hidden',
+              maxHeight: 320, overflowY: 'auto', marginBottom: 16,
+            }}>
+              {allRoutes.length === 0 ? (
+                <div style={{ padding: 24, color: '#64748b', textAlign: 'center' }}>
+                  No routes found
+                </div>
+              ) : allRoutes.map(r => (
+                <button
+                  key={r.RouteID}
+                  onClick={() => setRouteInfo({
+                    route_id:               r.RouteID,
+                    route_name:             r.RouteName,
+                    crew_leader_contact_id: r.CrewLeaderContactID,
+                    crew_leader_name:       r.CrewLeaderContactName,
+                  })}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left',
+                    padding: '14px 20px', background: routeInfo?.route_id === r.RouteID ? '#0f3460' : 'none',
+                    border: 'none', borderBottom: '1px solid #0f172a',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ color: routeInfo?.route_id === r.RouteID ? '#38bdf8' : '#e2e8f0', fontWeight: 600, fontSize: 16 }}>
+                    {r.RouteName}
+                  </div>
+                  {r.CrewLeaderContactName && (
+                    <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>
+                      Lead: {r.CrewLeaderContactName}
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setPhase('main')}
+              disabled={!confirmed}
+              style={{
+                width: '100%', padding: 18, borderRadius: 12, border: 'none',
+                background: confirmed ? '#22c55e' : '#334155',
+                color: '#fff', fontSize: 18, fontWeight: 700,
+                cursor: confirmed ? 'pointer' : 'default', marginBottom: 12,
+                opacity: confirmed ? 1 : 0.5,
+              }}
+            >
+              {confirmed ? `✓ Continue — ${routeInfo!.route_name}` : 'Select a route to continue'}
+            </button>
+            <button
+              onClick={() => setPhase('main')}
+              style={{
+                width: '100%', padding: 12, borderRadius: 12,
+                background: 'none', border: 'none',
+                color: '#475569', fontSize: 13, cursor: 'pointer',
+              }}
+            >
+              Skip (no route)
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // RENDER — Main tracking screen
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -1090,6 +1306,15 @@ export default function TimeTracking() {
             <div style={{ color: '#64748b', fontSize: 13, marginTop: 2 }}>
               {fmtDate(today)}
             </div>
+            {routeInfo?.route_name && (
+              <div style={{
+                display: 'inline-block', marginTop: 4, padding: '2px 8px',
+                background: '#0f3460', borderRadius: 6, color: '#38bdf8',
+                fontSize: 12, fontWeight: 600,
+              }}>
+                🗺️ {routeInfo.route_name}
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button

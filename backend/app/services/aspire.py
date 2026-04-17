@@ -917,23 +917,46 @@ class AspireClient:
         clock_in_time: str,
         clock_out_time: str,
         break_time: int = 0,
+        route_id: Optional[int] = None,
+        crew_leader_contact_id: Optional[int] = None,
     ) -> dict:
         """
         POST a clock-in/out record to /ClockTimes.
         break_time is in minutes.
+        ClockStartDateTime / ClockEndDateTime are local-time ISO strings (no Z).
         Returns the created record dict (includes ClockTimeID).
         """
-        body = {
-            "ContactID":    contact_id,
-            "Date":         date,
-            "ClockInTime":  clock_in_time,
-            "ClockOutTime": clock_out_time,
-            "BreakTime":    break_time,
+        body: dict = {
+            "ContactID":          contact_id,
+            "ClockStartDateTime": clock_in_time,
+            "ClockEndDateTime":   clock_out_time,
+            "BreakTime":          break_time,
         }
+        if route_id is not None:
+            body["RouteID"] = route_id
+        if crew_leader_contact_id is not None:
+            body["CrewLeaderContactID"] = crew_leader_contact_id
         logger.info(
-            f"POST /ClockTimes ContactID={contact_id} Date={date}"
+            f"POST /ClockTimes ContactID={contact_id} RouteID={route_id} "
+            f"CrewLeaderContactID={crew_leader_contact_id}"
         )
         return await self._post("ClockTimes", body)
+
+    async def get_aspire_routes(self, active_only: bool = True) -> list[dict]:
+        """
+        Fetch routes from Aspire /Routes.
+        Returns list of dicts with RouteID, RouteName, CrewLeaderContactID,
+        CrewLeaderContactName.
+        """
+        params: dict = {
+            "$select":  "RouteID,RouteName,CrewLeaderContactID,CrewLeaderContactName,Active",
+            "$orderby": "RouteName asc",
+            "$top":     "200",
+        }
+        if active_only:
+            params["$filter"] = "Active eq true"
+        result = await self._get("Routes", params)
+        return self._extract_list(result)
 
     async def get_crew_members_with_pin(self) -> list[dict]:
         """
