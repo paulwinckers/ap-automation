@@ -539,9 +539,16 @@ async def save_drive_ticket(body: DriveTicketBody, db: Database = Depends(get_db
 async def submit_session(session_id: int, db: Database = Depends(get_db)):
     """
     Submit a completed session to Aspire:
-    1. POST each onsite/drive segment to /WorkTicketTimes
-    2. POST the overall clock record to /ClockTimes
-    3. Mark session status = 'submitted'
+
+    1. Build a complete timeline from clock_in → clock_out:
+       - Onsite/drive segments  → their own work ticket
+       - Lunch segments         → monthly drive ticket
+       - Gaps between segments  → monthly drive ticket
+       This ensures WorkTicketTimes sum = ClockTime duration (net = 0).
+
+    2. POST each timeline entry to /WorkTicketTimes
+    3. POST the overall clock record to /ClockTimes
+    4. Mark session status = 'submitted'
     """
     session = await db.get_time_session(session_id)
     if not session:
@@ -555,31 +562,119 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
             status_code=422, detail="Cannot submit — employee has not clocked out yet"
         )
 
-    segments    = await db.get_time_segments(session_id)
-    contact_id  = session["employee_id"]
-    work_date   = session["work_date"]
-    route_id    = session.get("route_id")
+    segments               = await db.get_time_segments(session_id)
+    contact_id             = session["employee_id"]
+    work_date              = session["work_date"]
+    route_id               = session.get("route_id")
     crew_leader_contact_id = session.get("crew_leader_contact_id")
-    errors: list[str] = []
-    wtt_ids: list[str] = []
+    clock_in_iso           = session["clock_in"]
+    clock_out_iso          = session["clock_out"]
+    errors: list[str]      = []
+    wtt_ids: list[str]     = []
 
-    # ── Step 1: POST work ticket time entries ─────────────────────────────────
-    for seg in segments:
-        if seg.get("segment_type") not in ("onsite", "drive"):
-            continue
-        if not seg.get("end_time"):
-            logger.warning(f"Skipping open segment {seg['id']} — no end_time")
-            continue
-        wt_id = seg.get("work_ticket_id")
-        if not wt_id:
-            logger.warning(f"Segment {seg['id']} has no work_ticket_id — skipping WorkTicketTimes POST")
-            continue
+    # ── Get drive ticket (used for gaps + lunch) ──────────────────────────────
+    drive_ticket_id_str = await db.get_setting("drive_ticket_id")
+    drive_ticket_id     = int(drive_ticket_id_str) if drive_ticket_id_str else None
+
+    # ── Build sorted timeline of completed segments ───────────────────────────
+    completed = sorted(
+        [s for s in segments if s.get("end_time")],
+        key=lambda s: s["start_time"],
+    )
+
+    # ── Build full timeline entries (segments + gaps + lunch) ─────────────────
+    #
+    # Each entry: { work_ticket_id, start_time, end_time, segment_id | None }
+    # Gaps between clock_in/first-seg, seg-to-seg, last-seg/clock_out all go to
+    # the drive ticket so the day's WTT total = clock duration (net = 0).
+
+    _GAP_THRESHOLD_MINUTES = 1   # ignore sub-minute rounding gaps
+
+    timeline: list[dict] = []
+    cursor = clock_in_iso
+
+    for seg in completed:
+        seg_start = seg["start_time"]
+        seg_end   = seg["end_time"]
+        seg_type  = seg.get("segment_type")
+
+        # Gap before this segment → drive ticket
+        gap = _duration_minutes(cursor, seg_start)
+        if gap >= _GAP_THRESHOLD_MINUTES:
+            if drive_ticket_id:
+                timeline.append({
+                    "work_ticket_id": drive_ticket_id,
+                    "start_time":     cursor,
+                    "end_time":       seg_start,
+                    "segment_id":     None,
+                    "label":          "gap",
+                })
+            else:
+                logger.warning(
+                    f"Gap of {gap} min before segment {seg['id']} — "
+                    "no drive ticket set, skipping gap fill"
+                )
+
+        # Segment itself
+        if seg_type == "lunch":
+            # Lunch → drive ticket
+            if drive_ticket_id:
+                timeline.append({
+                    "work_ticket_id": drive_ticket_id,
+                    "start_time":     seg_start,
+                    "end_time":       seg_end,
+                    "segment_id":     seg["id"],
+                    "label":          "lunch",
+                })
+            else:
+                logger.warning(f"Lunch segment {seg['id']} skipped — no drive ticket set")
+        elif seg_type in ("onsite", "drive"):
+            wt_id = seg.get("work_ticket_id")
+            if wt_id:
+                timeline.append({
+                    "work_ticket_id": int(wt_id),
+                    "start_time":     seg_start,
+                    "end_time":       seg_end,
+                    "segment_id":     seg["id"],
+                    "label":          seg_type,
+                })
+            else:
+                logger.warning(
+                    f"Segment {seg['id']} ({seg_type}) has no work_ticket_id — skipping"
+                )
+
+        cursor = seg_end
+
+    # Trailing gap after last segment → clock_out → drive ticket
+    if clock_out_iso:
+        trailing = _duration_minutes(cursor, clock_out_iso)
+        if trailing >= _GAP_THRESHOLD_MINUTES:
+            if drive_ticket_id:
+                timeline.append({
+                    "work_ticket_id": drive_ticket_id,
+                    "start_time":     cursor,
+                    "end_time":       clock_out_iso,
+                    "segment_id":     None,
+                    "label":          "trailing-gap",
+                })
+            else:
+                logger.warning(
+                    f"Trailing gap of {trailing} min — no drive ticket, skipping"
+                )
+
+    logger.info(
+        f"Submit session {session_id}: {len(timeline)} timeline entries "
+        f"({len(completed)} segments + gaps/lunch)"
+    )
+
+    # ── Step 1: POST all timeline entries to WorkTicketTimes ─────────────────
+    for entry in timeline:
         try:
             result = await _aspire.post_work_ticket_time(
-                work_ticket_id=int(wt_id),
+                work_ticket_id=entry["work_ticket_id"],
                 contact_id=contact_id,
-                start_time=_utc_iso_to_local(seg["start_time"]),
-                end_time=_utc_iso_to_local(seg["end_time"]),
+                start_time=_utc_iso_to_local(entry["start_time"]),
+                end_time=_utc_iso_to_local(entry["end_time"]),
                 route_id=route_id,
             )
             wtt_id = (
@@ -589,14 +684,21 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
                 or ""
             )
             wtt_ids.append(str(wtt_id))
-            # Store aspire_wtt_id back on the segment row
-            await db._x(
-                "UPDATE time_segments SET aspire_wtt_id = ? WHERE id = ?",
-                [str(wtt_id), seg["id"]],
+            # Store aspire_wtt_id on the segment row (where applicable)
+            if entry.get("segment_id"):
+                await db._x(
+                    "UPDATE time_segments SET aspire_wtt_id = ? WHERE id = ?",
+                    [str(wtt_id), entry["segment_id"]],
+                )
+            logger.info(
+                f"WorkTicketTime posted — wtt_id={wtt_id} "
+                f"label={entry['label']} wt={entry['work_ticket_id']}"
             )
-            logger.info(f"WorkTicketTime posted — wtt_id={wtt_id} for segment {seg['id']}")
         except Exception as e:
-            msg = f"WorkTicketTimes POST failed for segment {seg['id']}: {e}"
+            msg = (
+                f"WorkTicketTimes POST failed "
+                f"(label={entry['label']} wt={entry['work_ticket_id']}): {e}"
+            )
             logger.error(msg)
             errors.append(msg)
 
@@ -606,8 +708,8 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
         result = await _aspire.post_clock_time(
             contact_id=contact_id,
             date=work_date,
-            clock_in_time=_utc_iso_to_local(session["clock_in"]),
-            clock_out_time=_utc_iso_to_local(session["clock_out"]),
+            clock_in_time=_utc_iso_to_local(clock_in_iso),
+            clock_out_time=_utc_iso_to_local(clock_out_iso),
             break_time=session.get("break_minutes") or 0,
             route_id=route_id,
             crew_leader_contact_id=crew_leader_contact_id,
@@ -633,14 +735,15 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
         )
 
     await db.update_time_session(session_id, {
-        "status":         "submitted",
-        "submitted_at":   _now_iso(),
+        "status":          "submitted",
+        "submitted_at":    _now_iso(),
         "aspire_clock_id": str(clock_id) if clock_id else None,
     })
 
     return {
-        "ok":          True,
-        "clock_id":    clock_id,
-        "wtt_ids":     wtt_ids,
-        "session_id":  session_id,
+        "ok":         True,
+        "clock_id":   clock_id,
+        "wtt_ids":    wtt_ids,
+        "session_id": session_id,
+        "timeline":   len(timeline),
     }
