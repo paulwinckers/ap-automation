@@ -943,11 +943,7 @@ async def send_estimating_digest():
     if not cfg.MS_TENANT_ID or not cfg.MS_CLIENT_ID or not cfg.MS_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Microsoft Graph credentials not configured")
 
-    graph = GraphClient(
-        tenant_id=cfg.MS_TENANT_ID,
-        client_id=cfg.MS_CLIENT_ID,
-        client_secret=cfg.MS_CLIENT_SECRET,
-    )
+    graph   = GraphClient()
     mailbox = cfg.MS_AP_INBOX
     sent: list[str] = []
     skipped: list[str] = []
