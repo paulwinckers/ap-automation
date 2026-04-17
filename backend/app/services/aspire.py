@@ -181,7 +181,7 @@ class AspireClient:
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
-    async def _post(self, path: str, body: dict) -> dict:
+    async def _post(self, path: str, body: dict):
         token = await self._get_token()
         resp = await self._http.post(
             f"{self.base_url}/{path.lstrip('/')}",
@@ -197,7 +197,10 @@ class AspireClient:
                 f"Aspire POST {path} failed {resp.status_code}: {resp.text[:500]}"
             )
             logger.error(f"Aspire POST {path} payload: {body}")
-        resp.raise_for_status()
+            # Raise with Aspire's actual message so it surfaces in the UI
+            raise RuntimeError(
+                f"Aspire {path} {resp.status_code}: {resp.text[:300]}"
+            )
         return resp.json()
 
     # ── PO / Receipt lookup ───────────────────────────────────────────────────
@@ -928,7 +931,8 @@ class AspireClient:
         """
         body: dict = {
             "ContactID":          contact_id,
-            "ClockStartDateTime": clock_in_time,
+            "Date":               date,              # YYYY-MM-DD (work date)
+            "ClockStartDateTime": clock_in_time,     # local ISO e.g. 2026-04-17T07:00:00
             "ClockEndDateTime":   clock_out_time,
             "BreakTime":          break_time,
         }

@@ -678,12 +678,16 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
                 end_time=_utc_iso_to_local(entry["end_time"]),
                 route_id=route_id,
             )
-            wtt_id = (
-                result.get("WorkTicketTimeID")
-                or result.get("Id")
-                or result.get("id")
-                or ""
-            )
+            # Aspire returns either a raw integer ID or a dict
+            if isinstance(result, (int, float)):
+                wtt_id = int(result)
+            else:
+                wtt_id = (
+                    result.get("WorkTicketTimeID")
+                    or result.get("Id")
+                    or result.get("id")
+                    or ""
+                )
             wtt_ids.append(str(wtt_id))
             # Store aspire_wtt_id on the segment row (where applicable)
             if entry.get("segment_id"):
@@ -715,12 +719,15 @@ async def submit_session(session_id: int, db: Database = Depends(get_db)):
             route_id=route_id,
             crew_leader_contact_id=crew_leader_contact_id,
         )
-        clock_id = (
-            result.get("ClockTimeID")
-            or result.get("Id")
-            or result.get("id")
-            or ""
-        )
+        if isinstance(result, (int, float)):
+            clock_id = int(result)
+        else:
+            clock_id = (
+                result.get("ClockTimeID")
+                or result.get("Id")
+                or result.get("id")
+                or ""
+            )
         logger.info(f"ClockTime posted — clock_id={clock_id} for session {session_id}")
     except Exception as e:
         msg = f"ClockTimes POST failed for session {session_id}: {e}"
