@@ -289,6 +289,7 @@ async def clock_in(body: ClockInBody, db: Database = Depends(get_db)):
         work_date=body.work_date,
         employee_id=body.employee_id,
         employee_name=body.employee_name,
+        clock_in=_now_iso(),   # explicit UTC ISO — avoids datetime('now') timezone bug
         route_id=body.route_id,
         route_name=body.route_name,
         crew_leader_contact_id=body.crew_leader_contact_id,

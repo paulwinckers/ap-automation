@@ -811,16 +811,23 @@ class Database:
         work_date: str,
         employee_id: int,
         employee_name: str,
+        clock_in: Optional[str] = None,
         route_id: Optional[int] = None,
         route_name: Optional[str] = None,
         crew_leader_contact_id: Optional[int] = None,
         crew_leader_name: Optional[str] = None,
     ) -> int:
+        # Use explicit UTC ISO string so JavaScript can parse it correctly.
+        # datetime('now') returns "YYYY-MM-DD HH:MM:SS" without a timezone
+        # marker, which browsers misinterpret as local time.
+        from datetime import datetime, timezone
+        clock_in_ts = clock_in or datetime.now(timezone.utc).isoformat()
+
         # Insert core fields only (route columns may not exist yet on older DBs)
         session_id = await self._x(
             """INSERT INTO time_sessions (work_date, employee_id, employee_name, clock_in)
-               VALUES (?, ?, ?, datetime('now'))""",
-            [work_date, employee_id, employee_name],
+               VALUES (?, ?, ?, ?)""",
+            [work_date, employee_id, employee_name, clock_in_ts],
         )
         # Update route fields separately so migration state doesn't block the insert
         if any(v is not None for v in (route_id, route_name, crew_leader_contact_id, crew_leader_name)):
