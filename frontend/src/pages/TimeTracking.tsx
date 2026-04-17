@@ -194,23 +194,59 @@ function fmtDate(iso: string): string {
   });
 }
 
+// ── Shared ticket row ─────────────────────────────────────────────────────────
+
+function TicketRow({ ticket: t, onSelect, highlight }: {
+  ticket: WorkTicket;
+  onSelect: (t: WorkTicket) => void;
+  highlight?: boolean;
+}) {
+  return (
+    <button
+      onClick={() => onSelect(t)}
+      style={{
+        display: 'block', width: '100%', textAlign: 'left',
+        padding: '14px 20px', background: highlight ? '#f0f9ff' : 'none',
+        border: 'none', borderBottom: '1px solid #f1f5f9', cursor: 'pointer',
+      }}
+    >
+      <div style={{ fontWeight: 600, fontSize: 15, color: '#0f172a' }}>
+        {t.OpportunityName || t.WorkTicketTitle || `Ticket #${t.WorkTicketNumber || t.WorkTicketID}`}
+      </div>
+      {t.PropertyName && (
+        <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>{t.PropertyName}</div>
+      )}
+      <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
+        #{t.WorkTicketNumber || t.WorkTicketID} · {t._RouteName || ''}
+        {t.ScheduledDate ? ` · ${fmtDate(t.ScheduledDate.slice(0, 10))}` : ''}
+      </div>
+    </button>
+  );
+}
+
 // ── Ticket picker modal ───────────────────────────────────────────────────────
 
 interface TicketPickerProps {
   tickets:    WorkTicket[];
   loading:    boolean;
+  routeName?: string | null;   // active route — used to pin route tickets to top
   onSelect:   (t: WorkTicket) => void;
   onManual:   (id: string, num: string, name: string) => void;
   onClose:    () => void;
 }
 
-function TicketPicker({ tickets, loading, onSelect, onManual, onClose }: TicketPickerProps) {
+function TicketPicker({ tickets, loading, routeName, onSelect, onManual, onClose }: TicketPickerProps) {
   const [query,      setQuery]      = useState('');
   const [manualId,   setManualId]   = useState('');
   const [manualNum,  setManualNum]  = useState('');
   const [manualName, setManualName] = useState('');
 
-  const filtered = query.trim()
+  const matchesRoute = (t: WorkTicket) =>
+    routeName
+      ? (t._RouteName || '').toLowerCase().trim() === routeName.toLowerCase().trim()
+      : false;
+
+  const allFiltered = query.trim()
     ? tickets.filter(t =>
         (t.OpportunityName || '').toLowerCase().includes(query.toLowerCase()) ||
         (t.PropertyName    || '').toLowerCase().includes(query.toLowerCase()) ||
@@ -218,6 +254,11 @@ function TicketPicker({ tickets, loading, onSelect, onManual, onClose }: TicketP
         String(t.WorkTicketNumber || t.WorkTicketID).includes(query)
       )
     : tickets;
+
+  // When not searching: split into route tickets + others
+  const routeTickets = query.trim() ? [] : allFiltered.filter(matchesRoute);
+  const otherTickets = query.trim() ? allFiltered : allFiltered.filter(t => !matchesRoute(t));
+  const hasRouteSplit = !query.trim() && routeTickets.length > 0;
 
   return (
     <div style={{
@@ -262,30 +303,39 @@ function TicketPicker({ tickets, loading, onSelect, onManual, onClose }: TicketP
           {loading && (
             <div style={{ padding: 24, textAlign: 'center', color: '#64748b' }}>Loading tickets…</div>
           )}
-          {!loading && filtered.length === 0 && (
+          {!loading && allFiltered.length === 0 && (
             <div style={{ padding: 24, textAlign: 'center', color: '#64748b' }}>No tickets found</div>
           )}
-          {filtered.map(t => (
-            <button
-              key={t.WorkTicketID}
-              onClick={() => onSelect(t)}
-              style={{
-                display: 'block', width: '100%', textAlign: 'left',
-                padding: '14px 20px', background: 'none', border: 'none',
-                borderBottom: '1px solid #f1f5f9', cursor: 'pointer',
-              }}
-            >
-              <div style={{ fontWeight: 600, fontSize: 15, color: '#0f172a' }}>
-                {t.OpportunityName || t.WorkTicketTitle || `Ticket #${t.WorkTicketNumber || t.WorkTicketID}`}
+
+          {/* ── Route tickets pinned to top ── */}
+          {hasRouteSplit && (
+            <>
+              <div style={{
+                padding: '8px 20px 4px', fontSize: 11, fontWeight: 700,
+                color: '#1d4ed8', textTransform: 'uppercase', letterSpacing: 0.8,
+                background: '#eff6ff', borderBottom: '1px solid #bfdbfe',
+              }}>
+                🗺️ {routeName} — Today's stops
               </div>
-              {t.PropertyName && (
-                <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>{t.PropertyName}</div>
+              {routeTickets.map(t => (
+                <TicketRow key={t.WorkTicketID} ticket={t} onSelect={onSelect} highlight />
+              ))}
+              {otherTickets.length > 0 && (
+                <div style={{
+                  padding: '8px 20px 4px', fontSize: 11, fontWeight: 700,
+                  color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.8,
+                  background: '#f8fafc', borderBottom: '1px solid #e2e8f0',
+                  borderTop: '2px solid #e2e8f0',
+                }}>
+                  Other routes
+                </div>
               )}
-              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
-                #{t.WorkTicketNumber || t.WorkTicketID} · {t._RouteName || ''}
-                {t.ScheduledDate ? ` · ${fmtDate(t.ScheduledDate.slice(0, 10))}` : ''}
-              </div>
-            </button>
+            </>
+          )}
+
+          {/* ── All tickets (search mode or no route split) ── */}
+          {otherTickets.map(t => (
+            <TicketRow key={t.WorkTicketID} ticket={t} onSelect={onSelect} />
           ))}
         </div>
 
@@ -1670,6 +1720,7 @@ export default function TimeTracking() {
         <TicketPicker
           tickets={tickets}
           loading={ticketsLoading}
+          routeName={routeInfo?.route_name}
           onSelect={handleTicketSelect}
           onManual={handleTicketManual}
           onClose={() => setShowTicketPicker(false)}
