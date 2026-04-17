@@ -500,10 +500,8 @@ async def estimating_tags_probe():
     the raw Tags value so we can see exactly how Aspire structures the field.
     """
     try:
-        props = await _aspire._get_all("Properties", {
-            "$select": "PropertyName,PropertyTags",
-            "$top": "500",
-        })
+        # No $select — PropertyTags is a nested field that can't be selected individually
+        props = await _aspire._get_all("Properties", {"$top": "500"})
     except Exception as e:
         return {"error": str(e)}
 
@@ -571,13 +569,10 @@ async def get_estimating_dashboard():
 
     async def _fetch_tier1_names() -> set[str]:
         """Return lowercase property names that carry a 'Tier 1' tag.
-        Aspire returns PropertyTags as a list of objects or strings.
+        PropertyTags is a nested field — must fetch without $select.
         """
         try:
-            props = await _aspire._get_all("Properties", {
-                "$select": "PropertyName,PropertyTags",
-                "$top": "500",
-            })
+            props = await _aspire._get_all("Properties", {"$top": "500"})
         except Exception as e:
             logger.warning(f"Tier 1 properties fetch failed: {e}")
             return set()
