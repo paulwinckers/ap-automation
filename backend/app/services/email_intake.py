@@ -281,6 +281,7 @@ class EmailIntakeService:
         self._running  = False
         self._start_time: Optional[str] = None
         self._summary_sent_today = False
+        self._digest_sent_today  = False
         self._posted:    list[dict] = []
         self._forwarded: list[dict] = []
         self._failed:    list[dict] = []
@@ -297,6 +298,7 @@ class EmailIntakeService:
         print(f"[AP Automation] Email intake started — polling {settings.MS_AP_INBOX}", flush=True)
         asyncio.create_task(self._poll_loop())
         asyncio.create_task(self._summary_loop())
+        asyncio.create_task(self._digest_loop())
 
     async def stop(self):
         self._running = False
@@ -1201,6 +1203,27 @@ Invoice ID in system: {invoice_id}"""
                     logger.error(f"Failed to send daily summary: {e}")
             if now.hour == 0 and now.minute == 0:
                 self._summary_sent_today = False
+            await asyncio.sleep(60)
+
+    # ── Estimating digest — 6 AM Pacific (13:00 UTC) ──────────────────────────
+
+    async def _digest_loop(self):
+        """Fire the estimating staleness digest once per day at 6 AM Pacific (13:00 UTC)."""
+        while self._running:
+            now = datetime.utcnow()
+            if now.hour == 13 and now.minute == 0 and not self._digest_sent_today:
+                try:
+                    from app.api.dashboard import send_estimating_digest
+                    result = await send_estimating_digest()
+                    logger.info(
+                        f"Estimating digest sent: {result.get('sent', 0)} recipient(s) — "
+                        f"{result.get('total_flagged_opps', 0)} flagged opps"
+                    )
+                except Exception as e:
+                    logger.error(f"Estimating digest failed: {e}", exc_info=True)
+                self._digest_sent_today = True
+            if now.hour == 0 and now.minute == 0:
+                self._digest_sent_today = False
             await asyncio.sleep(60)
 
     async def _send_daily_summary(self):
