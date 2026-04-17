@@ -500,28 +500,15 @@ async def estimating_tags_probe():
     the raw Tags value so we can see exactly how Aspire structures the field.
     """
     try:
-        props = await _aspire._get_all("Properties", {
-            "$select": "PropertyName,Tags",
-            "$top": "200",
-        })
+        # Fetch without $select to discover all available field names
+        props = await _aspire._get_all("Properties", {"$top": "5"})
     except Exception as e:
         return {"error": str(e)}
 
-    with_tags = [p for p in props if p.get("Tags")]
-    sample = with_tags[:10]
-    tier1_matches = [
-        p for p in props
-        if "tier 1" in str(p.get("Tags") or "").lower()
-    ]
     return {
-        "total_properties_fetched": len(props),
-        "properties_with_tags": len(with_tags),
-        "tier1_matches": len(tier1_matches),
-        "tier1_property_names": [p.get("PropertyName") for p in tier1_matches],
-        "sample_tags": [
-            {"PropertyName": p.get("PropertyName"), "Tags": p.get("Tags")}
-            for p in sample
-        ],
+        "total_fetched": len(props),
+        "first_property_all_fields": props[0] if props else None,
+        "all_field_names": sorted(props[0].keys()) if props else [],
     }
 
 
