@@ -40,6 +40,24 @@ async def get_db() -> Database:
     return _db
 
 
+async def _ensure_route_columns(db: Database) -> None:
+    """
+    Explicitly run the route-column migrations in case _ensure_schema
+    silently swallowed the ALTER TABLE errors on first deploy.
+    Safe to call every request — errors are ignored if columns already exist.
+    """
+    for stmt in [
+        "ALTER TABLE time_sessions ADD COLUMN route_id INTEGER",
+        "ALTER TABLE time_sessions ADD COLUMN route_name TEXT",
+        "ALTER TABLE time_sessions ADD COLUMN crew_leader_contact_id INTEGER",
+        "ALTER TABLE time_sessions ADD COLUMN crew_leader_name TEXT",
+    ]:
+        try:
+            await db._x(stmt, [])
+        except Exception:
+            pass  # Already exists — ignore
+
+
 # ── Crew-member cache (10 min) ────────────────────────────────────────────────
 _crew_cache: list[dict] = []
 _crew_cache_ts: float = 0.0
@@ -165,8 +183,10 @@ async def get_session(
 
 
 @router.get("/routes")
-async def get_routes():
-    """Return active Aspire routes (cached 10 min). Used by the route picker."""
+async def get_routes(db: Database = Depends(get_db)):
+    """Return active Aspire routes (cached 10 min). Used by the route picker.
+    Also triggers the route-column DB migration on first call."""
+    await _ensure_route_columns(db)
     try:
         routes = await _get_routes()
         return {"routes": routes}

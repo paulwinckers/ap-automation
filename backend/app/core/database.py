@@ -816,14 +816,24 @@ class Database:
         crew_leader_contact_id: Optional[int] = None,
         crew_leader_name: Optional[str] = None,
     ) -> int:
-        return await self._x(
-            """INSERT INTO time_sessions
-               (work_date, employee_id, employee_name, clock_in,
-                route_id, route_name, crew_leader_contact_id, crew_leader_name)
-               VALUES (?, ?, ?, datetime('now'), ?, ?, ?, ?)""",
-            [work_date, employee_id, employee_name,
-             route_id, route_name, crew_leader_contact_id, crew_leader_name],
+        # Insert core fields only (route columns may not exist yet on older DBs)
+        session_id = await self._x(
+            """INSERT INTO time_sessions (work_date, employee_id, employee_name, clock_in)
+               VALUES (?, ?, ?, datetime('now'))""",
+            [work_date, employee_id, employee_name],
         )
+        # Update route fields separately so migration state doesn't block the insert
+        if any(v is not None for v in (route_id, route_name, crew_leader_contact_id, crew_leader_name)):
+            try:
+                await self.update_time_session(session_id, {
+                    "route_id":               route_id,
+                    "route_name":             route_name,
+                    "crew_leader_contact_id": crew_leader_contact_id,
+                    "crew_leader_name":       crew_leader_name,
+                })
+            except Exception:
+                pass  # Route columns not yet migrated — non-fatal
+        return session_id
 
     async def get_time_session(self, session_id: int) -> Optional[dict]:
         rows = await self._q(
