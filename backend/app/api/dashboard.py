@@ -1705,8 +1705,11 @@ async def daily_report_probe(date: str = Query(None)):
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Aspire not configured")
 
-    now = datetime.now(timezone.utc)
-    target = date or now.strftime("%Y-%m-%d")
+    if date:
+        target = date
+    else:
+        tz_offset = getattr(settings, "REPORT_TZ_OFFSET", -4)
+        target = datetime.now(timezone(timedelta(hours=tz_offset))).strftime("%Y-%m-%d")
 
     # First try with date filter
     date_filtered = []
@@ -1800,15 +1803,21 @@ async def daily_report_html(date: str = Query(None)):
     HTML daily completion report — open in browser and Print → Save as PDF/Word.
     Shows completed work tickets grouped by route, with visit notes.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime, timezone, timedelta
     from fastapi.responses import HTMLResponse
-    import asyncio
+    import asyncio, re
 
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Aspire not configured")
 
-    now = datetime.now(timezone.utc)
-    target = date or now.strftime("%Y-%m-%d")
+    # Default to North American Eastern time (UTC-4 EDT / UTC-5 EST).
+    # Caller can pass ?date=YYYY-MM-DD to override.
+    if date:
+        target = date
+    else:
+        tz_offset = getattr(settings, "REPORT_TZ_OFFSET", -4)  # hours behind UTC
+        now_local = datetime.now(timezone(timedelta(hours=tz_offset)))
+        target = now_local.strftime("%Y-%m-%d")
     display_date = datetime.strptime(target, "%Y-%m-%d").strftime("%B %d, %Y")
 
     # ── Fetch data in parallel ────────────────────────────────────────────────
@@ -1962,15 +1971,21 @@ async def daily_report_html(date: str = Query(None)):
         return f"{float(h):.1f}h"
 
     def note_html(note_text: str) -> str:
-        """Render a note — detect if it contains HTML (Aspire app photos embed as HTML)."""
+        """Render a visit note. Handles plain text and HTML. Skips BBCode attachment-only notes."""
         if not note_text:
             return ""
         stripped = note_text.strip()
+        # Skip notes that are purely Aspire attachment BBCode references
+        # e.g. "[Attachments][Attachment]26023[/Attachment][/Attachments]"
+        bbcode_only = re.sub(r'\[/?[A-Za-z]+\]\d*', '', stripped).strip()
+        if not bbcode_only:
+            return ""  # nothing to show — attachment is handled by _fetch_attachments
         if stripped.lower().startswith("<") or "<img" in stripped.lower():
             # Already HTML — render directly (photos from native app)
             return f'<div class="note-html">{stripped}</div>'
-        # Plain text
-        return f'<p class="note-text">{stripped}</p>'
+        # Plain text — escape HTML entities for safety
+        safe = stripped.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return f'<p class="note-text">{safe}</p>'
 
     route_sections = ""
     for route in sorted(by_route.keys(), key=lambda r: (r == "Unassigned", r.lower())):
@@ -1985,8 +2000,9 @@ async def daily_report_html(date: str = Query(None)):
             prop_name = property_by_wt.get(wt_id) or "—"
             wt_notes  = notes_by_wt.get(wt_id, [])
             wt_attach  = attachments_by_wt.get(wt_id, [])
-            # Show all notes with content (public or private — this is an internal report)
+            # Show all notes with content — internal report, IsPublic doesn't matter
             public_notes = [n for n in wt_notes if (n.get("Note") or "").strip()]
+            # note_html() will filter BBCode-only attachment entries at render time
 
             notes_section = ""
             for n in public_notes:
