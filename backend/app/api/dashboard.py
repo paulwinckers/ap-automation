@@ -1781,21 +1781,61 @@ async def daily_report_html(date: str = Query(None)):
 
     # ── Fetch data in parallel ────────────────────────────────────────────────
     async def _fetch_tickets():
-        return await _aspire._get_all("WorkTickets", {
-            "$select": (
-                "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
-                "CompleteDate,HoursEst,HoursAct,Notes,OpportunityID,"
-                "CrewLeaderName,BranchName"
-            ),
-            "$filter": f"CompleteDate ge {target}T00:00:00Z and CompleteDate le {target}T23:59:59Z",
-            "$top": "200",
-        })
+        # Fetch tickets scheduled OR completed today
+        results = []
+        for f in [
+            # Completed today
+            f"CompleteDate ge {target}T00:00:00Z and CompleteDate le {target}T23:59:59Z",
+            # Scheduled today (not yet complete)
+            f"ScheduledStartDate ge {target}T00:00:00Z and ScheduledStartDate le {target}T23:59:59Z",
+        ]:
+            try:
+                batch = await _aspire._get_all("WorkTickets", {
+                    "$select": (
+                        "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
+                        "CompleteDate,ScheduledStartDate,HoursEst,HoursAct,"
+                        "Notes,OpportunityID,CrewLeaderName,BranchName"
+                    ),
+                    "$filter": f,
+                    "$top": "200",
+                })
+                results.extend(batch)
+            except Exception as e:
+                logger.warning(f"WorkTickets fetch failed ({f[:40]}): {e}")
+        # Deduplicate by WorkTicketID
+        seen: set[int] = set()
+        unique = []
+        for t in results:
+            wt_id = t.get("WorkTicketID")
+            if wt_id and wt_id not in seen:
+                seen.add(wt_id)
+                unique.append(t)
+        return unique
 
     async def _fetch_visit_notes():
-        return await _aspire._get_all("WorkTicketVisitNotes", {
-            "$filter": f"ScheduledDate ge {target}T00:00:00Z and ScheduledDate le {target}T23:59:59Z",
-            "$top": "500",
-        })
+        # Try date-only filter first; Aspire date handling varies
+        for date_filter in [
+            f"ScheduledDate ge {target}T00:00:00Z and ScheduledDate le {target}T23:59:59Z",
+            f"ScheduledDate ge {target} and ScheduledDate le {target}T23:59:59",
+        ]:
+            try:
+                result = await _aspire._get_all("WorkTicketVisitNotes", {
+                    "$filter": date_filter,
+                    "$top": "500",
+                })
+                if result:
+                    return result
+            except Exception:
+                continue
+        # Fallback: fetch recent and filter in Python
+        try:
+            all_notes = await _aspire._get_all("WorkTicketVisitNotes", {
+                "$orderby": "ScheduledDate desc",
+                "$top": "500",
+            })
+            return [n for n in all_notes if (n.get("ScheduledDate") or "").startswith(target)]
+        except Exception:
+            return []
 
     async def _fetch_attachments():
         return await _aspire._get_all("Attachments", {
@@ -1811,47 +1851,54 @@ async def daily_report_html(date: str = Query(None)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
-    # ── Index by WorkTicketID ─────────────────────────────────────────────────
+    # ── Fetch property names via Opportunity ──────────────────────────────────
+    opp_ids = list({int(t["OpportunityID"]) for t in tickets if t.get("OpportunityID")})
+    property_by_opp: dict[int, str] = {}
+    if opp_ids:
+        chunk_size = 30
+        for i in range(0, len(opp_ids), chunk_size):
+            chunk = opp_ids[i:i + chunk_size]
+            id_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
+            try:
+                res = await _aspire._get("Opportunities", {
+                    "$select": "OpportunityID,PropertyName",
+                    "$filter": id_filter,
+                    "$top": str(len(chunk)),
+                })
+                for rec in _aspire._extract_list(res):
+                    oid = rec.get("OpportunityID")
+                    if oid and rec.get("PropertyName"):
+                        property_by_opp[int(oid)] = rec["PropertyName"]
+            except Exception as e:
+                logger.warning(f"Opportunity property lookup failed: {e}")
+
+    # Map WorkTicketID → PropertyName via OpportunityID
+    property_by_wt: dict[int, str] = {}
+    for t in tickets:
+        wt_id = t.get("WorkTicketID")
+        opp_id = t.get("OpportunityID")
+        if wt_id and opp_id and int(opp_id) in property_by_opp:
+            property_by_wt[wt_id] = property_by_opp[int(opp_id)]
+
+    # ── Index visit notes by WorkTicketID ─────────────────────────────────────
     notes_by_wt: dict[int, list] = {}
     for n in visit_notes:
         wt_id = n.get("WorkTicketID")
         if wt_id:
             notes_by_wt.setdefault(wt_id, []).append(n)
 
+    # ── Index attachments by WorkTicketID ─────────────────────────────────────
     attachments_by_wt: dict[int, list] = {}
-    property_by_wt: dict[int, str] = {}
     for a in attachments:
         wt_id = a.get("WorkTicketID")
         if wt_id:
             attachments_by_wt.setdefault(wt_id, []).append(a)
-            if a.get("PropertyName"):
-                property_by_wt[wt_id] = a["PropertyName"]
 
-    # Also get property from visit notes RouteName context where available
-    for n in visit_notes:
-        wt_id = n.get("WorkTicketID")
-        if wt_id and wt_id not in property_by_wt and n.get("RouteName"):
-            pass  # RouteName ≠ PropertyName — skip
-
-    # ── Group tickets by route ────────────────────────────────────────────────
+    # ── Group tickets by route — skip routes with 0 tickets ───────────────────
     by_route: dict[str, list] = {}
     for t in tickets:
         route = (t.get("CrewLeaderName") or t.get("BranchName") or "Unassigned").strip()
         by_route.setdefault(route, []).append(t)
-
-    # Also group visit notes by route for tickets not in completed list
-    for n in visit_notes:
-        route = (n.get("RouteName") or "Unassigned").strip()
-        wt_id = n.get("WorkTicketID")
-        if wt_id:
-            # Check if this ticket is already in by_route
-            already = any(
-                t.get("WorkTicketID") == wt_id
-                for tlist in by_route.values()
-                for t in tlist
-            )
-            if not already:
-                by_route.setdefault(route, [])
 
     # ── Build HTML ────────────────────────────────────────────────────────────
     total_tickets    = len(tickets)
@@ -1900,11 +1947,19 @@ async def daily_report_html(date: str = Query(None)):
                 )
                 attach_section = f'<div class="attachments">📎 {len(wt_attach)} attachment(s): {names}</div>'
 
+            status_name = (t.get("WorkTicketStatusName") or "").strip()
+            is_complete = "complet" in status_name.lower()
+            status_badge = (
+                '<span class="badge-complete">✓ Complete</span>' if is_complete
+                else f'<span class="badge-scheduled">{status_name or "Scheduled"}</span>'
+            )
+
             ticket_rows += f"""
-            <div class="ticket">
+            <div class="ticket {'ticket-complete' if is_complete else 'ticket-scheduled'}">
               <div class="ticket-header">
                 <span class="ticket-num">#{wt_num}</span>
                 <span class="ticket-prop">{prop_name}</span>
+                {status_badge}
                 <span class="ticket-hours">{hrs(t.get('HoursAct'))} actual / {hrs(t.get('HoursEst'))} est</span>
               </div>
               {notes_section}
@@ -1946,6 +2001,11 @@ async def daily_report_html(date: str = Query(None)):
   .ticket-num  {{ font-weight: 700; color: #2563eb; font-size: 13px; min-width: 50px; }}
   .ticket-prop {{ font-weight: 600; font-size: 14px; flex: 1; }}
   .ticket-hours {{ font-size: 12px; color: #64748b; white-space: nowrap; }}
+  .badge-complete  {{ background:#dcfce7;color:#166534;font-size:11px;font-weight:700;
+                     padding:1px 8px;border-radius:20px; }}
+  .badge-scheduled {{ background:#e0f2fe;color:#0369a1;font-size:11px;font-weight:700;
+                     padding:1px 8px;border-radius:20px; }}
+  .ticket-scheduled {{ opacity: 0.85; }}
   .note-text   {{ margin: 4px 0 0; font-size: 13px; color: #374151;
                   background: #f8fafc; padding: 6px 10px; border-radius: 4px;
                   border-left: 3px solid #cbd5e1; }}
