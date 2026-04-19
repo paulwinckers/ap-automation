@@ -1804,45 +1804,108 @@ async def daily_report_probe(date: str = Query(None)):
     }
 
 
+@router.get("/daily-report/attachment-debug/{attachment_id}")
+async def daily_report_attachment_debug(attachment_id: int):
+    """Debug: show raw metadata for an attachment so we can find the download URL."""
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire not configured")
+    token = await _aspire._get_token()
+    attempts = {}
+
+    # Try direct record fetch
+    for path in [
+        f"Attachments/{attachment_id}",
+        f"Attachments?$filter=AttachmentID eq {attachment_id}&$top=1",
+    ]:
+        try:
+            r = await _aspire._http.get(
+                f"{_aspire.base_url}/{path}",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json;odata.metadata=minimal"},
+            )
+            attempts[path] = {"status": r.status_code, "body": r.text[:500]}
+        except Exception as ex:
+            attempts[path] = {"error": str(ex)}
+
+    # Try download paths
+    for dl_path in [
+        f"Attachments/{attachment_id}/Download",
+        f"Attachments/{attachment_id}/Content",
+        f"Attachments/{attachment_id}/File",
+    ]:
+        try:
+            r = await _aspire._http.get(
+                f"{_aspire.base_url}/{dl_path}",
+                headers={"Authorization": f"Bearer {token}"},
+                follow_redirects=False,
+            )
+            attempts[dl_path] = {
+                "status": r.status_code,
+                "content-type": r.headers.get("content-type"),
+                "location": r.headers.get("location"),
+                "content_length": len(r.content),
+                "body_preview": r.text[:200] if not r.is_success else f"[binary {len(r.content)} bytes]",
+            }
+        except Exception as ex:
+            attempts[dl_path] = {"error": str(ex)}
+
+    return {"attachment_id": attachment_id, "attempts": attempts}
+
+
 @router.get("/daily-report/attachment/{attachment_id}")
 async def daily_report_attachment(attachment_id: int):
     """
     Proxy an Aspire attachment binary for inline display in the daily report.
-    Tries the /Download sub-resource; falls back to ExternalContentID URL if present.
     """
-    from fastapi.responses import Response
+    from fastapi.responses import Response, RedirectResponse
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Aspire not configured")
     try:
         token = await _aspire._get_token()
-        # First attempt: Aspire binary download endpoint
-        resp = await _aspire._http.get(
-            f"{_aspire.base_url}/Attachments/{attachment_id}/Download",
-            headers={"Authorization": f"Bearer {token}"},
-            follow_redirects=True,
-        )
-        if resp.is_success and resp.content:
-            ct = resp.headers.get("content-type", "image/jpeg")
-            return Response(content=resp.content, media_type=ct)
+        headers_auth = {"Authorization": f"Bearer {token}"}
 
-        # Second attempt: fetch metadata, use ExternalContentID as URL
-        meta_resp = await _aspire._http.get(
+        # 1) Try /Download
+        for dl_path in [
+            f"{_aspire.base_url}/Attachments/{attachment_id}/Download",
+            f"{_aspire.base_url}/Attachments/{attachment_id}/Content",
+            f"{_aspire.base_url}/Attachments/{attachment_id}/File",
+        ]:
+            try:
+                resp = await _aspire._http.get(dl_path, headers=headers_auth, follow_redirects=True)
+                ct = resp.headers.get("content-type", "")
+                if resp.is_success and resp.content and "json" not in ct and "html" not in ct:
+                    return Response(content=resp.content, media_type=ct or "image/jpeg")
+            except Exception:
+                continue
+
+        # 2) Fetch metadata to get ExternalContentID
+        for meta_path in [
             f"{_aspire.base_url}/Attachments/{attachment_id}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json;odata.metadata=minimal",
-            },
-        )
-        if meta_resp.is_success:
-            meta = meta_resp.json()
-            records = meta.get("value", [meta]) if isinstance(meta, dict) else [meta]
-            if records:
-                ext_url = records[0].get("ExternalContentID") or ""
+            f"{_aspire.base_url}/Attachments?$filter=AttachmentID eq {attachment_id}&$top=1",
+        ]:
+            try:
+                meta_resp = await _aspire._http.get(
+                    meta_path,
+                    headers={**headers_auth, "Accept": "application/json;odata.metadata=minimal"},
+                )
+                if not meta_resp.is_success:
+                    continue
+                meta = meta_resp.json()
+                records = meta.get("value", []) if isinstance(meta, dict) else [meta]
+                if not records and isinstance(meta, dict):
+                    records = [meta]
+                rec = records[0] if records else {}
+                ext_url = rec.get("ExternalContentID") or ""
+                logger.info(f"Attachment {attachment_id} ExternalContentID: {ext_url!r}")
                 if ext_url.startswith("http"):
-                    redir = await _aspire._http.get(ext_url, follow_redirects=True)
-                    if redir.is_success:
-                        ct = redir.headers.get("content-type", "image/jpeg")
-                        return Response(content=redir.content, media_type=ct)
+                    # Could be a pre-signed S3 or CDN URL
+                    cdn = await _aspire._http.get(ext_url, follow_redirects=True)
+                    if cdn.is_success and cdn.content:
+                        ct = cdn.headers.get("content-type", "image/jpeg")
+                        return Response(content=cdn.content, media_type=ct)
+            except Exception as ex:
+                logger.warning(f"Attachment metadata fetch failed: {ex}")
+                continue
+
     except Exception as ex:
         logger.warning(f"Attachment proxy failed for {attachment_id}: {ex}")
     raise HTTPException(status_code=404, detail=f"Attachment {attachment_id} not available")
