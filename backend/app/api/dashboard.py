@@ -2158,7 +2158,7 @@ async def daily_report_html(
         if total_photos:
             label = f"📷 {total_photos} photo{'s' if total_photos != 1 else ''}"
             if ASPIRE_APP:
-                url = f"{ASPIRE_APP}/worktickets/details/{wt_num}"
+                url = f"{ASPIRE_APP}/worktickets/details/{wt_id}"
                 out += f'<div class="photo-badge"><a href="{url}" target="_blank">{label} — view in Aspire</a></div>'
             else:
                 out += f'<div class="photo-badge">{label}</div>'
@@ -2172,7 +2172,8 @@ async def daily_report_html(
         wt_num    = t.get("WorkTicketNumber") or "—"
         prop_name = property_by_wt.get(wt_id) or opp_name_by_wt.get(wt_id) or "—"
         wt_notes  = notes_by_wt.get(wt_id, [])
-        aspire_ticket_url = f"{ASPIRE_APP}/worktickets/details/{wt_num}" if ASPIRE_APP else ""
+        # URL uses WorkTicketID (internal DB id) — not WorkTicketNumber (user-facing #)
+        aspire_ticket_url = f"{ASPIRE_APP}/worktickets/details/{wt_id}" if (ASPIRE_APP and wt_id) else ""
         ticket_link = (
             f'<a class="ticket-num" href="{aspire_ticket_url}" target="_blank">#{wt_num}</a>'
             if aspire_ticket_url else f'<span class="ticket-num">#{wt_num}</span>'
