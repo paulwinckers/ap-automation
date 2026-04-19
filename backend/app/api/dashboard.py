@@ -1835,8 +1835,7 @@ async def daily_report_html(date: str = Query(None)):
                     "$select": (
                         "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
                         "CompleteDate,ScheduledStartDate,HoursEst,HoursAct,"
-                        "Notes,OpportunityID,PropertyName,PropertyID,"
-                        "CrewLeaderName,BranchName"
+                        "Notes,OpportunityID,CrewLeaderName,BranchName"
                     ),
                     "$filter": f,
                     "$top": "200",
@@ -1904,17 +1903,11 @@ async def daily_report_html(date: str = Query(None)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
-    # ── Build WorkTicketID → PropertyName map ─────────────────────────────────
-    # Pass 1: use PropertyName directly from WorkTicket (fastest, most reliable)
+    # ── Build WorkTicketID → PropertyName via OpportunityID lookup ───────────
     property_by_wt: dict[int, str] = {}
-    for t in tickets:
-        wt_id = t.get("WorkTicketID")
-        pname = (t.get("PropertyName") or "").strip()
-        if wt_id and pname:
-            property_by_wt[wt_id] = pname
 
-    # Pass 2: for any still missing, look up via OpportunityID → Opportunity.PropertyName
-    missing_wt = [t for t in tickets if t.get("WorkTicketID") and t["WorkTicketID"] not in property_by_wt]
+    # All tickets need Opportunity lookup (WorkTickets API doesn't expose PropertyName)
+    missing_wt = [t for t in tickets if t.get("WorkTicketID")]
     opp_ids = list({int(t["OpportunityID"]) for t in missing_wt if t.get("OpportunityID")})
     property_by_opp: dict[int, str] = {}
     if opp_ids:
@@ -2090,7 +2083,7 @@ async def daily_report_html(date: str = Query(None)):
 </head>
 <body>
   <h1>Daily Completion Report</h1>
-  <div class="subtitle">{display_date} &nbsp;·&nbsp; Generated {now.strftime('%H:%M UTC')}</div>
+  <div class="subtitle">{display_date} &nbsp;·&nbsp; Generated {datetime.now(timezone.utc).strftime('%H:%M UTC')}</div>
   <div class="summary">
     <div class="stat"><div class="stat-val">{total_tickets}</div><div class="stat-lbl">Tickets Completed</div></div>
     <div class="stat"><div class="stat-val">{total_hours_act:.1f}h</div><div class="stat-lbl">Actual Hours</div></div>
