@@ -122,9 +122,18 @@ export default function APDashboard() {
 
   async function refresh() {
     try {
-      const feedUrl = view === 'archived'
-        ? `${API}/invoices/archived?limit=200`
-        : `${API}/invoices/feed?limit=100`;
+      // For destination filters (qbo / aspire) fetch all records via /invoices/
+      // so we don't get truncated by the 100-row feed limit.
+      let feedUrl: string;
+      if (view === 'archived') {
+        feedUrl = `${API}/invoices/archived?limit=200`;
+      } else if (statusFilter === 'qbo') {
+        feedUrl = `${API}/invoices/?destination=qbo&limit=500`;
+      } else if (statusFilter === 'aspire') {
+        feedUrl = `${API}/invoices/?destination=aspire&limit=500`;
+      } else {
+        feedUrl = `${API}/invoices/feed?limit=100`;
+      }
 
       const [feedRes, countRes] = await Promise.all([
         fetch(feedUrl),
@@ -133,7 +142,7 @@ export default function APDashboard() {
       if (!feedRes.ok || !countRes.ok) throw new Error('API error');
       const feedData  = await feedRes.json();
       const countData = await countRes.json();
-      setEntries(feedData.entries ?? []);
+      setEntries(feedData.entries ?? feedData.invoices ?? []);
       setCounts(countData);
       setLastRefresh(new Date());
       setError(null);
@@ -271,6 +280,12 @@ export default function APDashboard() {
     timerRef.current = setInterval(refresh, 10_000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
+
+  // Re-fetch when switching to/from qbo or aspire destination views
+  useEffect(() => {
+    setEntries([]);
+    refresh();
+  }, [statusFilter]);
 
   function toggleStatFilter(value: string) {
     setStatusFilter(f => f === value ? 'all' : value);
