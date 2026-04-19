@@ -2552,6 +2552,11 @@ async def send_daily_report_email(
     response = await daily_report_html(date=date, division=division)
     html_body = response.body.decode("utf-8")
 
+    # Skip sending if there are no tickets for this division today
+    if "No tickets found" in html_body:
+        logger.info(f"Daily report: no tickets for {division!r} on {date or 'today'} — skipping email")
+        return {"ok": True, "division": division, "skipped": True, "reason": "no tickets"}
+
     # Work out the display date for the subject line
     if date:
         target = date
