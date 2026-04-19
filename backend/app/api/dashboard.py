@@ -2189,6 +2189,7 @@ async def daily_report_html(date: str = Query(None)):
     total_hours_act = sum(float(t.get("HoursAct") or 0) for t in tickets)
 
     IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".bmp"}
+    ASPIRE_APP = "https://app.youraspire.com"
 
     def hrs(h):
         if h is None: return "—"
@@ -2198,12 +2199,12 @@ async def daily_report_html(date: str = Query(None)):
         """Extract AttachmentIDs from [Attachments][Attachment]N[/Attachment][/Attachments]"""
         return [int(m) for m in re.findall(r'\[Attachment\](\d+)\[/Attachment\]', note_text)]
 
-    def render_note(note_text: str, wt_id_for_imgs: int) -> str:
-        """Render one visit note — text + any embedded attachment image references."""
+    def render_note(note_text: str, wt_num_for_link) -> str:
+        """Render one visit note. BBCode photo refs shown as badge linking to Aspire."""
         if not note_text:
             return ""
         stripped = note_text.strip()
-        ids = bbcode_attachment_ids(stripped)
+        photo_ids = bbcode_attachment_ids(stripped)
         # Strip all BBCode to get plain text remainder
         plain = re.sub(r'\[/?[A-Za-z]+\]\d*', '', stripped).strip()
 
@@ -2215,37 +2216,42 @@ async def daily_report_html(date: str = Query(None)):
                 safe = plain.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 html_out += f'<p class="note-text">{safe}</p>'
 
-        # Render attachment images referenced in this note
-        for aid in ids:
-            a = attachment_by_id.get(aid)
-            ext = ("." + (a.get("FileExtension") or "")).lower() if a else ""
-            if ext in IMAGE_EXTS:
-                html_out += f'<img class="attach-img" src="/dashboard/daily-report/attachment/{aid}" alt="Photo" loading="lazy">'
-            elif a:
-                fname = a.get("AttachmentName") or f"attachment-{aid}"
-                html_out += f'<div class="attach-file">📎 <a href="/dashboard/daily-report/attachment/{aid}">{fname}</a></div>'
+        # Photo BBCode → badge linking to Aspire (API doesn't expose binary download)
+        if photo_ids:
+            aspire_url = f"{ASPIRE_APP}/WorkOrders/{wt_num_for_link}"
+            label = f"📷 {len(photo_ids)} photo{'s' if len(photo_ids) != 1 else ''} — view in Aspire"
+            html_out += f'<div class="photo-badge"><a href="{aspire_url}" target="_blank">{label}</a></div>'
 
         return html_out
 
-    def render_ticket_attachments(wt_id: int) -> str:
-        """Render any attachments for this ticket NOT already referenced via note BBCode."""
+    def render_ticket_attachments(wt_id: int, wt_num) -> str:
+        """Render attachment badges for this ticket (photos not directly downloadable via API)."""
         wt_attach = attachments_by_wt.get(wt_id, [])
         # Collect IDs already shown via note BBCode
         shown_ids: set[int] = set()
         for n in notes_by_wt.get(wt_id, []):
             shown_ids.update(bbcode_attachment_ids(n.get("Note") or ""))
 
-        out = ""
+        photos = []
+        others = []
         for a in wt_attach:
             aid = a.get("AttachmentID")
             if not aid or int(aid) in shown_ids:
                 continue
             ext = ("." + (a.get("FileExtension") or "")).lower()
             if ext in IMAGE_EXTS:
-                out += f'<img class="attach-img" src="/dashboard/daily-report/attachment/{aid}" alt="Photo" loading="lazy">'
+                photos.append(a)
             else:
-                fname = a.get("AttachmentName") or f"attachment-{aid}"
-                out += f'<div class="attach-file">📎 <a href="/dashboard/daily-report/attachment/{aid}">{fname}</a></div>'
+                others.append(a)
+
+        out = ""
+        if photos:
+            aspire_url = f"{ASPIRE_APP}/WorkOrders/{wt_num}"
+            label = f"📷 {len(photos)} attachment photo{'s' if len(photos) != 1 else ''} — view in Aspire"
+            out += f'<div class="photo-badge"><a href="{aspire_url}" target="_blank">{label}</a></div>'
+        for a in others:
+            fname = a.get("AttachmentName") or a.get("OriginalFileName") or "attachment"
+            out += f'<div class="attach-file">📎 {fname}</div>'
         return out
 
     # ── Build route sections ──────────────────────────────────────────────────
@@ -2272,9 +2278,9 @@ async def daily_report_html(date: str = Query(None)):
 
             notes_html = ""
             for n in wt_notes:
-                notes_html += render_note(n.get("Note") or "", wt_id)
+                notes_html += render_note(n.get("Note") or "", wt_num)
 
-            extra_attach = render_ticket_attachments(wt_id)
+            extra_attach = render_ticket_attachments(wt_id, wt_num)
 
             status_name = (t.get("WorkTicketStatusName") or "").strip()
             is_complete = "complet" in status_name.lower()
@@ -2345,10 +2351,12 @@ async def daily_report_html(date: str = Query(None)):
                  border-left: 3px solid #cbd5e1; }}
   .note-html  {{ margin: 4px 0; }}
   .note-html img {{ max-width: 100%; border-radius: 6px; margin: 4px 0; }}
-  .attach-img {{ display: block; max-width: 100%; max-height: 400px; object-fit: contain;
-                 border-radius: 6px; margin: 6px 0; border: 1px solid #e2e8f0; }}
-  .attach-file {{ font-size: 12px; color: #2563eb; margin: 4px 0; }}
-  .attach-file a {{ color: #2563eb; }}
+  .photo-badge {{ display: inline-block; margin: 4px 0; font-size: 12px;
+                  background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 20px;
+                  padding: 2px 10px; }}
+  .photo-badge a {{ color: #1d4ed8; text-decoration: none; font-weight: 600; }}
+  .photo-badge a:hover {{ text-decoration: underline; }}
+  .attach-file {{ font-size: 12px; color: #64748b; margin: 3px 0; }}
   .empty {{ color: #94a3b8; font-size: 13px; padding: 8px 16px; }}
   @media print {{
     body {{ padding: 0; max-width: 100%; }}
