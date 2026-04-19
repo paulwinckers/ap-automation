@@ -2018,20 +2018,22 @@ async def daily_report_html(date: str = Query(None)):
         if wt_id and pname:
             property_by_wt[wt_id] = pname
 
-    # Pass 2: OpportunityID → Opportunity (PropertyName + PropertyID fallback)
+    # Pass 2: OpportunityID → Opportunity
+    # Fetch: PropertyName, PropertyID (for pass 3), OpportunityName (fallback display)
     need_lookup = [t for t in tickets if t.get("WorkTicketID") and t["WorkTicketID"] not in property_by_wt]
     opp_ids = list({int(t["OpportunityID"]) for t in need_lookup if t.get("OpportunityID")})
-    # wt_id → property_id for pass 3
     prop_id_by_wt: dict[int, int] = {}
+    opp_name_by_wt: dict[int, str] = {}   # fallback: use job name when no PropertyName
     if opp_ids:
         opp_property_name: dict[int, str] = {}
-        opp_property_id: dict[int, int] = {}
+        opp_property_id:   dict[int, int] = {}
+        opp_name:          dict[int, str] = {}
         for i in range(0, len(opp_ids), 30):
             chunk = opp_ids[i:i + 30]
             id_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
             try:
                 res = await _aspire._get("Opportunities", {
-                    "$select": "OpportunityID,PropertyName,PropertyID",
+                    "$select": "OpportunityID,OpportunityName,PropertyName,PropertyID",
                     "$filter": id_filter,
                     "$top": "500",
                 })
@@ -2039,10 +2041,13 @@ async def daily_report_html(date: str = Query(None)):
                     oid = rec.get("OpportunityID")
                     if not oid:
                         continue
+                    oid = int(oid)
                     if rec.get("PropertyName"):
-                        opp_property_name[int(oid)] = rec["PropertyName"]
+                        opp_property_name[oid] = rec["PropertyName"]
                     if rec.get("PropertyID"):
-                        opp_property_id[int(oid)] = int(rec["PropertyID"])
+                        opp_property_id[oid] = int(rec["PropertyID"])
+                    if rec.get("OpportunityName"):
+                        opp_name[oid] = rec["OpportunityName"]
             except Exception as e:
                 logger.warning(f"Opportunity property lookup failed: {e}")
 
@@ -2055,7 +2060,10 @@ async def daily_report_html(date: str = Query(None)):
             if oid in opp_property_name:
                 property_by_wt[wt_id] = opp_property_name[oid]
             elif oid in opp_property_id:
-                prop_id_by_wt[wt_id] = opp_property_id[oid]  # queue for pass 3
+                prop_id_by_wt[wt_id] = opp_property_id[oid]        # queue for pass 3
+            # Store opp name as fallback regardless
+            if oid in opp_name:
+                opp_name_by_wt[wt_id] = opp_name[oid]
 
     # Pass 3: PropertyID → Properties API → PropertyName
     if prop_id_by_wt:
@@ -2236,7 +2244,12 @@ async def daily_report_html(date: str = Query(None)):
         for t in sorted(route_tickets, key=lambda x: x.get("WorkTicketNumber") or 0):
             wt_id     = t.get("WorkTicketID")
             wt_num    = t.get("WorkTicketNumber") or "—"
-            prop_name = property_by_wt.get(wt_id) or "—"
+            # Use PropertyName → Opportunity name fallback → "—"
+            prop_name = (
+                property_by_wt.get(wt_id)
+                or opp_name_by_wt.get(wt_id)
+                or "—"
+            )
             wt_notes  = notes_by_wt.get(wt_id, [])
 
             # Hyperlink to Aspire web app
