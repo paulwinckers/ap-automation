@@ -1939,8 +1939,8 @@ async def daily_report_html(date: str = Query(None)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
-    # ── Property name resolution ──────────────────────────────────────────────
-    # Pass 1: use PropertyName directly from WorkTicket full record (no $select)
+    # ── Property name resolution (3-pass) ────────────────────────────────────
+    # Pass 1: PropertyName directly on WorkTicket full record (if field exists)
     property_by_wt: dict[int, str] = {}
     for t in tickets:
         wt_id = t.get("WorkTicketID")
@@ -1948,31 +1948,68 @@ async def daily_report_html(date: str = Query(None)):
         if wt_id and pname:
             property_by_wt[wt_id] = pname
 
-    # Pass 2: for remaining, look up via OpportunityID → Opportunity.PropertyName
+    # Pass 2: OpportunityID → Opportunity (PropertyName + PropertyID fallback)
     need_lookup = [t for t in tickets if t.get("WorkTicketID") and t["WorkTicketID"] not in property_by_wt]
     opp_ids = list({int(t["OpportunityID"]) for t in need_lookup if t.get("OpportunityID")})
+    # wt_id → property_id for pass 3
+    prop_id_by_wt: dict[int, int] = {}
     if opp_ids:
-        property_by_opp: dict[int, str] = {}
+        opp_property_name: dict[int, str] = {}
+        opp_property_id: dict[int, int] = {}
         for i in range(0, len(opp_ids), 30):
             chunk = opp_ids[i:i + 30]
             id_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
             try:
                 res = await _aspire._get("Opportunities", {
-                    "$select": "OpportunityID,PropertyName",
+                    "$select": "OpportunityID,PropertyName,PropertyID",
                     "$filter": id_filter,
                     "$top": "500",
                 })
                 for rec in _aspire._extract_list(res):
                     oid = rec.get("OpportunityID")
-                    if oid and rec.get("PropertyName"):
-                        property_by_opp[int(oid)] = rec["PropertyName"]
+                    if not oid:
+                        continue
+                    if rec.get("PropertyName"):
+                        opp_property_name[int(oid)] = rec["PropertyName"]
+                    if rec.get("PropertyID"):
+                        opp_property_id[int(oid)] = int(rec["PropertyID"])
             except Exception as e:
                 logger.warning(f"Opportunity property lookup failed: {e}")
+
         for t in need_lookup:
             wt_id  = t.get("WorkTicketID")
             opp_id = t.get("OpportunityID")
-            if wt_id and opp_id and int(opp_id) in property_by_opp:
-                property_by_wt[wt_id] = property_by_opp[int(opp_id)]
+            if not (wt_id and opp_id):
+                continue
+            oid = int(opp_id)
+            if oid in opp_property_name:
+                property_by_wt[wt_id] = opp_property_name[oid]
+            elif oid in opp_property_id:
+                prop_id_by_wt[wt_id] = opp_property_id[oid]  # queue for pass 3
+
+    # Pass 3: PropertyID → Properties API → PropertyName
+    if prop_id_by_wt:
+        prop_ids = list(set(prop_id_by_wt.values()))
+        prop_name_map: dict[int, str] = {}
+        for i in range(0, len(prop_ids), 30):
+            chunk = prop_ids[i:i + 30]
+            id_filter = " or ".join(f"PropertyID eq {pid}" for pid in chunk)
+            try:
+                res = await _aspire._get("Properties", {
+                    "$select": "PropertyID,PropertyName",
+                    "$filter": id_filter,
+                    "$top": "500",
+                })
+                for rec in _aspire._extract_list(res):
+                    pid = rec.get("PropertyID")
+                    if pid and rec.get("PropertyName"):
+                        prop_name_map[int(pid)] = rec["PropertyName"]
+            except Exception as e:
+                logger.warning(f"Properties name lookup failed: {e}")
+
+        for wt_id, pid in prop_id_by_wt.items():
+            if pid in prop_name_map:
+                property_by_wt[wt_id] = prop_name_map[pid]
 
     # ── Index visit notes and attachments ─────────────────────────────────────
     notes_by_wt: dict[int, list] = {}
