@@ -120,16 +120,18 @@ export default function APDashboard() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  async function refresh() {
+  // accept an explicit filter so callers can bypass stale closure
+  async function refresh(activeFilter?: string) {
+    const filter = activeFilter ?? statusFilter;
     try {
       // For destination filters (qbo / aspire) fetch all records via /invoices/
       // so we don't get truncated by the 100-row feed limit.
       let feedUrl: string;
       if (view === 'archived') {
         feedUrl = `${API}/invoices/archived?limit=200`;
-      } else if (statusFilter === 'qbo') {
+      } else if (filter === 'qbo') {
         feedUrl = `${API}/invoices/?destination=qbo&limit=500`;
-      } else if (statusFilter === 'aspire') {
+      } else if (filter === 'aspire') {
         feedUrl = `${API}/invoices/?destination=aspire&limit=500`;
       } else {
         feedUrl = `${API}/invoices/feed?limit=100`;
@@ -281,14 +283,11 @@ export default function APDashboard() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
 
-  // Re-fetch when switching to/from qbo or aspire destination views
-  useEffect(() => {
-    setEntries([]);
-    refresh();
-  }, [statusFilter]);
-
   function toggleStatFilter(value: string) {
-    setStatusFilter(f => f === value ? 'all' : value);
+    const next = statusFilter === value ? 'all' : value;
+    setStatusFilter(next);
+    setEntries([]);
+    refresh(next);  // pass new value directly — avoids stale closure
   }
 
   const forwardedCount = entries.filter(e => !!e.forwarded_to).length;
@@ -429,7 +428,7 @@ export default function APDashboard() {
           }} />
           {error ? `Error — ${error}` : `Updated ${lastRefresh.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`}
           <button
-            onClick={refresh}
+            onClick={() => refresh()}
             style={{
               marginLeft: 8, background: 'transparent', border: '1px solid #475569',
               color: '#cbd5e1', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 12,
