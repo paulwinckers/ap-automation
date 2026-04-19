@@ -2489,3 +2489,79 @@ function filterReport(q) {{
 </html>"""
 
     return HTMLResponse(content=html)
+
+
+# ── Daily Report Email Recipients ─────────────────────────────────────────────
+# Add / edit divisions and recipients here; cron calls /daily-report/send-email
+# with ?division=<key> for each entry.
+
+DAILY_REPORT_RECIPIENTS: dict[str, list[str]] = {
+    "Construction": [
+        "rodger@darios.ca",
+        "dustin@darios.ca",
+        "keeland@darios.ca",
+    ],
+    "Commercial Maintenance": [
+        "ipm@darios.ca",
+        "vesna@darios.ca",
+        "don.i.whyte@gmail.com",
+        "clientcare@darios.ca",
+    ],
+}
+
+
+@router.post("/daily-report/send-email")
+async def send_daily_report_email(
+    date: str = Query(None),
+    division: str = Query(..., description="Division name, e.g. 'Construction'"),
+):
+    """
+    Generate the daily HTML report for one division and email it to configured recipients.
+    Called by Railway cron at 5 pm ET:
+      POST /dashboard/daily-report/send-email?division=Construction
+      POST /dashboard/daily-report/send-email?division=Commercial+Maintenance
+    """
+    from datetime import datetime, timezone, timedelta
+    from app.services.email_intake import GraphClient
+
+    recipients = DAILY_REPORT_RECIPIENTS.get(division)
+    if not recipients:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No recipients configured for division '{division}'. "
+                   f"Add it to DAILY_REPORT_RECIPIENTS in dashboard.py.",
+        )
+
+    if not settings.MS_TENANT_ID or not settings.MS_CLIENT_ID or not settings.MS_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="MS Graph credentials not configured")
+
+    # Generate the report HTML by calling the existing endpoint directly
+    response = await daily_report_html(date=date, division=division)
+    html_body = response.body.decode("utf-8")
+
+    # Work out the display date for the subject line
+    if date:
+        target = date
+    else:
+        tz_offset = getattr(settings, "REPORT_TZ_OFFSET", -4)
+        target = datetime.now(timezone(timedelta(hours=tz_offset))).strftime("%Y-%m-%d")
+    display_date = datetime.strptime(target, "%Y-%m-%d").strftime("%B %d, %Y")
+
+    graph = GraphClient()
+    await graph.send_email(
+        mailbox=settings.MS_AP_INBOX,
+        to_addresses=recipients,
+        subject=f"📋 {division} Daily Report — {display_date}",
+        body_html=html_body,
+    )
+
+    logger.info(
+        f"Daily report emailed: division={division!r} date={target} "
+        f"recipients={recipients}"
+    )
+    return {
+        "ok":        True,
+        "division":  division,
+        "date":      target,
+        "sent_to":   recipients,
+    }
