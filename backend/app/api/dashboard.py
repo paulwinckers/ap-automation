@@ -2513,6 +2513,13 @@ DAILY_REPORT_RECIPIENTS: dict[str, list[str]] = {
         "ipm@darios.ca",
         "clientcare@darios.ca",
     ],
+    "Irrigation": [
+        "vesna@darios.ca",
+        "becca@darios.ca",
+        "ipm@darios.ca",
+        "clientcare@darios.ca",
+        "don.i.whyte@gmail.com",
+    ],
 }
 
 
