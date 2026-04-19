@@ -2158,7 +2158,6 @@ async def daily_report_html(date: str = Query(None)):
     total_hours_act = sum(float(t.get("HoursAct") or 0) for t in tickets)
 
     IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".bmp"}
-    ASPIRE_APP = "https://app.youraspire.com"
 
     def hrs(h):
         if h is None: return "—"
@@ -2183,7 +2182,7 @@ async def daily_report_html(date: str = Query(None)):
         safe = plain.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return f'<p class="note-text">{safe}</p>'
 
-    def ticket_photo_section(wt_id: int, wt_num) -> str:
+    def ticket_photo_section(wt_id: int, wt_num) -> str:  # noqa: wt_num kept for future use
         """
         Build ONE consolidated photo badge for all photos on this ticket
         (from note BBCode + direct attachments).
@@ -2214,7 +2213,7 @@ async def daily_report_html(date: str = Query(None)):
         if total_photos:
             label = f"📷 {total_photos} photo{'s' if total_photos != 1 else ''}"
             if ASPIRE_APP:
-                url = f"{ASPIRE_APP}/WorkOrders/{wt_num}"
+                url = f"{ASPIRE_APP}/WorkTickets/{wt_id}"
                 out += f'<div class="photo-badge"><a href="{url}" target="_blank">{label} — view in Aspire</a></div>'
             else:
                 out += f'<div class="photo-badge">{label}</div>'
@@ -2243,7 +2242,11 @@ async def daily_report_html(date: str = Query(None)):
             wt_notes  = notes_by_wt.get(wt_id, [])
 
             # Hyperlink to Aspire web app
-            ticket_link = f'<a class="ticket-num" href="https://app.youraspire.com/WorkOrders/{wt_num}" target="_blank">#{wt_num}</a>'
+            aspire_ticket_url = f"{ASPIRE_APP}/WorkTickets/{wt_id}" if ASPIRE_APP else ""
+            ticket_link = (
+                f'<a class="ticket-num" href="{aspire_ticket_url}" target="_blank">#{wt_num}</a>'
+                if aspire_ticket_url else f'<span class="ticket-num">#{wt_num}</span>'
+            )
 
             # Render plain-text notes (photo BBCode handled separately as one badge)
             notes_html = ""
