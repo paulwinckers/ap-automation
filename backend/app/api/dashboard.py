@@ -2120,7 +2120,10 @@ async def daily_report_html(
         """Extract AttachmentIDs from [Attachments][Attachment]N[/Attachment][/Attachments]"""
         return [int(m) for m in re.findall(r'\[Attachment\](\d+)\[/Attachment\]', note_text)]
 
-    ASPIRE_APP = getattr(settings, "ASPIRE_WEB_URL", "").rstrip("/")
+    _aspire_base = getattr(settings, "ASPIRE_WEB_URL", "").rstrip("/")
+    _company_code = getattr(settings, "ASPIRE_COMPANY_CODE", "").strip()
+    # If company code is set, ticket URLs include it: /app/DARIO1272/worktickets/details/N
+    ASPIRE_APP = f"{_aspire_base}/{_company_code}" if _company_code else _aspire_base
 
     def render_note_text(note_text: str) -> str:
         """Render just the plain-text portion of a visit note (no photo badges here)."""

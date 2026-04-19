@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     ASPIRE_BRANCH_ID:         int = 0    # Required — integer, find in Aspire Settings → Branches
     ASPIRE_DEFAULT_USER_ID:   int = 7    # Fallback UserID for Issues AssignedTo (Keeland = 7)
     ASPIRE_WEB_URL:           str = "https://cloud.youraspire.com/app"  # Aspire web app base URL
+    ASPIRE_COMPANY_CODE:      str = ""   # e.g. DARIO1272 — included in ticket deep-links if set
 
     # QBO
     QBO_CLIENT_ID:       str = ""
