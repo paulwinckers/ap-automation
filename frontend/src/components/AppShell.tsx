@@ -10,6 +10,8 @@ import { logout, currentUser } from '../lib/api';
 const SIDEBAR_FULL  = 220;
 const SIDEBAR_MINI  = 56;
 
+const DAILY_REPORT_URL = 'https://ap-automation-production.up.railway.app/dashboard/daily-report';
+
 const NAV = [
   {
     section: 'AP & Finance',
@@ -23,11 +25,12 @@ const NAV = [
   {
     section: 'Dashboards',
     items: [
-      { label: 'Sales',        path: '/dashboards/sales',        icon: '📊' },
-      { label: 'Operations',   path: '/dashboards/ops',          icon: '⚙️' },
-      { label: 'Construction', path: '/dashboards/construction', icon: '🏗️' },
-      { label: 'Estimating',  path: '/dashboards/estimating',  icon: '📋' },
-      { label: 'Activities',  path: '/dashboards/activities',  icon: '📅' },
+      { label: 'Sales',         path: '/dashboards/sales',        icon: '📊' },
+      { label: 'Operations',    path: '/dashboards/ops',          icon: '⚙️' },
+      { label: 'Construction',  path: '/dashboards/construction', icon: '🏗️' },
+      { label: 'Estimating',   path: '/dashboards/estimating',   icon: '📋' },
+      { label: 'Activities',   path: '/dashboards/activities',   icon: '📅' },
+      { label: 'Daily Report', href: DAILY_REPORT_URL,           icon: '📝' },
     ],
   },
   {
@@ -112,26 +115,42 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               {collapsed && <div style={{ height: 8 }} />}
 
               {group.items.map(item => {
+                const linkStyle = (active: boolean) => ({
+                  display: 'flex', alignItems: 'center',
+                  gap: collapsed ? 0 : 10,
+                  padding: collapsed ? '10px 0' : '9px 16px',
+                  justifyContent: collapsed ? 'center' : 'flex-start',
+                  fontSize: 14, textDecoration: 'none',
+                  color: active ? '#fff' : '#94a3b8',
+                  background: active ? '#1e293b' : 'transparent',
+                  borderLeft: `3px solid ${active ? '#22c55e' : 'transparent'}`,
+                  transition: 'color 0.15s, background 0.15s',
+                  whiteSpace: 'nowrap' as const,
+                });
+                if ('href' in item && item.href) {
+                  return (
+                    <a
+                      key={item.label}
+                      href={item.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={collapsed ? item.label : undefined}
+                      style={linkStyle(false)}
+                    >
+                      <span style={{ fontSize: 18, flexShrink: 0 }}>{item.icon}</span>
+                      {!collapsed && <span>{item.label}</span>}
+                    </a>
+                  );
+                }
                 const active = item.path === '/ap'
                   ? pathname === '/ap'
-                  : pathname.startsWith(item.path);
+                  : pathname.startsWith(item.path!);
                 return (
                   <Link
                     key={item.path}
-                    to={item.path}
+                    to={item.path!}
                     title={collapsed ? item.label : undefined}
-                    style={{
-                      display: 'flex', alignItems: 'center',
-                      gap: collapsed ? 0 : 10,
-                      padding: collapsed ? '10px 0' : '9px 16px',
-                      justifyContent: collapsed ? 'center' : 'flex-start',
-                      fontSize: 14, textDecoration: 'none',
-                      color: active ? '#fff' : '#94a3b8',
-                      background: active ? '#1e293b' : 'transparent',
-                      borderLeft: `3px solid ${active ? '#22c55e' : 'transparent'}`,
-                      transition: 'color 0.15s, background 0.15s',
-                      whiteSpace: 'nowrap',
-                    }}
+                    style={linkStyle(active)}
                   >
                     <span style={{ fontSize: 18, flexShrink: 0 }}>{item.icon}</span>
                     {!collapsed && <span>{item.label}</span>}
