@@ -117,28 +117,43 @@ class AspireClient:
             return result
         return result.get("value", [])
 
-    async def _get_all(self, path: str, params: dict = None, max_pages: int = 20) -> list:
+    async def _get_all(self, path: str, params: dict = None, max_pages: int = 50) -> list:
         """
-        Fetch ALL records by following OData @odata.nextLink pagination.
-        Aspire caps $top at ~500; this iterates until no next link remains.
+        Fetch ALL records using Aspire's preferred $pageNumber/$limit pagination.
+        Aspire docs recommend $pageNumber/$limit over $skip/$top for large datasets;
+        $top is silently capped and can produce inconsistent results on big tables.
+
+        Callers pass $top to set the page size (default 500); it is converted to
+        $limit internally. $pageNumber increments until a short page signals EOF.
         """
         token = await self._get_token()
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json;odata.metadata=minimal",
         }
-        url = f"{self.base_url}/{path.lstrip('/')}"
-        all_records: list = []
-        page = 0
+        base_url = f"{self.base_url}/{path.lstrip('/')}"
 
-        while url and page < max_pages:
-            resp = await self._http.get(url, params=params if page == 0 else None, headers=headers)
+        # Convert caller's $top → $limit; remove $top so Aspire sees only $limit
+        base_params = dict(params or {})
+        page_limit = int(base_params.pop("$top", 500))
+        base_params["$limit"] = str(page_limit)
+
+        all_records: list = []
+
+        for page_num in range(1, max_pages + 1):
+            base_params["$pageNumber"] = str(page_num)
+            resp = await self._http.get(base_url, params=base_params, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-            all_records.extend(self._extract_list(data))
-            url = data.get("@odata.nextLink") if isinstance(data, dict) else None
-            page += 1
-            logger.debug(f"_get_all page {page}: {len(all_records)} records so far, next={bool(url)}")
+            records = self._extract_list(data)
+            all_records.extend(records)
+            logger.debug(
+                f"_get_all {path} page {page_num}: got {len(records)}, "
+                f"total {len(all_records)}"
+            )
+            # Fewer records than the page limit → this is the last page
+            if len(records) < page_limit:
+                break
 
         return all_records
 

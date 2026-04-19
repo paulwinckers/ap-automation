@@ -2051,33 +2051,30 @@ async def daily_report_html(
         opp_name:          dict[int, str] = {}
         opp_division:      dict[int, str] = {}
 
-        async def _fetch_one_opp(oid: int):
-            """Fetch one Opportunity by ID with no $select — avoids 400 from bad field names."""
+        # Use OData `in` operator — one request per chunk of 200 IDs instead of
+        # one request per ID. Much faster and avoids OR-filter silent failures.
+        chunk_size = 200
+        for i in range(0, len(opp_ids), chunk_size):
+            chunk = opp_ids[i:i + chunk_size]
+            id_list = ",".join(str(oid) for oid in chunk)
             try:
                 res = await _aspire._get("Opportunities", {
-                    "$filter": f"OpportunityID eq {oid}",
-                    "$top": "1",
+                    "$filter": f"OpportunityID in ({id_list})",
+                    "$top": "500",
                 })
-                recs = _aspire._extract_list(res)
-                if recs:
-                    rec = recs[0]
+                for rec in _aspire._extract_list(res):
+                    oid_val = rec.get("OpportunityID")
+                    if not oid_val:
+                        continue
+                    oid_int = int(oid_val)
                     pname = (rec.get("PropertyName") or "").strip()
                     oname = (rec.get("OpportunityName") or "").strip()
                     dname = (rec.get("DivisionName") or "").strip()
-                    if pname:
-                        opp_property_name[oid] = pname
-                    if oname:
-                        opp_name[oid] = oname
-                    if dname:
-                        opp_division[oid] = dname
+                    if pname: opp_property_name[oid_int] = pname
+                    if oname: opp_name[oid_int] = oname
+                    if dname: opp_division[oid_int] = dname
             except Exception as e:
-                logger.warning(f"Opportunity fetch failed for ID {oid}: {e}")
-
-        # Fetch up to 20 in parallel, then next batch
-        batch_size = 20
-        for i in range(0, len(opp_ids), batch_size):
-            batch = opp_ids[i:i + batch_size]
-            await asyncio.gather(*[_fetch_one_opp(oid) for oid in batch])
+                logger.warning(f"Opportunity in() fetch failed for chunk starting {chunk[0]}: {e}")
 
         for t in need_lookup:
             wt_id  = t.get("WorkTicketID")
@@ -2174,6 +2171,7 @@ async def daily_report_html(
         wt_notes  = notes_by_wt.get(wt_id, [])
         # URL uses WorkTicketID (internal DB id) — not WorkTicketNumber (user-facing #)
         aspire_ticket_url = f"{ASPIRE_APP}/worktickets/details/{wt_id}" if (ASPIRE_APP and wt_id) else ""
+        logger.info(f"Ticket link: wt_id={wt_id!r} wt_num={wt_num!r} url={aspire_ticket_url!r} ASPIRE_APP={ASPIRE_APP!r}")
         ticket_link = (
             f'<a class="ticket-num" href="{aspire_ticket_url}" target="_blank">#{wt_num}</a>'
             if aspire_ticket_url else f'<span class="ticket-num">#{wt_num}</span>'
@@ -2235,6 +2233,11 @@ async def daily_report_html(
                 wt_id  = n.get("WorkTicketID") or "?"
                 wt_num = n.get("WorkTicketNumber") or wt_id
                 text_notes.append(f"Ticket #{wt_num}: {clean}")
+            logger.info(
+                f"AI summary [{label}]: {len(note_list)} notes in, "
+                f"{len(text_notes)} with text content, "
+                f"api_key_set={bool(settings.ANTHROPIC_API_KEY)}"
+            )
             if not text_notes:
                 return ""
             notes_block = "\n".join(text_notes)
