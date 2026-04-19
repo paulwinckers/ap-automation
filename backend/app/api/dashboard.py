@@ -2037,18 +2037,16 @@ async def daily_report_html(date: str = Query(None)):
     # Fetch: PropertyName, PropertyID (for pass 3), OpportunityName (fallback display)
     need_lookup = [t for t in tickets if t.get("WorkTicketID") and t["WorkTicketID"] not in property_by_wt]
     opp_ids = list({int(t["OpportunityID"]) for t in need_lookup if t.get("OpportunityID")})
-    prop_id_by_wt: dict[int, int] = {}
-    opp_name_by_wt: dict[int, str] = {}   # fallback: use job name when no PropertyName
+    opp_name_by_wt: dict[int, str] = {}   # fallback: opportunity name when no PropertyName
     if opp_ids:
         opp_property_name: dict[int, str] = {}
-        opp_property_id:   dict[int, int] = {}
         opp_name:          dict[int, str] = {}
         for i in range(0, len(opp_ids), 30):
             chunk = opp_ids[i:i + 30]
             id_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
             try:
                 res = await _aspire._get("Opportunities", {
-                    "$select": "OpportunityID,OpportunityName,PropertyName,PropertyID",
+                    "$select": "OpportunityID,OpportunityName,PropertyName",
                     "$filter": id_filter,
                     "$top": "500",
                 })
@@ -2059,12 +2057,10 @@ async def daily_report_html(date: str = Query(None)):
                     oid = int(oid)
                     if rec.get("PropertyName"):
                         opp_property_name[oid] = rec["PropertyName"]
-                    if rec.get("PropertyID"):
-                        opp_property_id[oid] = int(rec["PropertyID"])
                     if rec.get("OpportunityName"):
                         opp_name[oid] = rec["OpportunityName"]
             except Exception as e:
-                logger.warning(f"Opportunity property lookup failed: {e}")
+                logger.warning(f"Opportunity lookup failed (chunk {i}): {e}")
 
         for t in need_lookup:
             wt_id  = t.get("WorkTicketID")
@@ -2074,35 +2070,8 @@ async def daily_report_html(date: str = Query(None)):
             oid = int(opp_id)
             if oid in opp_property_name:
                 property_by_wt[wt_id] = opp_property_name[oid]
-            elif oid in opp_property_id:
-                prop_id_by_wt[wt_id] = opp_property_id[oid]        # queue for pass 3
-            # Store opp name as fallback regardless
             if oid in opp_name:
-                opp_name_by_wt[wt_id] = opp_name[oid]
-
-    # Pass 3: PropertyID → Properties API → PropertyName
-    if prop_id_by_wt:
-        prop_ids = list(set(prop_id_by_wt.values()))
-        prop_name_map: dict[int, str] = {}
-        for i in range(0, len(prop_ids), 30):
-            chunk = prop_ids[i:i + 30]
-            id_filter = " or ".join(f"PropertyID eq {pid}" for pid in chunk)
-            try:
-                res = await _aspire._get("Properties", {
-                    "$select": "PropertyID,PropertyName",
-                    "$filter": id_filter,
-                    "$top": "500",
-                })
-                for rec in _aspire._extract_list(res):
-                    pid = rec.get("PropertyID")
-                    if pid and rec.get("PropertyName"):
-                        prop_name_map[int(pid)] = rec["PropertyName"]
-            except Exception as e:
-                logger.warning(f"Properties name lookup failed: {e}")
-
-        for wt_id, pid in prop_id_by_wt.items():
-            if pid in prop_name_map:
-                property_by_wt[wt_id] = prop_name_map[pid]
+                opp_name_by_wt[wt_id] = opp_name[oid]  # store regardless, for fallback
 
     # ── Index visit notes and attachments ─────────────────────────────────────
     notes_by_wt: dict[int, list] = {}
@@ -2199,57 +2168,57 @@ async def daily_report_html(date: str = Query(None)):
         """Extract AttachmentIDs from [Attachments][Attachment]N[/Attachment][/Attachments]"""
         return [int(m) for m in re.findall(r'\[Attachment\](\d+)\[/Attachment\]', note_text)]
 
-    def render_note(note_text: str, wt_num_for_link) -> str:
-        """Render one visit note. BBCode photo refs shown as badge linking to Aspire."""
+    ASPIRE_APP = getattr(settings, "ASPIRE_WEB_URL", "").rstrip("/")
+
+    def render_note_text(note_text: str) -> str:
+        """Render just the plain-text portion of a visit note (no photo badges here)."""
         if not note_text:
             return ""
         stripped = note_text.strip()
-        photo_ids = bbcode_attachment_ids(stripped)
-        # Strip all BBCode to get plain text remainder
         plain = re.sub(r'\[/?[A-Za-z]+\]\d*', '', stripped).strip()
+        if not plain:
+            return ""
+        if plain.lower().startswith("<") or "<img" in plain.lower():
+            return f'<div class="note-html">{plain}</div>'
+        safe = plain.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return f'<p class="note-text">{safe}</p>'
 
-        html_out = ""
-        if plain:
-            if plain.lower().startswith("<") or "<img" in plain.lower():
-                html_out += f'<div class="note-html">{plain}</div>'
-            else:
-                safe = plain.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                html_out += f'<p class="note-text">{safe}</p>'
-
-        # Photo BBCode → badge linking to Aspire (API doesn't expose binary download)
-        if photo_ids:
-            aspire_url = f"{ASPIRE_APP}/WorkOrders/{wt_num_for_link}"
-            label = f"📷 {len(photo_ids)} photo{'s' if len(photo_ids) != 1 else ''} — view in Aspire"
-            html_out += f'<div class="photo-badge"><a href="{aspire_url}" target="_blank">{label}</a></div>'
-
-        return html_out
-
-    def render_ticket_attachments(wt_id: int, wt_num) -> str:
-        """Render attachment badges for this ticket (photos not directly downloadable via API)."""
-        wt_attach = attachments_by_wt.get(wt_id, [])
-        # Collect IDs already shown via note BBCode
-        shown_ids: set[int] = set()
+    def ticket_photo_section(wt_id: int, wt_num) -> str:
+        """
+        Build ONE consolidated photo badge for all photos on this ticket
+        (from note BBCode + direct attachments).
+        Aspire API doesn't expose binary downloads so we link to the ticket in Aspire.
+        """
+        # Photos from visit note BBCode
+        note_photo_ids: list[int] = []
         for n in notes_by_wt.get(wt_id, []):
-            shown_ids.update(bbcode_attachment_ids(n.get("Note") or ""))
+            note_photo_ids.extend(bbcode_attachment_ids(n.get("Note") or ""))
 
-        photos = []
-        others = []
-        for a in wt_attach:
-            aid = a.get("AttachmentID")
-            if not aid or int(aid) in shown_ids:
-                continue
-            ext = ("." + (a.get("FileExtension") or "")).lower()
-            if ext in IMAGE_EXTS:
-                photos.append(a)
-            else:
-                others.append(a)
+        # Photos from fetched attachments (not already counted via BBCode)
+        bbcode_set = set(note_photo_ids)
+        attach_photo_count = sum(
+            1 for a in attachments_by_wt.get(wt_id, [])
+            if a.get("AttachmentID") and int(a["AttachmentID"]) not in bbcode_set
+            and ("." + (a.get("FileExtension") or "")).lower() in IMAGE_EXTS
+        )
+
+        total_photos = len(note_photo_ids) + attach_photo_count
+
+        # Non-image files
+        other_files = [
+            a for a in attachments_by_wt.get(wt_id, [])
+            if ("." + (a.get("FileExtension") or "")).lower() not in IMAGE_EXTS
+        ]
 
         out = ""
-        if photos:
-            aspire_url = f"{ASPIRE_APP}/WorkOrders/{wt_num}"
-            label = f"📷 {len(photos)} attachment photo{'s' if len(photos) != 1 else ''} — view in Aspire"
-            out += f'<div class="photo-badge"><a href="{aspire_url}" target="_blank">{label}</a></div>'
-        for a in others:
+        if total_photos:
+            label = f"📷 {total_photos} photo{'s' if total_photos != 1 else ''}"
+            if ASPIRE_APP:
+                url = f"{ASPIRE_APP}/WorkOrders/{wt_num}"
+                out += f'<div class="photo-badge"><a href="{url}" target="_blank">{label} — view in Aspire</a></div>'
+            else:
+                out += f'<div class="photo-badge">{label}</div>'
+        for a in other_files:
             fname = a.get("AttachmentName") or a.get("OriginalFileName") or "attachment"
             out += f'<div class="attach-file">📎 {fname}</div>'
         return out
@@ -2276,11 +2245,13 @@ async def daily_report_html(date: str = Query(None)):
             # Hyperlink to Aspire web app
             ticket_link = f'<a class="ticket-num" href="https://app.youraspire.com/WorkOrders/{wt_num}" target="_blank">#{wt_num}</a>'
 
+            # Render plain-text notes (photo BBCode handled separately as one badge)
             notes_html = ""
             for n in wt_notes:
-                notes_html += render_note(n.get("Note") or "", wt_num)
+                notes_html += render_note_text(n.get("Note") or "")
 
-            extra_attach = render_ticket_attachments(wt_id, wt_num)
+            # One consolidated photo badge for all photos on this ticket
+            extra_attach = ticket_photo_section(wt_id, wt_num)
 
             status_name = (t.get("WorkTicketStatusName") or "").strip()
             is_complete = "complet" in status_name.lower()
