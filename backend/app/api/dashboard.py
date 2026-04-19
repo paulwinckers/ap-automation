@@ -2041,26 +2041,33 @@ async def daily_report_html(date: str = Query(None)):
     if opp_ids:
         opp_property_name: dict[int, str] = {}
         opp_name:          dict[int, str] = {}
-        for i in range(0, len(opp_ids), 30):
-            chunk = opp_ids[i:i + 30]
-            id_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
+
+        import asyncio as _asyncio
+
+        async def _fetch_one_opp(oid: int):
+            """Fetch one Opportunity by ID with no $select — avoids 400 from bad field names."""
             try:
                 res = await _aspire._get("Opportunities", {
-                    "$select": "OpportunityID,OpportunityName,PropertyName",
-                    "$filter": id_filter,
-                    "$top": "500",
+                    "$filter": f"OpportunityID eq {oid}",
+                    "$top": "1",
                 })
-                for rec in _aspire._extract_list(res):
-                    oid = rec.get("OpportunityID")
-                    if not oid:
-                        continue
-                    oid = int(oid)
-                    if rec.get("PropertyName"):
-                        opp_property_name[oid] = rec["PropertyName"]
-                    if rec.get("OpportunityName"):
-                        opp_name[oid] = rec["OpportunityName"]
+                recs = _aspire._extract_list(res)
+                if recs:
+                    rec = recs[0]
+                    pname = (rec.get("PropertyName") or "").strip()
+                    oname = (rec.get("OpportunityName") or "").strip()
+                    if pname:
+                        opp_property_name[oid] = pname
+                    if oname:
+                        opp_name[oid] = oname
             except Exception as e:
-                logger.warning(f"Opportunity lookup failed (chunk {i}): {e}")
+                logger.warning(f"Opportunity fetch failed for ID {oid}: {e}")
+
+        # Fetch up to 20 in parallel, then next batch
+        batch_size = 20
+        for i in range(0, len(opp_ids), batch_size):
+            batch = opp_ids[i:i + batch_size]
+            await _asyncio.gather(*[_fetch_one_opp(oid) for oid in batch])
 
         for t in need_lookup:
             wt_id  = t.get("WorkTicketID")
@@ -2071,7 +2078,7 @@ async def daily_report_html(date: str = Query(None)):
             if oid in opp_property_name:
                 property_by_wt[wt_id] = opp_property_name[oid]
             if oid in opp_name:
-                opp_name_by_wt[wt_id] = opp_name[oid]  # store regardless, for fallback
+                opp_name_by_wt[wt_id] = opp_name[oid]
 
     # ── Index visit notes and attachments ─────────────────────────────────────
     notes_by_wt: dict[int, list] = {}
