@@ -518,7 +518,7 @@ export default function APDashboard() {
         {/* Status filter */}
         <select
           value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
+          onChange={e => { const v = e.target.value; setStatusFilter(v); setEntries([]); refresh(v); }}
           style={{
             padding: '6px 12px', fontSize: 13, border: '1px solid #e2e8f0',
             borderRadius: 8, background: '#fff', color: '#1e293b', cursor: 'pointer',
