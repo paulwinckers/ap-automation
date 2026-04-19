@@ -710,7 +710,7 @@ async def get_audit_log(
 async def list_invoices(
     status:      Optional[str] = Query(None),
     destination: Optional[str] = Query(None),
-    limit:       int           = Query(50, le=200),
+    limit:       int           = Query(50, le=1000),
     offset:      int           = Query(0),
     db:          Database      = Depends(get_db),
 ):
