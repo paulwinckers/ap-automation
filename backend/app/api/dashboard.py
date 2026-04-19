@@ -1797,6 +1797,50 @@ async def daily_report_probe(date: str = Query(None)):
     }
 
 
+@router.get("/daily-report/attachment/{attachment_id}")
+async def daily_report_attachment(attachment_id: int):
+    """
+    Proxy an Aspire attachment binary for inline display in the daily report.
+    Tries the /Download sub-resource; falls back to ExternalContentID URL if present.
+    """
+    from fastapi.responses import Response
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire not configured")
+    try:
+        token = await _aspire._get_token()
+        # First attempt: Aspire binary download endpoint
+        resp = await _aspire._http.get(
+            f"{_aspire.base_url}/Attachments/{attachment_id}/Download",
+            headers={"Authorization": f"Bearer {token}"},
+            follow_redirects=True,
+        )
+        if resp.is_success and resp.content:
+            ct = resp.headers.get("content-type", "image/jpeg")
+            return Response(content=resp.content, media_type=ct)
+
+        # Second attempt: fetch metadata, use ExternalContentID as URL
+        meta_resp = await _aspire._http.get(
+            f"{_aspire.base_url}/Attachments/{attachment_id}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json;odata.metadata=minimal",
+            },
+        )
+        if meta_resp.is_success:
+            meta = meta_resp.json()
+            records = meta.get("value", [meta]) if isinstance(meta, dict) else [meta]
+            if records:
+                ext_url = records[0].get("ExternalContentID") or ""
+                if ext_url.startswith("http"):
+                    redir = await _aspire._http.get(ext_url, follow_redirects=True)
+                    if redir.is_success:
+                        ct = redir.headers.get("content-type", "image/jpeg")
+                        return Response(content=redir.content, media_type=ct)
+    except Exception as ex:
+        logger.warning(f"Attachment proxy failed for {attachment_id}: {ex}")
+    raise HTTPException(status_code=404, detail=f"Attachment {attachment_id} not available")
+
+
 @router.get("/daily-report")
 async def daily_report_html(date: str = Query(None)):
     """
@@ -1820,30 +1864,22 @@ async def daily_report_html(date: str = Query(None)):
         target = now_local.strftime("%Y-%m-%d")
     display_date = datetime.strptime(target, "%Y-%m-%d").strftime("%B %d, %Y")
 
-    # ── Fetch data in parallel ────────────────────────────────────────────────
+    # ── Fetch tickets (no $select — full record may include PropertyName) ───────
     async def _fetch_tickets():
-        # Fetch tickets scheduled OR completed today
         results = []
         for f in [
-            # Completed today
             f"CompleteDate ge {target}T00:00:00Z and CompleteDate le {target}T23:59:59Z",
-            # Scheduled today (not yet complete)
             f"ScheduledStartDate ge {target}T00:00:00Z and ScheduledStartDate le {target}T23:59:59Z",
         ]:
             try:
+                # No $select — fetch all fields so PropertyName/PropertyID come through if available
                 batch = await _aspire._get_all("WorkTickets", {
-                    "$select": (
-                        "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
-                        "CompleteDate,ScheduledStartDate,HoursEst,HoursAct,"
-                        "Notes,OpportunityID,CrewLeaderName,BranchName"
-                    ),
                     "$filter": f,
                     "$top": "200",
                 })
                 results.extend(batch)
             except Exception as e:
                 logger.warning(f"WorkTickets fetch failed ({f[:40]}): {e}")
-        # Deduplicate by WorkTicketID
         seen: set[int] = set()
         unique = []
         for t in results:
@@ -1854,7 +1890,6 @@ async def daily_report_html(date: str = Query(None)):
         return unique
 
     async def _fetch_visit_notes():
-        # Try multiple date filter approaches — Aspire OData date handling varies
         for date_filter in [
             f"ScheduledDate ge {target}T00:00:00Z and ScheduledDate le {target}T23:59:59Z",
             f"ScheduledDate ge {target} and ScheduledDate le {target}T23:59:59",
@@ -1866,35 +1901,36 @@ async def daily_report_html(date: str = Query(None)):
                     "$top": "500",
                 })
                 if result:
-                    logger.info(f"visit_notes date_filter matched {len(result)} notes: {date_filter[:60]}")
+                    logger.info(f"visit_notes matched {len(result)}: {date_filter[:60]}")
                     return result
             except Exception as ex:
-                logger.warning(f"visit_notes filter failed ({date_filter[:50]}): {ex}")
-                continue
-        # Fallback: fetch the 500 most recent notes and filter in Python
+                logger.warning(f"visit_notes filter failed: {ex}")
         try:
             all_notes = await _aspire._get_all("WorkTicketVisitNotes", {
                 "$orderby": "CreatedDateTime desc",
                 "$top": "500",
             })
-            # Match by ScheduledDate OR CreatedDateTime prefix
             matched = [
                 n for n in all_notes
                 if (n.get("ScheduledDate") or "").startswith(target)
                 or (n.get("CreatedDateTime") or "").startswith(target)
             ]
-            logger.info(f"visit_notes fallback: {len(all_notes)} total, {len(matched)} matched {target}")
+            logger.info(f"visit_notes fallback: {len(matched)}/{len(all_notes)} matched {target}")
             return matched
         except Exception as ex:
             logger.warning(f"visit_notes fallback failed: {ex}")
             return []
 
     async def _fetch_attachments():
-        return await _aspire._get_all("Attachments", {
-            "$select": "AttachmentID,WorkTicketID,PropertyName,AttachmentName,FileExtension,DateUploaded,ExternalContentID",
-            "$filter": f"DateUploaded ge {target}T00:00:00Z and DateUploaded le {target}T23:59:59Z and WorkTicketID ne null",
-            "$top": "500",
-        })
+        try:
+            return await _aspire._get_all("Attachments", {
+                "$select": "AttachmentID,WorkTicketID,AttachmentName,FileExtension,DateUploaded,ExternalContentID",
+                "$filter": f"DateUploaded ge {target}T00:00:00Z and DateUploaded le {target}T23:59:59Z and WorkTicketID ne null",
+                "$top": "500",
+            })
+        except Exception as ex:
+            logger.warning(f"Attachments fetch failed: {ex}")
+            return []
 
     try:
         tickets, visit_notes, attachments = await asyncio.gather(
@@ -1903,17 +1939,22 @@ async def daily_report_html(date: str = Query(None)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
-    # ── Build WorkTicketID → PropertyName via OpportunityID lookup ───────────
+    # ── Property name resolution ──────────────────────────────────────────────
+    # Pass 1: use PropertyName directly from WorkTicket full record (no $select)
     property_by_wt: dict[int, str] = {}
+    for t in tickets:
+        wt_id = t.get("WorkTicketID")
+        pname = (t.get("PropertyName") or "").strip()
+        if wt_id and pname:
+            property_by_wt[wt_id] = pname
 
-    # All tickets need Opportunity lookup (WorkTickets API doesn't expose PropertyName)
-    missing_wt = [t for t in tickets if t.get("WorkTicketID")]
-    opp_ids = list({int(t["OpportunityID"]) for t in missing_wt if t.get("OpportunityID")})
-    property_by_opp: dict[int, str] = {}
+    # Pass 2: for remaining, look up via OpportunityID → Opportunity.PropertyName
+    need_lookup = [t for t in tickets if t.get("WorkTicketID") and t["WorkTicketID"] not in property_by_wt]
+    opp_ids = list({int(t["OpportunityID"]) for t in need_lookup if t.get("OpportunityID")})
     if opp_ids:
-        chunk_size = 30
-        for i in range(0, len(opp_ids), chunk_size):
-            chunk = opp_ids[i:i + chunk_size]
+        property_by_opp: dict[int, str] = {}
+        for i in range(0, len(opp_ids), 30):
+            chunk = opp_ids[i:i + 30]
             id_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
             try:
                 res = await _aspire._get("Opportunities", {
@@ -1927,62 +1968,160 @@ async def daily_report_html(date: str = Query(None)):
                         property_by_opp[int(oid)] = rec["PropertyName"]
             except Exception as e:
                 logger.warning(f"Opportunity property lookup failed: {e}")
-
-        for t in missing_wt:
+        for t in need_lookup:
             wt_id  = t.get("WorkTicketID")
             opp_id = t.get("OpportunityID")
             if wt_id and opp_id and int(opp_id) in property_by_opp:
                 property_by_wt[wt_id] = property_by_opp[int(opp_id)]
 
-    # ── Index visit notes by WorkTicketID ─────────────────────────────────────
+    # ── Index visit notes and attachments ─────────────────────────────────────
     notes_by_wt: dict[int, list] = {}
     for n in visit_notes:
         wt_id = n.get("WorkTicketID")
         if wt_id:
             notes_by_wt.setdefault(wt_id, []).append(n)
 
-    # ── Index attachments by WorkTicketID ─────────────────────────────────────
     attachments_by_wt: dict[int, list] = {}
+    attachment_by_id: dict[int, dict] = {}
     for a in attachments:
         wt_id = a.get("WorkTicketID")
+        aid   = a.get("AttachmentID")
         if wt_id:
             attachments_by_wt.setdefault(wt_id, []).append(a)
+        if aid:
+            attachment_by_id[int(aid)] = a
 
-    # ── Group tickets by route — skip routes with 0 tickets ───────────────────
+    # ── AI action-item summary ────────────────────────────────────────────────
+    ai_summary_html = ""
+    try:
+        import anthropic as _anthropic
+        all_text_notes = []
+        for n in visit_notes:
+            txt = (n.get("Note") or "").strip()
+            if not txt:
+                continue
+            # Skip BBCode-only attachment refs
+            clean = re.sub(r'\[/?[A-Za-z]+\]\d*', '', txt).strip()
+            if not clean:
+                continue
+            wt_num = n.get("WorkTicketNumber") or n.get("WorkTicketID") or "?"
+            route  = n.get("RouteName") or "?"
+            all_text_notes.append(f"Ticket #{wt_num} ({route}): {clean}")
+
+        if all_text_notes:
+            notes_block = "\n".join(all_text_notes)
+            _claude = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+            msg = await _claude.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=600,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Below are field notes from today's work tickets ({display_date}). "
+                        "Identify any action items, follow-ups, deficiencies, or issues that need management attention. "
+                        "Format as a concise bulleted list. If none, say 'No action items identified.'\n\n"
+                        f"{notes_block}"
+                    ),
+                }],
+            )
+            summary_text = msg.content[0].text.strip()
+            # Convert markdown bullets to HTML
+            lines = summary_text.split("\n")
+            html_lines = []
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith(("- ", "* ", "• ")):
+                    html_lines.append(f"<li>{line[2:].strip()}</li>")
+                else:
+                    html_lines.append(f"<p style='margin:4px 0'>{line}</p>")
+            inner = "".join(html_lines)
+            if "<li>" in inner:
+                inner = f"<ul style='margin:4px 0;padding-left:20px'>{inner}</ul>"
+            ai_summary_html = f"""
+            <div class="ai-summary">
+              <div class="ai-summary-title">🤖 Action Items &amp; Follow-ups</div>
+              {inner}
+            </div>"""
+    except Exception as ex:
+        logger.warning(f"AI summary failed: {ex}")
+
+    # ── Group tickets by route ────────────────────────────────────────────────
     by_route: dict[str, list] = {}
     for t in tickets:
         route = (t.get("CrewLeaderName") or t.get("BranchName") or "Unassigned").strip()
         by_route.setdefault(route, []).append(t)
 
-    # ── Build HTML ────────────────────────────────────────────────────────────
-    total_tickets    = len(tickets)
-    total_hours_est  = sum(float(t.get("HoursEst") or 0) for t in tickets)
-    total_hours_act  = sum(float(t.get("HoursAct") or 0) for t in tickets)
+    # ── Helper functions ──────────────────────────────────────────────────────
+    total_tickets   = len(tickets)
+    total_hours_est = sum(float(t.get("HoursEst") or 0) for t in tickets)
+    total_hours_act = sum(float(t.get("HoursAct") or 0) for t in tickets)
+
+    IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".bmp"}
 
     def hrs(h):
         if h is None: return "—"
         return f"{float(h):.1f}h"
 
-    def note_html(note_text: str) -> str:
-        """Render a visit note. Handles plain text and HTML. Skips BBCode attachment-only notes."""
+    def bbcode_attachment_ids(note_text: str) -> list[int]:
+        """Extract AttachmentIDs from [Attachments][Attachment]N[/Attachment][/Attachments]"""
+        return [int(m) for m in re.findall(r'\[Attachment\](\d+)\[/Attachment\]', note_text)]
+
+    def render_note(note_text: str, wt_id_for_imgs: int) -> str:
+        """Render one visit note — text + any embedded attachment image references."""
         if not note_text:
             return ""
         stripped = note_text.strip()
-        # Skip notes that are purely Aspire attachment BBCode references
-        # e.g. "[Attachments][Attachment]26023[/Attachment][/Attachments]"
-        bbcode_only = re.sub(r'\[/?[A-Za-z]+\]\d*', '', stripped).strip()
-        if not bbcode_only:
-            return ""  # nothing to show — attachment is handled by _fetch_attachments
-        if stripped.lower().startswith("<") or "<img" in stripped.lower():
-            # Already HTML — render directly (photos from native app)
-            return f'<div class="note-html">{stripped}</div>'
-        # Plain text — escape HTML entities for safety
-        safe = stripped.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        return f'<p class="note-text">{safe}</p>'
+        ids = bbcode_attachment_ids(stripped)
+        # Strip all BBCode to get plain text remainder
+        plain = re.sub(r'\[/?[A-Za-z]+\]\d*', '', stripped).strip()
 
+        html_out = ""
+        if plain:
+            if plain.lower().startswith("<") or "<img" in plain.lower():
+                html_out += f'<div class="note-html">{plain}</div>'
+            else:
+                safe = plain.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                html_out += f'<p class="note-text">{safe}</p>'
+
+        # Render attachment images referenced in this note
+        for aid in ids:
+            a = attachment_by_id.get(aid)
+            ext = ("." + (a.get("FileExtension") or "")).lower() if a else ""
+            if ext in IMAGE_EXTS:
+                html_out += f'<img class="attach-img" src="/dashboard/daily-report/attachment/{aid}" alt="Photo" loading="lazy">'
+            elif a:
+                fname = a.get("AttachmentName") or f"attachment-{aid}"
+                html_out += f'<div class="attach-file">📎 <a href="/dashboard/daily-report/attachment/{aid}">{fname}</a></div>'
+
+        return html_out
+
+    def render_ticket_attachments(wt_id: int) -> str:
+        """Render any attachments for this ticket NOT already referenced via note BBCode."""
+        wt_attach = attachments_by_wt.get(wt_id, [])
+        # Collect IDs already shown via note BBCode
+        shown_ids: set[int] = set()
+        for n in notes_by_wt.get(wt_id, []):
+            shown_ids.update(bbcode_attachment_ids(n.get("Note") or ""))
+
+        out = ""
+        for a in wt_attach:
+            aid = a.get("AttachmentID")
+            if not aid or int(aid) in shown_ids:
+                continue
+            ext = ("." + (a.get("FileExtension") or "")).lower()
+            if ext in IMAGE_EXTS:
+                out += f'<img class="attach-img" src="/dashboard/daily-report/attachment/{aid}" alt="Photo" loading="lazy">'
+            else:
+                fname = a.get("AttachmentName") or f"attachment-{aid}"
+                out += f'<div class="attach-file">📎 <a href="/dashboard/daily-report/attachment/{aid}">{fname}</a></div>'
+        return out
+
+    # ── Build route sections ──────────────────────────────────────────────────
     route_sections = ""
     for route in sorted(by_route.keys(), key=lambda r: (r == "Unassigned", r.lower())):
-        route_tickets = by_route[route]
+        route_tickets   = by_route[route]
         route_hours_act = sum(float(t.get("HoursAct") or 0) for t in route_tickets)
         route_hours_est = sum(float(t.get("HoursEst") or 0) for t in route_tickets)
 
@@ -1992,22 +2131,15 @@ async def daily_report_html(date: str = Query(None)):
             wt_num    = t.get("WorkTicketNumber") or "—"
             prop_name = property_by_wt.get(wt_id) or "—"
             wt_notes  = notes_by_wt.get(wt_id, [])
-            wt_attach  = attachments_by_wt.get(wt_id, [])
-            # Show all notes with content — internal report, IsPublic doesn't matter
-            public_notes = [n for n in wt_notes if (n.get("Note") or "").strip()]
-            # note_html() will filter BBCode-only attachment entries at render time
 
-            notes_section = ""
-            for n in public_notes:
-                notes_section += note_html(n.get("Note") or "")
+            # Hyperlink to Aspire web app
+            ticket_link = f'<a class="ticket-num" href="https://app.youraspire.com/WorkOrders/{wt_num}" target="_blank">#{wt_num}</a>'
 
-            attach_section = ""
-            if wt_attach:
-                names = ", ".join(
-                    a.get("OriginalFileName") or a.get("AttachmentName") or "file"
-                    for a in wt_attach[:5]
-                )
-                attach_section = f'<div class="attachments">📎 {len(wt_attach)} attachment(s): {names}</div>'
+            notes_html = ""
+            for n in wt_notes:
+                notes_html += render_note(n.get("Note") or "", wt_id)
+
+            extra_attach = render_ticket_attachments(wt_id)
 
             status_name = (t.get("WorkTicketStatusName") or "").strip()
             is_complete = "complet" in status_name.lower()
@@ -2019,13 +2151,12 @@ async def daily_report_html(date: str = Query(None)):
             ticket_rows += f"""
             <div class="ticket {'ticket-complete' if is_complete else 'ticket-scheduled'}">
               <div class="ticket-header">
-                <span class="ticket-num">#{wt_num}</span>
+                {ticket_link}
                 <span class="ticket-prop">{prop_name}</span>
                 {status_badge}
                 <span class="ticket-hours">{hrs(t.get('HoursAct'))} actual / {hrs(t.get('HoursEst'))} est</span>
               </div>
-              {notes_section}
-              {attach_section}
+              {notes_html}{extra_attach}
             </div>"""
 
         route_sections += f"""
@@ -2034,7 +2165,7 @@ async def daily_report_html(date: str = Query(None)):
             <h2>{route}</h2>
             <span class="route-stats">{len(route_tickets)} ticket(s) &nbsp;·&nbsp; {hrs(route_hours_act)} / {hrs(route_hours_est)} est</span>
           </div>
-          {ticket_rows if ticket_rows else '<p class="empty">No completed tickets.</p>'}
+          {ticket_rows if ticket_rows else '<p class="empty">No tickets found.</p>'}
         </div>"""
 
     html = f"""<!DOCTYPE html>
@@ -2044,40 +2175,50 @@ async def daily_report_html(date: str = Query(None)):
 <title>Daily Completion Report — {display_date}</title>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-         color: #111; max-width: 900px; margin: 0 auto; padding: 32px 24px; }}
+         color: #111; max-width: 960px; margin: 0 auto; padding: 32px 24px; }}
   h1   {{ font-size: 22px; margin: 0 0 4px; color: #0f172a; }}
   .subtitle {{ color: #64748b; font-size: 14px; margin-bottom: 24px; }}
-  .summary {{ display: flex; gap: 24px; margin-bottom: 32px; background: #f8fafc;
-              border-radius: 8px; padding: 16px 20px; }}
+  .summary {{ display: flex; gap: 24px; margin-bottom: 24px; background: #f8fafc;
+              border-radius: 8px; padding: 16px 20px; flex-wrap: wrap; }}
   .stat    {{ text-align: center; }}
   .stat-val {{ font-size: 28px; font-weight: 700; color: #0f172a; }}
   .stat-lbl {{ font-size: 12px; color: #64748b; }}
-  .route-section {{ margin-bottom: 32px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }}
+  .ai-summary {{ background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
+                 padding: 14px 18px; margin-bottom: 28px; }}
+  .ai-summary-title {{ font-weight: 700; font-size: 14px; color: #92400e; margin-bottom: 8px; }}
+  .ai-summary li {{ font-size: 13px; color: #374151; margin-bottom: 4px; }}
+  .route-section {{ margin-bottom: 28px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }}
   .route-header {{ background: #0f172a; color: #fff; padding: 10px 16px;
                    display: flex; justify-content: space-between; align-items: center; }}
   .route-header h2 {{ margin: 0; font-size: 15px; }}
   .route-stats {{ font-size: 12px; color: #94a3b8; }}
   .ticket {{ padding: 12px 16px; border-bottom: 1px solid #f1f5f9; }}
   .ticket:last-child {{ border-bottom: none; }}
-  .ticket-header {{ display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }}
-  .ticket-num  {{ font-weight: 700; color: #2563eb; font-size: 13px; min-width: 50px; }}
+  .ticket-header {{ display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }}
+  .ticket-num  {{ font-weight: 700; color: #2563eb; font-size: 13px; min-width: 55px;
+                  text-decoration: none; }}
+  .ticket-num:hover {{ text-decoration: underline; }}
   .ticket-prop {{ font-weight: 600; font-size: 14px; flex: 1; }}
   .ticket-hours {{ font-size: 12px; color: #64748b; white-space: nowrap; }}
   .badge-complete  {{ background:#dcfce7;color:#166534;font-size:11px;font-weight:700;
-                     padding:1px 8px;border-radius:20px; }}
+                     padding:1px 8px;border-radius:20px; white-space:nowrap; }}
   .badge-scheduled {{ background:#e0f2fe;color:#0369a1;font-size:11px;font-weight:700;
-                     padding:1px 8px;border-radius:20px; }}
-  .ticket-scheduled {{ opacity: 0.85; }}
-  .note-text   {{ margin: 4px 0 0; font-size: 13px; color: #374151;
-                  background: #f8fafc; padding: 6px 10px; border-radius: 4px;
-                  border-left: 3px solid #cbd5e1; }}
-  .note-html   {{ margin: 4px 0 0; }}
+                     padding:1px 8px;border-radius:20px; white-space:nowrap; }}
+  .ticket-scheduled {{ opacity: 0.88; }}
+  .note-text  {{ margin: 4px 0; font-size: 13px; color: #374151;
+                 background: #f8fafc; padding: 6px 10px; border-radius: 4px;
+                 border-left: 3px solid #cbd5e1; }}
+  .note-html  {{ margin: 4px 0; }}
   .note-html img {{ max-width: 100%; border-radius: 6px; margin: 4px 0; }}
-  .attachments {{ font-size: 12px; color: #64748b; margin-top: 4px; }}
-  .empty       {{ color: #94a3b8; font-size: 13px; padding: 8px 16px; }}
+  .attach-img {{ display: block; max-width: 100%; max-height: 400px; object-fit: contain;
+                 border-radius: 6px; margin: 6px 0; border: 1px solid #e2e8f0; }}
+  .attach-file {{ font-size: 12px; color: #2563eb; margin: 4px 0; }}
+  .attach-file a {{ color: #2563eb; }}
+  .empty {{ color: #94a3b8; font-size: 13px; padding: 8px 16px; }}
   @media print {{
-    body {{ padding: 0; }}
+    body {{ padding: 0; max-width: 100%; }}
     .route-section {{ break-inside: avoid; }}
+    .attach-img {{ max-height: 300px; }}
   }}
 </style>
 </head>
@@ -2085,12 +2226,15 @@ async def daily_report_html(date: str = Query(None)):
   <h1>Daily Completion Report</h1>
   <div class="subtitle">{display_date} &nbsp;·&nbsp; Generated {datetime.now(timezone.utc).strftime('%H:%M UTC')}</div>
   <div class="summary">
-    <div class="stat"><div class="stat-val">{total_tickets}</div><div class="stat-lbl">Tickets Completed</div></div>
+    <div class="stat"><div class="stat-val">{total_tickets}</div><div class="stat-lbl">Tickets</div></div>
     <div class="stat"><div class="stat-val">{total_hours_act:.1f}h</div><div class="stat-lbl">Actual Hours</div></div>
-    <div class="stat"><div class="stat-val">{total_hours_est:.1f}h</div><div class="stat-lbl">Estimated Hours</div></div>
+    <div class="stat"><div class="stat-val">{total_hours_est:.1f}h</div><div class="stat-lbl">Est. Hours</div></div>
     <div class="stat"><div class="stat-val">{len(by_route)}</div><div class="stat-lbl">Routes</div></div>
+    <div class="stat"><div class="stat-val">{len(visit_notes)}</div><div class="stat-lbl">Visit Notes</div></div>
+    <div class="stat"><div class="stat-val">{len(attachments)}</div><div class="stat-lbl">Attachments</div></div>
   </div>
-  {route_sections or '<p style="color:#94a3b8">No completed tickets found for this date.</p>'}
+  {ai_summary_html}
+  {route_sections or '<p style="color:#94a3b8">No tickets found for this date.</p>'}
 </body>
 </html>"""
 
