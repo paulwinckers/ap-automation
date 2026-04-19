@@ -4,6 +4,8 @@ GET /dashboard/construction          — all jobs + targets
 GET /dashboard/construction/{id}/tickets — work tickets for one job
 """
 import logging
+import re
+import asyncio
 from collections import Counter
 from fastapi import APIRouter, HTTPException, Query
 
@@ -1927,10 +1929,15 @@ async def daily_report_attachment(attachment_id: int):
 
 
 @router.get("/daily-report")
-async def daily_report_html(date: str = Query(None)):
+async def daily_report_html(
+    date: str = Query(None),
+    division: str = Query(None, description="Filter to one division, e.g. 'Construction'"),
+):
     """
     HTML daily completion report — open in browser and Print → Save as PDF/Word.
-    Shows completed work tickets grouped by route, with visit notes.
+    Shows completed work tickets grouped by division then route, with visit notes.
+    Pass ?division=Construction (or Residential Maintenance / Commercial Maintenance / Irrigation)
+    to get a single-division report (useful for emailing).
     """
     from datetime import datetime, timezone, timedelta
     from fastapi.responses import HTMLResponse
@@ -2038,11 +2045,11 @@ async def daily_report_html(date: str = Query(None)):
     need_lookup = [t for t in tickets if t.get("WorkTicketID") and t["WorkTicketID"] not in property_by_wt]
     opp_ids = list({int(t["OpportunityID"]) for t in need_lookup if t.get("OpportunityID")})
     opp_name_by_wt: dict[int, str] = {}   # fallback: opportunity name when no PropertyName
+    division_by_wt: dict[int, str] = {}   # WorkTicketID → DivisionName
     if opp_ids:
         opp_property_name: dict[int, str] = {}
         opp_name:          dict[int, str] = {}
-
-        import asyncio as _asyncio
+        opp_division:      dict[int, str] = {}
 
         async def _fetch_one_opp(oid: int):
             """Fetch one Opportunity by ID with no $select — avoids 400 from bad field names."""
@@ -2056,10 +2063,13 @@ async def daily_report_html(date: str = Query(None)):
                     rec = recs[0]
                     pname = (rec.get("PropertyName") or "").strip()
                     oname = (rec.get("OpportunityName") or "").strip()
+                    dname = (rec.get("DivisionName") or "").strip()
                     if pname:
                         opp_property_name[oid] = pname
                     if oname:
                         opp_name[oid] = oname
+                    if dname:
+                        opp_division[oid] = dname
             except Exception as e:
                 logger.warning(f"Opportunity fetch failed for ID {oid}: {e}")
 
@@ -2067,7 +2077,7 @@ async def daily_report_html(date: str = Query(None)):
         batch_size = 20
         for i in range(0, len(opp_ids), batch_size):
             batch = opp_ids[i:i + batch_size]
-            await _asyncio.gather(*[_fetch_one_opp(oid) for oid in batch])
+            await asyncio.gather(*[_fetch_one_opp(oid) for oid in batch])
 
         for t in need_lookup:
             wt_id  = t.get("WorkTicketID")
@@ -2079,6 +2089,8 @@ async def daily_report_html(date: str = Query(None)):
                 property_by_wt[wt_id] = opp_property_name[oid]
             if oid in opp_name:
                 opp_name_by_wt[wt_id] = opp_name[oid]
+            if oid in opp_division:
+                division_by_wt[wt_id] = opp_division[oid]
 
     # ── Index visit notes and attachments ─────────────────────────────────────
     notes_by_wt: dict[int, list] = {}
@@ -2097,73 +2109,7 @@ async def daily_report_html(date: str = Query(None)):
         if aid:
             attachment_by_id[int(aid)] = a
 
-    # ── AI action-item summary ────────────────────────────────────────────────
-    ai_summary_html = ""
-    try:
-        import anthropic as _anthropic
-        all_text_notes = []
-        for n in visit_notes:
-            txt = (n.get("Note") or "").strip()
-            if not txt:
-                continue
-            # Skip BBCode-only attachment refs
-            clean = re.sub(r'\[/?[A-Za-z]+\]\d*', '', txt).strip()
-            if not clean:
-                continue
-            wt_num = n.get("WorkTicketNumber") or n.get("WorkTicketID") or "?"
-            route  = n.get("RouteName") or "?"
-            all_text_notes.append(f"Ticket #{wt_num} ({route}): {clean}")
-
-        if all_text_notes:
-            notes_block = "\n".join(all_text_notes)
-            _claude = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-            msg = await _claude.messages.create(
-                model="claude-3-5-haiku-20241022",
-                max_tokens=600,
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"Below are field notes from today's work tickets ({display_date}). "
-                        "Identify any action items, follow-ups, deficiencies, or issues that need management attention. "
-                        "Format as a concise bulleted list. If none, say 'No action items identified.'\n\n"
-                        f"{notes_block}"
-                    ),
-                }],
-            )
-            summary_text = msg.content[0].text.strip()
-            # Convert markdown bullets to HTML
-            lines = summary_text.split("\n")
-            html_lines = []
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                if line.startswith(("- ", "* ", "• ")):
-                    html_lines.append(f"<li>{line[2:].strip()}</li>")
-                else:
-                    html_lines.append(f"<p style='margin:4px 0'>{line}</p>")
-            inner = "".join(html_lines)
-            if "<li>" in inner:
-                inner = f"<ul style='margin:4px 0;padding-left:20px'>{inner}</ul>"
-            ai_summary_html = f"""
-            <div class="ai-summary">
-              <div class="ai-summary-title">🤖 Action Items &amp; Follow-ups</div>
-              {inner}
-            </div>"""
-    except Exception as ex:
-        logger.warning(f"AI summary failed: {ex}")
-
-    # ── Group tickets by route ────────────────────────────────────────────────
-    by_route: dict[str, list] = {}
-    for t in tickets:
-        route = (t.get("CrewLeaderName") or t.get("BranchName") or "Unassigned").strip()
-        by_route.setdefault(route, []).append(t)
-
     # ── Helper functions ──────────────────────────────────────────────────────
-    total_tickets   = len(tickets)
-    total_hours_est = sum(float(t.get("HoursEst") or 0) for t in tickets)
-    total_hours_act = sum(float(t.get("HoursAct") or 0) for t in tickets)
-
     IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".bmp"}
 
     def hrs(h):
@@ -2189,33 +2135,22 @@ async def daily_report_html(date: str = Query(None)):
         safe = plain.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return f'<p class="note-text">{safe}</p>'
 
-    def ticket_photo_section(wt_id: int, wt_num) -> str:  # noqa: wt_num kept for future use
-        """
-        Build ONE consolidated photo badge for all photos on this ticket
-        (from note BBCode + direct attachments).
-        Aspire API doesn't expose binary downloads so we link to the ticket in Aspire.
-        """
-        # Photos from visit note BBCode
+    def ticket_photo_section(wt_id: int, wt_num) -> str:
+        """One consolidated photo badge for all photos on this ticket."""
         note_photo_ids: list[int] = []
         for n in notes_by_wt.get(wt_id, []):
             note_photo_ids.extend(bbcode_attachment_ids(n.get("Note") or ""))
-
-        # Photos from fetched attachments (not already counted via BBCode)
         bbcode_set = set(note_photo_ids)
         attach_photo_count = sum(
             1 for a in attachments_by_wt.get(wt_id, [])
             if a.get("AttachmentID") and int(a["AttachmentID"]) not in bbcode_set
             and ("." + (a.get("FileExtension") or "")).lower() in IMAGE_EXTS
         )
-
         total_photos = len(note_photo_ids) + attach_photo_count
-
-        # Non-image files
         other_files = [
             a for a in attachments_by_wt.get(wt_id, [])
             if ("." + (a.get("FileExtension") or "")).lower() not in IMAGE_EXTS
         ]
-
         out = ""
         if total_photos:
             label = f"📷 {total_photos} photo{'s' if total_photos != 1 else ''}"
@@ -2229,50 +2164,27 @@ async def daily_report_html(date: str = Query(None)):
             out += f'<div class="attach-file">📎 {fname}</div>'
         return out
 
-    # ── Build route sections ──────────────────────────────────────────────────
-    route_sections = ""
-    for route in sorted(by_route.keys(), key=lambda r: (r == "Unassigned", r.lower())):
-        route_tickets   = by_route[route]
-        route_hours_act = sum(float(t.get("HoursAct") or 0) for t in route_tickets)
-        route_hours_est = sum(float(t.get("HoursEst") or 0) for t in route_tickets)
-
-        ticket_rows = ""
-        for t in sorted(route_tickets, key=lambda x: x.get("WorkTicketNumber") or 0):
-            wt_id     = t.get("WorkTicketID")
-            wt_num    = t.get("WorkTicketNumber") or "—"
-            # Use PropertyName → Opportunity name fallback → "—"
-            prop_name = (
-                property_by_wt.get(wt_id)
-                or opp_name_by_wt.get(wt_id)
-                or "—"
-            )
-            wt_notes  = notes_by_wt.get(wt_id, [])
-
-            # Hyperlink to Aspire web app
-            # Aspire deep link — WorkTicketNumber is the user-facing number shown in the UI
-            aspire_ticket_url = f"{ASPIRE_APP}/worktickets/details/{wt_num}" if ASPIRE_APP else ""
-            ticket_link = (
-                f'<a class="ticket-num" href="{aspire_ticket_url}" target="_blank">#{wt_num}</a>'
-                if aspire_ticket_url else f'<span class="ticket-num">#{wt_num}</span>'
-            )
-
-            # Render plain-text notes (photo BBCode handled separately as one badge)
-            notes_html = ""
-            for n in wt_notes:
-                notes_html += render_note_text(n.get("Note") or "")
-
-            # One consolidated photo badge for all photos on this ticket
-            extra_attach = ticket_photo_section(wt_id, wt_num)
-
-            status_name = (t.get("WorkTicketStatusName") or "").strip()
-            is_complete = "complet" in status_name.lower()
-            status_badge = (
-                '<span class="badge-complete">✓ Complete</span>' if is_complete
-                else f'<span class="badge-scheduled">{status_name or "Scheduled"}</span>'
-            )
-
-            ticket_rows += f"""
-            <div class="ticket {'ticket-complete' if is_complete else 'ticket-scheduled'}">
+    def build_ticket_row(t: dict) -> str:
+        wt_id     = t.get("WorkTicketID")
+        wt_num    = t.get("WorkTicketNumber") or "—"
+        prop_name = property_by_wt.get(wt_id) or opp_name_by_wt.get(wt_id) or "—"
+        wt_notes  = notes_by_wt.get(wt_id, [])
+        aspire_ticket_url = f"{ASPIRE_APP}/worktickets/details/{wt_num}" if ASPIRE_APP else ""
+        ticket_link = (
+            f'<a class="ticket-num" href="{aspire_ticket_url}" target="_blank">#{wt_num}</a>'
+            if aspire_ticket_url else f'<span class="ticket-num">#{wt_num}</span>'
+        )
+        notes_html = "".join(render_note_text(n.get("Note") or "") for n in wt_notes)
+        extra_attach = ticket_photo_section(wt_id, wt_num)
+        status_name = (t.get("WorkTicketStatusName") or "").strip()
+        is_complete = "complet" in status_name.lower()
+        status_badge = (
+            '<span class="badge-complete">✓ Complete</span>' if is_complete
+            else f'<span class="badge-scheduled">{status_name or "Scheduled"}</span>'
+        )
+        css = "ticket-complete" if is_complete else "ticket-scheduled"
+        return f"""
+            <div class="ticket {css}">
               <div class="ticket-header">
                 {ticket_link}
                 <span class="ticket-prop">{prop_name}</span>
@@ -2282,20 +2194,179 @@ async def daily_report_html(date: str = Query(None)):
               {notes_html}{extra_attach}
             </div>"""
 
-        route_sections += f"""
+    def build_route_sections(ticket_list: list) -> str:
+        """Build HTML route sections for a given list of tickets."""
+        by_route: dict[str, list] = {}
+        for t in ticket_list:
+            route = (t.get("CrewLeaderName") or t.get("BranchName") or "Unassigned").strip()
+            by_route.setdefault(route, []).append(t)
+        html_out = ""
+        for route in sorted(by_route.keys(), key=lambda r: (r == "Unassigned", r.lower())):
+            rt = by_route[route]
+            ra = sum(float(t.get("HoursAct") or 0) for t in rt)
+            re_ = sum(float(t.get("HoursEst") or 0) for t in rt)
+            rows = "".join(build_ticket_row(t) for t in sorted(rt, key=lambda x: x.get("WorkTicketNumber") or 0))
+            html_out += f"""
         <div class="route-section">
           <div class="route-header">
             <h2>{route}</h2>
-            <span class="route-stats">{len(route_tickets)} ticket(s) &nbsp;·&nbsp; {hrs(route_hours_act)} / {hrs(route_hours_est)} est</span>
+            <span class="route-stats">{len(rt)} ticket(s) &nbsp;·&nbsp; {hrs(ra)} / {hrs(re_)} est</span>
           </div>
-          {ticket_rows if ticket_rows else '<p class="empty">No tickets found.</p>'}
+          {rows if rows else '<p class="empty">No tickets found.</p>'}
         </div>"""
+        return html_out
+
+    async def build_ai_summary(note_list: list, label: str = "") -> str:
+        """Generate AI action-item summary HTML for a list of visit notes."""
+        try:
+            import anthropic as _anthropic
+            text_notes = []
+            for n in note_list:
+                txt = (n.get("Note") or "").strip()
+                if not txt:
+                    continue
+                clean = re.sub(r'\[/?[A-Za-z]+\]\d*', '', txt).strip()
+                if not clean:
+                    continue
+                wt_id  = n.get("WorkTicketID") or "?"
+                wt_num = n.get("WorkTicketNumber") or wt_id
+                text_notes.append(f"Ticket #{wt_num}: {clean}")
+            if not text_notes:
+                return ""
+            notes_block = "\n".join(text_notes)
+            scope = f" ({label})" if label else ""
+            _claude = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+            msg = await _claude.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=600,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Below are field notes from today's work tickets{scope} ({display_date}). "
+                        "Identify any action items, follow-ups, deficiencies, or issues needing management attention. "
+                        "Format as a concise bulleted list. If none, say 'No action items identified.'\n\n"
+                        f"{notes_block}"
+                    ),
+                }],
+            )
+            summary_text = msg.content[0].text.strip()
+            html_lines = []
+            for line in summary_text.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith(("- ", "* ", "• ")):
+                    html_lines.append(f"<li>{line[2:].strip()}</li>")
+                else:
+                    html_lines.append(f"<p style='margin:4px 0'>{line}</p>")
+            inner = "".join(html_lines)
+            if "<li>" in inner:
+                inner = f"<ul style='margin:4px 0;padding-left:20px'>{inner}</ul>"
+            return f"""
+            <div class="ai-summary">
+              <div class="ai-summary-title">🤖 Action Items &amp; Follow-ups</div>
+              {inner}
+            </div>"""
+        except Exception as ex:
+            logger.warning(f"AI summary failed ({label}): {ex}")
+            return ""
+
+    # ── Division ordering & colours ───────────────────────────────────────────
+    DIVISION_ORDER = [
+        "Residential Maintenance",
+        "Commercial Maintenance",
+        "Construction",
+        "Irrigation",
+    ]
+    DIVISION_COLOURS = {
+        "Residential Maintenance": "#166534",   # green
+        "Commercial Maintenance":  "#0369a1",   # blue
+        "Construction":            "#92400e",   # amber
+        "Irrigation":              "#6d28d9",   # purple
+    }
+
+    # ── Build WorkTicketID → DivisionName for tickets that have OpportunityID ─
+    # (already done above via opp_division); for tickets without an opportunity,
+    # fall back to the WorkTicket's own DivisionName field if present.
+    for t in tickets:
+        wt_id = t.get("WorkTicketID")
+        if wt_id and wt_id not in division_by_wt:
+            d = (t.get("DivisionName") or "").strip()
+            if d:
+                division_by_wt[wt_id] = d
+
+    # ── Filter to one division if requested ───────────────────────────────────
+    if division:
+        div_filter = division.strip().lower()
+        tickets = [
+            t for t in tickets
+            if div_filter in (division_by_wt.get(t.get("WorkTicketID")) or "").lower()
+        ]
+        # Also filter visit_notes to those tickets
+        valid_wt_ids = {t.get("WorkTicketID") for t in tickets}
+        visit_notes = [n for n in visit_notes if n.get("WorkTicketID") in valid_wt_ids]
+
+    # ── Group tickets by division ─────────────────────────────────────────────
+    by_division: dict[str, list] = {}
+    for t in tickets:
+        wt_id  = t.get("WorkTicketID")
+        div    = division_by_wt.get(wt_id) or "Other"
+        by_division.setdefault(div, []).append(t)
+
+    # ── Also index notes by division for AI summaries ────────────────────────
+    notes_by_division: dict[str, list] = {}
+    for n in visit_notes:
+        wt_id = n.get("WorkTicketID")
+        # find which division this note's ticket belongs to
+        div = division_by_wt.get(wt_id) or "Other"
+        notes_by_division.setdefault(div, []).append(n)
+
+    # ── Build per-division HTML sections (AI summaries run concurrently) ──────
+    div_names_in_data = list(by_division.keys())
+    ordered_divs = [d for d in DIVISION_ORDER if d in div_names_in_data] + \
+                   [d for d in div_names_in_data if d not in DIVISION_ORDER]
+
+    # Run all AI summaries concurrently
+    ai_tasks = {
+        div: build_ai_summary(notes_by_division.get(div, []), div)
+        for div in ordered_divs
+    }
+    ai_results = dict(zip(
+        ai_tasks.keys(),
+        await asyncio.gather(*ai_tasks.values()),
+    ))
+
+    total_tickets   = len(tickets)
+    total_hours_est = sum(float(t.get("HoursEst") or 0) for t in tickets)
+    total_hours_act = sum(float(t.get("HoursAct") or 0) for t in tickets)
+
+    division_sections = ""
+    for div in ordered_divs:
+        div_tickets = by_division[div]
+        div_act = sum(float(t.get("HoursAct") or 0) for t in div_tickets)
+        div_est = sum(float(t.get("HoursEst") or 0) for t in div_tickets)
+        colour  = DIVISION_COLOURS.get(div, "#334155")
+        route_html   = build_route_sections(div_tickets)
+        ai_html      = ai_results.get(div, "")
+        division_sections += f"""
+    <div class="division-section">
+      <div class="division-header" style="background:{colour}">
+        <h2>{div}</h2>
+        <span class="div-stats">{len(div_tickets)} ticket(s) &nbsp;·&nbsp; {hrs(div_act)} / {hrs(div_est)} est</span>
+      </div>
+      <div class="division-body">
+        {ai_html}
+        {route_html if route_html else '<p class="empty">No tickets found.</p>'}
+      </div>
+    </div>"""
+
+    report_title = f"Daily Report — {division}" if division else "Daily Completion Report"
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Daily Completion Report — {display_date}</title>
+<title>{report_title} — {display_date}</title>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
          color: #111; max-width: 960px; margin: 0 auto; padding: 32px 24px; }}
@@ -2306,15 +2377,21 @@ async def daily_report_html(date: str = Query(None)):
   .stat    {{ text-align: center; }}
   .stat-val {{ font-size: 28px; font-weight: 700; color: #0f172a; }}
   .stat-lbl {{ font-size: 12px; color: #64748b; }}
+  .division-section {{ margin-bottom: 36px; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }}
+  .division-header {{ color: #fff; padding: 12px 18px;
+                      display: flex; justify-content: space-between; align-items: center; }}
+  .division-header h2 {{ margin: 0; font-size: 17px; font-weight: 700; }}
+  .div-stats {{ font-size: 12px; color: rgba(255,255,255,0.75); }}
+  .division-body {{ padding: 12px 0; }}
   .ai-summary {{ background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
-                 padding: 14px 18px; margin-bottom: 28px; }}
+                 padding: 14px 18px; margin: 8px 14px 16px; }}
   .ai-summary-title {{ font-weight: 700; font-size: 14px; color: #92400e; margin-bottom: 8px; }}
   .ai-summary li {{ font-size: 13px; color: #374151; margin-bottom: 4px; }}
-  .route-section {{ margin-bottom: 28px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }}
-  .route-header {{ background: #0f172a; color: #fff; padding: 10px 16px;
+  .route-section {{ margin: 0 14px 16px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }}
+  .route-header {{ background: #334155; color: #fff; padding: 8px 14px;
                    display: flex; justify-content: space-between; align-items: center; }}
-  .route-header h2 {{ margin: 0; font-size: 15px; }}
-  .route-stats {{ font-size: 12px; color: #94a3b8; }}
+  .route-header h2 {{ margin: 0; font-size: 13px; font-weight: 600; }}
+  .route-stats {{ font-size: 11px; color: #94a3b8; }}
   .ticket {{ padding: 12px 16px; border-bottom: 1px solid #f1f5f9; }}
   .ticket:last-child {{ border-bottom: none; }}
   .ticket-header {{ display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }}
@@ -2342,24 +2419,23 @@ async def daily_report_html(date: str = Query(None)):
   .empty {{ color: #94a3b8; font-size: 13px; padding: 8px 16px; }}
   @media print {{
     body {{ padding: 0; max-width: 100%; }}
+    .division-section {{ break-inside: avoid; }}
     .route-section {{ break-inside: avoid; }}
-    .attach-img {{ max-height: 300px; }}
   }}
 </style>
 </head>
 <body>
-  <h1>Daily Completion Report</h1>
+  <h1>{report_title}</h1>
   <div class="subtitle">{display_date} &nbsp;·&nbsp; Generated {datetime.now(timezone.utc).strftime('%H:%M UTC')}</div>
   <div class="summary">
     <div class="stat"><div class="stat-val">{total_tickets}</div><div class="stat-lbl">Tickets</div></div>
     <div class="stat"><div class="stat-val">{total_hours_act:.1f}h</div><div class="stat-lbl">Actual Hours</div></div>
     <div class="stat"><div class="stat-val">{total_hours_est:.1f}h</div><div class="stat-lbl">Est. Hours</div></div>
-    <div class="stat"><div class="stat-val">{len(by_route)}</div><div class="stat-lbl">Routes</div></div>
+    <div class="stat"><div class="stat-val">{len(ordered_divs)}</div><div class="stat-lbl">Divisions</div></div>
     <div class="stat"><div class="stat-val">{len(visit_notes)}</div><div class="stat-lbl">Visit Notes</div></div>
     <div class="stat"><div class="stat-val">{len(attachments)}</div><div class="stat-lbl">Attachments</div></div>
   </div>
-  {ai_summary_html}
-  {route_sections or '<p style="color:#94a3b8">No tickets found for this date.</p>'}
+  {division_sections or '<p style="color:#94a3b8">No tickets found for this date.</p>'}
 </body>
 </html>"""
 
