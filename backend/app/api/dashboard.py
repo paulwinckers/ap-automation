@@ -2220,7 +2220,7 @@ async def daily_report_html(date: str = Query(None)):
         if total_photos:
             label = f"📷 {total_photos} photo{'s' if total_photos != 1 else ''}"
             if ASPIRE_APP:
-                url = f"{ASPIRE_APP}/WorkTicket/{wt_num}"
+                url = f"{ASPIRE_APP}/worktickets/details/{wt_num}"
                 out += f'<div class="photo-badge"><a href="{url}" target="_blank">{label} — view in Aspire</a></div>'
             else:
                 out += f'<div class="photo-badge">{label}</div>'
@@ -2250,7 +2250,7 @@ async def daily_report_html(date: str = Query(None)):
 
             # Hyperlink to Aspire web app
             # Aspire deep link — WorkTicketNumber is the user-facing number shown in the UI
-            aspire_ticket_url = f"{ASPIRE_APP}/WorkTicket/{wt_num}" if ASPIRE_APP else ""
+            aspire_ticket_url = f"{ASPIRE_APP}/worktickets/details/{wt_num}" if ASPIRE_APP else ""
             ticket_link = (
                 f'<a class="ticket-num" href="{aspire_ticket_url}" target="_blank">#{wt_num}</a>'
                 if aspire_ticket_url else f'<span class="ticket-num">#{wt_num}</span>'
