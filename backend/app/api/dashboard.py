@@ -1708,32 +1708,56 @@ async def daily_report_probe(date: str = Query(None)):
     now = datetime.now(timezone.utc)
     target = date or now.strftime("%Y-%m-%d")
 
+    # First try with date filter
+    date_filtered = []
+    date_error = None
     try:
-        notes = await _aspire._get_all("WorkTicketVisitNotes", {
+        date_filtered = await _aspire._get_all("WorkTicketVisitNotes", {
             "$filter": f"ScheduledDate ge {target}T00:00:00Z and ScheduledDate le {target}T23:59:59Z",
             "$top": "100",
         })
     except Exception as e:
-        return {"error": str(e)}
+        date_error = str(e)
 
-    with_notes = [n for n in notes if (n.get("Note") or "").strip()]
-    sample = with_notes[:10]
+    # Also fetch most recent 20 notes with NO filter to see real data + date format
+    recent = []
+    try:
+        recent = await _aspire._get_all("WorkTicketVisitNotes", {
+            "$orderby": "CreatedDateTime desc",
+            "$top": "20",
+        })
+    except Exception as e:
+        pass
+
+    with_notes = [n for n in recent if (n.get("Note") or "").strip()]
 
     return {
-        "date": target,
-        "total_visit_notes": len(notes),
-        "notes_with_content": len(with_notes),
-        "sample": [
+        "target_date": target,
+        "date_filter_results": len(date_filtered),
+        "date_filter_error": date_error,
+        "recent_total": len(recent),
+        "recent_with_content": len(with_notes),
+        # Show all field names from first record so we know exact field names
+        "first_record_fields": sorted(recent[0].keys()) if recent else [],
+        "sample_dates": [
             {
-                "WorkTicketID":   n.get("WorkTicketID"),
-                "WorkTicketNumber": n.get("WorkTicketNumber"),
-                "RouteName":      n.get("RouteName"),
-                "ScheduledDate":  n.get("ScheduledDate"),
-                "IsPublic":       n.get("IsPublic"),
-                "Note_raw":       n.get("Note"),          # raw — shows us if HTML/base64/URL
-                "Note_length":    len(n.get("Note") or ""),
+                "ScheduledDate":    n.get("ScheduledDate"),
+                "CreatedDateTime":  n.get("CreatedDateTime"),
+                "StartDateTime":    n.get("StartDateTime"),
             }
-            for n in sample
+            for n in recent[:5]
+        ],
+        "sample_with_notes": [
+            {
+                "WorkTicketID":     n.get("WorkTicketID"),
+                "WorkTicketNumber": n.get("WorkTicketNumber"),
+                "RouteName":        n.get("RouteName"),
+                "ScheduledDate":    n.get("ScheduledDate"),
+                "IsPublic":         n.get("IsPublic"),
+                "Note_raw":         n.get("Note"),
+                "Note_length":      len(n.get("Note") or ""),
+            }
+            for n in with_notes[:5]
         ],
     }
 
