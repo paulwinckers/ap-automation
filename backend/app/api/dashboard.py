@@ -1726,10 +1726,28 @@ async def daily_report_probe(date: str = Query(None)):
             "$orderby": "CreatedDateTime desc",
             "$top": "20",
         })
-    except Exception as e:
+    except Exception:
         pass
 
     with_notes = [n for n in recent if (n.get("Note") or "").strip()]
+
+    # Also fetch today's tickets so we can cross-check WorkTicketIDs
+    today_ticket_ids: list[int] = []
+    try:
+        wt_batch = await _aspire._get_all("WorkTickets", {
+            "$select": "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,CompleteDate,ScheduledStartDate",
+            "$filter": (
+                f"CompleteDate ge {target}T00:00:00Z and CompleteDate le {target}T23:59:59Z"
+                f" or ScheduledStartDate ge {target}T00:00:00Z and ScheduledStartDate le {target}T23:59:59Z"
+            ),
+            "$top": "100",
+        })
+        today_ticket_ids = [t["WorkTicketID"] for t in wt_batch if t.get("WorkTicketID")]
+    except Exception:
+        pass
+
+    note_ticket_ids = [n.get("WorkTicketID") for n in recent if n.get("WorkTicketID")]
+    overlap = list(set(today_ticket_ids) & set(note_ticket_ids))
 
     return {
         "target_date": target,
@@ -1737,6 +1755,10 @@ async def daily_report_probe(date: str = Query(None)):
         "date_filter_error": date_error,
         "recent_total": len(recent),
         "recent_with_content": len(with_notes),
+        "today_tickets_count": len(today_ticket_ids),
+        "today_ticket_ids_sample": today_ticket_ids[:10],
+        "note_ticket_ids_sample": note_ticket_ids[:10],
+        "wt_id_overlap": overlap,
         # Show all field names from first record so we know exact field names
         "first_record_fields": sorted(recent[0].keys()) if recent else [],
         "sample_dates": [
@@ -1753,11 +1775,21 @@ async def daily_report_probe(date: str = Query(None)):
                 "WorkTicketNumber": n.get("WorkTicketNumber"),
                 "RouteName":        n.get("RouteName"),
                 "ScheduledDate":    n.get("ScheduledDate"),
+                "CreatedDateTime":  n.get("CreatedDateTime"),
                 "IsPublic":         n.get("IsPublic"),
-                "Note_raw":         n.get("Note"),
+                "Note_raw":         (n.get("Note") or "")[:200],
                 "Note_length":      len(n.get("Note") or ""),
             }
             for n in with_notes[:5]
+        ],
+        "all_recent_sample": [
+            {
+                "WorkTicketID":    n.get("WorkTicketID"),
+                "ScheduledDate":   n.get("ScheduledDate"),
+                "CreatedDateTime": n.get("CreatedDateTime"),
+                "has_note":        bool((n.get("Note") or "").strip()),
+            }
+            for n in recent[:10]
         ],
     }
 
@@ -1794,7 +1826,8 @@ async def daily_report_html(date: str = Query(None)):
                     "$select": (
                         "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
                         "CompleteDate,ScheduledStartDate,HoursEst,HoursAct,"
-                        "Notes,OpportunityID,CrewLeaderName,BranchName"
+                        "Notes,OpportunityID,PropertyName,PropertyID,"
+                        "CrewLeaderName,BranchName"
                     ),
                     "$filter": f,
                     "$top": "200",
@@ -1813,10 +1846,11 @@ async def daily_report_html(date: str = Query(None)):
         return unique
 
     async def _fetch_visit_notes():
-        # Try date-only filter first; Aspire date handling varies
+        # Try multiple date filter approaches — Aspire OData date handling varies
         for date_filter in [
             f"ScheduledDate ge {target}T00:00:00Z and ScheduledDate le {target}T23:59:59Z",
             f"ScheduledDate ge {target} and ScheduledDate le {target}T23:59:59",
+            f"CreatedDateTime ge {target}T00:00:00Z and CreatedDateTime le {target}T23:59:59Z",
         ]:
             try:
                 result = await _aspire._get_all("WorkTicketVisitNotes", {
@@ -1824,17 +1858,27 @@ async def daily_report_html(date: str = Query(None)):
                     "$top": "500",
                 })
                 if result:
+                    logger.info(f"visit_notes date_filter matched {len(result)} notes: {date_filter[:60]}")
                     return result
-            except Exception:
+            except Exception as ex:
+                logger.warning(f"visit_notes filter failed ({date_filter[:50]}): {ex}")
                 continue
-        # Fallback: fetch recent and filter in Python
+        # Fallback: fetch the 500 most recent notes and filter in Python
         try:
             all_notes = await _aspire._get_all("WorkTicketVisitNotes", {
-                "$orderby": "ScheduledDate desc",
+                "$orderby": "CreatedDateTime desc",
                 "$top": "500",
             })
-            return [n for n in all_notes if (n.get("ScheduledDate") or "").startswith(target)]
-        except Exception:
+            # Match by ScheduledDate OR CreatedDateTime prefix
+            matched = [
+                n for n in all_notes
+                if (n.get("ScheduledDate") or "").startswith(target)
+                or (n.get("CreatedDateTime") or "").startswith(target)
+            ]
+            logger.info(f"visit_notes fallback: {len(all_notes)} total, {len(matched)} matched {target}")
+            return matched
+        except Exception as ex:
+            logger.warning(f"visit_notes fallback failed: {ex}")
             return []
 
     async def _fetch_attachments():
@@ -1851,8 +1895,18 @@ async def daily_report_html(date: str = Query(None)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
-    # ── Fetch property names via Opportunity ──────────────────────────────────
-    opp_ids = list({int(t["OpportunityID"]) for t in tickets if t.get("OpportunityID")})
+    # ── Build WorkTicketID → PropertyName map ─────────────────────────────────
+    # Pass 1: use PropertyName directly from WorkTicket (fastest, most reliable)
+    property_by_wt: dict[int, str] = {}
+    for t in tickets:
+        wt_id = t.get("WorkTicketID")
+        pname = (t.get("PropertyName") or "").strip()
+        if wt_id and pname:
+            property_by_wt[wt_id] = pname
+
+    # Pass 2: for any still missing, look up via OpportunityID → Opportunity.PropertyName
+    missing_wt = [t for t in tickets if t.get("WorkTicketID") and t["WorkTicketID"] not in property_by_wt]
+    opp_ids = list({int(t["OpportunityID"]) for t in missing_wt if t.get("OpportunityID")})
     property_by_opp: dict[int, str] = {}
     if opp_ids:
         chunk_size = 30
@@ -1863,7 +1917,7 @@ async def daily_report_html(date: str = Query(None)):
                 res = await _aspire._get("Opportunities", {
                     "$select": "OpportunityID,PropertyName",
                     "$filter": id_filter,
-                    "$top": str(len(chunk)),
+                    "$top": "500",
                 })
                 for rec in _aspire._extract_list(res):
                     oid = rec.get("OpportunityID")
@@ -1872,13 +1926,11 @@ async def daily_report_html(date: str = Query(None)):
             except Exception as e:
                 logger.warning(f"Opportunity property lookup failed: {e}")
 
-    # Map WorkTicketID → PropertyName via OpportunityID
-    property_by_wt: dict[int, str] = {}
-    for t in tickets:
-        wt_id = t.get("WorkTicketID")
-        opp_id = t.get("OpportunityID")
-        if wt_id and opp_id and int(opp_id) in property_by_opp:
-            property_by_wt[wt_id] = property_by_opp[int(opp_id)]
+        for t in missing_wt:
+            wt_id  = t.get("WorkTicketID")
+            opp_id = t.get("OpportunityID")
+            if wt_id and opp_id and int(opp_id) in property_by_opp:
+                property_by_wt[wt_id] = property_by_opp[int(opp_id)]
 
     # ── Index visit notes by WorkTicketID ─────────────────────────────────────
     notes_by_wt: dict[int, list] = {}
@@ -1933,7 +1985,8 @@ async def daily_report_html(date: str = Query(None)):
             prop_name = property_by_wt.get(wt_id) or "—"
             wt_notes  = notes_by_wt.get(wt_id, [])
             wt_attach  = attachments_by_wt.get(wt_id, [])
-            public_notes = [n for n in wt_notes if n.get("IsPublic", True) and (n.get("Note") or "").strip()]
+            # Show all notes with content (public or private — this is an internal report)
+            public_notes = [n for n in wt_notes if (n.get("Note") or "").strip()]
 
             notes_section = ""
             for n in public_notes:
