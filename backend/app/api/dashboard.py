@@ -2425,16 +2425,38 @@ async def daily_report_html(
   .photo-badge a:hover {{ text-decoration: underline; }}
   .attach-file {{ font-size: 12px; color: #64748b; margin: 3px 0; }}
   .empty {{ color: #94a3b8; font-size: 13px; padding: 8px 16px; }}
+  .report-header {{ display:flex; justify-content:space-between; align-items:flex-end;
+                    margin-bottom:20px; flex-wrap:wrap; gap:12px; }}
+  .controls {{ display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap; }}
   @media print {{
     body {{ padding: 0; max-width: 100%; }}
+    .controls {{ display: none; }}
     .division-section {{ break-inside: avoid; }}
     .route-section {{ break-inside: avoid; }}
   }}
 </style>
 </head>
 <body>
-  <h1>{report_title}</h1>
-  <div class="subtitle">{display_date} &nbsp;·&nbsp; Generated {datetime.now(timezone.utc).strftime('%H:%M UTC')}</div>
+  <div class="report-header">
+    <div>
+      <h1>{report_title}</h1>
+      <div class="subtitle">Generated {datetime.now(timezone.utc).strftime('%H:%M UTC')}</div>
+    </div>
+    <div class="controls">
+      <div>
+        <label style="font-size:12px;color:#64748b;display:block;margin-bottom:4px">Report date</label>
+        <input type="date" id="report-date" value="{target}"
+               style="font-size:14px;padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer"
+               onchange="window.location.href='?date='+this.value{('+&division='+encodeURIComponent(division)) if division else ''}">
+      </div>
+      <div>
+        <label style="font-size:12px;color:#64748b;display:block;margin-bottom:4px">Search</label>
+        <input type="search" id="search" placeholder="Property or route…"
+               style="font-size:14px;padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;width:220px"
+               oninput="filterReport(this.value)">
+      </div>
+    </div>
+  </div>
   <div class="summary">
     <div class="stat"><div class="stat-val">{total_tickets}</div><div class="stat-lbl">Tickets</div></div>
     <div class="stat"><div class="stat-val">{total_hours_act:.1f}h</div><div class="stat-lbl">Actual Hours</div></div>
@@ -2444,6 +2466,25 @@ async def daily_report_html(
     <div class="stat"><div class="stat-val">{len(attachments)}</div><div class="stat-lbl">Attachments</div></div>
   </div>
   {division_sections or '<p style="color:#94a3b8">No tickets found for this date.</p>'}
+<script>
+function filterReport(q) {{
+  q = q.trim().toLowerCase();
+  document.querySelectorAll('.ticket').forEach(function(el) {{
+    var text = el.innerText.toLowerCase();
+    el.style.display = (!q || text.includes(q)) ? '' : 'none';
+  }});
+  // Hide route sections that have no visible tickets
+  document.querySelectorAll('.route-section').forEach(function(sec) {{
+    var visible = Array.from(sec.querySelectorAll('.ticket')).some(function(t) {{ return t.style.display !== 'none'; }});
+    sec.style.display = visible ? '' : 'none';
+  }});
+  // Hide division sections that have no visible route sections
+  document.querySelectorAll('.division-section').forEach(function(sec) {{
+    var visible = Array.from(sec.querySelectorAll('.route-section')).some(function(r) {{ return r.style.display !== 'none'; }});
+    sec.style.display = visible ? '' : 'none';
+  }});
+}}
+</script>
 </body>
 </html>"""
 
