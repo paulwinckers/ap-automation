@@ -2232,7 +2232,8 @@ async def daily_report_html(
                     continue
                 wt_id  = n.get("WorkTicketID") or "?"
                 wt_num = n.get("WorkTicketNumber") or wt_id
-                text_notes.append(f"Ticket #{wt_num}: {clean}")
+                prop   = property_by_wt.get(wt_id) or opp_name_by_wt.get(wt_id) or f"Ticket #{wt_num}"
+                text_notes.append(f"{prop}: {clean}")
             logger.info(
                 f"AI summary [{label}]: {len(note_list)} notes in, "
                 f"{len(text_notes)} with text content, "
