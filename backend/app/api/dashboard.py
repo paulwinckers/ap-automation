@@ -1692,3 +1692,260 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     }
 
 
+# ── Daily Completion Report ───────────────────────────────────────────────────
+
+@router.get("/daily-report/probe")
+async def daily_report_probe(date: str = Query(None)):
+    """
+    Probe: fetch raw WorkTicketVisitNotes for a given date (default today)
+    so we can inspect what the Note field looks like when photos are attached.
+    Returns first 10 notes with non-empty Note fields.
+    """
+    from datetime import datetime, timezone, timedelta
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire not configured")
+
+    now = datetime.now(timezone.utc)
+    target = date or now.strftime("%Y-%m-%d")
+
+    try:
+        notes = await _aspire._get_all("WorkTicketVisitNotes", {
+            "$filter": f"ScheduledDate ge {target}T00:00:00Z and ScheduledDate le {target}T23:59:59Z",
+            "$top": "100",
+        })
+    except Exception as e:
+        return {"error": str(e)}
+
+    with_notes = [n for n in notes if (n.get("Note") or "").strip()]
+    sample = with_notes[:10]
+
+    return {
+        "date": target,
+        "total_visit_notes": len(notes),
+        "notes_with_content": len(with_notes),
+        "sample": [
+            {
+                "WorkTicketID":   n.get("WorkTicketID"),
+                "WorkTicketNumber": n.get("WorkTicketNumber"),
+                "RouteName":      n.get("RouteName"),
+                "ScheduledDate":  n.get("ScheduledDate"),
+                "IsPublic":       n.get("IsPublic"),
+                "Note_raw":       n.get("Note"),          # raw — shows us if HTML/base64/URL
+                "Note_length":    len(n.get("Note") or ""),
+            }
+            for n in sample
+        ],
+    }
+
+
+@router.get("/daily-report")
+async def daily_report_html(date: str = Query(None)):
+    """
+    HTML daily completion report — open in browser and Print → Save as PDF/Word.
+    Shows completed work tickets grouped by route, with visit notes.
+    """
+    from datetime import datetime, timezone
+    from fastapi.responses import HTMLResponse
+    import asyncio
+
+    if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire not configured")
+
+    now = datetime.now(timezone.utc)
+    target = date or now.strftime("%Y-%m-%d")
+    display_date = datetime.strptime(target, "%Y-%m-%d").strftime("%B %d, %Y")
+
+    # ── Fetch data in parallel ────────────────────────────────────────────────
+    async def _fetch_tickets():
+        return await _aspire._get_all("WorkTickets", {
+            "$select": (
+                "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
+                "CompleteDate,HoursEst,HoursAct,Notes,OpportunityID,"
+                "CrewLeaderName,BranchName"
+            ),
+            "$filter": f"CompleteDate ge {target}T00:00:00Z and CompleteDate le {target}T23:59:59Z",
+            "$top": "200",
+        })
+
+    async def _fetch_visit_notes():
+        return await _aspire._get_all("WorkTicketVisitNotes", {
+            "$filter": f"ScheduledDate ge {target}T00:00:00Z and ScheduledDate le {target}T23:59:59Z",
+            "$top": "500",
+        })
+
+    async def _fetch_attachments():
+        return await _aspire._get_all("Attachments", {
+            "$select": "AttachmentID,WorkTicketID,PropertyName,AttachmentName,FileExtension,DateUploaded,ExternalContentID",
+            "$filter": f"DateUploaded ge {target}T00:00:00Z and DateUploaded le {target}T23:59:59Z and WorkTicketID ne null",
+            "$top": "500",
+        })
+
+    try:
+        tickets, visit_notes, attachments = await asyncio.gather(
+            _fetch_tickets(), _fetch_visit_notes(), _fetch_attachments()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
+
+    # ── Index by WorkTicketID ─────────────────────────────────────────────────
+    notes_by_wt: dict[int, list] = {}
+    for n in visit_notes:
+        wt_id = n.get("WorkTicketID")
+        if wt_id:
+            notes_by_wt.setdefault(wt_id, []).append(n)
+
+    attachments_by_wt: dict[int, list] = {}
+    property_by_wt: dict[int, str] = {}
+    for a in attachments:
+        wt_id = a.get("WorkTicketID")
+        if wt_id:
+            attachments_by_wt.setdefault(wt_id, []).append(a)
+            if a.get("PropertyName"):
+                property_by_wt[wt_id] = a["PropertyName"]
+
+    # Also get property from visit notes RouteName context where available
+    for n in visit_notes:
+        wt_id = n.get("WorkTicketID")
+        if wt_id and wt_id not in property_by_wt and n.get("RouteName"):
+            pass  # RouteName ≠ PropertyName — skip
+
+    # ── Group tickets by route ────────────────────────────────────────────────
+    by_route: dict[str, list] = {}
+    for t in tickets:
+        route = (t.get("CrewLeaderName") or t.get("BranchName") or "Unassigned").strip()
+        by_route.setdefault(route, []).append(t)
+
+    # Also group visit notes by route for tickets not in completed list
+    for n in visit_notes:
+        route = (n.get("RouteName") or "Unassigned").strip()
+        wt_id = n.get("WorkTicketID")
+        if wt_id:
+            # Check if this ticket is already in by_route
+            already = any(
+                t.get("WorkTicketID") == wt_id
+                for tlist in by_route.values()
+                for t in tlist
+            )
+            if not already:
+                by_route.setdefault(route, [])
+
+    # ── Build HTML ────────────────────────────────────────────────────────────
+    total_tickets    = len(tickets)
+    total_hours_est  = sum(float(t.get("HoursEst") or 0) for t in tickets)
+    total_hours_act  = sum(float(t.get("HoursAct") or 0) for t in tickets)
+
+    def hrs(h):
+        if h is None: return "—"
+        return f"{float(h):.1f}h"
+
+    def note_html(note_text: str) -> str:
+        """Render a note — detect if it contains HTML (Aspire app photos embed as HTML)."""
+        if not note_text:
+            return ""
+        stripped = note_text.strip()
+        if stripped.lower().startswith("<") or "<img" in stripped.lower():
+            # Already HTML — render directly (photos from native app)
+            return f'<div class="note-html">{stripped}</div>'
+        # Plain text
+        return f'<p class="note-text">{stripped}</p>'
+
+    route_sections = ""
+    for route in sorted(by_route.keys(), key=lambda r: (r == "Unassigned", r.lower())):
+        route_tickets = by_route[route]
+        route_hours_act = sum(float(t.get("HoursAct") or 0) for t in route_tickets)
+        route_hours_est = sum(float(t.get("HoursEst") or 0) for t in route_tickets)
+
+        ticket_rows = ""
+        for t in sorted(route_tickets, key=lambda x: x.get("WorkTicketNumber") or 0):
+            wt_id     = t.get("WorkTicketID")
+            wt_num    = t.get("WorkTicketNumber") or "—"
+            prop_name = property_by_wt.get(wt_id) or "—"
+            wt_notes  = notes_by_wt.get(wt_id, [])
+            wt_attach  = attachments_by_wt.get(wt_id, [])
+            public_notes = [n for n in wt_notes if n.get("IsPublic", True) and (n.get("Note") or "").strip()]
+
+            notes_section = ""
+            for n in public_notes:
+                notes_section += note_html(n.get("Note") or "")
+
+            attach_section = ""
+            if wt_attach:
+                names = ", ".join(
+                    a.get("OriginalFileName") or a.get("AttachmentName") or "file"
+                    for a in wt_attach[:5]
+                )
+                attach_section = f'<div class="attachments">📎 {len(wt_attach)} attachment(s): {names}</div>'
+
+            ticket_rows += f"""
+            <div class="ticket">
+              <div class="ticket-header">
+                <span class="ticket-num">#{wt_num}</span>
+                <span class="ticket-prop">{prop_name}</span>
+                <span class="ticket-hours">{hrs(t.get('HoursAct'))} actual / {hrs(t.get('HoursEst'))} est</span>
+              </div>
+              {notes_section}
+              {attach_section}
+            </div>"""
+
+        route_sections += f"""
+        <div class="route-section">
+          <div class="route-header">
+            <h2>{route}</h2>
+            <span class="route-stats">{len(route_tickets)} ticket(s) &nbsp;·&nbsp; {hrs(route_hours_act)} / {hrs(route_hours_est)} est</span>
+          </div>
+          {ticket_rows if ticket_rows else '<p class="empty">No completed tickets.</p>'}
+        </div>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Daily Completion Report — {display_date}</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         color: #111; max-width: 900px; margin: 0 auto; padding: 32px 24px; }}
+  h1   {{ font-size: 22px; margin: 0 0 4px; color: #0f172a; }}
+  .subtitle {{ color: #64748b; font-size: 14px; margin-bottom: 24px; }}
+  .summary {{ display: flex; gap: 24px; margin-bottom: 32px; background: #f8fafc;
+              border-radius: 8px; padding: 16px 20px; }}
+  .stat    {{ text-align: center; }}
+  .stat-val {{ font-size: 28px; font-weight: 700; color: #0f172a; }}
+  .stat-lbl {{ font-size: 12px; color: #64748b; }}
+  .route-section {{ margin-bottom: 32px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }}
+  .route-header {{ background: #0f172a; color: #fff; padding: 10px 16px;
+                   display: flex; justify-content: space-between; align-items: center; }}
+  .route-header h2 {{ margin: 0; font-size: 15px; }}
+  .route-stats {{ font-size: 12px; color: #94a3b8; }}
+  .ticket {{ padding: 12px 16px; border-bottom: 1px solid #f1f5f9; }}
+  .ticket:last-child {{ border-bottom: none; }}
+  .ticket-header {{ display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }}
+  .ticket-num  {{ font-weight: 700; color: #2563eb; font-size: 13px; min-width: 50px; }}
+  .ticket-prop {{ font-weight: 600; font-size: 14px; flex: 1; }}
+  .ticket-hours {{ font-size: 12px; color: #64748b; white-space: nowrap; }}
+  .note-text   {{ margin: 4px 0 0; font-size: 13px; color: #374151;
+                  background: #f8fafc; padding: 6px 10px; border-radius: 4px;
+                  border-left: 3px solid #cbd5e1; }}
+  .note-html   {{ margin: 4px 0 0; }}
+  .note-html img {{ max-width: 100%; border-radius: 6px; margin: 4px 0; }}
+  .attachments {{ font-size: 12px; color: #64748b; margin-top: 4px; }}
+  .empty       {{ color: #94a3b8; font-size: 13px; padding: 8px 16px; }}
+  @media print {{
+    body {{ padding: 0; }}
+    .route-section {{ break-inside: avoid; }}
+  }}
+</style>
+</head>
+<body>
+  <h1>Daily Completion Report</h1>
+  <div class="subtitle">{display_date} &nbsp;·&nbsp; Generated {now.strftime('%H:%M UTC')}</div>
+  <div class="summary">
+    <div class="stat"><div class="stat-val">{total_tickets}</div><div class="stat-lbl">Tickets Completed</div></div>
+    <div class="stat"><div class="stat-val">{total_hours_act:.1f}h</div><div class="stat-lbl">Actual Hours</div></div>
+    <div class="stat"><div class="stat-val">{total_hours_est:.1f}h</div><div class="stat-lbl">Estimated Hours</div></div>
+    <div class="stat"><div class="stat-val">{len(by_route)}</div><div class="stat-lbl">Routes</div></div>
+  </div>
+  {route_sections or '<p style="color:#94a3b8">No completed tickets found for this date.</p>'}
+</body>
+</html>"""
+
+    return HTMLResponse(content=html)
