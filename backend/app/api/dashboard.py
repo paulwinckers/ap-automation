@@ -1734,23 +1734,41 @@ async def daily_report_probe(date: str = Query(None)):
 
     with_notes = [n for n in recent if (n.get("Note") or "").strip()]
 
-    # Also fetch today's tickets so we can cross-check WorkTicketIDs
+    # Fetch today's tickets WITHOUT $select — inspect all returned fields
+    today_tickets_raw: list[dict] = []
     today_ticket_ids: list[int] = []
     try:
         wt_batch = await _aspire._get_all("WorkTickets", {
-            "$select": "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,CompleteDate,ScheduledStartDate",
-            "$filter": (
-                f"CompleteDate ge {target}T00:00:00Z and CompleteDate le {target}T23:59:59Z"
-                f" or ScheduledStartDate ge {target}T00:00:00Z and ScheduledStartDate le {target}T23:59:59Z"
-            ),
-            "$top": "100",
+            "$filter": f"CompleteDate ge {target}T00:00:00Z and CompleteDate le {target}T23:59:59Z",
+            "$top": "5",  # small — we just want to see the fields
         })
+        today_tickets_raw = wt_batch
         today_ticket_ids = [t["WorkTicketID"] for t in wt_batch if t.get("WorkTicketID")]
-    except Exception:
+    except Exception as ex:
         pass
+
+    # Also try scheduled if completed came back empty
+    if not today_ticket_ids:
+        try:
+            wt_batch2 = await _aspire._get_all("WorkTickets", {
+                "$filter": f"ScheduledStartDate ge {target}T00:00:00Z and ScheduledStartDate le {target}T23:59:59Z",
+                "$top": "5",
+            })
+            today_tickets_raw = wt_batch2
+            today_ticket_ids = [t["WorkTicketID"] for t in wt_batch2 if t.get("WorkTicketID")]
+        except Exception:
+            pass
 
     note_ticket_ids = [n.get("WorkTicketID") for n in recent if n.get("WorkTicketID")]
     overlap = list(set(today_ticket_ids) & set(note_ticket_ids))
+
+    # Extract all field names from a WorkTicket to find property-related fields
+    wt_all_fields = sorted(today_tickets_raw[0].keys()) if today_tickets_raw else []
+    wt_property_fields = {
+        k: today_tickets_raw[0].get(k)
+        for k in wt_all_fields
+        if any(kw in k.lower() for kw in ("prop", "site", "address", "location", "job"))
+    } if today_tickets_raw else {}
 
     return {
         "target_date": target,
@@ -1762,37 +1780,26 @@ async def daily_report_probe(date: str = Query(None)):
         "today_ticket_ids_sample": today_ticket_ids[:10],
         "note_ticket_ids_sample": note_ticket_ids[:10],
         "wt_id_overlap": overlap,
-        # Show all field names from first record so we know exact field names
-        "first_record_fields": sorted(recent[0].keys()) if recent else [],
-        "sample_dates": [
-            {
-                "ScheduledDate":    n.get("ScheduledDate"),
-                "CreatedDateTime":  n.get("CreatedDateTime"),
-                "StartDateTime":    n.get("StartDateTime"),
-            }
-            for n in recent[:5]
-        ],
+        # KEY: all fields returned on a WorkTicket (no $select) to find property linkage
+        "worktticket_all_fields": wt_all_fields,
+        "workticket_property_related_fields": wt_property_fields,
+        "workticket_sample_record": {
+            k: today_tickets_raw[0].get(k)
+            for k in ["WorkTicketID", "WorkTicketNumber", "OpportunityID", "OpportunityNumber",
+                      "PropertyID", "PropertyName", "SiteID", "SiteName"]
+            if k in (today_tickets_raw[0] if today_tickets_raw else {})
+        } if today_tickets_raw else {},
+        "first_visit_note_fields": sorted(recent[0].keys()) if recent else [],
         "sample_with_notes": [
             {
                 "WorkTicketID":     n.get("WorkTicketID"),
                 "WorkTicketNumber": n.get("WorkTicketNumber"),
                 "RouteName":        n.get("RouteName"),
                 "ScheduledDate":    n.get("ScheduledDate"),
-                "CreatedDateTime":  n.get("CreatedDateTime"),
                 "IsPublic":         n.get("IsPublic"),
                 "Note_raw":         (n.get("Note") or "")[:200],
-                "Note_length":      len(n.get("Note") or ""),
             }
             for n in with_notes[:5]
-        ],
-        "all_recent_sample": [
-            {
-                "WorkTicketID":    n.get("WorkTicketID"),
-                "ScheduledDate":   n.get("ScheduledDate"),
-                "CreatedDateTime": n.get("CreatedDateTime"),
-                "has_note":        bool((n.get("Note") or "").strip()),
-            }
-            for n in recent[:10]
         ],
     }
 
