@@ -2244,7 +2244,7 @@ async def daily_report_html(
             scope = f" ({label})" if label else ""
             _claude = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
             msg = await _claude.messages.create(
-                model="claude-3-5-haiku-20241022",
+                model="claude-haiku-4-5",
                 max_tokens=600,
                 messages=[{
                     "role": "user",
