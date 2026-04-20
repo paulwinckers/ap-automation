@@ -1332,7 +1332,7 @@ async def get_po_work_tickets(opportunity_id: int):
             "$filter": f"OpportunityID eq {opportunity_id}",
             "$select": (
                 "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
-                "ScheduledStartDate,PropertyName,WorkTicketTitle"
+                "ScheduledStartDate"
             ),
             "$top": "50",
         })
@@ -1353,7 +1353,7 @@ async def get_po_work_tickets(opportunity_id: int):
             "WorkTicketNumber":     t.get("WorkTicketNumber"),
             "WorkTicketStatusName": t.get("WorkTicketStatusName"),
             "ScheduledStartDate":   (t.get("ScheduledStartDate") or "")[:10],
-            "PropertyName":         t.get("PropertyName"),
+            "PropertyName":         None,
         }
         for t in active
     ]
