@@ -9,10 +9,11 @@
 import { Link } from 'react-router-dom';
 
 const FIELD_LINKS = [
-  { to: '/field',             icon: '🧾', label: 'Submit Receipt',       sub: 'Invoices, MC & expenses' },
-  { to: '/field/work-ticket', icon: '✅', label: 'Schedule',             sub: 'View routes & complete tickets' },
-  { to: '/field/opportunity', icon: '➕', label: 'New Opportunity',       sub: 'Create a job in Aspire' },
-  { to: '/field/issue',       icon: '⚠️', label: 'New Issue',              sub: 'Log a site issue' },
+  { to: '/field',              icon: '🧾', label: 'Submit Receipt',   sub: 'Invoices, MC & expenses' },
+  { to: '/field/work-ticket',  icon: '✅', label: 'Schedule',         sub: 'View routes & complete tickets' },
+  { to: '/ops/time-tracking',  icon: '⏱️', label: 'Time Tracking',    sub: 'Clock in / out' },
+  { to: '/field/opportunity',  icon: '➕', label: 'New Opportunity',   sub: 'Create a job in Aspire' },
+  { to: '/field/issue',        icon: '⚠️', label: 'New Issue',         sub: 'Log a site issue' },
 ];
 
 const OFFICE_GROUPS = [
@@ -28,37 +29,41 @@ const OFFICE_GROUPS = [
     label: 'Field Ops',
     items: [
       { to: '/ops/crew-schedule', icon: '👥', label: 'Crew Schedule', sub: 'Assign staff to routes' },
+      { to: '/ops/contacts',      icon: '📞', label: 'Contacts',      sub: 'Property & client lookup' },
     ],
   },
   {
     label: 'Dashboards',
     items: [
-      { to: '/dashboards/sales',        icon: '📊', label: 'Sales',        sub: 'Pipeline & won jobs' },
-      { to: '/dashboards/ops',          icon: '⚙️', label: 'Operations',   sub: 'Job progress' },
-      { to: '/dashboards/construction', icon: '🏗️', label: 'Construction', sub: 'Active builds' },
-      { to: '/dashboards/estimating',   icon: '📋', label: 'Estimating',   sub: 'Quotes & bids' },
-      { to: '/dashboards/activities',   icon: '📅', label: 'Activities',   sub: 'Team activity log' },
+      { to: '/dashboards/sales',        icon: '📊', label: 'Sales',         sub: 'Pipeline & won jobs' },
+      { to: '/dashboards/ops',          icon: '⚙️', label: 'Operations',    sub: 'Job progress' },
+      { to: '/dashboards/construction', icon: '🏗️', label: 'Construction',  sub: 'Active builds' },
+      { to: '/dashboards/estimating',   icon: '📋', label: 'Estimating',    sub: 'Quotes & bids' },
+      { to: '/dashboards/activities',   icon: '📅', label: 'Activities',    sub: 'Team activity log' },
+      { to: 'https://ap-automation-production.up.railway.app/dashboard/daily-report', icon: '📝', label: 'Daily Report', sub: 'Completion report by division', external: true },
     ],
   },
 ];
 
-function CardLink({ to, icon, label, sub }: { to: string; icon: string; label: string; sub: string }) {
-  return (
-    <Link to={to} style={{ textDecoration: 'none' }}>
-      <div
-        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', cursor: 'pointer' }}
-        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
-        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-      >
-        <span style={{ fontSize: 20, flexShrink: 0, width: 28, textAlign: 'center' }}>{icon}</span>
-        <div style={{ flex: 1 }}>
-          <div style={{ color: '#fff', fontWeight: 600, fontSize: 14 }}>{label}</div>
-          <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 1 }}>{sub}</div>
-        </div>
-        <span style={{ color: '#475569', fontSize: 14 }}>›</span>
+function CardLink({ to, icon, label, sub, external }: { to: string; icon: string; label: string; sub: string; external?: boolean }) {
+  const inner = (
+    <div
+      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', cursor: 'pointer' }}
+      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+    >
+      <span style={{ fontSize: 20, flexShrink: 0, width: 28, textAlign: 'center' }}>{icon}</span>
+      <div style={{ flex: 1 }}>
+        <div style={{ color: '#fff', fontWeight: 600, fontSize: 14 }}>{label}</div>
+        <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 1 }}>{sub}</div>
       </div>
-    </Link>
+      <span style={{ color: '#475569', fontSize: 14 }}>›</span>
+    </div>
   );
+  if (external) {
+    return <a href={to} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>{inner}</a>;
+  }
+  return <Link to={to} style={{ textDecoration: 'none' }}>{inner}</Link>;
 }
 
 export default function Landing() {
