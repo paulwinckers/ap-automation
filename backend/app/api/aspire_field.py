@@ -1475,19 +1475,51 @@ async def create_field_purchase_order(
     except (ValueError, TypeError):
         receipt_id = None
 
+    # ReceiptNumber is the display number shown in the Aspire UI (e.g. "Purchase Receipt #1720").
+    # The POST response only returns ReceiptID (internal DB ID), not the display number.
+    # We do a follow-up GET to resolve the actual ReceiptNumber shown to users.
+    receipt_number_raw = (
+        result.get("ReceiptNumber")
+        or result.get("receiptNumber")
+    )
+    try:
+        receipt_number = int(receipt_number_raw) if receipt_number_raw is not None else None
+    except (ValueError, TypeError):
+        receipt_number = None
+
+    # If POST didn't return ReceiptNumber, fetch it via GET
+    if receipt_number is None and receipt_id is not None:
+        try:
+            get_res = await _aspire._get("Receipts", {
+                "$filter": f"ReceiptID eq {receipt_id}",
+                "$select": "ReceiptID,ReceiptNumber",
+                "$top":    "1",
+            })
+            records = _aspire._extract_list(get_res)
+            if records:
+                rn = records[0].get("ReceiptNumber")
+                receipt_number = int(rn) if rn is not None else None
+                logger.info(f"Fetched ReceiptNumber={receipt_number} via GET for ReceiptID={receipt_id}")
+        except Exception as e:
+            logger.warning(f"Failed to fetch ReceiptNumber via GET: {e}")
+
+    display_number = receipt_number if receipt_number is not None else receipt_id
+
     logger.info(
-        f"Field PO created: ReceiptID={receipt_id} vendor={vendor_name} "
-        f"by={requester_name} total=${total_cost:.2f}"
+        f"Field PO created: ReceiptID={receipt_id} ReceiptNumber={receipt_number} "
+        f"vendor={vendor_name} by={requester_name} total=${total_cost:.2f}"
     )
 
     return {
-        "success":     True,
-        "receipt_id":  receipt_id,
-        "vendor_name": vendor_name,
-        "total":       round(total_cost, 2),
-        "items":       len(receipt_items),
-        "requester":   requester_name,
-        "job_name":    job_name,
+        "success":        True,
+        "receipt_id":     receipt_id,
+        "receipt_number": receipt_number,   # display number shown in Aspire UI
+        "display_number": display_number,   # what to show the user (ReceiptNumber or fallback)
+        "vendor_name":    vendor_name,
+        "total":          round(total_cost, 2),
+        "items":          len(receipt_items),
+        "requester":      requester_name,
+        "job_name":       job_name,
     }
 
 

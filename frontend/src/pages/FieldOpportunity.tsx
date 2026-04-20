@@ -260,7 +260,9 @@ export default function FieldOpportunity() {
       {/* Header */}
       <div style={S.header}>
         <div style={S.headerTop}>
-          <img src="/darios-logo.png" alt="Dario's" style={{ height: 30, filter: 'brightness(0) invert(1)' }} />
+          <a href="/" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }} title="Home">
+            <img src="/darios-logo.png" alt="Dario's" style={{ height: 30, filter: 'brightness(0) invert(1)' }} />
+          </a>
           <span style={S.chip}>{submitterName || 'Field crew'}</span>
         </div>
         <div style={S.hsub}>New Opportunity</div>

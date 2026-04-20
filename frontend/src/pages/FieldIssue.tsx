@@ -658,7 +658,9 @@ export default function FieldIssue() {
     }}>
       {/* Header bar */}
       <div style={{ background: '#0a0f1c', padding: '16px 20px', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ fontSize: 22 }}>⚠️</span>
+        <a href="/" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none', flexShrink: 0 }} title="Home">
+          <img src="/darios-logo.png" alt="Darios" style={{ height: 28, objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
+        </a>
         <div>
           <div style={{ color: '#fff', fontWeight: 800, fontSize: 16 }}>New Issue</div>
           <div style={{ color: '#64748b', fontSize: 11 }}>Darios Landscaping</div>

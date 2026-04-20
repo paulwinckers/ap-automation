@@ -772,13 +772,15 @@ export interface POLineItem {
 }
 
 export interface POResult {
-  success:     boolean;
-  receipt_id:  number | null;
-  vendor_name: string;
-  total:       number;
-  items:       number;
-  requester:   string;
-  job_name:    string | null;
+  success:        boolean;
+  receipt_id:     number | null;
+  receipt_number: number | null;  // display number shown in Aspire UI
+  display_number: number | null;  // receipt_number ?? receipt_id
+  vendor_name:    string;
+  total:          number;
+  items:          number;
+  requester:      string;
+  job_name:       string | null;
 }
 
 export async function getPOVendors(q = ''): Promise<{ vendors: POVendor[]; preferred_shown: boolean }> {

@@ -169,7 +169,9 @@ export default function FieldSubmit() {
       {/* Header */}
       <div style={S.header}>
         <div style={S.headerTop}>
-          <img src="/darios-logo.png" alt="Dario's Landscape Services" style={{ height: 32, filter: 'brightness(0) invert(1)' }} />
+          <a href="/" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }} title="Home">
+            <img src="/darios-logo.png" alt="Dario's Landscape Services" style={{ height: 32, filter: 'brightness(0) invert(1)' }} />
+          </a>
           <span style={S.chip}>{employee || 'Field crew'}</span>
         </div>
         <div style={S.hsub}>Submit Receipt</div>

@@ -38,9 +38,6 @@ const CARD = '#1e293b';
 const GRN  = '#22c55e';
 const BLU  = '#3b82f6';
 
-function fmt(n: number) {
-  return n.toLocaleString('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 2 });
-}
 
 const EMPTY_ITEM: POLineItem = { description: '', qty: 1, unit_cost: 0, uom: '' };
 
@@ -75,7 +72,7 @@ export default function FieldPurchaseOrder() {
 
   // Submission
   const [submitting, setSubmitting] = useState(false);
-  const [result, setResult]         = useState<{ receipt_id: number | null; total: number } | null>(null);
+  const [result, setResult]         = useState<{ receipt_id: number | null; display_number: number | null; total: number } | null>(null);
   const [error, setError]           = useState('');
 
   const jobTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -192,8 +189,7 @@ export default function FieldPurchaseOrder() {
     if (items.length > 1) setItems(prev => prev.filter((_, idx) => idx !== i));
   }
 
-  const total = items.reduce((s, it) => s + it.qty * it.unit_cost, 0);
-  const validItems = items.filter(it => it.description.trim() && it.unit_cost > 0);
+  const validItems = items.filter(it => it.description.trim());
 
   async function submit() {
     if (!selectedVendor?.vendor_id) { setError('Please select a vendor.'); return; }
@@ -213,7 +209,7 @@ export default function FieldPurchaseOrder() {
         notes,
         items: validItems,
       });
-      setResult({ receipt_id: res.receipt_id, total: res.total });
+      setResult({ receipt_id: res.receipt_id, display_number: res.display_number, total: res.total });
       setStep(7);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Submission failed. Please try again.');
@@ -263,8 +259,13 @@ export default function FieldPurchaseOrder() {
     return (
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-          <img src="/darios-logo.png" alt="Darios" style={{ height: 28, objectFit: 'contain' }} />
+          <a href="/" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }} title="Home">
+            <img src="/darios-logo.png" alt="Darios" style={{ height: 28, objectFit: 'contain' }} />
+          </a>
           <span style={{ color: '#64748b', fontSize: 12 }}>Purchase Order</span>
+          <a href="/" style={{ marginLeft: 'auto', color: '#475569', fontSize: 13, textDecoration: 'none', padding: '4px 10px', borderRadius: 6, border: '1px solid #334155' }}>
+            🏠 Home
+          </a>
         </div>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{title}</h2>
       </div>
@@ -468,7 +469,7 @@ export default function FieldPurchaseOrder() {
               </div>
               {ticketItems.map((ti, i) => (
                 <div key={i} style={{ color: '#bfdbfe', fontSize: 13, marginBottom: 2 }}>
-                  · {ti.name} × {ti.qty}{ti.uom ? ` ${ti.uom}` : ''} @ ${ti.unit_cost.toFixed(2)}
+                  · {ti.name} × {ti.qty}{ti.uom ? ` ${ti.uom}` : ''}
                 </div>
               ))}
               <button
@@ -505,7 +506,7 @@ export default function FieldPurchaseOrder() {
             onChange={e => updateItem(i, 'description', e.target.value)}
           />
 
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 3fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <div style={label}>Qty</div>
               <input
@@ -522,33 +523,13 @@ export default function FieldPurchaseOrder() {
                 onChange={e => updateItem(i, 'uom', e.target.value)}
               />
             </div>
-            <div>
-              <div style={label}>Unit Cost ($)</div>
-              <input
-                style={inp} type="number" min="0" step="0.01"
-                placeholder="0.00"
-                value={it.unit_cost || ''}
-                onChange={e => updateItem(i, 'unit_cost', e.target.value)}
-              />
-            </div>
           </div>
-
-          {it.description && it.unit_cost > 0 && (
-            <div style={{ textAlign: 'right', color: '#94a3b8', fontSize: 13, marginTop: 6 }}>
-              Subtotal: {fmt(it.qty * it.unit_cost)}
-            </div>
-          )}
         </div>
       ))}
 
       {items.length < 5 && (
         <button style={{ ...ghost, marginBottom: 8 }} onClick={addItem}>+ Add another item</button>
       )}
-
-      <div style={{ ...card, textAlign: 'right', padding: '10px 16px' }}>
-        <span style={{ color: '#64748b', fontSize: 13 }}>Estimated Total: </span>
-        <span style={{ fontWeight: 700, fontSize: 18 }}>{fmt(total)}</span>
-      </div>
 
       <button style={btn()} disabled={validItems.length === 0}
         onClick={() => setStep(5)}>
@@ -630,17 +611,11 @@ export default function FieldPurchaseOrder() {
         <div style={{ marginBottom: 10 }}>
           <div style={label}>Items</div>
           {validItems.map((it, i) => (
-            <div key={i} style={{ display: 'flex', justifyContent: 'space-between',
-              fontSize: 14, padding: '4px 0', borderBottom: '1px solid #0f172a' }}>
-              <span>{it.description} × {it.qty}{it.uom ? ` ${it.uom}` : ''}</span>
-              <span style={{ color: '#94a3b8' }}>{fmt(it.qty * it.unit_cost)}</span>
+            <div key={i} style={{ fontSize: 14, padding: '6px 0', borderBottom: '1px solid #0f172a' }}>
+              {it.description}
+              <span style={{ color: '#94a3b8', marginLeft: 8 }}>× {it.qty}{it.uom ? ` ${it.uom}` : ''}</span>
             </div>
           ))}
-          <div style={{ display: 'flex', justifyContent: 'space-between',
-            fontWeight: 700, fontSize: 16, marginTop: 8 }}>
-            <span>Total</span>
-            <span>{fmt(total)}</span>
-          </div>
         </div>
 
         {notes && (
@@ -671,11 +646,11 @@ export default function FieldPurchaseOrder() {
       <div style={{ textAlign: 'center', padding: '40px 16px' }}>
         <div style={{ fontSize: 64, marginBottom: 16 }}>✅</div>
         <h2 style={{ margin: '0 0 8px', fontSize: 24 }}>PO Created!</h2>
-        {result?.receipt_id && (
+        {(result?.display_number ?? result?.receipt_id) != null && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ color: '#64748b', fontSize: 13 }}>PO Reference Number</div>
             <div style={{ fontSize: 36, fontWeight: 800, color: GRN, letterSpacing: 2 }}>
-              #{result.receipt_id}
+              #{result?.display_number ?? result?.receipt_id}
             </div>
           </div>
         )}
@@ -691,19 +666,15 @@ export default function FieldPurchaseOrder() {
             </div>
           )}
           {selectedTicket && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: '#64748b' }}>Work Ticket</span>
               <span>#{selectedTicket.WorkTicketNumber}</span>
             </div>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ color: '#64748b' }}>Total</span>
-            <span style={{ fontWeight: 700 }}>{fmt(result?.total ?? 0)}</span>
-          </div>
         </div>
 
         <div style={{ color: '#64748b', fontSize: 13, marginBottom: 24 }}>
-          Give PO #{result?.receipt_id} to the vendor as your reference number.
+          Give PO #{result?.display_number ?? result?.receipt_id} to the vendor as your reference number.
           The purchase order is now in Aspire.
         </div>
 
@@ -717,6 +688,9 @@ export default function FieldPurchaseOrder() {
         }}>
           + Create Another PO
         </button>
+        <a href="/" style={{ display: 'block', textAlign: 'center', color: '#475569', fontSize: 14, marginTop: 16, textDecoration: 'none' }}>
+          🏠 Back to Home
+        </a>
       </div>
     </div>
   );
