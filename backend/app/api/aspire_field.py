@@ -1146,72 +1146,176 @@ async def search_po_vendors(q: str = Query(default="")):
 async def search_po_jobs(q: str = Query(..., min_length=1)):
     """
     Search for an active job by name or work ticket number for PO creation.
-    Returns opportunities and their work tickets.
+
+    For numeric queries: tries multiple Aspire filter strategies to find a ticket
+    by WorkTicketNumber, then also searches opportunities by name.
+    For text queries: searches opportunity name (any active status, not just Won).
     """
+    import asyncio as _asyncio
     _check_credentials()
     q = (q or "").strip()
 
-    # Try as a work ticket number first (pure digits)
     results: list[dict] = []
+    seen_wt_ids: set[int] = set()
+
+    # ── Numeric query: search by work ticket number ───────────────────────────
     if q.isdigit():
-        try:
-            wt_result = await _aspire._get("WorkTickets", {
-                "$filter": f"WorkTicketNumber eq {q}",
-                "$select": (
-                    "WorkTicketID,WorkTicketNumber,OpportunityID,"
-                    "OpportunityName,PropertyName,ScheduledStartDate,"
-                    "WorkTicketStatusName"
-                ),
-                "$top": "5",
-            })
-            tickets = _aspire._extract_list(wt_result)
-            for t in tickets:
+        wt_select = (
+            "WorkTicketID,WorkTicketNumber,OpportunityID,"
+            "OpportunityName,PropertyName,ScheduledStartDate,"
+            "WorkTicketStatusName"
+        )
+
+        async def _try_filter(filt: str) -> list:
+            try:
+                res = await _aspire._get("WorkTickets", {
+                    "$filter": filt,
+                    "$select": wt_select,
+                    "$top":    "5",
+                })
+                return _aspire._extract_list(res)
+            except Exception as e:
+                logger.warning(f"WorkTicket filter '{filt}' failed: {e}")
+                return []
+
+        # Try integer eq, then string eq (some Aspire tenants store as string)
+        for filt in [
+            f"WorkTicketNumber eq {q}",
+            f"WorkTicketNumber eq '{q}'",
+        ]:
+            tickets = await _try_filter(filt)
+            if tickets:
+                break
+
+        for t in tickets:
+            wid = t.get("WorkTicketID")
+            if wid and wid not in seen_wt_ids:
+                seen_wt_ids.add(wid)
                 results.append({
-                    "type":            "work_ticket",
-                    "opportunity_id":  t.get("OpportunityID"),
+                    "type":             "work_ticket",
+                    "opportunity_id":   t.get("OpportunityID"),
                     "opportunity_name": t.get("OpportunityName") or f"Ticket #{q}",
-                    "property_name":   t.get("PropertyName"),
-                    "work_ticket_id":  t.get("WorkTicketID"),
-                    "work_ticket_num": t.get("WorkTicketNumber"),
-                    "status":          t.get("WorkTicketStatusName"),
-                    "date":            (t.get("ScheduledStartDate") or "")[:10],
+                    "property_name":    t.get("PropertyName"),
+                    "work_ticket_id":   wid,
+                    "work_ticket_num":  t.get("WorkTicketNumber"),
+                    "status":           t.get("WorkTicketStatusName"),
+                    "date":             (t.get("ScheduledStartDate") or "")[:10],
                 })
-        except Exception as e:
-            logger.warning(f"Work ticket number search failed: {e}")
 
-    # Also search by opportunity name
-    if not results or not q.isdigit():
+        if not results:
+            logger.info(
+                f"WorkTicketNumber eq {q} returned nothing — "
+                "trying date-range fallback with Python filter"
+            )
+            # Fallback: fetch a broad date window and filter in Python.
+            # Aspire may not support $filter on WorkTicketNumber in all tenants.
+            from datetime import timedelta
+            today = date.today()
+            start = (today - timedelta(days=180)).strftime("%Y-%m-%d")
+            end   = (today + timedelta(days=90)).strftime("%Y-%m-%d")
+            try:
+                res = await _aspire._get("WorkTickets", {
+                    "$filter": f"ScheduledStartDate ge {start} and ScheduledStartDate lt {end}",
+                    "$select": wt_select,
+                    "$top":    "500",
+                })
+                all_tickets = _aspire._extract_list(res)
+                matched = [
+                    t for t in all_tickets
+                    if str(t.get("WorkTicketNumber") or "") == q
+                ]
+                for t in matched:
+                    wid = t.get("WorkTicketID")
+                    if wid and wid not in seen_wt_ids:
+                        seen_wt_ids.add(wid)
+                        results.append({
+                            "type":             "work_ticket",
+                            "opportunity_id":   t.get("OpportunityID"),
+                            "opportunity_name": t.get("OpportunityName") or f"Ticket #{q}",
+                            "property_name":    t.get("PropertyName"),
+                            "work_ticket_id":   wid,
+                            "work_ticket_num":  t.get("WorkTicketNumber"),
+                            "status":           t.get("WorkTicketStatusName"),
+                            "date":             (t.get("ScheduledStartDate") or "")[:10],
+                        })
+                logger.info(
+                    f"Date-range fallback: scanned {len(all_tickets)} tickets "
+                    f"→ {len(matched)} matched WorkTicketNumber={q}"
+                )
+            except Exception as e:
+                logger.warning(f"Date-range fallback failed: {e}")
+
+    # ── Text / numeric: also search opportunity name (any active status) ──────
+    if not q.isdigit() or not results:
+        escaped = q.replace("'", "''")
+        active_statuses = {"won", "active", "in progress", "approved", "complete"}
         try:
-            opps = await _aspire.search_opportunities_field(q, 10)
+            select_fields = ",".join([
+                "OpportunityID", "OpportunityName", "OpportunityNumber",
+                "OpportunityStatusName", "PropertyName", "DivisionName",
+                "StartDate", "EndDate",
+            ])
+            res = await _aspire._get("Opportunities", {
+                "$filter": f"contains(OpportunityName, '{escaped}')",
+                "$select": select_fields,
+                "$top":    "15",
+            })
+            opps = _aspire._extract_list(res)
+            # Include all statuses relevant to active work (not just Won)
             for o in opps:
-                results.append({
-                    "type":            "opportunity",
-                    "opportunity_id":  o.get("OpportunityID"),
-                    "opportunity_name": o.get("OpportunityName"),
-                    "property_name":   o.get("PropertyName"),
-                    "work_ticket_id":  None,
-                    "work_ticket_num": None,
-                    "status":          o.get("OpportunityStatusName"),
-                    "date":            None,
-                })
+                status = (o.get("OpportunityStatusName") or "").lower()
+                if status in active_statuses:
+                    results.append({
+                        "type":             "opportunity",
+                        "opportunity_id":   o.get("OpportunityID"),
+                        "opportunity_name": o.get("OpportunityName"),
+                        "property_name":    o.get("PropertyName"),
+                        "work_ticket_id":   None,
+                        "work_ticket_num":  None,
+                        "status":           o.get("OpportunityStatusName"),
+                        "date":             None,
+                    })
         except Exception as e:
-            logger.warning(f"Opportunity search failed: {e}")
+            logger.warning(f"Opportunity name search failed: {e}")
 
-    return {"results": results[:10]}
+    return {"results": results[:12]}
 
 
 @router.get("/purchase-order/work-tickets/{opportunity_id}")
 async def get_po_work_tickets(opportunity_id: int):
-    """Return open work tickets for an opportunity so the user can pick one."""
+    """Return work tickets for an opportunity so the user can pick one for a PO."""
     _check_credentials()
-    tickets = await _aspire.get_work_tickets_summary(opportunity_id)
-    # Filter to only open/scheduled tickets
-    open_statuses = {"scheduled", "in progress", "new", "open"}
+    try:
+        res = await _aspire._get("WorkTickets", {
+            "$filter": f"OpportunityID eq {opportunity_id}",
+            "$select": (
+                "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
+                "ScheduledStartDate,PropertyName,WorkTicketTitle"
+            ),
+            "$top": "50",
+        })
+        all_tickets = _aspire._extract_list(res)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch work tickets: {e}")
+
+    # Prefer open/scheduled tickets; fall back to all if none found
+    open_statuses = {"scheduled", "in progress", "new", "open", "active"}
     active = [
-        t for t in tickets
+        t for t in all_tickets
         if (t.get("WorkTicketStatusName") or "").lower() in open_statuses
-    ] or tickets  # fall back to all if none active
-    return {"opportunity_id": opportunity_id, "tickets": active}
+    ] or all_tickets
+
+    tickets_out = [
+        {
+            "WorkTicketID":         t.get("WorkTicketID"),
+            "WorkTicketNumber":     t.get("WorkTicketNumber"),
+            "WorkTicketStatusName": t.get("WorkTicketStatusName"),
+            "ScheduledStartDate":   (t.get("ScheduledStartDate") or "")[:10],
+            "PropertyName":         t.get("PropertyName"),
+        }
+        for t in active
+    ]
+    return {"opportunity_id": opportunity_id, "tickets": tickets_out}
 
 
 @router.post("/purchase-order")
