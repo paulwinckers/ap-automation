@@ -1248,7 +1248,7 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
     # ── Text / numeric: also search opportunity name (any active status) ──────
     if not q.isdigit() or not results:
         escaped = q.replace("'", "''")
-        active_statuses = {"won", "active", "in progress", "approved", "complete"}
+        active_statuses = {"won", "active", "in progress", "approved"}
         try:
             select_fields = ",".join([
                 "OpportunityID", "OpportunityName", "OpportunityNumber",
