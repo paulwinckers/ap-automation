@@ -1941,6 +1941,7 @@ async def daily_report_html(
     """
     from datetime import datetime, timezone, timedelta
     from fastapi.responses import HTMLResponse
+    from urllib.parse import quote as _url_quote
     import asyncio, re
 
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
@@ -2369,6 +2370,8 @@ async def daily_report_html(
     </div>"""
 
     report_title = f"Daily Report — {division}" if division else "Daily Completion Report"
+    # Pre-encode division for use in the date-picker JS (encodeURIComponent is JS, not Python)
+    _div_qs = f"&division={_url_quote(division, safe='')}" if division else ""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -2447,7 +2450,7 @@ async def daily_report_html(
         <label style="font-size:12px;color:#64748b;display:block;margin-bottom:4px">Report date</label>
         <input type="date" id="report-date" value="{target}"
                style="font-size:14px;padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer"
-               onchange="window.location.href='?date='+this.value{('+&division='+encodeURIComponent(division)) if division else ''}">
+               onchange="window.location.href='?date='+this.value+'{_div_qs}'">
       </div>
       <div>
         <label style="font-size:12px;color:#64748b;display:block;margin-bottom:4px">Search</label>
