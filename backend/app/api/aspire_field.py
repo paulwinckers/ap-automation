@@ -1392,16 +1392,26 @@ async def create_field_purchase_order(
 
     today_dt = f"{date.today().isoformat()}T00:00:00Z"
 
+    # Default inventory location ID (from probe: InventoryLocationID=1 on existing receipts).
+    # Required by Aspire when no WorkTicketID is provided (inventory purchases).
+    INVENTORY_LOCATION_ID = 1
+
     # Build ReceiptItems
     receipt_items = []
     total_cost = 0.0
     for item in raw_items:
         desc            = (item.get("description") or MISC_IRRIGATION_ITEM).strip()[:100]
         qty             = float(item.get("qty") or 1)
-        cost            = float(item.get("unit_cost") or 0)
         catalog_item_id = item.get("catalog_item_id")  # links receipt to existing WorkTicketItem
-        subtotal        = round(qty * cost, 4)
-        total_cost     += subtotal
+
+        # Aspire requires ReceiptTotalCost > 0. Field crew don't enter prices, so
+        # we use a $0.01 placeholder when no cost is provided. The actual price is
+        # reconciled when the vendor invoice arrives.
+        raw_cost = float(item.get("unit_cost") or 0)
+        cost     = raw_cost if raw_cost > 0 else 0.01
+
+        subtotal    = round(qty * cost, 4)
+        total_cost += subtotal
 
         receipt_item: dict = {
             "ItemName":     desc,
@@ -1415,13 +1425,22 @@ async def create_field_purchase_order(
         if catalog_item_id:
             receipt_item["CatalogItemID"] = int(catalog_item_id)
 
-        # Add allocation if a specific work ticket was selected
         if work_ticket_id:
+            # Job purchase — allocate to work ticket
             receipt_item["ItemAllocations"] = [{
                 "WorkTicketID":     work_ticket_id,
                 "ItemQuantity":     qty,
                 "ReceiptItemPrice": subtotal,
                 "ItemEstUnitCost":  cost,
+            }]
+        else:
+            # Inventory purchase — Aspire requires ItemAllocations with InventoryLocationID
+            # AND the receipt-level InventoryLocationID. Without this Aspire returns 400.
+            receipt_item["ItemAllocations"] = [{
+                "InventoryLocationID": INVENTORY_LOCATION_ID,
+                "ItemQuantity":        qty,
+                "ReceiptItemPrice":    subtotal,
+                "ItemEstUnitCost":     cost,
             }]
         receipt_items.append(receipt_item)
 
@@ -1439,15 +1458,18 @@ async def create_field_purchase_order(
     receipt_note = "\n".join(note_lines)
 
     body: dict = {
-        "BranchID":        settings.ASPIRE_BRANCH_ID or 2,
-        "VendorID":        vendor_id,
-        "ReceivedDate":    today_dt,
-        "ReceiptNote":     receipt_note,
-        "ReceiptTotalCost": round(total_cost, 2),
-        "ReceiptItems":    receipt_items,
+        "BranchID":           settings.ASPIRE_BRANCH_ID or 2,
+        "VendorID":           vendor_id,
+        "ReceivedDate":       today_dt,
+        "ReceiptNote":        receipt_note,
+        "ReceiptTotalCost":   round(total_cost, 2),
+        "ReceiptItems":       receipt_items,
     }
     if work_ticket_id:
         body["WorkTicketID"] = work_ticket_id
+    else:
+        # Aspire requires WorkTicketID or InventoryLocationID at the receipt level
+        body["InventoryLocationID"] = INVENTORY_LOCATION_ID
 
     logger.info(
         f"Field PO: vendor={vendor_name}({vendor_id}), "
@@ -1475,33 +1497,15 @@ async def create_field_purchase_order(
     except (ValueError, TypeError):
         receipt_id = None
 
-    # ReceiptNumber is the display number shown in the Aspire UI (e.g. "Purchase Receipt #1720").
-    # The POST response only returns ReceiptID (internal DB ID), not the display number.
-    # We do a follow-up GET to resolve the actual ReceiptNumber shown to users.
-    receipt_number_raw = (
-        result.get("ReceiptNumber")
-        or result.get("receiptNumber")
-    )
-    try:
-        receipt_number = int(receipt_number_raw) if receipt_number_raw is not None else None
-    except (ValueError, TypeError):
-        receipt_number = None
+    # Aspire POST /Receipts returns a number that is consistently 1 higher than the
+    # "Purchase Receipt #N" display number shown in the Aspire UI.
+    # (Two tests: POST→1721 displayed as #1720; POST→1723 displayed as #1722.)
+    # A follow-up GET returns the *next* receipt's number, making things worse.
+    # Until Aspire documents this clearly, we subtract 1 from the POST result.
+    display_number = (receipt_id - 1) if receipt_id is not None else None
+    receipt_number = display_number  # alias for the return payload
 
-    # If POST didn't return ReceiptNumber, fetch it via OData single-key GET.
-    # The $filter approach is unreliable; /Receipts({id}) is the OData standard.
-    if receipt_number is None and receipt_id is not None:
-        try:
-            single_res = await _aspire._get(f"Receipts({receipt_id})")
-            rn = single_res.get("ReceiptNumber") or single_res.get("receiptNumber")
-            receipt_number = int(rn) if rn is not None else None
-            logger.info(
-                f"Fetched ReceiptNumber={receipt_number} via GET Receipts({receipt_id}), "
-                f"full response keys: {list(single_res.keys())}"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to fetch ReceiptNumber via GET Receipts({receipt_id}): {e}")
-
-    display_number = receipt_number if receipt_number is not None else receipt_id
+    logger.info(f"POST /Receipts raw result: {result}")  # log once to confirm offset
 
     logger.info(
         f"Field PO created: ReceiptID={receipt_id} ReceiptNumber={receipt_number} "
