@@ -1077,19 +1077,6 @@ async def create_field_issue(
 
 # ── Purchase Order creation ───────────────────────────────────────────────────
 
-# Preferred vendors shown first in the PO vendor picker.
-# Format: {name, aspire_name} — aspire_name is what Aspire /Vendors stores.
-# Update this list with your actual Aspire vendor names.
-PREFERRED_VENDORS: list[dict] = [
-    {"name": "Ewing Irrigation & Landscape Supply", "aspire_name": "Ewing Irrigation"},
-    {"name": "SiteOne Landscape Supply",            "aspire_name": "SiteOne Landscape Supply"},
-    {"name": "Home Depot",                           "aspire_name": "Home Depot"},
-    {"name": "Rona",                                 "aspire_name": "Rona"},
-    {"name": "Greenleaf Horticulture",               "aspire_name": "Greenleaf Horticulture"},
-    {"name": "Westland Turf Supplies",               "aspire_name": "Westland Turf"},
-    {"name": "Fastenal",                             "aspire_name": "Fastenal"},
-]
-
 # Default inventory item description when no work ticket is attached
 MISC_IRRIGATION_ITEM = "Misc Irrigation Inventory"
 
@@ -1097,30 +1084,57 @@ MISC_IRRIGATION_ITEM = "Misc Irrigation Inventory"
 @router.get("/purchase-order/vendors")
 async def search_po_vendors(q: str = Query(default="")):
     """
-    Search Aspire vendors by name for PO creation.
-    With no query, returns the preferred vendor list (IDs resolved from Aspire).
-    With a query, searches all Aspire vendors live.
+    Vendor list for PO creation.
+    No query  → returns all active, non-employee vendors from the AP vendor rules
+                DB that have a vendor_id_aspire set. These are the same vendors
+                used for invoice routing — no separate maintenance needed.
+    With query → also searches Aspire /Vendors live for vendors not in the DB.
     """
+    from app.core.database import Database
     _check_credentials()
     q = (q or "").strip()
 
+    # ── Always load from vendor_rules DB first ────────────────────────────────
+    db = Database()
+    try:
+        if db._db is None:
+            await db.connect()
+        rows = await db._q(
+            """SELECT vendor_name, vendor_id_aspire
+               FROM vendor_rules
+               WHERE active = 1
+                 AND (is_employee = 0 OR is_employee IS NULL)
+                 AND vendor_id_aspire IS NOT NULL
+                 AND vendor_id_aspire != ''
+               ORDER BY vendor_name"""
+        )
+    except Exception as e:
+        logger.warning(f"Vendor rules DB lookup failed: {e}")
+        rows = []
+
+    db_vendors: list[dict] = []
+    db_names_lower: set[str] = set()
+    for r in rows:
+        name = r["vendor_name"] or ""
+        vid_raw = r["vendor_id_aspire"]
+        try:
+            vid = int(vid_raw) if vid_raw else None
+        except (ValueError, TypeError):
+            vid = None
+        # Filter by query if provided
+        if q and q.lower() not in name.lower():
+            continue
+        db_vendors.append({
+            "vendor_id":   vid,
+            "vendor_name": name,
+            "preferred":   True,
+        })
+        db_names_lower.add(name.lower())
+
     if not q:
-        # Resolve preferred vendor IDs from Aspire in parallel
-        import asyncio
+        return {"vendors": db_vendors, "preferred_shown": True}
 
-        async def _resolve(pv: dict) -> dict | None:
-            vid = await _aspire.get_vendor_id(pv["aspire_name"])
-            return {
-                "vendor_id":   vid,
-                "vendor_name": pv["name"],
-                "preferred":   True,
-            }
-
-        resolved = await asyncio.gather(*[_resolve(pv) for pv in PREFERRED_VENDORS])
-        # Return all (even those not resolved — UI can handle None ID)
-        return {"vendors": list(resolved), "preferred_shown": True}
-
-    # Live search
+    # ── With a query: also search Aspire live for vendors not in the DB ───────
     q_safe = q.replace("'", "''")
     try:
         result = await _aspire._get("Vendors", {
@@ -1129,17 +1143,18 @@ async def search_po_vendors(q: str = Query(default="")):
             "$top":    "15",
         })
         records = _aspire._extract_list(result)
-        vendors = [
-            {
-                "vendor_id":   r.get("VendorID"),
-                "vendor_name": r.get("VendorName"),
-                "preferred":   False,
-            }
-            for r in records
-        ]
-        return {"vendors": vendors, "preferred_shown": False}
+        for r in records:
+            name = r.get("VendorName") or ""
+            if name.lower() not in db_names_lower:
+                db_vendors.append({
+                    "vendor_id":   r.get("VendorID"),
+                    "vendor_name": name,
+                    "preferred":   False,
+                })
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Vendor search failed: {e}")
+        logger.warning(f"Aspire live vendor search failed: {e}")
+
+    return {"vendors": db_vendors, "preferred_shown": False}
 
 
 @router.get("/purchase-order/jobs/search")
