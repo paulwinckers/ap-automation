@@ -1215,9 +1215,10 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
             end   = (today + timedelta(days=180)).strftime("%Y-%m-%d")   # 6 months ahead
             try:
                 res = await _aspire._get("WorkTickets", {
-                    "$filter": f"ScheduledStartDate ge {start} and ScheduledStartDate lt {end}",
-                    "$select": wt_select,
-                    "$top":    "1000",
+                    "$filter":  f"ScheduledStartDate ge {start} and ScheduledStartDate lt {end}",
+                    "$select":  wt_select,
+                    "$orderby": "ScheduledStartDate desc",  # upcoming tickets first
+                    "$top":     "1000",
                 })
                 all_tickets = _aspire._extract_list(res)
                 matched = [
