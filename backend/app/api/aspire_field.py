@@ -1485,6 +1485,39 @@ async def create_field_purchase_order(
     }
 
 
+@router.get("/purchase-order/work-ticket-items/{work_ticket_id}")
+async def get_work_ticket_material_items(work_ticket_id: int):
+    """
+    Fetch material items for a work ticket so the PO form can be pre-populated.
+    Tries several Aspire endpoints to find where ticket materials live.
+    """
+    _check_credentials()
+    results = {}
+
+    # Try the most likely endpoints
+    candidates = [
+        ("WorkTicketItems",    {"$filter": f"WorkTicketID eq {work_ticket_id}", "$top": "50"}),
+        ("WorkTicketServices", {"$filter": f"WorkTicketID eq {work_ticket_id}", "$top": "50"}),
+        ("ReceiptItems",       {"$filter": f"WorkTicketID eq {work_ticket_id}", "$top": "50"}),
+        ("Services",           {"$filter": f"WorkTicketID eq {work_ticket_id}", "$top": "50"}),
+        ("WorkTicketMaterials",{"$filter": f"WorkTicketID eq {work_ticket_id}", "$top": "50"}),
+    ]
+
+    for endpoint, params in candidates:
+        try:
+            res = await _aspire._get(endpoint, params)
+            records = _aspire._extract_list(res)
+            results[endpoint] = {
+                "count":  len(records),
+                "fields": sorted(records[0].keys()) if records else [],
+                "sample": records[:3],
+            }
+        except Exception as e:
+            results[endpoint] = {"error": str(e)[:120]}
+
+    return {"work_ticket_id": work_ticket_id, "results": results}
+
+
 @router.get("/purchase-order/probe")
 async def probe_receipts():
     """
