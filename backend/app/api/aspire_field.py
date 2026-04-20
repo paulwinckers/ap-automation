@@ -1159,11 +1159,14 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
     seen_wt_ids: set[int] = set()
 
     # ── Numeric query: search by work ticket number ───────────────────────────
+    # OpportunityName and PropertyName are NOT direct WorkTicket fields — they
+    # live on the Opportunity entity. Including them in $select causes a 400.
+    # We fetch them separately via a secondary Opportunities lookup after finding
+    # the matching ticket(s).
     if q.isdigit():
         wt_select = (
             "WorkTicketID,WorkTicketNumber,OpportunityID,"
-            "OpportunityName,PropertyName,ScheduledStartDate,"
-            "WorkTicketStatusName"
+            "ScheduledStartDate,WorkTicketStatusName"
         )
 
         async def _try_filter(filt: str) -> list:
@@ -1179,6 +1182,7 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
                 return []
 
         # Try integer eq, then string eq (some Aspire tenants store as string)
+        tickets: list = []
         for filt in [
             f"WorkTicketNumber eq {q}",
             f"WorkTicketNumber eq '{q}'",
@@ -1187,28 +1191,13 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
             if tickets:
                 break
 
-        for t in tickets:
-            wid = t.get("WorkTicketID")
-            if wid and wid not in seen_wt_ids:
-                seen_wt_ids.add(wid)
-                results.append({
-                    "type":             "work_ticket",
-                    "opportunity_id":   t.get("OpportunityID"),
-                    "opportunity_name": t.get("OpportunityName") or f"Ticket #{q}",
-                    "property_name":    t.get("PropertyName"),
-                    "work_ticket_id":   wid,
-                    "work_ticket_num":  t.get("WorkTicketNumber"),
-                    "status":           t.get("WorkTicketStatusName"),
-                    "date":             (t.get("ScheduledStartDate") or "")[:10],
-                })
-
-        if not results:
+        if not tickets:
             logger.info(
                 f"WorkTicketNumber eq {q} returned nothing — "
                 "trying date-range fallback with Python filter"
             )
-            # Fallback: fetch a wide date window and filter WorkTicketNumber in Python.
-            # Aspire may not support $filter on WorkTicketNumber in all tenants.
+            # Fallback: fetch upcoming + recent tickets and filter in Python.
+            # WorkTicketNumber is not OData-filterable in all Aspire tenants.
             from datetime import timedelta
             today = date.today()
             start = (today - timedelta(days=730)).strftime("%Y-%m-%d")   # 2 years back
@@ -1217,34 +1206,53 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
                 res = await _aspire._get("WorkTickets", {
                     "$filter":  f"ScheduledStartDate ge {start} and ScheduledStartDate lt {end}",
                     "$select":  wt_select,
-                    "$orderby": "ScheduledStartDate desc",  # upcoming tickets first
+                    "$orderby": "ScheduledStartDate desc",  # upcoming/recent first
                     "$top":     "1000",
                 })
                 all_tickets = _aspire._extract_list(res)
-                matched = [
+                tickets = [
                     t for t in all_tickets
                     if str(t.get("WorkTicketNumber") or "") == q
                 ]
-                for t in matched:
-                    wid = t.get("WorkTicketID")
-                    if wid and wid not in seen_wt_ids:
-                        seen_wt_ids.add(wid)
-                        results.append({
-                            "type":             "work_ticket",
-                            "opportunity_id":   t.get("OpportunityID"),
-                            "opportunity_name": t.get("OpportunityName") or f"Ticket #{q}",
-                            "property_name":    t.get("PropertyName"),
-                            "work_ticket_id":   wid,
-                            "work_ticket_num":  t.get("WorkTicketNumber"),
-                            "status":           t.get("WorkTicketStatusName"),
-                            "date":             (t.get("ScheduledStartDate") or "")[:10],
-                        })
                 logger.info(
                     f"Date-range fallback: scanned {len(all_tickets)} tickets "
-                    f"→ {len(matched)} matched WorkTicketNumber={q}"
+                    f"→ {len(tickets)} matched WorkTicketNumber={q}"
                 )
             except Exception as e:
                 logger.warning(f"Date-range fallback failed: {e}")
+
+        # Secondary lookup: fetch OpportunityName + PropertyName for matched tickets
+        opp_map: dict[int, dict] = {}
+        opp_ids = list({t.get("OpportunityID") for t in tickets if t.get("OpportunityID")})
+        if opp_ids:
+            id_filter = " or ".join(f"OpportunityID eq {oid}" for oid in opp_ids)
+            try:
+                opp_res = await _aspire._get("Opportunities", {
+                    "$filter": f"({id_filter})",
+                    "$select": "OpportunityID,OpportunityName,PropertyName",
+                    "$top":    str(len(opp_ids) + 5),
+                })
+                for o in _aspire._extract_list(opp_res):
+                    opp_map[o["OpportunityID"]] = o
+            except Exception as e:
+                logger.warning(f"Opportunity lookup for ticket results failed: {e}")
+
+        for t in tickets:
+            wid = t.get("WorkTicketID")
+            if wid and wid not in seen_wt_ids:
+                seen_wt_ids.add(wid)
+                oid  = t.get("OpportunityID")
+                opp  = opp_map.get(oid, {})
+                results.append({
+                    "type":             "work_ticket",
+                    "opportunity_id":   oid,
+                    "opportunity_name": opp.get("OpportunityName") or f"Ticket #{q}",
+                    "property_name":    opp.get("PropertyName"),
+                    "work_ticket_id":   wid,
+                    "work_ticket_num":  t.get("WorkTicketNumber"),
+                    "status":           t.get("WorkTicketStatusName"),
+                    "date":             (t.get("ScheduledStartDate") or "")[:10],
+                })
 
     # ── Text / numeric: search by opportunity name AND property name ─────────
     if not q.isdigit() or not results:
