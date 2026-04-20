@@ -1574,6 +1574,21 @@ async def get_work_ticket_material_items(work_ticket_id: int):
     return {"work_ticket_id": work_ticket_id, "items": items}
 
 
+@router.get("/purchase-order/uom-probe")
+async def probe_uom_endpoints():
+    """Probe Aspire for UOM / Unit-of-Measure endpoints. Development tool; read-only."""
+    _check_credentials()
+    results = {}
+    for ep in ["AllocationUnitTypes", "UnitTypes", "AllocationUnits", "Units", "UOMTypes", "CatalogItemUnitTypes"]:
+        try:
+            res = await _aspire._get(ep, {"$top": "5"})
+            items = _aspire._extract_list(res)
+            results[ep] = {"ok": True, "count": len(items), "sample": items[:2]}
+        except Exception as e:
+            results[ep] = {"ok": False, "error": str(e)[:100]}
+    return results
+
+
 @router.get("/purchase-order/probe")
 async def probe_receipts():
     """
