@@ -1207,17 +1207,17 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
                 f"WorkTicketNumber eq {q} returned nothing — "
                 "trying date-range fallback with Python filter"
             )
-            # Fallback: fetch a broad date window and filter in Python.
+            # Fallback: fetch a wide date window and filter WorkTicketNumber in Python.
             # Aspire may not support $filter on WorkTicketNumber in all tenants.
             from datetime import timedelta
             today = date.today()
-            start = (today - timedelta(days=180)).strftime("%Y-%m-%d")
-            end   = (today + timedelta(days=90)).strftime("%Y-%m-%d")
+            start = (today - timedelta(days=730)).strftime("%Y-%m-%d")   # 2 years back
+            end   = (today + timedelta(days=180)).strftime("%Y-%m-%d")   # 6 months ahead
             try:
                 res = await _aspire._get("WorkTickets", {
                     "$filter": f"ScheduledStartDate ge {start} and ScheduledStartDate lt {end}",
                     "$select": wt_select,
-                    "$top":    "500",
+                    "$top":    "1000",
                 })
                 all_tickets = _aspire._extract_list(res)
                 matched = [
@@ -1249,9 +1249,12 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
     if not q.isdigit() or not results:
         escaped = q.replace("'", "''")
         active_statuses = {"won", "active", "in progress", "approved"}
+        # JobStatusName tracks actual completion state independently of OpportunityStatusName.
+        # A "Won" job keeps that status forever; JobStatusName flips to Complete/Closed when done.
+        complete_job_statuses = {"complete", "completed", "closed", "cancelled", "canceled"}
         select_fields = ",".join([
             "OpportunityID", "OpportunityName", "OpportunityNumber",
-            "OpportunityStatusName", "PropertyName", "DivisionName",
+            "OpportunityStatusName", "JobStatusName", "PropertyName", "DivisionName",
             "StartDate", "EndDate",
         ])
 
@@ -1278,8 +1281,9 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
             oid = o.get("OpportunityID")
             if not oid or oid in seen_opp_ids:
                 continue
-            status = (o.get("OpportunityStatusName") or "").lower()
-            if status in active_statuses:
+            status     = (o.get("OpportunityStatusName") or "").lower()
+            job_status = (o.get("JobStatusName") or "").lower()
+            if status in active_statuses and job_status not in complete_job_statuses:
                 seen_opp_ids.add(oid)
                 results.append({
                     "type":             "opportunity",
