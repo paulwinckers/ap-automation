@@ -42,7 +42,7 @@ function fmt(n: number) {
   return n.toLocaleString('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 2 });
 }
 
-const EMPTY_ITEM: POLineItem = { description: '', qty: 1, unit_cost: 0 };
+const EMPTY_ITEM: POLineItem = { description: '', qty: 1, unit_cost: 0, uom: '' };
 
 export default function FieldPurchaseOrder() {
   const [step, setStep] = useState<Step>(1);
@@ -133,6 +133,7 @@ export default function FieldPurchaseOrder() {
       description: ti.name,
       qty:         ti.qty,
       unit_cost:   ti.unit_cost,
+      uom:         ti.uom || '',
     })));
   }
 
@@ -157,6 +158,7 @@ export default function FieldPurchaseOrder() {
         const ticket = {
           WorkTicketID:         job.work_ticket_id,
           WorkTicketNumber:     job.work_ticket_num ?? 0,
+          WorkTicketTitle:      job.work_ticket_title ?? null,
           WorkTicketStatusName: job.status,
           ScheduledStartDate:   job.date,
           PropertyName:         job.property_name,
@@ -348,12 +350,12 @@ export default function FieldPurchaseOrder() {
         >
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 600 }}>Ticket #{t.WorkTicketNumber}</div>
+            {t.WorkTicketTitle && (
+              <div style={{ color: '#e2e8f0', fontSize: 13 }}>{t.WorkTicketTitle}</div>
+            )}
             <div style={{ color: '#94a3b8', fontSize: 12 }}>
               {t.ScheduledStartDate?.slice(0, 10)} · {t.WorkTicketStatusName}
             </div>
-            {t.PropertyName && (
-              <div style={{ color: '#64748b', fontSize: 11 }}>{t.PropertyName}</div>
-            )}
           </div>
           {selectedTicket?.WorkTicketID === t.WorkTicketID && (
             <span style={{ color: GRN, fontSize: 18 }}>✓</span>
@@ -363,7 +365,9 @@ export default function FieldPurchaseOrder() {
 
       <button style={btn()} disabled={!selectedTicket && workTickets.length > 0}
         onClick={() => setStep(3)}>
-        {selectedTicket ? `Continue with Ticket #${selectedTicket.WorkTicketNumber}` : 'Skip — No ticket'}
+        {selectedTicket
+          ? `Continue with #${selectedTicket.WorkTicketNumber}${selectedTicket.WorkTicketTitle ? ' — ' + selectedTicket.WorkTicketTitle : ''}`
+          : 'Skip — No ticket'}
       </button>
       <button style={ghost} onClick={() => { setStep(1); setSelectedJob(null); setWorkTickets([]); }}>
         ← Back
@@ -459,11 +463,11 @@ export default function FieldPurchaseOrder() {
           {!ticketItemsLoading && ticketItems.length > 0 && (
             <div>
               <div style={{ color: '#93c5fd', fontSize: 12, marginBottom: 6 }}>
-                📋 Ticket #{selectedTicket.WorkTicketNumber} has {ticketItems.length} material item{ticketItems.length !== 1 ? 's' : ''}:
+                📋 Ticket #{selectedTicket.WorkTicketNumber}{selectedTicket.WorkTicketTitle ? ' — ' + selectedTicket.WorkTicketTitle : ''} · {ticketItems.length} material item{ticketItems.length !== 1 ? 's' : ''}:
               </div>
               {ticketItems.map((ti, i) => (
                 <div key={i} style={{ color: '#bfdbfe', fontSize: 13, marginBottom: 2 }}>
-                  · {ti.name} × {ti.qty} @ ${ti.unit_cost.toFixed(2)}
+                  · {ti.name} × {ti.qty}{ti.uom ? ` ${ti.uom}` : ''} @ ${ti.unit_cost.toFixed(2)}
                 </div>
               ))}
               <button
@@ -500,13 +504,21 @@ export default function FieldPurchaseOrder() {
             onChange={e => updateItem(i, 'description', e.target.value)}
           />
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 3fr', gap: 10 }}>
             <div>
               <div style={label}>Qty</div>
               <input
                 style={inp} type="number" min="0.01" step="0.01"
                 value={it.qty || ''}
                 onChange={e => updateItem(i, 'qty', e.target.value)}
+              />
+            </div>
+            <div>
+              <div style={label}>UOM</div>
+              <input
+                style={inp} placeholder="e.g. cuyd, ea, bag"
+                value={it.uom || ''}
+                onChange={e => updateItem(i, 'uom', e.target.value)}
               />
             </div>
             <div>
@@ -619,7 +631,7 @@ export default function FieldPurchaseOrder() {
           {validItems.map((it, i) => (
             <div key={i} style={{ display: 'flex', justifyContent: 'space-between',
               fontSize: 14, padding: '4px 0', borderBottom: '1px solid #0f172a' }}>
-              <span>{it.description} × {it.qty}</span>
+              <span>{it.description} × {it.qty}{it.uom ? ` ${it.uom}` : ''}</span>
               <span style={{ color: '#94a3b8' }}>{fmt(it.qty * it.unit_cost)}</span>
             </div>
           ))}

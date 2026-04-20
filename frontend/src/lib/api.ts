@@ -743,19 +743,21 @@ export interface POVendor {
 }
 
 export interface POJobResult {
-  type:             'work_ticket' | 'opportunity';
-  opportunity_id:   number | null;
-  opportunity_name: string | null;
-  property_name:    string | null;
-  work_ticket_id:   number | null;
-  work_ticket_num:  number | null;
-  status:           string | null;
-  date:             string | null;
+  type:              'work_ticket' | 'opportunity';
+  opportunity_id:    number | null;
+  opportunity_name:  string | null;
+  property_name:     string | null;
+  work_ticket_id:    number | null;
+  work_ticket_num:   number | null;
+  work_ticket_title: string | null;
+  status:            string | null;
+  date:              string | null;
 }
 
 export interface POWorkTicket {
   WorkTicketID:         number;
   WorkTicketNumber:     number;
+  WorkTicketTitle:      string | null;
   WorkTicketStatusName: string | null;
   ScheduledStartDate:   string | null;
   PropertyName:         string | null;
@@ -765,6 +767,7 @@ export interface POLineItem {
   description: string;
   qty:         number;
   unit_cost:   number;
+  uom:         string;
 }
 
 export interface POResult {
@@ -795,6 +798,7 @@ export interface POTicketItem {
   name:      string;
   qty:       number;
   unit_cost: number;
+  uom:       string;
 }
 
 export async function getWorkTicketMaterials(workTicketId: number): Promise<{ items: POTicketItem[] }> {
