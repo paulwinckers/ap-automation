@@ -1487,21 +1487,19 @@ async def create_field_purchase_order(
     except (ValueError, TypeError):
         receipt_number = None
 
-    # If POST didn't return ReceiptNumber, fetch it via GET
+    # If POST didn't return ReceiptNumber, fetch it via OData single-key GET.
+    # The $filter approach is unreliable; /Receipts({id}) is the OData standard.
     if receipt_number is None and receipt_id is not None:
         try:
-            get_res = await _aspire._get("Receipts", {
-                "$filter": f"ReceiptID eq {receipt_id}",
-                "$select": "ReceiptID,ReceiptNumber",
-                "$top":    "1",
-            })
-            records = _aspire._extract_list(get_res)
-            if records:
-                rn = records[0].get("ReceiptNumber")
-                receipt_number = int(rn) if rn is not None else None
-                logger.info(f"Fetched ReceiptNumber={receipt_number} via GET for ReceiptID={receipt_id}")
+            single_res = await _aspire._get(f"Receipts({receipt_id})")
+            rn = single_res.get("ReceiptNumber") or single_res.get("receiptNumber")
+            receipt_number = int(rn) if rn is not None else None
+            logger.info(
+                f"Fetched ReceiptNumber={receipt_number} via GET Receipts({receipt_id}), "
+                f"full response keys: {list(single_res.keys())}"
+            )
         except Exception as e:
-            logger.warning(f"Failed to fetch ReceiptNumber via GET: {e}")
+            logger.warning(f"Failed to fetch ReceiptNumber via GET Receipts({receipt_id}): {e}")
 
     display_number = receipt_number if receipt_number is not None else receipt_id
 
