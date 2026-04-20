@@ -1075,6 +1075,293 @@ async def create_field_issue(
     }
 
 
+# ── Purchase Order creation ───────────────────────────────────────────────────
+
+# Preferred vendors shown first in the PO vendor picker.
+# Format: {name, aspire_name} — aspire_name is what Aspire /Vendors stores.
+# Update this list with your actual Aspire vendor names.
+PREFERRED_VENDORS: list[dict] = [
+    {"name": "Ewing Irrigation & Landscape Supply", "aspire_name": "Ewing Irrigation"},
+    {"name": "SiteOne Landscape Supply",            "aspire_name": "SiteOne Landscape Supply"},
+    {"name": "Home Depot",                           "aspire_name": "Home Depot"},
+    {"name": "Rona",                                 "aspire_name": "Rona"},
+    {"name": "Greenleaf Horticulture",               "aspire_name": "Greenleaf Horticulture"},
+    {"name": "Westland Turf Supplies",               "aspire_name": "Westland Turf"},
+    {"name": "Fastenal",                             "aspire_name": "Fastenal"},
+]
+
+# Default inventory item description when no work ticket is attached
+MISC_IRRIGATION_ITEM = "Misc Irrigation Inventory"
+
+
+@router.get("/purchase-order/vendors")
+async def search_po_vendors(q: str = Query(default="")):
+    """
+    Search Aspire vendors by name for PO creation.
+    With no query, returns the preferred vendor list (IDs resolved from Aspire).
+    With a query, searches all Aspire vendors live.
+    """
+    _check_credentials()
+    q = (q or "").strip()
+
+    if not q:
+        # Resolve preferred vendor IDs from Aspire in parallel
+        import asyncio
+
+        async def _resolve(pv: dict) -> dict | None:
+            vid = await _aspire.get_vendor_id(pv["aspire_name"])
+            return {
+                "vendor_id":   vid,
+                "vendor_name": pv["name"],
+                "preferred":   True,
+            }
+
+        resolved = await asyncio.gather(*[_resolve(pv) for pv in PREFERRED_VENDORS])
+        # Return all (even those not resolved — UI can handle None ID)
+        return {"vendors": list(resolved), "preferred_shown": True}
+
+    # Live search
+    q_safe = q.replace("'", "''")
+    try:
+        result = await _aspire._get("Vendors", {
+            "$filter": f"contains(VendorName, '{q_safe}')",
+            "$select": "VendorID,VendorName",
+            "$top":    "15",
+        })
+        records = _aspire._extract_list(result)
+        vendors = [
+            {
+                "vendor_id":   r.get("VendorID"),
+                "vendor_name": r.get("VendorName"),
+                "preferred":   False,
+            }
+            for r in records
+        ]
+        return {"vendors": vendors, "preferred_shown": False}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Vendor search failed: {e}")
+
+
+@router.get("/purchase-order/jobs/search")
+async def search_po_jobs(q: str = Query(..., min_length=1)):
+    """
+    Search for an active job by name or work ticket number for PO creation.
+    Returns opportunities and their work tickets.
+    """
+    _check_credentials()
+    q = (q or "").strip()
+
+    # Try as a work ticket number first (pure digits)
+    results: list[dict] = []
+    if q.isdigit():
+        try:
+            wt_result = await _aspire._get("WorkTickets", {
+                "$filter": f"WorkTicketNumber eq {q}",
+                "$select": (
+                    "WorkTicketID,WorkTicketNumber,OpportunityID,"
+                    "OpportunityName,PropertyName,ScheduledStartDate,"
+                    "WorkTicketStatusName"
+                ),
+                "$top": "5",
+            })
+            tickets = _aspire._extract_list(wt_result)
+            for t in tickets:
+                results.append({
+                    "type":            "work_ticket",
+                    "opportunity_id":  t.get("OpportunityID"),
+                    "opportunity_name": t.get("OpportunityName") or f"Ticket #{q}",
+                    "property_name":   t.get("PropertyName"),
+                    "work_ticket_id":  t.get("WorkTicketID"),
+                    "work_ticket_num": t.get("WorkTicketNumber"),
+                    "status":          t.get("WorkTicketStatusName"),
+                    "date":            (t.get("ScheduledStartDate") or "")[:10],
+                })
+        except Exception as e:
+            logger.warning(f"Work ticket number search failed: {e}")
+
+    # Also search by opportunity name
+    if not results or not q.isdigit():
+        try:
+            opps = await _aspire.search_opportunities_field(q, 10)
+            for o in opps:
+                results.append({
+                    "type":            "opportunity",
+                    "opportunity_id":  o.get("OpportunityID"),
+                    "opportunity_name": o.get("OpportunityName"),
+                    "property_name":   o.get("PropertyName"),
+                    "work_ticket_id":  None,
+                    "work_ticket_num": None,
+                    "status":          o.get("OpportunityStatusName"),
+                    "date":            None,
+                })
+        except Exception as e:
+            logger.warning(f"Opportunity search failed: {e}")
+
+    return {"results": results[:10]}
+
+
+@router.get("/purchase-order/work-tickets/{opportunity_id}")
+async def get_po_work_tickets(opportunity_id: int):
+    """Return open work tickets for an opportunity so the user can pick one."""
+    _check_credentials()
+    tickets = await _aspire.get_work_tickets_summary(opportunity_id)
+    # Filter to only open/scheduled tickets
+    open_statuses = {"scheduled", "in progress", "new", "open"}
+    active = [
+        t for t in tickets
+        if (t.get("WorkTicketStatusName") or "").lower() in open_statuses
+    ] or tickets  # fall back to all if none active
+    return {"opportunity_id": opportunity_id, "tickets": active}
+
+
+@router.post("/purchase-order")
+async def create_field_purchase_order(
+    requester_name:   str            = Form(...),
+    vendor_id:        int            = Form(...),
+    vendor_name:      str            = Form(...),
+    work_ticket_id:   Optional[int]  = Form(default=None),
+    opportunity_id:   Optional[int]  = Form(default=None),
+    job_name:         Optional[str]  = Form(default=None),
+    notes:            str            = Form(default=""),
+    items_json:       str            = Form(...),   # JSON: [{description, qty, unit_cost}]
+):
+    """
+    Create a Purchase Order (Aspire Receipt) from the field.
+
+    If work_ticket_id is provided, items are allocated to that ticket.
+    If not, items are posted without allocation (inventory purchase).
+    Returns the ReceiptID as the PO reference number.
+    """
+    import json as _json
+
+    _check_credentials()
+
+    # Parse line items
+    try:
+        raw_items = _json.loads(items_json)
+    except _json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="items_json must be a valid JSON array")
+
+    if not raw_items:
+        raise HTTPException(status_code=400, detail="At least one line item is required")
+
+    today_dt = f"{date.today().isoformat()}T00:00:00Z"
+
+    # Build ReceiptItems
+    receipt_items = []
+    total_cost = 0.0
+    for item in raw_items:
+        desc  = (item.get("description") or MISC_IRRIGATION_ITEM).strip()[:100]
+        qty   = float(item.get("qty") or 1)
+        cost  = float(item.get("unit_cost") or 0)
+        subtotal = round(qty * cost, 4)
+        total_cost += subtotal
+
+        receipt_item: dict = {
+            "ItemName":     desc,
+            "ItemQuantity": qty,
+            "ItemUnitCost": cost,
+            "ItemType":     "Material",
+        }
+        # Add allocation if a specific work ticket was selected
+        if work_ticket_id:
+            receipt_item["ItemAllocations"] = [{
+                "WorkTicketID":    work_ticket_id,
+                "ItemQuantity":    qty,
+                "ReceiptItemPrice": subtotal,
+                "ItemEstUnitCost":  cost,
+            }]
+        receipt_items.append(receipt_item)
+
+    # Build note
+    note_lines = [
+        f"Field PO — {date.today().strftime('%b %d, %Y')}",
+        f"Requested by: {requester_name}",
+    ]
+    if job_name:
+        note_lines.append(f"Job: {job_name}")
+    if work_ticket_id:
+        note_lines.append(f"Work Ticket ID: {work_ticket_id}")
+    if notes:
+        note_lines.append(f"\nNotes: {notes}")
+    receipt_note = "\n".join(note_lines)
+
+    body: dict = {
+        "BranchID":        settings.ASPIRE_BRANCH_ID or 2,
+        "VendorID":        vendor_id,
+        "ReceivedDate":    today_dt,
+        "ReceiptNote":     receipt_note,
+        "ReceiptTotalCost": round(total_cost, 2),
+        "ReceiptItems":    receipt_items,
+    }
+    if work_ticket_id:
+        body["WorkTicketID"] = work_ticket_id
+
+    logger.info(
+        f"Field PO: vendor={vendor_name}({vendor_id}), "
+        f"wt={work_ticket_id}, items={len(receipt_items)}, total=${total_cost:.2f}, "
+        f"by={requester_name}"
+    )
+
+    try:
+        result = await _aspire._post("Receipts", body)
+    except Exception as e:
+        logger.error(f"Field PO creation failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to create PO in Aspire: {e}")
+
+    logger.info(f"Aspire Receipt POST response: {result}")
+
+    receipt_id = (
+        result.get("ReceiptID")
+        or result.get("receiptId")
+        or result.get("Id")
+        or result.get("id")
+        or result.get("value")
+    )
+    try:
+        receipt_id = int(receipt_id) if receipt_id is not None else None
+    except (ValueError, TypeError):
+        receipt_id = None
+
+    logger.info(
+        f"Field PO created: ReceiptID={receipt_id} vendor={vendor_name} "
+        f"by={requester_name} total=${total_cost:.2f}"
+    )
+
+    return {
+        "success":     True,
+        "receipt_id":  receipt_id,
+        "vendor_name": vendor_name,
+        "total":       round(total_cost, 2),
+        "items":       len(receipt_items),
+        "requester":   requester_name,
+        "job_name":    job_name,
+    }
+
+
+@router.get("/purchase-order/probe")
+async def probe_receipts():
+    """
+    Probe the Aspire Receipts endpoint — lists fields on a recent receipt.
+    Development tool; safe (read-only).
+    """
+    _check_credentials()
+    try:
+        result = await _aspire._get("Receipts", {
+            "$top": "1",
+            "$orderby": "ReceivedDate desc",
+        })
+        records = _aspire._extract_list(result)
+        if records:
+            return {
+                "fields":  sorted(records[0].keys()),
+                "sample":  records[0],
+            }
+        return {"fields": [], "sample": {}}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/visit-notes/probe")
 async def probe_visit_notes(ticket_id: int = Query(default=16914)):
     """Probe VisitNotes endpoint and WorkTicket PATCH to find customer-portal-visible note path."""

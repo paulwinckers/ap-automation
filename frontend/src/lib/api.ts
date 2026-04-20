@@ -733,3 +733,81 @@ export async function createFieldOpportunity(p: FieldOpportunityPayload): Promis
   for (const photo of p.photos) form.append('photos', photo);
   return request<CreateOpportunityResponse>('POST', '/aspire/field/opportunity', form, true);
 }
+
+// ── Purchase Orders ───────────────────────────────────────────────────────────
+
+export interface POVendor {
+  vendor_id:   number | null;
+  vendor_name: string;
+  preferred:   boolean;
+}
+
+export interface POJobResult {
+  type:             'work_ticket' | 'opportunity';
+  opportunity_id:   number | null;
+  opportunity_name: string | null;
+  property_name:    string | null;
+  work_ticket_id:   number | null;
+  work_ticket_num:  number | null;
+  status:           string | null;
+  date:             string | null;
+}
+
+export interface POWorkTicket {
+  WorkTicketID:         number;
+  WorkTicketNumber:     number;
+  WorkTicketStatusName: string | null;
+  ScheduledStartDate:   string | null;
+  PropertyName:         string | null;
+}
+
+export interface POLineItem {
+  description: string;
+  qty:         number;
+  unit_cost:   number;
+}
+
+export interface POResult {
+  success:     boolean;
+  receipt_id:  number | null;
+  vendor_name: string;
+  total:       number;
+  items:       number;
+  requester:   string;
+  job_name:    string | null;
+}
+
+export async function getPOVendors(q = ''): Promise<{ vendors: POVendor[]; preferred_shown: boolean }> {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+  return request('GET', `/aspire/field/purchase-order/vendors${qs}`);
+}
+
+export async function searchPOJobs(q: string): Promise<{ results: POJobResult[] }> {
+  return request('GET', `/aspire/field/purchase-order/jobs/search?q=${encodeURIComponent(q)}`);
+}
+
+export async function getPOWorkTickets(opportunityId: number): Promise<{ tickets: POWorkTicket[] }> {
+  return request('GET', `/aspire/field/purchase-order/work-tickets/${opportunityId}`);
+}
+
+export async function createPurchaseOrder(p: {
+  requesterName: string;
+  vendorId:      number;
+  vendorName:    string;
+  workTicketId?: number | null;
+  opportunityId?: number | null;
+  jobName?:      string | null;
+  notes?:        string;
+  items:         POLineItem[];
+}): Promise<POResult> {
+  const form = new FormData();
+  form.append('requester_name', p.requesterName);
+  form.append('vendor_id',      String(p.vendorId));
+  form.append('vendor_name',    p.vendorName);
+  if (p.workTicketId)  form.append('work_ticket_id',  String(p.workTicketId));
+  if (p.opportunityId) form.append('opportunity_id',  String(p.opportunityId));
+  if (p.jobName)       form.append('job_name',         p.jobName);
+  form.append('notes',      p.notes ?? '');
+  form.append('items_json', JSON.stringify(p.items));
+  return request<POResult>('POST', '/aspire/field/purchase-order', form, true);
+}
