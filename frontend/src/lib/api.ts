@@ -816,6 +816,33 @@ export async function getWorkTicketMaterials(workTicketId: number): Promise<{ it
   return request('GET', `/aspire/field/purchase-order/work-ticket-items/${workTicketId}`);
 }
 
+export interface NewReceipt {
+  receipt_id:     number;
+  display_number: number;
+  vendor_id:      number;
+  vendor_name:    string;
+  received_date:  string;
+  note_snippet:   string;
+  total:          number;
+}
+
+export async function getNewReceipts(): Promise<NewReceipt[]> {
+  const r = await request<{ receipts: NewReceipt[] }>('GET', '/aspire/field/purchase-order/new-receipts');
+  return r.receipts;
+}
+
+export async function amendPOVendor(p: {
+  receiptId:  number;
+  vendorId:   number;
+  vendorName: string;
+}): Promise<{ success: boolean; display_number: number; old_vendor: string; vendor_name: string }> {
+  const form = new FormData();
+  form.append('receipt_id',  String(p.receiptId));
+  form.append('vendor_id',   String(p.vendorId));
+  form.append('vendor_name', p.vendorName);
+  return request('POST', '/aspire/field/purchase-order/amend-vendor', form, true);
+}
+
 export async function createPurchaseOrder(p: {
   requesterName: string;
   vendorId:      number;

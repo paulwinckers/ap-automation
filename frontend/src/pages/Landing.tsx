@@ -13,6 +13,7 @@ const FIELD_LINKS = [
   { to: '/field/work-ticket',      icon: '✅', label: 'Schedule',         sub: 'View routes & complete tickets' },
   { to: '/ops/time-tracking',      icon: '⏱️', label: 'Time Tracking',    sub: 'Clock in / out' },
   { to: '/field/purchase-order',   icon: '🛒', label: 'Purchase Order',   sub: 'Create a PO for materials' },
+  { to: '/field/amend-po',         icon: '✏️', label: 'Amend PO Vendor',  sub: 'Change vendor on an open PO' },
   { to: '/field/opportunity',      icon: '➕', label: 'New Opportunity',   sub: 'Create a job in Aspire' },
   { to: '/field/issue',            icon: '⚠️', label: 'New Issue',         sub: 'Log a site issue' },
 ];

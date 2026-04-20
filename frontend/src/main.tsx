@@ -9,6 +9,7 @@ import FieldWorkTicket  from './pages/FieldWorkTicket';
 import FieldOpportunity from './pages/FieldOpportunity';
 import FieldIssue           from './pages/FieldIssue';
 import FieldPurchaseOrder  from './pages/FieldPurchaseOrder';
+import FieldAmendPO        from './pages/FieldAmendPO';
 import APDashboard    from './pages/APDashboard';
 import VendorAdmin    from './pages/VendorAdmin';
 import Reconcile      from './pages/Reconcile';
@@ -48,6 +49,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/field/opportunity" element={<FieldOpportunity />} />
         <Route path="/field/issue"          element={<FieldIssue />} />
         <Route path="/field/purchase-order" element={<FieldPurchaseOrder />} />
+        <Route path="/field/amend-po"       element={<FieldAmendPO />} />
 
         {/* Office / AP — login required */}
         <Route path="/ap"           element={<RequireAuth><Office><APDashboard /></Office></RequireAuth>} />

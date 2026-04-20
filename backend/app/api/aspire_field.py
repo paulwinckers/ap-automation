@@ -1544,6 +1544,104 @@ async def create_field_purchase_order(
     }
 
 
+@router.get("/purchase-order/new-receipts")
+async def get_new_receipts():
+    """
+    Return all receipts with status 'New' so field crew can pick one to amend.
+    Sorted newest first.
+    """
+    _check_credentials()
+    try:
+        res = await _aspire._get("Receipts", {
+            "$filter": "ReceiptStatusName eq 'New'",
+            "$top": "200",
+            "$orderby": "ReceiptID desc",
+        })
+        records = _aspire._extract_list(res)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch receipts: {e}")
+
+    receipts = []
+    for r in records:
+        rid = r.get("ReceiptID")
+        note = (r.get("ReceiptNote") or "").strip()
+        # Pull first non-empty line from the note for a short label
+        note_snippet = next((ln.strip() for ln in note.splitlines() if ln.strip()), "")
+        receipts.append({
+            "receipt_id":     rid,
+            "display_number": (rid - 1) if rid else None,
+            "vendor_id":      r.get("VendorID"),
+            "vendor_name":    r.get("VendorName") or "Unknown Vendor",
+            "received_date":  (r.get("ReceivedDate") or "")[:10],
+            "note_snippet":   note_snippet[:80],
+            "total":          r.get("ReceiptTotalCost") or 0,
+        })
+    return {"receipts": receipts}
+
+
+@router.post("/purchase-order/amend-vendor")
+async def amend_po_vendor(
+    receipt_id:  int = Form(...),
+    vendor_id:   int = Form(...),
+    vendor_name: str = Form(...),
+):
+    """
+    Change the vendor on an existing 'New' status receipt.
+    Fetches the current receipt, swaps VendorID, then POSTs it back as an
+    upsert (Aspire treats POST /Receipts with ReceiptID as an update).
+    """
+    _check_credentials()
+
+    # 1. Fetch the existing receipt
+    try:
+        res = await _aspire._get("Receipts", {
+            "$filter": f"ReceiptID eq {receipt_id}",
+            "$top": "1",
+        })
+        records = _aspire._extract_list(res)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch receipt: {e}")
+
+    if not records:
+        raise HTTPException(status_code=404, detail=f"Receipt {receipt_id} not found")
+
+    existing = records[0]
+
+    # 2. Guard — only allow amendments on New receipts
+    status = (existing.get("ReceiptStatusName") or "").strip().lower()
+    if status != "new":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Receipt #{receipt_id - 1} has status '{existing.get('ReceiptStatusName')}'. "
+                   f"Only 'New' receipts can be amended.",
+        )
+
+    old_vendor = existing.get("VendorName") or existing.get("VendorID") or "?"
+
+    # 3. Build upsert body — keep all existing fields, just swap VendorID
+    body = {k: v for k, v in existing.items() if v is not None}
+    body["ReceiptID"] = receipt_id
+    body["VendorID"]  = vendor_id
+
+    try:
+        await _aspire._post("Receipts", body)
+    except Exception as e:
+        logger.error(f"Amend vendor failed for receipt {receipt_id}: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to update receipt in Aspire: {e}")
+
+    logger.info(
+        f"Amend PO vendor: receipt_id={receipt_id} display=#{receipt_id - 1} "
+        f"old_vendor={old_vendor!r} new_vendor={vendor_name}({vendor_id})"
+    )
+    return {
+        "success":        True,
+        "receipt_id":     receipt_id,
+        "display_number": receipt_id - 1,
+        "old_vendor":     old_vendor,
+        "vendor_name":    vendor_name,
+    }
+
+
 @router.get("/purchase-order/work-ticket-items/{work_ticket_id}")
 async def get_work_ticket_material_items(work_ticket_id: int):
     """
