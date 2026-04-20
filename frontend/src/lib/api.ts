@@ -790,6 +790,17 @@ export async function getPOWorkTickets(opportunityId: number): Promise<{ tickets
   return request('GET', `/aspire/field/purchase-order/work-tickets/${opportunityId}`);
 }
 
+export interface POTicketItem {
+  item_id:   number;
+  name:      string;
+  qty:       number;
+  unit_cost: number;
+}
+
+export async function getWorkTicketMaterials(workTicketId: number): Promise<{ items: POTicketItem[] }> {
+  return request('GET', `/aspire/field/purchase-order/work-ticket-items/${workTicketId}`);
+}
+
 export async function createPurchaseOrder(p: {
   requesterName: string;
   vendorId:      number;

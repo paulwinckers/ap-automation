@@ -17,12 +17,14 @@ import {
   getPOVendors,
   searchPOJobs,
   getPOWorkTickets,
+  getWorkTicketMaterials,
   createPurchaseOrder,
   getAspireEmployees,
   type POVendor,
   type POJobResult,
   type POWorkTicket,
   type POLineItem,
+  type POTicketItem,
   type AspireEmployee,
 } from '../lib/api';
 
@@ -63,6 +65,8 @@ export default function FieldPurchaseOrder() {
 
   // Line items
   const [items, setItems] = useState<POLineItem[]>([{ ...EMPTY_ITEM }]);
+  const [ticketItems, setTicketItems]     = useState<POTicketItem[]>([]);
+  const [ticketItemsLoading, setTicketItemsLoading] = useState(false);
 
   // Notes + name
   const [notes, setNotes]         = useState('');
@@ -114,9 +118,28 @@ export default function FieldPurchaseOrder() {
     }, 400);
   }, [vendorQuery]);
 
+  async function fetchTicketItems(ticketId: number) {
+    setTicketItemsLoading(true);
+    try {
+      const r = await getWorkTicketMaterials(ticketId);
+      setTicketItems(r.items);
+    } catch { setTicketItems([]); }
+    finally { setTicketItemsLoading(false); }
+  }
+
+  function loadTicketItemsIntoForm() {
+    if (!ticketItems.length) return;
+    setItems(ticketItems.map(ti => ({
+      description: ti.name,
+      qty:         ti.qty,
+      unit_cost:   ti.unit_cost,
+    })));
+  }
+
   async function selectJob(job: POJobResult) {
     setSelectedJob(job);
     setSelectedTicket(null);
+    setTicketItems([]);
     if (job.opportunity_id && job.type === 'opportunity') {
       // Load work tickets so user can optionally pin one
       setTicketsLoading(true);
@@ -131,13 +154,15 @@ export default function FieldPurchaseOrder() {
     } else {
       // Already have a work ticket from the search
       if (job.work_ticket_id) {
-        setSelectedTicket({
+        const ticket = {
           WorkTicketID:         job.work_ticket_id,
           WorkTicketNumber:     job.work_ticket_num ?? 0,
           WorkTicketStatusName: job.status,
           ScheduledStartDate:   job.date,
           PropertyName:         job.property_name,
-        });
+        };
+        setSelectedTicket(ticket);
+        fetchTicketItems(job.work_ticket_id);
       }
       setStep(3); // skip to vendor
     }
@@ -319,7 +344,7 @@ export default function FieldPurchaseOrder() {
             border: selectedTicket?.WorkTicketID === t.WorkTicketID
               ? `2px solid ${GRN}` : '1px solid #334155',
           }}
-          onClick={() => setSelectedTicket(t)}
+          onClick={() => { setSelectedTicket(t); fetchTicketItems(t.WorkTicketID); }}
         >
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 600 }}>Ticket #{t.WorkTicketNumber}</div>
@@ -424,6 +449,36 @@ export default function FieldPurchaseOrder() {
         <span style={{ fontSize: 13 }}>{selectedVendor?.vendor_name}</span>
         {selectedJob && <span style={{ color: '#64748b', fontSize: 12 }}> · {selectedJob.opportunity_name}</span>}
       </div>
+
+      {/* Load from ticket banner */}
+      {selectedTicket && (
+        <div style={{ ...card, background: '#1e3a5f', border: '1px solid #3b82f6', padding: '12px 14px', marginBottom: 8 }}>
+          {ticketItemsLoading && (
+            <div style={{ color: '#93c5fd', fontSize: 13 }}>Loading ticket materials…</div>
+          )}
+          {!ticketItemsLoading && ticketItems.length > 0 && (
+            <div>
+              <div style={{ color: '#93c5fd', fontSize: 12, marginBottom: 6 }}>
+                📋 Ticket #{selectedTicket.WorkTicketNumber} has {ticketItems.length} material item{ticketItems.length !== 1 ? 's' : ''}:
+              </div>
+              {ticketItems.map((ti, i) => (
+                <div key={i} style={{ color: '#bfdbfe', fontSize: 13, marginBottom: 2 }}>
+                  · {ti.name} × {ti.qty} @ ${ti.unit_cost.toFixed(2)}
+                </div>
+              ))}
+              <button
+                style={{ ...btn(BLU), marginTop: 10, fontSize: 14, padding: '10px' }}
+                onClick={loadTicketItemsIntoForm}
+              >
+                ↓ Load these items into PO
+              </button>
+            </div>
+          )}
+          {!ticketItemsLoading && ticketItems.length === 0 && (
+            <div style={{ color: '#64748b', fontSize: 13 }}>No purchasable materials on this ticket.</div>
+          )}
+        </div>
+      )}
 
       {items.map((it, i) => (
         <div key={i} style={card}>

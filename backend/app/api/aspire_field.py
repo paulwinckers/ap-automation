@@ -1488,34 +1488,47 @@ async def create_field_purchase_order(
 @router.get("/purchase-order/work-ticket-items/{work_ticket_id}")
 async def get_work_ticket_material_items(work_ticket_id: int):
     """
-    Fetch material items for a work ticket so the PO form can be pre-populated.
-    Tries several Aspire endpoints to find where ticket materials live.
+    Return material items for a work ticket so the PO line items can be
+    pre-populated.  Filters to Material-type items only and excludes any
+    marked DoNotPurchase.
+
+    Fields returned per item:
+      item_id, name, qty, unit_cost
     """
     _check_credentials()
-    results = {}
+    try:
+        res = await _aspire._get("WorkTicketItems", {
+            "$filter": f"WorkTicketID eq {work_ticket_id}",
+            "$select": (
+                "WorkTicketItemID,ItemName,ItemType,"
+                "ItemQuantityExtended,ItemCost,DoNotPurchase"
+            ),
+            "$top": "50",
+        })
+        records = _aspire._extract_list(res)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch work ticket items: {e}")
 
-    # Try the most likely endpoints
-    candidates = [
-        ("WorkTicketItems",    {"$filter": f"WorkTicketID eq {work_ticket_id}", "$top": "50"}),
-        ("WorkTicketServices", {"$filter": f"WorkTicketID eq {work_ticket_id}", "$top": "50"}),
-        ("ReceiptItems",       {"$filter": f"WorkTicketID eq {work_ticket_id}", "$top": "50"}),
-        ("Services",           {"$filter": f"WorkTicketID eq {work_ticket_id}", "$top": "50"}),
-        ("WorkTicketMaterials",{"$filter": f"WorkTicketID eq {work_ticket_id}", "$top": "50"}),
-    ]
+    items = []
+    for r in records:
+        # Only include Material-type items (skip Labor, Subcontractor, Equipment, etc.)
+        item_type = (r.get("ItemType") or "").strip().lower()
+        if item_type and item_type not in ("material", "m"):
+            continue
+        # Skip items flagged as do-not-purchase
+        if r.get("DoNotPurchase"):
+            continue
+        name = (r.get("ItemName") or "").strip()
+        if not name:
+            continue
+        items.append({
+            "item_id":   r.get("WorkTicketItemID"),
+            "name":      name,
+            "qty":       float(r.get("ItemQuantityExtended") or 1),
+            "unit_cost": float(r.get("ItemCost") or 0),
+        })
 
-    for endpoint, params in candidates:
-        try:
-            res = await _aspire._get(endpoint, params)
-            records = _aspire._extract_list(res)
-            results[endpoint] = {
-                "count":  len(records),
-                "fields": sorted(records[0].keys()) if records else [],
-                "sample": records[:3],
-            }
-        except Exception as e:
-            results[endpoint] = {"error": str(e)[:120]}
-
-    return {"work_ticket_id": work_ticket_id, "results": results}
+    return {"work_ticket_id": work_ticket_id, "items": items}
 
 
 @router.get("/purchase-order/probe")
