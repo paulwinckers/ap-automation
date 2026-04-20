@@ -1081,6 +1081,25 @@ async def create_field_issue(
 MISC_IRRIGATION_ITEM = "Misc Irrigation Inventory"
 
 
+@router.get("/purchase-order/uom-types")
+async def get_po_uom_types():
+    """Return all active Unit of Measure types from Aspire for the PO line item UOM dropdown."""
+    _check_credentials()
+    try:
+        res = await _aspire._get("UnitTypes", {"$top": "100"})
+        records = _aspire._extract_list(res)
+        uoms = [
+            {"id": r["UnitTypeID"], "name": r["UnitTypeName"]}
+            for r in records
+            if r.get("Active") and r.get("UnitTypeName") and r["UnitTypeName"].lower() != "dollars"
+        ]
+        uoms.sort(key=lambda x: x["name"].lower())
+        return {"uom_types": uoms}
+    except Exception as e:
+        logger.warning(f"UnitTypes fetch failed: {e}")
+        return {"uom_types": []}
+
+
 @router.get("/purchase-order/vendors")
 async def search_po_vendors(q: str = Query(default="")):
     """

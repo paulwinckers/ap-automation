@@ -20,12 +20,14 @@ import {
   getWorkTicketMaterials,
   createPurchaseOrder,
   getAspireEmployees,
+  getPOUomTypes,
   type POVendor,
   type POJobResult,
   type POWorkTicket,
   type POLineItem,
   type POTicketItem,
   type AspireEmployee,
+  type POUomType,
 } from '../lib/api';
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
@@ -64,6 +66,7 @@ export default function FieldPurchaseOrder() {
   const [items, setItems] = useState<POLineItem[]>([{ ...EMPTY_ITEM }]);
   const [ticketItems, setTicketItems]     = useState<POTicketItem[]>([]);
   const [ticketItemsLoading, setTicketItemsLoading] = useState(false);
+  const [uomTypes, setUomTypes]           = useState<POUomType[]>([]);
 
   // Notes + name
   const [notes, setNotes]         = useState('');
@@ -78,10 +81,11 @@ export default function FieldPurchaseOrder() {
   const jobTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const vendorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load preferred vendors and employee list on mount
+  // Load preferred vendors, employee list, and UOM types on mount
   useEffect(() => {
     getPOVendors().then(r => setVendors(r.vendors)).catch(() => {});
     getAspireEmployees().then(r => setEmployees(r)).catch(() => {});
+    getPOUomTypes().then(r => setUomTypes(r)).catch(() => {});
   }, []);
 
   // Debounced job search
@@ -517,11 +521,16 @@ export default function FieldPurchaseOrder() {
             </div>
             <div>
               <div style={label}>UOM</div>
-              <input
-                style={inp} placeholder="e.g. cuyd, ea, bag"
+              <select
+                style={inp}
                 value={it.uom || ''}
                 onChange={e => updateItem(i, 'uom', e.target.value)}
-              />
+              >
+                <option value="">— select —</option>
+                {uomTypes.map(u => (
+                  <option key={u.id} value={u.name}>{u.name}</option>
+                ))}
+              </select>
             </div>
           </div>
         </div>

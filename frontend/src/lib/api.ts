@@ -783,6 +783,13 @@ export interface POResult {
   job_name:       string | null;
 }
 
+export interface POUomType { id: number; name: string; }
+
+export async function getPOUomTypes(): Promise<POUomType[]> {
+  const r = await request<{ uom_types: POUomType[] }>('GET', '/aspire/field/purchase-order/uom-types');
+  return r.uom_types;
+}
+
 export async function getPOVendors(q = ''): Promise<{ vendors: POVendor[]; preferred_shown: boolean }> {
   const qs = q ? `?q=${encodeURIComponent(q)}` : '';
   return request('GET', `/aspire/field/purchase-order/vendors${qs}`);
