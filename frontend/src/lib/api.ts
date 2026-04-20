@@ -764,10 +764,11 @@ export interface POWorkTicket {
 }
 
 export interface POLineItem {
-  description: string;
-  qty:         number;
-  unit_cost:   number;
-  uom:         string;
+  description:     string;
+  qty:             number;
+  unit_cost:       number;
+  uom:             string;
+  catalog_item_id?: number | null;
 }
 
 export interface POResult {
@@ -794,11 +795,12 @@ export async function getPOWorkTickets(opportunityId: number): Promise<{ tickets
 }
 
 export interface POTicketItem {
-  item_id:   number;
-  name:      string;
-  qty:       number;
-  unit_cost: number;
-  uom:       string;
+  item_id:         number;
+  catalog_item_id: number | null;
+  name:            string;
+  qty:             number;
+  unit_cost:       number;
+  uom:             string;
 }
 
 export async function getWorkTicketMaterials(workTicketId: number): Promise<{ items: POTicketItem[] }> {

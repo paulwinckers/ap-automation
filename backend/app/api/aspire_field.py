@@ -1396,11 +1396,12 @@ async def create_field_purchase_order(
     receipt_items = []
     total_cost = 0.0
     for item in raw_items:
-        desc  = (item.get("description") or MISC_IRRIGATION_ITEM).strip()[:100]
-        qty   = float(item.get("qty") or 1)
-        cost  = float(item.get("unit_cost") or 0)
-        subtotal = round(qty * cost, 4)
-        total_cost += subtotal
+        desc            = (item.get("description") or MISC_IRRIGATION_ITEM).strip()[:100]
+        qty             = float(item.get("qty") or 1)
+        cost            = float(item.get("unit_cost") or 0)
+        catalog_item_id = item.get("catalog_item_id")  # links receipt to existing WorkTicketItem
+        subtotal        = round(qty * cost, 4)
+        total_cost     += subtotal
 
         receipt_item: dict = {
             "ItemName":     desc,
@@ -1408,11 +1409,17 @@ async def create_field_purchase_order(
             "ItemUnitCost": cost,
             "ItemType":     "Material",
         }
+        # CatalogItemID tells Aspire which catalog item this is, so it can match
+        # the receipt line back to the existing WorkTicketItem and update COM QTY
+        # on that item rather than creating a new line.
+        if catalog_item_id:
+            receipt_item["CatalogItemID"] = int(catalog_item_id)
+
         # Add allocation if a specific work ticket was selected
         if work_ticket_id:
             receipt_item["ItemAllocations"] = [{
-                "WorkTicketID":    work_ticket_id,
-                "ItemQuantity":    qty,
+                "WorkTicketID":     work_ticket_id,
+                "ItemQuantity":     qty,
                 "ReceiptItemPrice": subtotal,
                 "ItemEstUnitCost":  cost,
             }]
@@ -1499,7 +1506,7 @@ async def get_work_ticket_material_items(work_ticket_id: int):
         res = await _aspire._get("WorkTicketItems", {
             "$filter": f"WorkTicketID eq {work_ticket_id}",
             "$select": (
-                "WorkTicketItemID,ItemName,ItemType,"
+                "WorkTicketItemID,CatalogItemID,ItemName,ItemType,"
                 "ItemQuantityExtended,ItemCost,DoNotPurchase,"
                 "AllocationUnitTypeName"
             ),
@@ -1522,11 +1529,12 @@ async def get_work_ticket_material_items(work_ticket_id: int):
         if not name:
             continue
         items.append({
-            "item_id":   r.get("WorkTicketItemID"),
-            "name":      name,
-            "qty":       float(r.get("ItemQuantityExtended") or 1),
-            "unit_cost": float(r.get("ItemCost") or 0),
-            "uom":       (r.get("AllocationUnitTypeName") or "").strip(),
+            "item_id":         r.get("WorkTicketItemID"),
+            "catalog_item_id": r.get("CatalogItemID"),
+            "name":            name,
+            "qty":             float(r.get("ItemQuantityExtended") or 1),
+            "unit_cost":       float(r.get("ItemCost") or 0),
+            "uom":             (r.get("AllocationUnitTypeName") or "").strip(),
         })
 
     return {"work_ticket_id": work_ticket_id, "items": items}

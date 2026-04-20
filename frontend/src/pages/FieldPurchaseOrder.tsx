@@ -130,10 +130,11 @@ export default function FieldPurchaseOrder() {
   function loadTicketItemsIntoForm() {
     if (!ticketItems.length) return;
     setItems(ticketItems.map(ti => ({
-      description: ti.name,
-      qty:         ti.qty,
-      unit_cost:   ti.unit_cost,
-      uom:         ti.uom || '',
+      description:     ti.name,
+      qty:             ti.qty,
+      unit_cost:       ti.unit_cost,
+      uom:             ti.uom || '',
+      catalog_item_id: ti.catalog_item_id ?? null,
     })));
   }
 
