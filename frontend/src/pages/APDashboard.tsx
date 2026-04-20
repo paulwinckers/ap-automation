@@ -118,11 +118,12 @@ export default function APDashboard() {
   const [view, setView]               = useState<'active' | 'archived'>('active');
   const [search, setSearch]           = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const statusFilterRef = useRef<string>('all');   // always holds current filter for the interval
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // accept an explicit filter so callers can bypass stale closure
   async function refresh(activeFilter?: string) {
-    const filter = activeFilter ?? statusFilter;
+    const filter = activeFilter ?? statusFilterRef.current;
     try {
       // For destination filters (qbo / aspire) fetch all records via /invoices/
       // so we don't get truncated by the 100-row feed limit.
@@ -285,9 +286,10 @@ export default function APDashboard() {
 
   function toggleStatFilter(value: string) {
     const next = statusFilter === value ? 'all' : value;
+    statusFilterRef.current = next;   // update ref so the interval sees it immediately
     setStatusFilter(next);
     setEntries([]);
-    refresh(next);  // pass new value directly — avoids stale closure
+    refresh(next);
   }
 
   const forwardedCount = entries.filter(e => !!e.forwarded_to).length;
@@ -518,7 +520,7 @@ export default function APDashboard() {
         {/* Status filter */}
         <select
           value={statusFilter}
-          onChange={e => { const v = e.target.value; setStatusFilter(v); setEntries([]); refresh(v); }}
+          onChange={e => { const v = e.target.value; statusFilterRef.current = v; setStatusFilter(v); setEntries([]); refresh(v); }}
           style={{
             padding: '6px 12px', fontSize: 13, border: '1px solid #e2e8f0',
             borderRadius: 8, background: '#fff', color: '#1e293b', cursor: 'pointer',
