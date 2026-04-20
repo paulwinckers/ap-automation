@@ -1180,7 +1180,7 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
     # the matching ticket(s).
     if q.isdigit():
         wt_select = (
-            "WorkTicketID,WorkTicketNumber,WorkTicketTitle,OpportunityID,"
+            "WorkTicketID,WorkTicketNumber,OpportunityID,"
             "ScheduledStartDate,WorkTicketStatusName"
         )
 
@@ -1259,15 +1259,15 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
                 oid  = t.get("OpportunityID")
                 opp  = opp_map.get(oid, {})
                 results.append({
-                    "type":             "work_ticket",
-                    "opportunity_id":   oid,
-                    "opportunity_name": opp.get("OpportunityName") or f"Ticket #{q}",
-                    "property_name":    opp.get("PropertyName"),
-                    "work_ticket_id":   wid,
-                    "work_ticket_num":  t.get("WorkTicketNumber"),
-                    "work_ticket_title": t.get("WorkTicketTitle"),
-                    "status":           t.get("WorkTicketStatusName"),
-                    "date":             (t.get("ScheduledStartDate") or "")[:10],
+                    "type":              "work_ticket",
+                    "opportunity_id":    oid,
+                    "opportunity_name":  opp.get("OpportunityName") or f"Ticket #{q}",
+                    "property_name":     opp.get("PropertyName"),
+                    "work_ticket_id":    wid,
+                    "work_ticket_num":   t.get("WorkTicketNumber"),
+                    "work_ticket_title": None,  # not in WorkTickets $select
+                    "status":            t.get("WorkTicketStatusName"),
+                    "date":              (t.get("ScheduledStartDate") or "")[:10],
                 })
 
     # ── Text / numeric: search by opportunity name AND property name ─────────
@@ -1331,10 +1331,7 @@ async def get_po_work_tickets(opportunity_id: int):
     try:
         res = await _aspire._get("WorkTickets", {
             "$filter": f"OpportunityID eq {opportunity_id}",
-            "$select": (
-                "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
-                "WorkTicketTitle,ScheduledStartDate"
-            ),
+            "$select": "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,ScheduledStartDate",
             "$top": "50",
         })
         all_tickets = _aspire._extract_list(res)
@@ -1352,7 +1349,7 @@ async def get_po_work_tickets(opportunity_id: int):
         {
             "WorkTicketID":         t.get("WorkTicketID"),
             "WorkTicketNumber":     t.get("WorkTicketNumber"),
-            "WorkTicketTitle":      t.get("WorkTicketTitle"),
+            "WorkTicketTitle":      None,  # WorkTicketTitle not valid in $select
             "WorkTicketStatusName": t.get("WorkTicketStatusName"),
             "ScheduledStartDate":   (t.get("ScheduledStartDate") or "")[:10],
             "PropertyName":         None,
