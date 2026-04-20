@@ -1245,38 +1245,52 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
             except Exception as e:
                 logger.warning(f"Date-range fallback failed: {e}")
 
-    # ── Text / numeric: also search opportunity name (any active status) ──────
+    # ── Text / numeric: search by opportunity name AND property name ─────────
     if not q.isdigit() or not results:
         escaped = q.replace("'", "''")
         active_statuses = {"won", "active", "in progress", "approved"}
-        try:
-            select_fields = ",".join([
-                "OpportunityID", "OpportunityName", "OpportunityNumber",
-                "OpportunityStatusName", "PropertyName", "DivisionName",
-                "StartDate", "EndDate",
-            ])
-            res = await _aspire._get("Opportunities", {
-                "$filter": f"contains(OpportunityName, '{escaped}')",
-                "$select": select_fields,
-                "$top":    "15",
-            })
-            opps = _aspire._extract_list(res)
-            # Include all statuses relevant to active work (not just Won)
-            for o in opps:
-                status = (o.get("OpportunityStatusName") or "").lower()
-                if status in active_statuses:
-                    results.append({
-                        "type":             "opportunity",
-                        "opportunity_id":   o.get("OpportunityID"),
-                        "opportunity_name": o.get("OpportunityName"),
-                        "property_name":    o.get("PropertyName"),
-                        "work_ticket_id":   None,
-                        "work_ticket_num":  None,
-                        "status":           o.get("OpportunityStatusName"),
-                        "date":             None,
-                    })
-        except Exception as e:
-            logger.warning(f"Opportunity name search failed: {e}")
+        select_fields = ",".join([
+            "OpportunityID", "OpportunityName", "OpportunityNumber",
+            "OpportunityStatusName", "PropertyName", "DivisionName",
+            "StartDate", "EndDate",
+        ])
+
+        async def _search_opps(filt: str) -> list:
+            try:
+                res = await _aspire._get("Opportunities", {
+                    "$filter": filt,
+                    "$select": select_fields,
+                    "$top":    "15",
+                })
+                return _aspire._extract_list(res)
+            except Exception as e:
+                logger.warning(f"Opportunity search '{filt}' failed: {e}")
+                return []
+
+        # Run both searches in parallel
+        by_name, by_property = await _asyncio.gather(
+            _search_opps(f"contains(OpportunityName, '{escaped}')"),
+            _search_opps(f"contains(PropertyName, '{escaped}')"),
+        )
+
+        seen_opp_ids: set[int] = set()
+        for o in by_name + by_property:
+            oid = o.get("OpportunityID")
+            if not oid or oid in seen_opp_ids:
+                continue
+            status = (o.get("OpportunityStatusName") or "").lower()
+            if status in active_statuses:
+                seen_opp_ids.add(oid)
+                results.append({
+                    "type":             "opportunity",
+                    "opportunity_id":   oid,
+                    "opportunity_name": o.get("OpportunityName"),
+                    "property_name":    o.get("PropertyName"),
+                    "work_ticket_id":   None,
+                    "work_ticket_num":  None,
+                    "status":           o.get("OpportunityStatusName"),
+                    "date":             None,
+                })
 
     return {"results": results[:12]}
 
