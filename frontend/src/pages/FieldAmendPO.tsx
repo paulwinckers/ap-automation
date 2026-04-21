@@ -48,7 +48,7 @@ export default function FieldAmendPO() {
   const [vendorQ,     setVendorQ]     = useState('');
   const [newVendor,   setNewVendor]   = useState<POVendor | null>(null);
   const [error,       setError]       = useState<string | null>(null);
-  const [result,      setResult]      = useState<{ display_number: number; old_vendor: string; vendor_name: string } | null>(null);
+  const [result,      setResult]      = useState<{ display_number: number | null; old_vendor: string; vendor_name: string } | null>(null);
 
   // Load New receipts on mount
   useEffect(() => {
@@ -80,7 +80,7 @@ export default function FieldAmendPO() {
     try {
       const res = await amendPOVendor({
         receiptId:  selected.receipt_id,
-        vendorId:   newVendor.vendor_id,
+        vendorId:   newVendor.vendor_id!,
         vendorName: newVendor.vendor_name,
       });
       setResult(res);
