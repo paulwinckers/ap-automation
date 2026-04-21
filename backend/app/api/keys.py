@@ -77,10 +77,10 @@ async def search_aspire_properties(
     _user: dict = Depends(_get_current_user),
 ):
     """Search Aspire properties by name (for admin key setup)."""
+    q_safe = q.replace("'", "''")
     try:
         res = await _aspire._get("Properties", {
-            "$filter": f"contains(tolower(PropertyName), '{q.lower().replace(chr(39), '')}') and Active eq true",
-            "$select": "PropertyID,PropertyName,Address1,City",
+            "$filter": f"contains(PropertyName,'{q_safe}')",
             "$top": "20",
         })
         records = _aspire._extract_list(res)
