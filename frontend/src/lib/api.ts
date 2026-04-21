@@ -896,6 +896,11 @@ export async function getKeyEmployees(): Promise<string[]> {
   return r.employees;
 }
 
+export async function listKeysPublic(): Promise<KeyEntry[]> {
+  const r = await request<{ keys: KeyEntry[] }>('GET', '/keys/list');
+  return r.keys;
+}
+
 export async function getKey(id: number): Promise<{ key: KeyEntry; checked_out: boolean; log: KeyLogEntry[] }> {
   return request('GET', `/keys/${id}`);
 }

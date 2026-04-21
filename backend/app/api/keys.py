@@ -60,6 +60,13 @@ def _is_out(row: dict) -> bool:
 
 # ── Fixed-path public endpoints (must be before /{key_id}) ───────────────────
 
+@router.get("/list")
+async def list_keys_public(db: Database = Depends(get_db)):
+    """Public — all active keys with current holder, for the field search page."""
+    rows = await db._q(KEYS_WITH_STATUS_SQL.format(where="WHERE k.active = 1"), [])
+    return {"keys": [dict(r) for r in rows]}
+
+
 @router.get("/employees")
 async def list_key_employees(db: Database = Depends(get_db)):
     """Employee names for the scan-page dropdown (is_employee=1 in vendor_rules)."""

@@ -27,6 +27,7 @@ import UserAdmin            from './pages/UserAdmin';
 import RequireAuth          from './components/RequireAuth';
 import KeyScan             from './pages/KeyScan';
 import KeysAdmin           from './pages/KeysAdmin';
+import FieldKeys           from './pages/FieldKeys';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -53,6 +54,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/field/purchase-order" element={<FieldPurchaseOrder />} />
         <Route path="/field/amend-po"       element={<FieldAmendPO />} />
         <Route path="/keys/scan/:id"        element={<KeyScan />} />
+        <Route path="/field/keys"           element={<FieldKeys />} />
 
         {/* Office / AP — login required */}
         <Route path="/ap"           element={<RequireAuth><Office><APDashboard /></Office></RequireAuth>} />
