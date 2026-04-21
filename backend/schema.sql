@@ -265,3 +265,26 @@ ALTER TABLE time_sessions ADD COLUMN route_id INTEGER;
 ALTER TABLE time_sessions ADD COLUMN route_name TEXT;
 ALTER TABLE time_sessions ADD COLUMN crew_leader_contact_id INTEGER;
 ALTER TABLE time_sessions ADD COLUMN crew_leader_name TEXT;
+
+-- ── Key management ────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS keys (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    key_type      TEXT NOT NULL CHECK(key_type IN ('vehicle', 'property_owner', 'other')),
+    description   TEXT,
+    property_name TEXT,
+    active        INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS key_logs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_id        INTEGER NOT NULL,
+    employee_name TEXT NOT NULL,
+    action        TEXT NOT NULL CHECK(action IN ('out', 'in')),
+    notes         TEXT,
+    scanned_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_key_logs_key_id    ON key_logs(key_id);
+CREATE INDEX IF NOT EXISTS idx_key_logs_scanned_at ON key_logs(scanned_at);

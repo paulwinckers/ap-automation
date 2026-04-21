@@ -864,3 +864,83 @@ export async function createPurchaseOrder(p: {
   form.append('items_json', JSON.stringify(p.items));
   return request<POResult>('POST', '/aspire/field/purchase-order', form, true);
 }
+
+// ── Key management ────────────────────────────────────────────────────────────
+
+export interface KeyEntry {
+  id:             number;
+  name:           string;
+  key_type:       'vehicle' | 'property_owner' | 'other';
+  description:    string | null;
+  property_name:  string | null;
+  active:         number;
+  created_at:     string;
+  current_holder: string | null;
+  last_action:    'in' | 'out' | null;
+  last_scanned:   string | null;
+}
+
+export interface KeyLogEntry {
+  id:            number;
+  key_id:        number;
+  key_name?:     string;
+  key_type?:     string;
+  employee_name: string;
+  action:        'in' | 'out';
+  notes:         string | null;
+  scanned_at:    string;
+}
+
+export async function getKeyEmployees(): Promise<string[]> {
+  const r = await request<{ employees: string[] }>('GET', '/keys/employees');
+  return r.employees;
+}
+
+export async function getKey(id: number): Promise<{ key: KeyEntry; checked_out: boolean; log: KeyLogEntry[] }> {
+  return request('GET', `/keys/${id}`);
+}
+
+export async function scanKey(p: { keyId: number; employeeName: string; action: 'in' | 'out'; notes?: string }): Promise<{ ok: boolean }> {
+  const form = new FormData();
+  form.append('employee_name', p.employeeName);
+  form.append('action', p.action);
+  form.append('notes', p.notes ?? '');
+  return request('POST', `/keys/${p.keyId}/scan`, form, true);
+}
+
+export async function listKeys(): Promise<KeyEntry[]> {
+  const r = await request<{ keys: KeyEntry[] }>('GET', '/keys/');
+  return r.keys;
+}
+
+export async function createKey(p: { name: string; keyType: string; description?: string; propertyName?: string }): Promise<{ ok: boolean; key_id: number }> {
+  const form = new FormData();
+  form.append('name',          p.name);
+  form.append('key_type',      p.keyType);
+  form.append('description',   p.description  ?? '');
+  form.append('property_name', p.propertyName ?? '');
+  return request('POST', '/keys/', form, true);
+}
+
+export async function updateKey(id: number, p: { name?: string; keyType?: string; description?: string; propertyName?: string }): Promise<{ ok: boolean }> {
+  const form = new FormData();
+  if (p.name         != null) form.append('name',          p.name);
+  if (p.keyType      != null) form.append('key_type',      p.keyType);
+  if (p.description  != null) form.append('description',   p.description);
+  if (p.propertyName != null) form.append('property_name', p.propertyName);
+  return request('PATCH', `/keys/${id}`, form, true);
+}
+
+export async function deactivateKey(id: number): Promise<{ ok: boolean }> {
+  return request('DELETE', `/keys/${id}`);
+}
+
+export async function getKeyFullLog(limit = 200): Promise<KeyLogEntry[]> {
+  const r = await request<{ log: KeyLogEntry[] }>('GET', `/keys/log/all?limit=${limit}`);
+  return r.log;
+}
+
+export async function searchAspireProperties(q: string): Promise<{ property_id: number; property_name: string; address: string }[]> {
+  const r = await request<{ results: { property_id: number; property_name: string; address: string }[] }>('GET', `/keys/properties/search?q=${encodeURIComponent(q)}`);
+  return r.results;
+}

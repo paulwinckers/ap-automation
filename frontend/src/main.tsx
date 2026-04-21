@@ -25,6 +25,8 @@ import Login                from './pages/Login';
 import Setup                from './pages/Setup';
 import UserAdmin            from './pages/UserAdmin';
 import RequireAuth          from './components/RequireAuth';
+import KeyScan             from './pages/KeyScan';
+import KeysAdmin           from './pages/KeysAdmin';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -50,6 +52,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/field/issue"          element={<FieldIssue />} />
         <Route path="/field/purchase-order" element={<FieldPurchaseOrder />} />
         <Route path="/field/amend-po"       element={<FieldAmendPO />} />
+        <Route path="/keys/scan/:id"        element={<KeyScan />} />
 
         {/* Office / AP — login required */}
         <Route path="/ap"           element={<RequireAuth><Office><APDashboard /></Office></RequireAuth>} />
@@ -64,6 +67,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/dashboards/estimating"   element={<RequireAuth><Office><EstimatingDashboard /></Office></RequireAuth>} />
         <Route path="/dashboards/activities"   element={<RequireAuth><Office><ActivitiesDashboard /></Office></RequireAuth>} />
         <Route path="/ops/crew-schedule"       element={<RequireAuth><Office><CrewSchedule /></Office></RequireAuth>} />
+        <Route path="/keys/admin"              element={<RequireAuth><Office><KeysAdmin /></Office></RequireAuth>} />
         <Route path="/ops/time-tracking"       element={<TimeTracking />} />
         <Route path="/ops/contacts"            element={<RequireAuth><Office><PropertyLookup /></Office></RequireAuth>} />
 

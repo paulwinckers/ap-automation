@@ -32,6 +32,7 @@ const OFFICE_GROUPS = [
     items: [
       { to: '/ops/crew-schedule', icon: '👥', label: 'Crew Schedule', sub: 'Assign staff to routes' },
       { to: '/ops/contacts',      icon: '📞', label: 'Contacts',      sub: 'Property & client lookup' },
+      { to: '/keys/admin',        icon: '🔑', label: 'Key Box Admin', sub: 'Manage keys & view log' },
     ],
   },
   {

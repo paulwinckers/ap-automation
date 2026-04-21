@@ -26,6 +26,7 @@ from app.api.aspire_field import router as aspire_field_router
 from app.api.crew_schedule import router as crew_schedule_router
 from app.api.time_tracking import router as time_tracking_router
 from app.api.auth import router as auth_router
+from app.api.keys import router as keys_router
 from app.core.config import settings
 from app.core.database import Database
 from app.services.qbo import qbo_auth_router
@@ -138,3 +139,4 @@ app.include_router(crew_schedule_router)
 app.include_router(time_tracking_router)
 app.include_router(auth_router)
 app.include_router(qbo_auth_router)
+app.include_router(keys_router)
