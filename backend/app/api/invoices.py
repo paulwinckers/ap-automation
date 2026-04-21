@@ -779,6 +779,11 @@ async def apply_po_override(
     await db.apply_po_override(invoice_id, body.po_number, body.reviewed_by)
 
     raw = json.loads(row.get("intake_raw") or "{}")
+
+    # Fetch PDF from R2 so the attachment reaches Aspire on re-routing
+    r2_key = row.get("pdf_r2_key")
+    file_bytes_po = await get_file_bytes(r2_key) if r2_key else None
+
     invoice = Invoice(
         id                 = invoice_id,
         status             = InvoiceStatus.QUEUED,
@@ -796,6 +801,7 @@ async def apply_po_override(
         intake_source      = row["intake_source"],
         line_items         = [LineItem(**li) for li in raw.get("line_items", [])],
         tax_lines          = [TaxLine(**tl) for tl in raw.get("tax_lines", [])],
+        file_bytes         = file_bytes_po,
     )
 
     outcome = await route_invoice(invoice, db, _aspire, _qbo)
@@ -826,6 +832,13 @@ async def mark_as_overhead(
         raise HTTPException(status_code=422, detail="No GL account available — provide one or add it to the vendor rule")
 
     raw = json.loads(row.get("intake_raw") or "{}")
+
+    # Fetch PDF from R2 so the attachment is included in the QBO bill
+    r2_key = row.get("pdf_r2_key")
+    file_bytes = await get_file_bytes(r2_key) if r2_key else None
+    if not file_bytes:
+        logger.warning(f"No R2 file for invoice {invoice_id} — bill will be posted without attachment")
+
     invoice = Invoice(
         id             = invoice_id,
         status         = InvoiceStatus.QUEUED,
@@ -843,7 +856,11 @@ async def mark_as_overhead(
     )
 
     try:
-        bill_id, qbo_amount = await _qbo.post_bill(invoice, gl_account)
+        bill_id, qbo_amount = await _qbo.post_bill(
+            invoice, gl_account,
+            file_bytes=file_bytes,
+            filename=row.get("pdf_filename"),
+        )
         await db.mark_posted_qbo(invoice_id, bill_id, gl_account, gl_name=gl_name, qbo_amount=qbo_amount)
         await db.audit(invoice_id, "posted", body.reviewed_by, {
             "destination": "qbo", "bill_id": bill_id, "gl_account": gl_account, "gl_name": gl_name, "qbo_amount": qbo_amount, "manual": True

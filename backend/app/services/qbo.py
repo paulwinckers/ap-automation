@@ -565,17 +565,50 @@ class QBOClient:
         return bill_id, qbo_amount
 
     async def _attach_file(self, entity_id: str, entity_type: str, file_bytes: bytes, filename: str) -> None:
-        """Upload a file and attach it to any QBO entity (Bill, VendorCredit, Purchase, etc.)."""
-        import base64
+        """
+        Upload a file and attach it to any QBO entity (Bill, VendorCredit, Purchase, etc.).
+        Uses the QBO multipart /upload endpoint.
+        Supported formats: PDF, JPG, PNG.  HEIC (iPhone) is converted to JPEG first.
+        """
+        import json as _json
         import mimetypes as _mimetypes
+
+        fn_lower = filename.lower()
+
+        # HEIC/HEIF (common iPhone format) — QBO does not accept it.
+        # Convert to JPEG in-memory so the attachment actually opens in QBO.
+        if fn_lower.endswith((".heic", ".heif")):
+            try:
+                import io
+                from PIL import Image
+                img = Image.open(io.BytesIO(file_bytes))
+                buf = io.BytesIO()
+                img.convert("RGB").save(buf, format="JPEG", quality=90)
+                file_bytes = buf.getvalue()
+                filename = filename.rsplit(".", 1)[0] + ".jpg"
+                fn_lower  = filename.lower()
+                logger.info(f"Converted HEIC attachment to JPEG for QBO upload: {filename}")
+            except Exception as e:
+                logger.warning(f"HEIC→JPEG conversion failed ({e}); uploading as-is (QBO may reject it)")
+
         mime_type, _ = _mimetypes.guess_type(filename)
         if not mime_type:
-            mime_type = "application/pdf" if filename.lower().endswith(".pdf") else "image/jpeg"
+            if fn_lower.endswith(".pdf"):
+                mime_type = "application/pdf"
+            elif fn_lower.endswith((".jpg", ".jpeg")):
+                mime_type = "image/jpeg"
+            elif fn_lower.endswith(".png"):
+                mime_type = "image/png"
+            elif fn_lower.endswith(".webp"):
+                mime_type = "image/webp"
+            else:
+                mime_type = "application/octet-stream"
+
         body = {
             "AttachableRef": [{"EntityRef": {"type": entity_type, "value": entity_id}}],
             "FileName": filename,
             "ContentType": mime_type,
-            "Note": f"Original document — auto-attached by AP Automation",
+            "Note": "Original document — auto-attached by AP Automation",
         }
         token = await self._ensure_token()
         upload_url = f"{self.base_url}/v3/company/{self.realm_id}/upload"
@@ -584,7 +617,7 @@ class QBOClient:
             params={"minorversion": "70"},
             headers={"Authorization": f"Bearer {token}"},
             files={
-                "file_metadata_01": (None, __import__("json").dumps(body), "application/json"),
+                "file_metadata_01": (None, _json.dumps(body), "application/json"),
                 "file_content_01":  (filename, file_bytes, mime_type),
             },
         )
@@ -592,48 +625,8 @@ class QBOClient:
             raise ValueError(f"Attachment upload failed: {resp.status_code} {resp.text[:200]}")
 
     async def _attach_file_to_bill(self, bill_id: str, file_bytes: bytes, filename: str) -> None:
-        """
-        Upload a file and attach it to a QBO bill using the attachable endpoint.
-        QBO supports PDF, JPG, PNG attachments on bills.
-        """
-        import base64
-        import mimetypes
-
-        # Detect MIME type
-        mime_type, _ = mimetypes.guess_type(filename)
-        if not mime_type:
-            if filename.lower().endswith(".pdf"):
-                mime_type = "application/pdf"
-            else:
-                mime_type = "image/jpeg"
-
-        file_b64 = base64.b64encode(file_bytes).decode("utf-8")
-
-        body = {
-            "AttachableRef": [{"EntityRef": {"type": "Bill", "value": bill_id}}],
-            "FileName": filename,
-            "ContentType": mime_type,
-            "Note": f"Original invoice — auto-attached by AP Automation",
-        }
-
-        token = await self._ensure_token()
-        # QBO attachment upload uses multipart form — different from regular JSON POST
-        import httpx
-        files = {"file_metadata_01": (None, str(body).replace("'", '"'), "application/json")}
-
-        # Use the upload endpoint
-        upload_url = f"{self.base_url}/v3/company/{self.realm_id}/upload"
-        resp = await self._http.post(
-            upload_url,
-            params={"minorversion": "70"},
-            headers={"Authorization": f"Bearer {token}"},
-            files={
-                "file_metadata_01": (None, __import__("json").dumps(body), "application/json"),
-                "file_content_01":  (filename, file_bytes, mime_type),
-            },
-        )
-        if resp.status_code not in (200, 201):
-            raise ValueError(f"Attachment upload failed: {resp.status_code} {resp.text[:200]}")
+        """Attach a file to a QBO Bill. Delegates to _attach_file."""
+        await self._attach_file(bill_id, "Bill", file_bytes, filename)
 
     # ── Purchase (credit card charge) creation ────────────────────────────────
 
