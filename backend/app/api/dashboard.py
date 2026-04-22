@@ -46,6 +46,41 @@ async def probe_aspire():
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@router.get("/probe/clock-times")
+async def probe_clock_times(date: str = Query(None)):
+    """
+    Diagnostic: fetch raw ClockTimes records and try multiple filters.
+    Returns field names + sample records so we can identify the correct filter field.
+    """
+    from datetime import date as _date
+    target = date or _date.today().isoformat()
+    results = {}
+
+    # Try each filter variant
+    filters = [
+        ("no_filter_top3",         {}),
+        ("date_eq",                {"$filter": f"Date eq {target}"}),
+        ("date_ge_le",             {"$filter": f"Date ge {target} and Date le {target}"}),
+        ("clock_start_range",      {"$filter": f"ClockStartDateTime ge {target}T00:00:00Z and ClockStartDateTime le {target}T23:59:59Z"}),
+        ("clock_start_date_func",  {"$filter": f"Date(ClockStartDateTime) eq {target}"}),
+    ]
+
+    for label, params in filters:
+        try:
+            params["$top"] = "3"
+            raw = await _aspire._get("ClockTimes", params)
+            records = _aspire._extract_list(raw)
+            results[label] = {
+                "count": len(records),
+                "fields": sorted(records[0].keys()) if records else [],
+                "sample": records[:2] if records else [],
+            }
+        except Exception as e:
+            results[label] = {"error": str(e)}
+
+    return results
+
+
 @router.get("/construction/opp/{opp_number}")
 async def get_opp_raw(opp_number: int):
     """Debug: fetch one opportunity by OpportunityNumber with ALL fields."""
