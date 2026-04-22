@@ -2221,6 +2221,7 @@ async def daily_report_html(
             except Exception as e:
                 logger.warning(f"Opportunity in() fetch failed for chunk starting {chunk[0]}: {e}")
 
+        # Property + name: only needed for tickets that didn't have PropertyName directly
         for t in need_lookup:
             wt_id  = t.get("WorkTicketID")
             opp_id = t.get("OpportunityID")
@@ -2231,6 +2232,14 @@ async def daily_report_html(
                 property_by_wt[wt_id] = opp_property_name[oid]
             if oid in opp_name:
                 opp_name_by_wt[wt_id] = opp_name[oid]
+
+        # Division: must be resolved for ALL tickets (including those with PropertyName)
+        for t in tickets:
+            wt_id  = t.get("WorkTicketID")
+            opp_id = t.get("OpportunityID")
+            if not (wt_id and opp_id):
+                continue
+            oid = int(opp_id)
             if oid in opp_division:
                 division_by_wt[wt_id] = opp_division[oid]
 
