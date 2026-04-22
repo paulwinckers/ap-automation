@@ -2155,8 +2155,10 @@ async def daily_report_html(
 
     # Pass 2: OpportunityID → Opportunity
     # Fetch: PropertyName, PropertyID (for pass 3), OpportunityName (fallback display)
+    # NOTE: opp_ids is built from ALL tickets so DivisionName is resolved for every
+    # ticket — including those that already have PropertyName directly on the record.
     need_lookup = [t for t in tickets if t.get("WorkTicketID") and t["WorkTicketID"] not in property_by_wt]
-    opp_ids = list({int(t["OpportunityID"]) for t in need_lookup if t.get("OpportunityID")})
+    opp_ids = list({int(t["OpportunityID"]) for t in tickets if t.get("OpportunityID")})
     opp_name_by_wt: dict[int, str] = {}   # fallback: opportunity name when no PropertyName
     division_by_wt: dict[int, str] = {}   # WorkTicketID → DivisionName
     if opp_ids:
