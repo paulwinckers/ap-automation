@@ -2013,8 +2013,8 @@ async def daily_report_html(
 
         # Pass 1 & 2: tickets completed or scheduled on target date
         for f in [
-            f"CompleteDate ge {day_start_z} and CompleteDate le {day_end_z}",
-            f"ScheduledStartDate ge {day_start_z} and ScheduledStartDate le {day_end_z}",
+            f"CompleteDate ge {target}T00:00:00Z and CompleteDate le {target}T23:59:59Z",
+            f"ScheduledStartDate ge {target}T00:00:00Z and ScheduledStartDate le {target}T23:59:59Z",
         ]:
             try:
                 batch = await _aspire._get_all("WorkTickets", {
@@ -2096,9 +2096,9 @@ async def daily_report_html(
 
     async def _fetch_visit_notes():
         for date_filter in [
-            f"ScheduledDate ge {day_start_z} and ScheduledDate le {day_end_z}",
-            f"ScheduledDate ge {target} and ScheduledDate le {next_day}",
-            f"CreatedDateTime ge {day_start_z} and CreatedDateTime le {day_end_z}",
+            f"ScheduledDate ge {target}T00:00:00Z and ScheduledDate le {target}T23:59:59Z",
+            f"ScheduledDate ge {target} and ScheduledDate le {target}T23:59:59",
+            f"CreatedDateTime ge {target}T00:00:00Z and CreatedDateTime le {target}T23:59:59Z",
         ]:
             try:
                 result = await _aspire._get_all("WorkTicketVisitNotes", {
@@ -2130,7 +2130,7 @@ async def daily_report_html(
         try:
             return await _aspire._get_all("Attachments", {
                 "$select": "AttachmentID,WorkTicketID,AttachmentName,FileExtension,DateUploaded,ExternalContentID",
-                "$filter": f"DateUploaded ge {day_start_z} and DateUploaded le {day_end_z} and WorkTicketID ne null",
+                "$filter": f"DateUploaded ge {target}T00:00:00Z and DateUploaded le {day_end_z} and WorkTicketID ne null",
                 "$top": "500",
             })
         except Exception as ex:
