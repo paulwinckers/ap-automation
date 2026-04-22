@@ -950,15 +950,27 @@ async def get_issue_categories():
 async def debug_issue_raw(issue_id: int):
     """Temp: fetch a raw Aspire Issue record to inspect available fields."""
     _check_credentials()
-    try:
-        result = await _aspire._get("Issues", {
-            "$filter": f"IssueID eq {issue_id}",
-            "$top": "1",
-        })
-        records = _aspire._extract_list(result)
-        return {"raw": records[0] if records else None, "count": len(records)}
-    except Exception as e:
-        return {"error": str(e)}
+    errors = {}
+    # Try multiple approaches to fetch an Issue
+    for approach, params in [
+        ("no_filter",   {"$top": "1"}),
+        ("select_all",  {"$top": "1", "$select": "IssueID,ActivityCategoryID,ActivityCategoryName,CategoryID,AssignedTo,AssignedToName,Subject,PropertyID"}),
+        ("activities_filter", None),  # Try /Activities endpoint for issues
+    ]:
+        try:
+            if approach == "activities_filter":
+                result = await _aspire._get("Activities", {
+                    "$filter": "ActivityType eq 'Issue'",
+                    "$top": "1",
+                    "$select": "ActivityID,ActivityCategoryID,ActivityCategoryName,AssignedTo",
+                })
+            else:
+                result = await _aspire._get("Issues", params or {})
+            records = _aspire._extract_list(result)
+            return {"approach": approach, "raw": records[0] if records else None, "count": len(records)}
+        except Exception as e:
+            errors[approach] = str(e)
+    return {"errors": errors}
 
 
 @router.post("/issue")
