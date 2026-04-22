@@ -46,6 +46,37 @@ async def probe_aspire():
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@router.get("/probe/work-ticket/{wt_id}")
+async def probe_work_ticket(wt_id: int):
+    """Diagnostic: return all fields on a WorkTicket record fetched by ID."""
+    try:
+        result = await _aspire._get("WorkTickets", {
+            "$filter": f"WorkTicketID eq {wt_id}",
+            "$top": "1",
+        })
+        records = _aspire._extract_list(result)
+        if not records:
+            # Try in() syntax
+            result2 = await _aspire._get("WorkTickets", {
+                "$filter": f"WorkTicketID in ({wt_id})",
+                "$top": "1",
+            })
+            records = _aspire._extract_list(result2)
+        if not records:
+            return {"found": False, "wt_id": wt_id}
+        rec = records[0]
+        return {
+            "found": True,
+            "fields": sorted(rec.keys()),
+            "OpportunityID": rec.get("OpportunityID"),
+            "DivisionName": rec.get("DivisionName"),
+            "DivisionID": rec.get("DivisionID"),
+            "record": rec,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @router.get("/probe/clock-times")
 async def probe_clock_times(date: str = Query(None)):
     """
