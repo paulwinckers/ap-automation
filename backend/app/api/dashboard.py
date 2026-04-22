@@ -2144,6 +2144,36 @@ async def daily_report_html(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
 
+    # ── Supplemental visit-note fetch by WorkTicketID ─────────────────────────
+    # Visit notes inherit ScheduledDate from the ticket, so a ticket worked on a
+    # different day than scheduled (e.g. scheduled 4/20, worked 4/21) will have
+    # notes with ScheduledDate=4/20 — missed by the date filter above.
+    # Fix: after we know which tickets are in scope, fetch notes for any ticket
+    # that has no notes yet.
+    noted_wt_ids = {n.get("WorkTicketID") for n in visit_notes}
+    missing_note_ids = [
+        t.get("WorkTicketID") for t in tickets
+        if t.get("WorkTicketID") and t.get("WorkTicketID") not in noted_wt_ids
+    ]
+    if missing_note_ids:
+        for i in range(0, len(missing_note_ids), 50):
+            chunk = missing_note_ids[i:i + 50]
+            id_list = ",".join(str(x) for x in chunk)
+            try:
+                extra = await _aspire._get_all("WorkTicketVisitNotes", {
+                    "$filter": f"WorkTicketID in ({id_list})",
+                    "$top": "200",
+                })
+                # Only keep notes actually written on the target date
+                for n in extra:
+                    created = (n.get("CreatedDateTime") or "")
+                    scheduled = (n.get("ScheduledDate") or "")
+                    if created.startswith(target) or scheduled.startswith(target):
+                        visit_notes.append(n)
+                logger.info(f"Supplemental visit notes: {len(extra)} fetched for {len(chunk)} tickets")
+            except Exception as ex:
+                logger.warning(f"Supplemental visit notes fetch failed: {ex}")
+
     # ── Property name resolution (3-pass) ────────────────────────────────────
     # Pass 1: PropertyName directly on WorkTicket full record (if field exists)
     property_by_wt: dict[int, str] = {}
