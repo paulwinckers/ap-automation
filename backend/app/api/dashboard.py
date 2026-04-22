@@ -2528,24 +2528,12 @@ async def daily_report_html(
                     clocked_str = "—"
                     diff_cell   = "—"
 
-                # vs Estimate efficiency
-                if s_est > 0:
-                    eff_pct    = (worked_h / s_est) * 100
-                    eff_colour = "#ef4444" if eff_pct > 110 else ("#f59e0b" if eff_pct > 95 else "#16a34a")
-                    eff_str    = f'<span style="font-weight:700;color:{eff_colour}">{eff_pct:.0f}%</span>'
-                    est_str    = f"{s_est:.1f}h"
-                else:
-                    eff_str = "—"
-                    est_str = "—"
-
                 staff_rows_html += f"""
               <tr>
                 <td class="eff-name">{info['name']}</td>
                 <td class="eff-num">{clocked_str}</td>
                 <td class="eff-num">{worked_h:.2f}h</td>
                 <td class="eff-num">{diff_cell}</td>
-                <td class="eff-num">{est_str}</td>
-                <td class="eff-num">{eff_str}</td>
               </tr>"""
             efficiency_html = f"""
         <div class="efficiency-table">
@@ -2556,8 +2544,6 @@ async def daily_report_html(
               <th class="eff-num">Clocked</th>
               <th class="eff-num">Worked</th>
               <th class="eff-num">Difference</th>
-              <th class="eff-num">Est.</th>
-              <th class="eff-num">vs Est.</th>
             </tr></thead>
             <tbody>{staff_rows_html}</tbody>
           </table>
