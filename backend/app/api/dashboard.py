@@ -2531,6 +2531,24 @@ DAILY_REPORT_RECIPIENTS: dict[str, list[str]] = {
 }
 
 
+@router.post("/daily-report/send-all")
+async def send_all_daily_reports(date: str = Query(None)):
+    """
+    Send daily report emails for ALL configured divisions in one call.
+    The Railway cron job should call this endpoint — no need for a separate
+    cron entry per division.
+    """
+    results = []
+    for division in DAILY_REPORT_RECIPIENTS:
+        try:
+            result = await send_daily_report_email(date=date, division=division)
+            results.append(result)
+        except Exception as e:
+            logger.error(f"Daily report failed for {division!r}: {e}")
+            results.append({"ok": False, "division": division, "error": str(e)})
+    return {"results": results}
+
+
 @router.post("/daily-report/send-email")
 async def send_daily_report_email(
     date: str = Query(None),
@@ -2538,9 +2556,7 @@ async def send_daily_report_email(
 ):
     """
     Generate the daily HTML report for one division and email it to configured recipients.
-    Called by Railway cron at 5 pm ET:
-      POST /dashboard/daily-report/send-email?division=Construction
-      POST /dashboard/daily-report/send-email?division=Commercial+Maintenance
+    Prefer calling /daily-report/send-all to send all divisions in one cron job.
     """
     from datetime import datetime, timezone, timedelta
     from app.services.email_intake import GraphClient
