@@ -2127,52 +2127,9 @@ async def daily_report_html(
             logger.warning(f"Attachments fetch failed: {ex}")
             return []
 
-    async def _fetch_clock_times():
-        """
-        Fetch ClockTimes for target date — gives total clocked hours per employee
-        (clock-in to clock-out minus break), regardless of which tickets they worked.
-        ContactID → clocked_hours (net of BreakTime).
-        """
-        clocked: dict = {}
-        try:
-            from datetime import datetime as _dt
-            # ClockTimes does not support $filter (all variants return 400).
-            # Fetch all records and filter in Python by ClockStart date prefix.
-            # Fields confirmed: ClockStart / ClockEnd (not ClockStartDateTime).
-            # BreakTime is in hours (0.5 = 30 min), not minutes.
-            all_clocks = await _aspire._get_all("ClockTimes", {"$top": "1000"})
-            logger.info(f"ClockTimes: fetched {len(all_clocks)} total, filtering to {target}")
-            for e in all_clocks:
-                cs_raw = e.get("ClockStart") or ""
-                if not cs_raw.startswith(target):
-                    continue          # skip entries not on target date
-                cid = e.get("ContactID")
-                if not cid:
-                    continue
-                try:
-                    cs    = _dt.fromisoformat(cs_raw.rstrip("Z"))
-                    ce    = _dt.fromisoformat(e["ClockEnd"].rstrip("Z")) if e.get("ClockEnd") else None
-                    if ce and ce > cs:
-                        gross_h = (ce - cs).total_seconds() / 3600
-                        break_h = float(e.get("BreakTime") or 0)  # already in hours
-                        net_h   = max(gross_h - break_h, 0.0)
-                        name    = (e.get("ContactName") or "").strip()
-                        if cid not in clocked:
-                            clocked[cid] = {"name": name or f"Staff #{cid}", "hours": 0.0}
-                        else:
-                            if name and clocked[cid]["name"].startswith("Staff #"):
-                                clocked[cid]["name"] = name
-                        clocked[cid]["hours"] += net_h
-                except Exception:
-                    pass
-            logger.info(f"ClockTimes: {len(clocked)} employees found for {target}")
-        except Exception as ex:
-            logger.warning(f"ClockTimes fetch failed: {ex}")
-        return clocked
-
     try:
-        (tickets, hours_today_by_wt, staff_hours_today), visit_notes, attachments, clocked_hours_today = await asyncio.gather(
-            _fetch_tickets(), _fetch_visit_notes(), _fetch_attachments(), _fetch_clock_times()
+        (tickets, hours_today_by_wt, staff_hours_today), visit_notes, attachments = await asyncio.gather(
+            _fetch_tickets(), _fetch_visit_notes(), _fetch_attachments()
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
@@ -2518,14 +2475,6 @@ async def daily_report_html(
         for t in tickets
     )
 
-    # Build lookup: WorkTicketID → division (for staff efficiency scoping)
-    wt_to_div: dict[int, str] = {}
-    for t in tickets:
-        wt_id = t.get("WorkTicketID")
-        d     = t.get("DivisionName") or "Other"
-        if wt_id:
-            wt_to_div[int(wt_id)] = d
-
     division_sections = ""
     for div in ordered_divs:
         div_tickets = by_division[div]
@@ -2540,82 +2489,14 @@ async def daily_report_html(
         route_html   = build_route_sections(div_tickets)
         ai_html      = ai_results.get(div, "")
 
-        # ── Division-level efficiency rate ────────────────────────────────────
-        div_wt_ids = {t.get("WorkTicketID") for t in div_tickets}
-        # Filter staff to those who have time on at least one ticket in this division
-        div_staff = {
-            cid: info for cid, info in staff_hours_today.items()
-            if info["wt_ids"] & div_wt_ids
-        }
-        if div_staff:
-            # Per-staff estimated hours: sum HoursEst for their tickets in this division
-            est_by_wt = {t.get("WorkTicketID"): float(t.get("HoursEst") or 0) for t in div_tickets}
-            staff_rows_html = ""
-            for cid, info in sorted(div_staff.items(), key=lambda kv: -kv[1]["hours"]):
-                worked_h  = info["hours"]  # Direct Job Time (WorkTicketTimes)
-                clocked_h = clocked_hours_today.get(cid, {}).get("hours")  # ClockTimes
-                s_est     = sum(est_by_wt.get(wid, 0) for wid in info["wt_ids"] if wid in est_by_wt)
-
-                # Clocked column
-                if clocked_h is not None:
-                    diff_h     = clocked_h - worked_h
-                    diff_str   = f'⚠️ +{diff_h:.2f}h' if diff_h > 0.1 else f'{diff_h:.2f}h'
-                    diff_color = "#b45309" if diff_h > 0.1 else "#16a34a"
-                    clocked_str = f"{clocked_h:.2f}h"
-                    diff_cell   = f'<span style="color:{diff_color};font-weight:600">{diff_str}</span>'
-                else:
-                    clocked_str = "—"
-                    diff_cell   = "—"
-
-                staff_rows_html += f"""
-              <tr>
-                <td class="eff-name">{info['name']}</td>
-                <td class="eff-num">{clocked_str}</td>
-                <td class="eff-num">{worked_h:.2f}h</td>
-                <td class="eff-num">{diff_cell}</td>
-              </tr>"""
-            efficiency_html = f"""
-        <div class="efficiency-table">
-          <div class="efficiency-title">👷 Staff Hours Today</div>
-          <table>
-            <thead><tr>
-              <th class="eff-name">Employee</th>
-              <th class="eff-num">Clocked</th>
-              <th class="eff-num">Worked</th>
-              <th class="eff-num">Difference</th>
-            </tr></thead>
-            <tbody>{staff_rows_html}</tbody>
-          </table>
-        </div>"""
-        else:
-            efficiency_html = ""
-
-        # ── Division header efficiency rate ───────────────────────────────────
-        # Sum clocked + worked for all staff in this division
-        div_staff_cids = set(div_staff.keys()) if div_staff else set()
-        div_total_clocked = sum(
-            clocked_hours_today.get(cid, {}).get("hours", 0.0)
-            for cid in div_staff_cids
-        )
-        div_total_worked = sum(
-            info["hours"] for cid, info in (div_staff.items() if div_staff else [])
-        )
-        if div_total_clocked > 0:
-            div_eff_pct   = (div_total_worked / div_total_clocked) * 100
-            div_eff_color = "#ef4444" if div_eff_pct < 70 else ("#fbbf24" if div_eff_pct < 85 else "#86efac")
-            div_eff_badge = f'&nbsp;·&nbsp; <span style="color:{div_eff_color};font-weight:700">{div_eff_pct:.0f}% efficiency</span>'
-        else:
-            div_eff_badge = ""
-
         division_sections += f"""
     <div class="division-section">
       <div class="division-header" style="background:{colour}">
         <h2>{div}</h2>
-        <span class="div-stats">{len(div_tickets)} ticket(s) &nbsp;·&nbsp; {hrs(div_act)} today / {hrs(div_est)} est{div_eff_badge}</span>
+        <span class="div-stats">{len(div_tickets)} ticket(s) &nbsp;·&nbsp; {hrs(div_act)} today / {hrs(div_est)} est</span>
       </div>
       <div class="division-body">
         {ai_html}
-        {efficiency_html}
         {route_html if route_html else '<p class="empty">No tickets found.</p>'}
       </div>
     </div>"""
