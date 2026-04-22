@@ -944,6 +944,7 @@ async def create_field_issue(
     property_id:      Optional[int]     = Form(default=None),
     property_name:    Optional[str]     = Form(default=None),
     subject:          str               = Form(...),
+    category:         Optional[str]     = Form(default=None),
     assigned_to_id:   Optional[int]     = Form(default=None),   # UserID
     assigned_to_name: Optional[str]     = Form(default=None),
     priority:         Optional[str]     = Form(default=None),   # High / Normal / Low
@@ -978,6 +979,8 @@ async def create_field_issue(
     ]
     if property_name:
         lines.append(f"Property: {property_name}")
+    if category:
+        lines.append(f"Category: {category}")
     if notes:
         lines.append(f"\n{notes}")
     if photo_data:
@@ -1014,6 +1017,8 @@ async def create_field_issue(
     }
     if property_id:
         issue_body["PropertyID"] = property_id
+    if category:
+        issue_body["IssueCategoryName"] = category
     if priority:
         issue_body["Priority"] = priority
     if due_date:
