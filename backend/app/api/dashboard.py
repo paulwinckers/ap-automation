@@ -46,33 +46,51 @@ async def probe_aspire():
         raise HTTPException(status_code=502, detail=str(e))
 
 
-@router.get("/probe/work-ticket/{wt_id}")
-async def probe_work_ticket(wt_id: int):
-    """Diagnostic: return all fields on a WorkTicket record fetched by ID."""
+@router.get("/probe/work-ticket/{wt_num}")
+async def probe_work_ticket(wt_num: int, by_id: bool = False):
+    """
+    Diagnostic: look up a WorkTicket by WorkTicketNumber (default) or WorkTicketID (by_id=true).
+    Then fetches the linked Opportunity to show DivisionName.
+    """
     try:
+        field = "WorkTicketID" if by_id else "WorkTicketNumber"
         result = await _aspire._get("WorkTickets", {
-            "$filter": f"WorkTicketID eq {wt_id}",
+            "$filter": f"{field} eq {wt_num}",
             "$top": "1",
         })
         records = _aspire._extract_list(result)
         if not records:
-            # Try in() syntax
-            result2 = await _aspire._get("WorkTickets", {
-                "$filter": f"WorkTicketID in ({wt_id})",
-                "$top": "1",
-            })
-            records = _aspire._extract_list(result2)
-        if not records:
-            return {"found": False, "wt_id": wt_id}
+            return {"found": False, field: wt_num}
         rec = records[0]
-        return {
+        out = {
             "found": True,
-            "fields": sorted(rec.keys()),
-            "OpportunityID": rec.get("OpportunityID"),
-            "DivisionName": rec.get("DivisionName"),
-            "DivisionID": rec.get("DivisionID"),
-            "record": rec,
+            "WorkTicketID":     rec.get("WorkTicketID"),
+            "WorkTicketNumber": rec.get("WorkTicketNumber"),
+            "OpportunityID":    rec.get("OpportunityID"),
+            "OpportunityNumber":rec.get("OpportunityNumber"),
+            "DivisionName_on_ticket": rec.get("DivisionName"),
+            "ticket_fields": sorted(rec.keys()),
         }
+        # Now look up the Opportunity to get DivisionName
+        opp_id = rec.get("OpportunityID")
+        if opp_id:
+            try:
+                opp_res = await _aspire._get("Opportunities", {
+                    "$filter": f"OpportunityID eq {opp_id}",
+                    "$top": "1",
+                })
+                opps = _aspire._extract_list(opp_res)
+                if opps:
+                    opp = opps[0]
+                    out["opportunity"] = {
+                        "OpportunityID":   opp.get("OpportunityID"),
+                        "OpportunityName": opp.get("OpportunityName"),
+                        "DivisionName":    opp.get("DivisionName"),
+                        "DivisionID":      opp.get("DivisionID"),
+                    }
+            except Exception as e:
+                out["opportunity_error"] = str(e)
+        return out
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
