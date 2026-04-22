@@ -145,12 +145,15 @@ class GraphClient:
         body_html: str,
         attachment_bytes: Optional[bytes] = None,
         attachment_filename: Optional[str] = None,
+        cc_addresses: Optional[list[str]] = None,
     ) -> None:
         message: dict = {
             "subject": subject,
             "body": {"contentType": "HTML", "content": body_html},
             "toRecipients": [{"emailAddress": {"address": a}} for a in to_addresses],
         }
+        if cc_addresses:
+            message["ccRecipients"] = [{"emailAddress": {"address": a}} for a in cc_addresses]
         if attachment_bytes and attachment_filename:
             import mimetypes
             mime_type, _ = mimetypes.guess_type(attachment_filename)

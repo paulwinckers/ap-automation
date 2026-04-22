@@ -2498,6 +2498,11 @@ function filterReport(q) {{
 # Add / edit divisions and recipients here; cron calls /daily-report/send-email
 # with ?division=<key> for each entry.
 
+# Always CC'd on every division report (management oversight)
+DAILY_REPORT_CC: list[str] = [
+    "paul@darios.ca",
+]
+
 DAILY_REPORT_RECIPIENTS: dict[str, list[str]] = {
     "Construction": [
         "rodger@darios.ca",
@@ -2574,6 +2579,7 @@ async def send_daily_report_email(
         to_addresses=recipients,
         subject=f"📋 {division} Daily Report — {display_date}",
         body_html=html_body,
+        cc_addresses=DAILY_REPORT_CC or None,
     )
 
     logger.info(
