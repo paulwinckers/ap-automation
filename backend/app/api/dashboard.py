@@ -129,15 +129,24 @@ async def probe_division_trace(wt_number: int, date: str = Query(None)):
     except Exception as e:
         return {**out, "error": f"Step 1 failed: {e}"}
 
-    # Step 2: check WorkTicketTimes for this ticket on the target date
+    # Step 2: check WorkTicketTimes across a wide window to find where this ticket's entries actually live
     try:
+        _prev = (_date_cls.fromisoformat(target) - _td(days=1)).isoformat()
+        wide_start = f"{_prev}T00:00:00Z"
+        wide_end   = f"{(_date_cls.fromisoformat(target) + _td(days=2)).isoformat()}T00:00:00Z"
         times = await _aspire._get_all("WorkTicketTimes", {
-            "$filter": f"StartTime ge {day_start_z} and StartTime le {day_end_z}",
-            "$top": "500",
+            "$filter": f"StartTime ge {wide_start} and StartTime le {wide_end}",
+            "$top": "1000",
         })
         matching = [t for t in times if t.get("WorkTicketID") == wt_id]
-        out["steps"]["2_time_entries"] = {"total_fetched": len(times), "matching_this_ticket": len(matching),
-                                          "sample": matching[:3]}
+        in_window   = [t for t in times if t.get("StartTime", "").startswith(target)]
+        out["steps"]["2_time_entries"] = {
+            "wide_window": f"{wide_start} → {wide_end}",
+            "total_in_wide_window": len(times),
+            "matching_this_ticket": len(matching),
+            "in_target_date_window": len(in_window),
+            "this_ticket_start_times": [t.get("StartTime") for t in matching],
+        }
     except Exception as e:
         out["steps"]["2_time_entries"] = {"error": str(e)}
 
