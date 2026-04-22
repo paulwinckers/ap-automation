@@ -1957,9 +1957,12 @@ async def daily_report_html(
         target = now_local.strftime("%Y-%m-%d")
     display_date = datetime.strptime(target, "%Y-%m-%d").strftime("%B %d, %Y")
 
-    # ── Fetch tickets (no $select — full record may include PropertyName) ───────
+    # ── Fetch tickets + daily hours ───────────────────────────────────────────
+    # Returns (unique_tickets, hours_today_by_wt)
+    # hours_today_by_wt: WorkTicketID → hours clocked on target date specifically
     async def _fetch_tickets():
         results = []
+        hours_today_by_wt: dict[int, float] = {}
 
         # Pass 1 & 2: tickets completed or scheduled on target date
         for f in [
@@ -1975,34 +1978,47 @@ async def daily_report_html(
             except Exception as e:
                 logger.warning(f"WorkTickets fetch failed ({f[:40]}): {e}")
 
-        # Pass 3: tickets that had time logged on target date (catches tickets
-        # worked a day after their scheduled date and never marked Complete)
+        # Pass 3: WorkTicketTimes for target date — used both to catch off-schedule
+        # tickets AND to build per-ticket daily hour totals for the report.
         try:
             time_entries = await _aspire._get_all("WorkTicketTimes", {
                 "$filter": f"StartTime ge {target}T00:00:00Z and StartTime le {target}T23:59:59Z",
-                "$select": "WorkTicketID",
                 "$top": "500",
             })
-            time_wt_ids = list({
-                int(e["WorkTicketID"]) for e in time_entries
-                if e.get("WorkTicketID")
-            })
-            if time_wt_ids:
-                # Fetch full ticket records for any IDs not already in results
-                existing_ids = {r.get("WorkTicketID") for r in results}
-                missing_ids  = [wid for wid in time_wt_ids if wid not in existing_ids]
-                # Chunk into groups of 50 to stay under OData URL length limits
-                for i in range(0, len(missing_ids), 50):
-                    chunk = missing_ids[i:i + 50]
-                    id_list = ",".join(str(x) for x in chunk)
-                    try:
-                        batch = await _aspire._get_all("WorkTickets", {
-                            "$filter": f"WorkTicketID in ({id_list})",
-                            "$top": "200",
-                        })
-                        results.extend(batch)
-                    except Exception as e:
-                        logger.warning(f"WorkTickets time-based fetch failed (chunk {i}): {e}")
+
+            # Sum hours per ticket from StartTime/EndTime
+            from datetime import datetime as _dt
+            for e in time_entries:
+                wt_id = e.get("WorkTicketID")
+                if not wt_id:
+                    continue
+                wt_id = int(wt_id)
+                try:
+                    # Aspire returns ISO strings; strip trailing Z if present
+                    start = _dt.fromisoformat((e["StartTime"].rstrip("Z")))
+                    end   = _dt.fromisoformat((e["EndTime"].rstrip("Z"))) if e.get("EndTime") else None
+                    if end and end > start:
+                        hours_today_by_wt[wt_id] = (
+                            hours_today_by_wt.get(wt_id, 0.0)
+                            + (end - start).total_seconds() / 3600
+                        )
+                except Exception:
+                    pass
+
+            # Fetch full ticket records for IDs not already captured
+            existing_ids = {r.get("WorkTicketID") for r in results}
+            missing_ids  = [wid for wid in hours_today_by_wt if wid not in existing_ids]
+            for i in range(0, len(missing_ids), 50):
+                chunk   = missing_ids[i:i + 50]
+                id_list = ",".join(str(x) for x in chunk)
+                try:
+                    batch = await _aspire._get_all("WorkTickets", {
+                        "$filter": f"WorkTicketID in ({id_list})",
+                        "$top": "200",
+                    })
+                    results.extend(batch)
+                except Exception as e:
+                    logger.warning(f"WorkTickets time-based fetch failed (chunk {i}): {e}")
         except Exception as e:
             logger.warning(f"WorkTicketTimes fetch failed: {e}")
 
@@ -2011,14 +2027,13 @@ async def daily_report_html(
         for t in results:
             wt_id = t.get("WorkTicketID")
             if wt_id and wt_id not in seen:
-                # Skip tickets with no actual labour logged (e.g. Disposal Fees,
-                # admin-only completions) — HoursAct = 0 or null means no crew time
+                # Skip tickets with no actual labour logged (e.g. Disposal Fees)
                 if not float(t.get("HoursAct") or 0):
                     logger.debug(f"Skipping ticket {wt_id} — no labour hours logged")
                     continue
                 seen.add(wt_id)
                 unique.append(t)
-        return unique
+        return unique, hours_today_by_wt
 
     async def _fetch_visit_notes():
         for date_filter in [
@@ -2064,7 +2079,7 @@ async def daily_report_html(
             return []
 
     try:
-        tickets, visit_notes, attachments = await asyncio.gather(
+        (tickets, hours_today_by_wt), visit_notes, attachments = await asyncio.gather(
             _fetch_tickets(), _fetch_visit_notes(), _fetch_attachments()
         )
     except Exception as e:
@@ -2208,7 +2223,6 @@ async def daily_report_html(
         wt_num    = t.get("WorkTicketNumber") or "—"
         prop_name = property_by_wt.get(wt_id) or opp_name_by_wt.get(wt_id) or "—"
         wt_notes  = notes_by_wt.get(wt_id, [])
-        # URL uses WorkTicketID (internal DB id) — not WorkTicketNumber (user-facing #)
         aspire_ticket_url = f"{ASPIRE_APP}/worktickets/details/{wt_id}" if (ASPIRE_APP and wt_id) else ""
         logger.info(f"Ticket link: wt_id={wt_id!r} wt_num={wt_num!r} url={aspire_ticket_url!r} ASPIRE_APP={ASPIRE_APP!r}")
         ticket_link = (
@@ -2224,13 +2238,30 @@ async def daily_report_html(
             else f'<span class="badge-scheduled">{status_name or "Scheduled"}</span>'
         )
         css = "ticket-complete" if is_complete else "ticket-scheduled"
+
+        # Hours display: today's logged hours vs estimate; fall back to total actual if no time entries
+        today_h = hours_today_by_wt.get(wt_id)
+        hrs_est = float(t.get("HoursEst") or 0)
+        if today_h is not None:
+            # Colour-code: red if today > est, green if on/under
+            over = hrs_est and today_h > hrs_est * 1.1
+            colour = "#ef4444" if over else "#16a34a"
+            hours_html = (
+                f'<span class="ticket-hours">'
+                f'<span style="font-weight:700;color:{colour}">{today_h:.1f}h today</span>'
+                f' / {hrs(hrs_est)} est'
+                f'</span>'
+            )
+        else:
+            hours_html = f'<span class="ticket-hours">{hrs(t.get("HoursAct"))} actual / {hrs(hrs_est)} est</span>'
+
         return f"""
             <div class="ticket {css}">
               <div class="ticket-header">
                 {ticket_link}
                 <span class="ticket-prop">{prop_name}</span>
                 {status_badge}
-                <span class="ticket-hours">{hrs(t.get('HoursAct'))} actual / {hrs(t.get('HoursEst'))} est</span>
+                {hours_html}
               </div>
               {notes_html}{extra_attach}
             </div>"""
@@ -2244,14 +2275,18 @@ async def daily_report_html(
         html_out = ""
         for route in sorted(by_route.keys(), key=lambda r: (r == "Unassigned", r.lower())):
             rt = by_route[route]
-            ra = sum(float(t.get("HoursAct") or 0) for t in rt)
+            # Use today's logged hours if available, otherwise fall back to total actual
+            ra = sum(
+                hours_today_by_wt.get(t.get("WorkTicketID"), float(t.get("HoursAct") or 0))
+                for t in rt
+            )
             re_ = sum(float(t.get("HoursEst") or 0) for t in rt)
             rows = "".join(build_ticket_row(t) for t in sorted(rt, key=lambda x: x.get("WorkTicketNumber") or 0))
             html_out += f"""
         <div class="route-section">
           <div class="route-header">
             <h2>{route}</h2>
-            <span class="route-stats">{len(rt)} ticket(s) &nbsp;·&nbsp; {hrs(ra)} / {hrs(re_)} est</span>
+            <span class="route-stats">{len(rt)} ticket(s) &nbsp;·&nbsp; {hrs(ra)} today / {hrs(re_)} est</span>
           </div>
           {rows if rows else '<p class="empty">No tickets found.</p>'}
         </div>"""
