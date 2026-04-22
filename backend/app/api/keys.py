@@ -69,7 +69,17 @@ async def list_keys_public(db: Database = Depends(get_db)):
 
 @router.get("/employees")
 async def list_key_employees(db: Database = Depends(get_db)):
-    """Employee names for the scan-page dropdown (is_employee=1 in vendor_rules)."""
+    """Employee names for the scan-page dropdown — pulled from Aspire Contacts (Employee type)."""
+    try:
+        aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)
+        employees = await aspire.get_aspire_employees()
+        names = sorted(e["FullName"] for e in employees if e.get("FullName"))
+        if names:
+            return {"employees": names}
+    except Exception as ex:
+        logger.warning(f"Aspire employee fetch failed, falling back to vendor_rules: {ex}")
+
+    # Fallback: vendor_rules employees if Aspire is unavailable or returns nothing
     rows = await db._q(
         """SELECT vendor_name FROM vendor_rules
            WHERE active = 1 AND is_employee = 1
