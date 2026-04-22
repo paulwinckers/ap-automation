@@ -1958,11 +1958,13 @@ async def daily_report_html(
     display_date = datetime.strptime(target, "%Y-%m-%d").strftime("%B %d, %Y")
 
     # ── Fetch tickets + daily hours ───────────────────────────────────────────
-    # Returns (unique_tickets, hours_today_by_wt)
+    # Returns (unique_tickets, hours_today_by_wt, staff_hours_today)
     # hours_today_by_wt: WorkTicketID → hours clocked on target date specifically
+    # staff_hours_today: ContactID → {name, hours, wt_ids}
     async def _fetch_tickets():
         results = []
         hours_today_by_wt: dict[int, float] = {}
+        staff_hours_today: dict = {}
 
         # Pass 1 & 2: tickets completed or scheduled on target date
         for f in [
@@ -1978,15 +1980,14 @@ async def daily_report_html(
             except Exception as e:
                 logger.warning(f"WorkTickets fetch failed ({f[:40]}): {e}")
 
-        # Pass 3: WorkTicketTimes for target date — used both to catch off-schedule
-        # tickets AND to build per-ticket daily hour totals for the report.
+        # Pass 3: WorkTicketTimes for target date — used to catch off-schedule tickets,
+        # build per-ticket daily hours, and build per-staff efficiency summary.
         try:
             time_entries = await _aspire._get_all("WorkTicketTimes", {
                 "$filter": f"StartTime ge {target}T00:00:00Z and StartTime le {target}T23:59:59Z",
                 "$top": "500",
             })
 
-            # Sum hours per ticket from StartTime/EndTime
             from datetime import datetime as _dt
             for e in time_entries:
                 wt_id = e.get("WorkTicketID")
@@ -1994,14 +1995,23 @@ async def daily_report_html(
                     continue
                 wt_id = int(wt_id)
                 try:
-                    # Aspire returns ISO strings; strip trailing Z if present
-                    start = _dt.fromisoformat((e["StartTime"].rstrip("Z")))
-                    end   = _dt.fromisoformat((e["EndTime"].rstrip("Z"))) if e.get("EndTime") else None
+                    start = _dt.fromisoformat(e["StartTime"].rstrip("Z"))
+                    end   = _dt.fromisoformat(e["EndTime"].rstrip("Z")) if e.get("EndTime") else None
                     if end and end > start:
-                        hours_today_by_wt[wt_id] = (
-                            hours_today_by_wt.get(wt_id, 0.0)
-                            + (end - start).total_seconds() / 3600
-                        )
+                        h = (end - start).total_seconds() / 3600
+                        hours_today_by_wt[wt_id] = hours_today_by_wt.get(wt_id, 0.0) + h
+
+                        # Build per-staff hours: ContactID → {name, hours, wt_ids}
+                        cid  = e.get("ContactID")
+                        name = (e.get("ContactName") or e.get("EmployeeName") or
+                                e.get("FirstName", "") + " " + e.get("LastName", "")).strip()
+                        if cid:
+                            if cid not in staff_hours_today:
+                                staff_hours_today[cid] = {"name": name or f"Staff #{cid}", "hours": 0.0, "wt_ids": set()}
+                            elif name and staff_hours_today[cid]["name"].startswith("Staff #"):
+                                staff_hours_today[cid]["name"] = name
+                            staff_hours_today[cid]["hours"] += h
+                            staff_hours_today[cid]["wt_ids"].add(wt_id)
                 except Exception:
                     pass
 
@@ -2037,7 +2047,7 @@ async def daily_report_html(
                     continue
                 seen.add(wt_id)
                 unique.append(t)
-        return unique, hours_today_by_wt
+        return unique, hours_today_by_wt, staff_hours_today
 
     async def _fetch_visit_notes():
         for date_filter in [
@@ -2083,7 +2093,7 @@ async def daily_report_html(
             return []
 
     try:
-        (tickets, hours_today_by_wt), visit_notes, attachments = await asyncio.gather(
+        (tickets, hours_today_by_wt, staff_hours_today), visit_notes, attachments = await asyncio.gather(
             _fetch_tickets(), _fetch_visit_notes(), _fetch_attachments()
         )
     except Exception as e:
@@ -2430,22 +2440,81 @@ async def daily_report_html(
         for t in tickets
     )
 
+    # Build lookup: WorkTicketID → division (for staff efficiency scoping)
+    wt_to_div: dict[int, str] = {}
+    for t in tickets:
+        wt_id = t.get("WorkTicketID")
+        d     = t.get("DivisionName") or "Other"
+        if wt_id:
+            wt_to_div[int(wt_id)] = d
+
     division_sections = ""
     for div in ordered_divs:
         div_tickets = by_division[div]
-        div_act = sum(float(t.get("HoursAct") or 0) for t in div_tickets)
+        # Use today's clocked hours (from WorkTicketTimes) where available;
+        # fall back to lifetime HoursAct so scheduled-only tickets still show something.
+        div_act = sum(
+            hours_today_by_wt.get(t.get("WorkTicketID"), float(t.get("HoursAct") or 0))
+            for t in div_tickets
+        )
         div_est = sum(float(t.get("HoursEst") or 0) for t in div_tickets)
         colour  = DIVISION_COLOURS.get(div, "#334155")
         route_html   = build_route_sections(div_tickets)
         ai_html      = ai_results.get(div, "")
+
+        # ── Staff efficiency table for this division ──────────────────────────
+        div_wt_ids = {t.get("WorkTicketID") for t in div_tickets}
+        # Filter staff to those who have time on at least one ticket in this division
+        div_staff = {
+            cid: info for cid, info in staff_hours_today.items()
+            if info["wt_ids"] & div_wt_ids
+        }
+        if div_staff:
+            # Per-staff estimated hours: sum HoursEst for their tickets in this division
+            est_by_wt = {t.get("WorkTicketID"): float(t.get("HoursEst") or 0) for t in div_tickets}
+            staff_rows_html = ""
+            for info in sorted(div_staff.values(), key=lambda x: -x["hours"]):
+                s_hrs  = info["hours"]
+                s_est  = sum(est_by_wt.get(wid, 0) for wid in info["wt_ids"] if wid in est_by_wt)
+                if s_est > 0:
+                    eff_pct = (s_hrs / s_est) * 100
+                    eff_colour = "#ef4444" if eff_pct > 110 else ("#f59e0b" if eff_pct > 95 else "#16a34a")
+                    eff_str = f'<span style="font-weight:700;color:{eff_colour}">{eff_pct:.0f}%</span>'
+                else:
+                    eff_str = "—"
+                s_est_str = f"{s_est:.1f}h est" if s_est else "—"
+                staff_rows_html += f"""
+              <tr>
+                <td class="eff-name">{info['name']}</td>
+                <td class="eff-num">{s_hrs:.1f}h</td>
+                <td class="eff-num">{s_est_str}</td>
+                <td class="eff-num">{eff_str}</td>
+              </tr>"""
+            efficiency_html = f"""
+        <div class="efficiency-table">
+          <div class="efficiency-title">👷 Staff Hours Today</div>
+          <table>
+            <thead><tr>
+              <th class="eff-name">Employee</th>
+              <th class="eff-num">Hours</th>
+              <th class="eff-num">Est.</th>
+              <th class="eff-num">Efficiency</th>
+            </tr></thead>
+            <tbody>{staff_rows_html}</tbody>
+          </table>
+        </div>"""
+        else:
+            efficiency_html = ""
+
         division_sections += f"""
     <div class="division-section">
       <div class="division-header" style="background:{colour}">
         <h2>{div}</h2>
-        <span class="div-stats">{len(div_tickets)} ticket(s) &nbsp;·&nbsp; {hrs(div_act)} / {hrs(div_est)} est</span>
+        <span class="div-stats">{len(div_tickets)} ticket(s) &nbsp;·&nbsp; {hrs(div_act)} today / {hrs(div_est)} est</span>
       </div>
       <div class="division-body">
         {ai_html}
+        {efficiency_html}
         {route_html if route_html else '<p class="empty">No tickets found.</p>'}
       </div>
     </div>"""
@@ -2509,6 +2578,16 @@ async def daily_report_html(
   .photo-badge a:hover {{ text-decoration: underline; }}
   .attach-file {{ font-size: 12px; color: #64748b; margin: 3px 0; }}
   .empty {{ color: #94a3b8; font-size: 13px; padding: 8px 16px; }}
+  .efficiency-table {{ margin: 8px 14px 16px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }}
+  .efficiency-title {{ background: #f1f5f9; font-weight: 700; font-size: 13px; color: #334155;
+                       padding: 8px 14px; border-bottom: 1px solid #e2e8f0; }}
+  .efficiency-table table {{ width: 100%; border-collapse: collapse; }}
+  .efficiency-table th {{ font-size: 11px; color: #64748b; font-weight: 600; padding: 6px 12px;
+                          background: #f8fafc; border-bottom: 1px solid #e2e8f0; }}
+  .efficiency-table td {{ font-size: 13px; padding: 6px 12px; border-bottom: 1px solid #f1f5f9; }}
+  .efficiency-table tr:last-child td {{ border-bottom: none; }}
+  .eff-name {{ text-align: left; }}
+  .eff-num  {{ text-align: right; }}
   .report-header {{ display:flex; justify-content:space-between; align-items:flex-end;
                     margin-bottom:20px; flex-wrap:wrap; gap:12px; }}
   .controls {{ display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap; }}
