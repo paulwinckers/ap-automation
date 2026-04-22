@@ -946,6 +946,17 @@ async def get_issue_categories():
     return {"categories": categories}
 
 
+@router.get("/debug-issue-raw")
+async def debug_issue_raw(issue_id: int):
+    """Temp: fetch a raw Aspire Issue record to inspect available fields."""
+    _check_credentials()
+    try:
+        result = await _aspire._get(f"Issues({issue_id})", {})
+        return {"raw": result}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.post("/issue")
 async def create_field_issue(
     submitter_name:   str               = Form(...),
