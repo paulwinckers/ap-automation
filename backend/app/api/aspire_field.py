@@ -971,23 +971,7 @@ async def create_field_issue(
             raise HTTPException(status_code=413, detail=f"File {i+1} too large (max {label})")
         photo_data.append((photo.filename or f"photo_{i+1}.jpg", raw))
 
-    # ── Upload photos to R2 ───────────────────────────────────────────────────
-    ONE_YEAR = 365 * 24 * 3600
-    photo_urls: list[str] = []
-    for fname, raw in photo_data:
-        result = await r2.upload_field_photo(
-            file_bytes=raw,
-            filename=fname,
-            submitter=submitter_name,
-            entity_type="issue",
-            entity_id=f"prop{property_id or 0}",
-            expires_in=ONE_YEAR,
-        )
-        if result:
-            _key, url = result
-            photo_urls.append(url)
-
-    # ── Build notes text ─────────────────────────────────────────────────────
+    # ── Build notes text (no photo URLs yet) ────────────────────────────────
     lines = [
         f"Submitted by: {submitter_name}",
         f"Date: {date.today().isoformat()}",
@@ -996,9 +980,8 @@ async def create_field_issue(
         lines.append(f"Property: {property_name}")
     if notes:
         lines.append(f"\n{notes}")
-    if photo_urls:
-        lines.append("\nPhotos:")
-        lines.extend(f"  {url}" for url in photo_urls)
+    if photo_data:
+        lines.append(f"\n{len(photo_data)} photo(s) attached.")
     notes_text = "\n".join(lines)
 
     # ── Resolve AssignedTo UserID ─────────────────────────────────────────────
@@ -1059,19 +1042,57 @@ async def create_field_issue(
         except (ValueError, TypeError):
             issue_id = None
 
+    # ── Upload photos: try Aspire direct attachment, fall back to R2 ─────────
+    ONE_YEAR = 365 * 24 * 3600
+    photos_uploaded = 0
+    photo_urls: list[str] = []
+    for fname, raw in photo_data:
+        aspire_ok = False
+        if isinstance(issue_id, int) and issue_id > 0:
+            for obj_code in ("Issue", "Issues", "ServiceIssue"):
+                try:
+                    await _aspire.upload_aspire_attachment(
+                        object_id=issue_id,
+                        object_code=obj_code,
+                        filename=fname,
+                        file_bytes=raw,
+                        expose_to_crew=True,
+                    )
+                    photos_uploaded += 1
+                    aspire_ok = True
+                    logger.info(f"Issue {issue_id}: uploaded {fname} to Aspire directly (code={obj_code})")
+                    break
+                except Exception as e:
+                    logger.info(f"Issue {issue_id}: Aspire attachment failed (code={obj_code}): {e}")
+
+        if not aspire_ok:
+            r2_result = await r2.upload_field_photo(
+                file_bytes=raw,
+                filename=fname,
+                submitter=submitter_name,
+                entity_type="issue",
+                entity_id=f"prop{property_id or 0}",
+                expires_in=ONE_YEAR,
+            )
+            if r2_result:
+                _key, url = r2_result
+                photo_urls.append(url)
+                photos_uploaded += 1
+                logger.info(f"Issue {issue_id}: {fname} stored in R2 (fallback)")
+
     logger.info(
         f"New issue created: ID={issue_id} '{subject}' for property {property_id} "
-        f"by {submitter_name}, {len(photo_urls)} photo(s)"
+        f"by {submitter_name}, {photos_uploaded}/{len(photo_data)} photo(s)"
     )
 
     return {
-        "success":        True,
-        "issue_id":       issue_id,
-        "subject":        subject,
-        "property_id":    property_id,
-        "property_name":  property_name,
-        "photos_uploaded": len(photo_urls),
-        "submitter":      submitter_name,
+        "success":         True,
+        "issue_id":        issue_id,
+        "subject":         subject,
+        "property_id":     property_id,
+        "property_name":   property_name,
+        "photos_uploaded": photos_uploaded,
+        "submitter":       submitter_name,
     }
 
 
