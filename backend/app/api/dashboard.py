@@ -2136,45 +2136,36 @@ async def daily_report_html(
         clocked: dict = {}
         try:
             from datetime import datetime as _dt
-            # Try plain Date field first (matches the POST body field Aspire uses)
-            entries = []
-            for clock_filter in [
-                f"Date eq {target}",
-                f"ClockStartDateTime ge {target}T00:00:00Z and ClockStartDateTime le {target}T23:59:59Z",
-                f"Date ge {target} and Date le {target}",
-            ]:
-                try:
-                    entries = await _aspire._get_all("ClockTimes", {
-                        "$filter": clock_filter,
-                        "$top": "500",
-                    })
-                    if entries:
-                        logger.info(f"ClockTimes matched {len(entries)} with filter: {clock_filter}")
-                        break
-                except Exception as ef:
-                    logger.warning(f"ClockTimes filter failed ({clock_filter[:50]}): {ef}")
-            for e in entries:
+            # ClockTimes does not support $filter (all variants return 400).
+            # Fetch all records and filter in Python by ClockStart date prefix.
+            # Fields confirmed: ClockStart / ClockEnd (not ClockStartDateTime).
+            # BreakTime is in hours (0.5 = 30 min), not minutes.
+            all_clocks = await _aspire._get_all("ClockTimes", {"$top": "1000"})
+            logger.info(f"ClockTimes: fetched {len(all_clocks)} total, filtering to {target}")
+            for e in all_clocks:
+                cs_raw = e.get("ClockStart") or ""
+                if not cs_raw.startswith(target):
+                    continue          # skip entries not on target date
                 cid = e.get("ContactID")
                 if not cid:
                     continue
                 try:
-                    cs = _dt.fromisoformat((e.get("ClockStartDateTime") or "").rstrip("Z"))
-                    ce = _dt.fromisoformat((e.get("ClockEndDateTime")   or "").rstrip("Z")) if e.get("ClockEndDateTime") else None
+                    cs    = _dt.fromisoformat(cs_raw.rstrip("Z"))
+                    ce    = _dt.fromisoformat(e["ClockEnd"].rstrip("Z")) if e.get("ClockEnd") else None
                     if ce and ce > cs:
-                        gross_h   = (ce - cs).total_seconds() / 3600
-                        break_min = float(e.get("BreakTime") or 0)  # BreakTime is in minutes
-                        net_h     = max(gross_h - break_min / 60, 0.0)
-                        name = (e.get("ContactName") or e.get("EmployeeName") or
-                                (e.get("FirstName", "") + " " + e.get("LastName", "")).strip())
+                        gross_h = (ce - cs).total_seconds() / 3600
+                        break_h = float(e.get("BreakTime") or 0)  # already in hours
+                        net_h   = max(gross_h - break_h, 0.0)
+                        name    = (e.get("ContactName") or "").strip()
                         if cid not in clocked:
                             clocked[cid] = {"name": name or f"Staff #{cid}", "hours": 0.0}
                         else:
-                            # Keep best name we've seen
                             if name and clocked[cid]["name"].startswith("Staff #"):
                                 clocked[cid]["name"] = name
                         clocked[cid]["hours"] += net_h
                 except Exception:
                     pass
+            logger.info(f"ClockTimes: {len(clocked)} employees found for {target}")
         except Exception as ex:
             logger.warning(f"ClockTimes fetch failed: {ex}")
         return clocked
