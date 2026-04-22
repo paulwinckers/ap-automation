@@ -95,6 +95,78 @@ async def probe_work_ticket(wt_num: int, by_id: bool = False):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@router.get("/probe/division-trace/{wt_number}")
+async def probe_division_trace(wt_number: int, date: str = Query(None)):
+    """
+    Trace exactly why a ticket ends up in 'Other'.
+    Steps through the same logic as the daily report: WorkTicketTimes → WorkTicket → Opportunity.
+    wt_number = the WorkTicketNumber shown in Aspire UI.
+    """
+    from datetime import date as _date_cls, timedelta as _td, timezone, timedelta
+    target = date or _date_cls.today().isoformat()
+    tz_offset = getattr(settings, "REPORT_TZ_OFFSET", -7)
+    if not date:
+        from datetime import datetime
+        target = datetime.now(timezone(timedelta(hours=tz_offset))).strftime("%Y-%m-%d")
+
+    _next = _date_cls.fromisoformat(target) + _td(days=1)
+    day_start_z = f"{target}T08:00:00Z"
+    day_end_z   = f"{_next.isoformat()}T07:59:59Z"
+
+    out: dict = {"target": target, "wt_number": wt_number, "steps": {}}
+
+    # Step 1: find internal WorkTicketID
+    try:
+        r = await _aspire._get("WorkTickets", {"$filter": f"WorkTicketNumber eq {wt_number}", "$top": "1"})
+        recs = _aspire._extract_list(r)
+        if not recs:
+            return {**out, "error": "WorkTicketNumber not found"}
+        rec = recs[0]
+        wt_id  = rec.get("WorkTicketID")
+        opp_id = rec.get("OpportunityID")
+        out["steps"]["1_ticket"] = {"WorkTicketID": wt_id, "OpportunityID": opp_id,
+                                    "StatusName": rec.get("WorkTicketStatusName")}
+    except Exception as e:
+        return {**out, "error": f"Step 1 failed: {e}"}
+
+    # Step 2: check WorkTicketTimes for this ticket on the target date
+    try:
+        times = await _aspire._get_all("WorkTicketTimes", {
+            "$filter": f"StartTime ge {day_start_z} and StartTime le {day_end_z}",
+            "$top": "500",
+        })
+        matching = [t for t in times if t.get("WorkTicketID") == wt_id]
+        out["steps"]["2_time_entries"] = {"total_fetched": len(times), "matching_this_ticket": len(matching),
+                                          "sample": matching[:3]}
+    except Exception as e:
+        out["steps"]["2_time_entries"] = {"error": str(e)}
+
+    # Step 3: fetch WorkTicket by internal ID using in() filter (same as Pass 3 code)
+    try:
+        r2 = await _aspire._get("WorkTickets", {"$filter": f"WorkTicketID in ({wt_id})", "$top": "5"})
+        recs2 = _aspire._extract_list(r2)
+        out["steps"]["3_wt_by_id_in_filter"] = {
+            "count": len(recs2),
+            "OpportunityID": recs2[0].get("OpportunityID") if recs2 else None,
+        }
+    except Exception as e:
+        out["steps"]["3_wt_by_id_in_filter"] = {"error": str(e)}
+
+    # Step 4: fetch Opportunity using in() filter (same as report code)
+    try:
+        r3 = await _aspire._get("Opportunities", {"$filter": f"OpportunityID in ({opp_id})", "$top": "5"})
+        opps = _aspire._extract_list(r3)
+        out["steps"]["4_opp_in_filter"] = {
+            "count": len(opps),
+            "DivisionName": opps[0].get("DivisionName") if opps else None,
+            "OpportunityName": opps[0].get("OpportunityName") if opps else None,
+        }
+    except Exception as e:
+        out["steps"]["4_opp_in_filter"] = {"error": str(e)}
+
+    return out
+
+
 @router.get("/probe/clock-times")
 async def probe_clock_times(date: str = Query(None)):
     """
