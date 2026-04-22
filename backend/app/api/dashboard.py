@@ -2027,9 +2027,13 @@ async def daily_report_html(
         for t in results:
             wt_id = t.get("WorkTicketID")
             if wt_id and wt_id not in seen:
-                # Skip tickets with no actual labour logged (e.g. Disposal Fees)
-                if not float(t.get("HoursAct") or 0):
-                    logger.debug(f"Skipping ticket {wt_id} — no labour hours logged")
+                # Skip tickets that are marked Complete but have zero labour hours
+                # (e.g. Disposal Fees — admin completions with no crew on site).
+                # Scheduled/in-progress tickets are kept even if hours aren't logged yet.
+                status_name = (t.get("WorkTicketStatusName") or "").lower()
+                is_complete = "complet" in status_name
+                if is_complete and not float(t.get("HoursAct") or 0):
+                    logger.debug(f"Skipping ticket {wt_id} — completed with no labour hours")
                     continue
                 seen.add(wt_id)
                 unique.append(t)
@@ -2420,7 +2424,11 @@ async def daily_report_html(
 
     total_tickets   = len(tickets)
     total_hours_est = sum(float(t.get("HoursEst") or 0) for t in tickets)
-    total_hours_act = sum(float(t.get("HoursAct") or 0) for t in tickets)
+    # Use today's logged hours where available; fall back to ticket total actual
+    total_hours_act = sum(
+        hours_today_by_wt.get(t.get("WorkTicketID"), float(t.get("HoursAct") or 0))
+        for t in tickets
+    )
 
     division_sections = ""
     for div in ordered_divs:
@@ -2535,7 +2543,7 @@ async def daily_report_html(
   </div>
   <div class="summary">
     <div class="stat"><div class="stat-val">{total_tickets}</div><div class="stat-lbl">Tickets</div></div>
-    <div class="stat"><div class="stat-val">{total_hours_act:.1f}h</div><div class="stat-lbl">Actual Hours</div></div>
+    <div class="stat"><div class="stat-val">{total_hours_act:.1f}h</div><div class="stat-lbl">Hours Today</div></div>
     <div class="stat"><div class="stat-val">{total_hours_est:.1f}h</div><div class="stat-lbl">Est. Hours</div></div>
     <div class="stat"><div class="stat-val">{len(ordered_divs)}</div><div class="stat-lbl">Divisions</div></div>
     <div class="stat"><div class="stat-val">{len(visit_notes)}</div><div class="stat-lbl">Visit Notes</div></div>
