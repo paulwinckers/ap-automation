@@ -2122,15 +2122,17 @@ async def daily_report_html(
         target = now_local.strftime("%Y-%m-%d")
     display_date = datetime.strptime(target, "%Y-%m-%d").strftime("%B %d, %Y")
 
-    # Aspire stores times in UTC. A Pacific "business day" runs from midnight PST/PDT
-    # to midnight PST/PDT the following day.  UTC-7 (PDT) → day boundary = 07:00 UTC.
-    # We use 08:00 UTC as the end so the report catches crews working until midnight PST.
+    # Aspire stores WorkTicketTimes in UTC. Some entries (especially for tickets
+    # scheduled the day before) have StartTimes in the early UTC hours of the target
+    # date (e.g. T06:27Z = 11 PM PDT the night before).  Starting at T00:00:00Z
+    # ensures we catch everything that falls on the target UTC date.
+    # End at T12:00:00Z next day = 4 AM PST, covering crews finishing after midnight.
     from datetime import date as _date_cls, timedelta as _td
     _target_dt  = _date_cls.fromisoformat(target)
     _next_dt    = _target_dt + _td(days=1)
     next_day    = _next_dt.isoformat()          # YYYY-MM-DD of following calendar day
-    day_start_z = f"{target}T08:00:00Z"         # midnight PST (UTC-8) on target date
-    day_end_z   = f"{next_day}T07:59:59Z"       # 23:59:59 PDT / midnight PST next day
+    day_start_z = f"{target}T00:00:00Z"         # midnight UTC on target date
+    day_end_z   = f"{next_day}T12:00:00Z"       # 4 AM PST next day (noon UTC)
 
     # ── Fetch tickets + daily hours ───────────────────────────────────────────
     # Returns (unique_tickets, hours_today_by_wt, staff_hours_today)
