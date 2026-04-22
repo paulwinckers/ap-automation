@@ -2011,6 +2011,11 @@ async def daily_report_html(
         for t in results:
             wt_id = t.get("WorkTicketID")
             if wt_id and wt_id not in seen:
+                # Skip tickets with no actual labour logged (e.g. Disposal Fees,
+                # admin-only completions) — HoursAct = 0 or null means no crew time
+                if not float(t.get("HoursAct") or 0):
+                    logger.debug(f"Skipping ticket {wt_id} — no labour hours logged")
+                    continue
                 seen.add(wt_id)
                 unique.append(t)
         return unique
