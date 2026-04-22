@@ -2101,10 +2101,23 @@ async def daily_report_html(
         clocked: dict = {}
         try:
             from datetime import datetime as _dt
-            entries = await _aspire._get_all("ClockTimes", {
-                "$filter": f"ClockStartDateTime ge {target}T00:00:00Z and ClockStartDateTime le {target}T23:59:59Z",
-                "$top": "500",
-            })
+            # Try plain Date field first (matches the POST body field Aspire uses)
+            entries = []
+            for clock_filter in [
+                f"Date eq {target}",
+                f"ClockStartDateTime ge {target}T00:00:00Z and ClockStartDateTime le {target}T23:59:59Z",
+                f"Date ge {target} and Date le {target}",
+            ]:
+                try:
+                    entries = await _aspire._get_all("ClockTimes", {
+                        "$filter": clock_filter,
+                        "$top": "500",
+                    })
+                    if entries:
+                        logger.info(f"ClockTimes matched {len(entries)} with filter: {clock_filter}")
+                        break
+                except Exception as ef:
+                    logger.warning(f"ClockTimes filter failed ({clock_filter[:50]}): {ef}")
             for e in entries:
                 cid = e.get("ContactID")
                 if not cid:
@@ -2501,7 +2514,7 @@ async def daily_report_html(
         route_html   = build_route_sections(div_tickets)
         ai_html      = ai_results.get(div, "")
 
-        # ── Staff efficiency table for this division ──────────────────────────
+        # ── Division-level efficiency rate ────────────────────────────────────
         div_wt_ids = {t.get("WorkTicketID") for t in div_tickets}
         # Filter staff to those who have time on at least one ticket in this division
         div_staff = {
@@ -2551,11 +2564,28 @@ async def daily_report_html(
         else:
             efficiency_html = ""
 
+        # ── Division header efficiency rate ───────────────────────────────────
+        # Sum clocked + worked for all staff in this division
+        div_staff_cids = set(div_staff.keys()) if div_staff else set()
+        div_total_clocked = sum(
+            clocked_hours_today.get(cid, {}).get("hours", 0.0)
+            for cid in div_staff_cids
+        )
+        div_total_worked = sum(
+            info["hours"] for cid, info in (div_staff.items() if div_staff else [])
+        )
+        if div_total_clocked > 0:
+            div_eff_pct   = (div_total_worked / div_total_clocked) * 100
+            div_eff_color = "#ef4444" if div_eff_pct < 70 else ("#fbbf24" if div_eff_pct < 85 else "#86efac")
+            div_eff_badge = f'&nbsp;·&nbsp; <span style="color:{div_eff_color};font-weight:700">{div_eff_pct:.0f}% efficiency</span>'
+        else:
+            div_eff_badge = ""
+
         division_sections += f"""
     <div class="division-section">
       <div class="division-header" style="background:{colour}">
         <h2>{div}</h2>
-        <span class="div-stats">{len(div_tickets)} ticket(s) &nbsp;·&nbsp; {hrs(div_act)} today / {hrs(div_est)} est</span>
+        <span class="div-stats">{len(div_tickets)} ticket(s) &nbsp;·&nbsp; {hrs(div_act)} today / {hrs(div_est)} est{div_eff_badge}</span>
       </div>
       <div class="division-body">
         {ai_html}
