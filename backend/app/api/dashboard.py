@@ -1960,12 +1960,13 @@ async def daily_report_html(
     # ── Fetch tickets (no $select — full record may include PropertyName) ───────
     async def _fetch_tickets():
         results = []
+
+        # Pass 1 & 2: tickets completed or scheduled on target date
         for f in [
             f"CompleteDate ge {target}T00:00:00Z and CompleteDate le {target}T23:59:59Z",
             f"ScheduledStartDate ge {target}T00:00:00Z and ScheduledStartDate le {target}T23:59:59Z",
         ]:
             try:
-                # No $select — fetch all fields so PropertyName/PropertyID come through if available
                 batch = await _aspire._get_all("WorkTickets", {
                     "$filter": f,
                     "$top": "200",
@@ -1973,6 +1974,38 @@ async def daily_report_html(
                 results.extend(batch)
             except Exception as e:
                 logger.warning(f"WorkTickets fetch failed ({f[:40]}): {e}")
+
+        # Pass 3: tickets that had time logged on target date (catches tickets
+        # worked a day after their scheduled date and never marked Complete)
+        try:
+            time_entries = await _aspire._get_all("WorkTicketTimes", {
+                "$filter": f"StartTime ge {target}T00:00:00Z and StartTime le {target}T23:59:59Z",
+                "$select": "WorkTicketID",
+                "$top": "500",
+            })
+            time_wt_ids = list({
+                int(e["WorkTicketID"]) for e in time_entries
+                if e.get("WorkTicketID")
+            })
+            if time_wt_ids:
+                # Fetch full ticket records for any IDs not already in results
+                existing_ids = {r.get("WorkTicketID") for r in results}
+                missing_ids  = [wid for wid in time_wt_ids if wid not in existing_ids]
+                # Chunk into groups of 50 to stay under OData URL length limits
+                for i in range(0, len(missing_ids), 50):
+                    chunk = missing_ids[i:i + 50]
+                    id_list = ",".join(str(x) for x in chunk)
+                    try:
+                        batch = await _aspire._get_all("WorkTickets", {
+                            "$filter": f"WorkTicketID in ({id_list})",
+                            "$top": "200",
+                        })
+                        results.extend(batch)
+                    except Exception as e:
+                        logger.warning(f"WorkTickets time-based fetch failed (chunk {i}): {e}")
+        except Exception as e:
+            logger.warning(f"WorkTicketTimes fetch failed: {e}")
+
         seen: set[int] = set()
         unique = []
         for t in results:
