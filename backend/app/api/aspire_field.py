@@ -951,8 +951,12 @@ async def debug_issue_raw(issue_id: int):
     """Temp: fetch a raw Aspire Issue record to inspect available fields."""
     _check_credentials()
     try:
-        result = await _aspire._get(f"Issues({issue_id})", {})
-        return {"raw": result}
+        result = await _aspire._get("Issues", {
+            "$filter": f"IssueID eq {issue_id}",
+            "$top": "1",
+        })
+        records = _aspire._extract_list(result)
+        return {"raw": records[0] if records else None, "count": len(records)}
     except Exception as e:
         return {"error": str(e)}
 
