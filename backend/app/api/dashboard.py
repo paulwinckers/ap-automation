@@ -2092,9 +2092,48 @@ async def daily_report_html(
             logger.warning(f"Attachments fetch failed: {ex}")
             return []
 
+    async def _fetch_clock_times():
+        """
+        Fetch ClockTimes for target date — gives total clocked hours per employee
+        (clock-in to clock-out minus break), regardless of which tickets they worked.
+        ContactID → clocked_hours (net of BreakTime).
+        """
+        clocked: dict = {}
+        try:
+            from datetime import datetime as _dt
+            entries = await _aspire._get_all("ClockTimes", {
+                "$filter": f"ClockStartDateTime ge {target}T00:00:00Z and ClockStartDateTime le {target}T23:59:59Z",
+                "$top": "500",
+            })
+            for e in entries:
+                cid = e.get("ContactID")
+                if not cid:
+                    continue
+                try:
+                    cs = _dt.fromisoformat((e.get("ClockStartDateTime") or "").rstrip("Z"))
+                    ce = _dt.fromisoformat((e.get("ClockEndDateTime")   or "").rstrip("Z")) if e.get("ClockEndDateTime") else None
+                    if ce and ce > cs:
+                        gross_h   = (ce - cs).total_seconds() / 3600
+                        break_min = float(e.get("BreakTime") or 0)  # BreakTime is in minutes
+                        net_h     = max(gross_h - break_min / 60, 0.0)
+                        name = (e.get("ContactName") or e.get("EmployeeName") or
+                                (e.get("FirstName", "") + " " + e.get("LastName", "")).strip())
+                        if cid not in clocked:
+                            clocked[cid] = {"name": name or f"Staff #{cid}", "hours": 0.0}
+                        else:
+                            # Keep best name we've seen
+                            if name and clocked[cid]["name"].startswith("Staff #"):
+                                clocked[cid]["name"] = name
+                        clocked[cid]["hours"] += net_h
+                except Exception:
+                    pass
+        except Exception as ex:
+            logger.warning(f"ClockTimes fetch failed: {ex}")
+        return clocked
+
     try:
-        (tickets, hours_today_by_wt, staff_hours_today), visit_notes, attachments = await asyncio.gather(
-            _fetch_tickets(), _fetch_visit_notes(), _fetch_attachments()
+        (tickets, hours_today_by_wt, staff_hours_today), visit_notes, attachments, clocked_hours_today = await asyncio.gather(
+            _fetch_tickets(), _fetch_visit_notes(), _fetch_attachments(), _fetch_clock_times()
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
@@ -2473,21 +2512,39 @@ async def daily_report_html(
             # Per-staff estimated hours: sum HoursEst for their tickets in this division
             est_by_wt = {t.get("WorkTicketID"): float(t.get("HoursEst") or 0) for t in div_tickets}
             staff_rows_html = ""
-            for info in sorted(div_staff.values(), key=lambda x: -x["hours"]):
-                s_hrs  = info["hours"]
-                s_est  = sum(est_by_wt.get(wid, 0) for wid in info["wt_ids"] if wid in est_by_wt)
+            for cid, info in sorted(div_staff.items(), key=lambda kv: -kv[1]["hours"]):
+                worked_h  = info["hours"]  # Direct Job Time (WorkTicketTimes)
+                clocked_h = clocked_hours_today.get(cid, {}).get("hours")  # ClockTimes
+                s_est     = sum(est_by_wt.get(wid, 0) for wid in info["wt_ids"] if wid in est_by_wt)
+
+                # Clocked column
+                if clocked_h is not None:
+                    diff_h     = clocked_h - worked_h
+                    diff_str   = f'⚠️ +{diff_h:.2f}h' if diff_h > 0.1 else f'{diff_h:.2f}h'
+                    diff_color = "#b45309" if diff_h > 0.1 else "#16a34a"
+                    clocked_str = f"{clocked_h:.2f}h"
+                    diff_cell   = f'<span style="color:{diff_color};font-weight:600">{diff_str}</span>'
+                else:
+                    clocked_str = "—"
+                    diff_cell   = "—"
+
+                # vs Estimate efficiency
                 if s_est > 0:
-                    eff_pct = (s_hrs / s_est) * 100
+                    eff_pct    = (worked_h / s_est) * 100
                     eff_colour = "#ef4444" if eff_pct > 110 else ("#f59e0b" if eff_pct > 95 else "#16a34a")
-                    eff_str = f'<span style="font-weight:700;color:{eff_colour}">{eff_pct:.0f}%</span>'
+                    eff_str    = f'<span style="font-weight:700;color:{eff_colour}">{eff_pct:.0f}%</span>'
+                    est_str    = f"{s_est:.1f}h"
                 else:
                     eff_str = "—"
-                s_est_str = f"{s_est:.1f}h est" if s_est else "—"
+                    est_str = "—"
+
                 staff_rows_html += f"""
               <tr>
                 <td class="eff-name">{info['name']}</td>
-                <td class="eff-num">{s_hrs:.1f}h</td>
-                <td class="eff-num">{s_est_str}</td>
+                <td class="eff-num">{clocked_str}</td>
+                <td class="eff-num">{worked_h:.2f}h</td>
+                <td class="eff-num">{diff_cell}</td>
+                <td class="eff-num">{est_str}</td>
                 <td class="eff-num">{eff_str}</td>
               </tr>"""
             efficiency_html = f"""
@@ -2496,9 +2553,11 @@ async def daily_report_html(
           <table>
             <thead><tr>
               <th class="eff-name">Employee</th>
-              <th class="eff-num">Hours</th>
+              <th class="eff-num">Clocked</th>
+              <th class="eff-num">Worked</th>
+              <th class="eff-num">Difference</th>
               <th class="eff-num">Est.</th>
-              <th class="eff-num">Efficiency</th>
+              <th class="eff-num">vs Est.</th>
             </tr></thead>
             <tbody>{staff_rows_html}</tbody>
           </table>
