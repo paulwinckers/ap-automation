@@ -938,13 +938,22 @@ async def create_opportunity(
     }
 
 
+@router.get("/issue-categories")
+async def get_issue_categories():
+    """Return activity/issue categories from Aspire for the New Issue form."""
+    _check_credentials()
+    categories = await _aspire.get_activity_categories()
+    return {"categories": categories}
+
+
 @router.post("/issue")
 async def create_field_issue(
     submitter_name:   str               = Form(...),
     property_id:      Optional[int]     = Form(default=None),
     property_name:    Optional[str]     = Form(default=None),
     subject:          str               = Form(...),
-    category:         Optional[str]     = Form(default=None),
+    category_id:      Optional[int]     = Form(default=None),
+    category_name:    Optional[str]     = Form(default=None),
     assigned_to_id:   Optional[int]     = Form(default=None),   # UserID
     assigned_to_name: Optional[str]     = Form(default=None),
     priority:         Optional[str]     = Form(default=None),   # High / Normal / Low
@@ -972,23 +981,10 @@ async def create_field_issue(
             raise HTTPException(status_code=413, detail=f"File {i+1} too large (max {label})")
         photo_data.append((photo.filename or f"photo_{i+1}.jpg", raw))
 
-    # ── Build notes text (no photo URLs yet) ────────────────────────────────
-    lines = [
-        f"Submitted by: {submitter_name}",
-        f"Date: {date.today().isoformat()}",
-    ]
-    if property_name:
-        lines.append(f"Property: {property_name}")
-    if category:
-        lines.append(f"Category: {category}")
-    if notes:
-        lines.append(f"\n{notes}")
-    if photo_data:
-        lines.append(f"\n{len(photo_data)} photo(s) attached.")
-    notes_text = "\n".join(lines)
-
     # ── Resolve AssignedTo UserID ─────────────────────────────────────────────
-    assigned_uid = assigned_to_id
+    # assigned_to_id from frontend is already a UserID (we only send UserIDs now).
+    # Only fall back to default if nothing was selected.
+    assigned_uid = assigned_to_id if assigned_to_id else None
     if not assigned_uid and assigned_to_name:
         try:
             employees = await _aspire.get_aspire_employees()
@@ -1000,8 +996,44 @@ async def create_field_issue(
                     break
         except Exception:
             pass
-    if not assigned_uid:
-        assigned_uid = settings.ASPIRE_DEFAULT_USER_ID
+    # No default fallback — leave unassigned if nothing selected so Aspire
+    # doesn't silently assign to the wrong person.
+
+    # ── Upload photos to R2 first so URLs are always in the notes ────────────
+    ONE_YEAR = 365 * 24 * 3600
+    photo_urls: list[str] = []
+    for fname, raw in photo_data:
+        r2_result = await r2.upload_field_photo(
+            file_bytes=raw,
+            filename=fname,
+            submitter=submitter_name,
+            entity_type="issue",
+            entity_id=f"prop{property_id or 0}",
+            expires_in=ONE_YEAR,
+        )
+        if r2_result:
+            _key, url = r2_result
+            photo_urls.append(url)
+            logger.info(f"Uploaded {fname} to R2: {url}")
+
+    # ── Build notes text with R2 photo links ──────────────────────────────────
+    lines = [
+        f"Submitted by: {submitter_name}",
+        f"Date: {date.today().isoformat()}",
+    ]
+    if property_name:
+        lines.append(f"Property: {property_name}")
+    if category_name:
+        lines.append(f"Category: {category_name}")
+    if notes:
+        lines.append(f"\n{notes}")
+    if photo_urls:
+        lines.append(f"\nPhotos ({len(photo_urls)}):")
+        for url in photo_urls:
+            lines.append(url)
+    elif photo_data:
+        lines.append(f"\n{len(photo_data)} photo(s) attached.")
+    notes_text = "\n".join(lines)
 
     # ── POST to Aspire Issues ─────────────────────────────────────────────────
     def _as_dt(d: Optional[str]) -> Optional[str]:
@@ -1013,12 +1045,15 @@ async def create_field_issue(
         "Subject":       subject,
         "Notes":         notes_text,
         "PublicComment": False,
-        "AssignedTo":    assigned_uid,
     }
+    if assigned_uid:
+        issue_body["AssignedTo"] = assigned_uid
     if property_id:
         issue_body["PropertyID"] = property_id
-    if category:
-        issue_body["IssueCategoryName"] = category
+    if category_id:
+        issue_body["ActivityCategoryID"] = category_id
+    if category_name and not category_id:
+        issue_body["ActivityCategoryName"] = category_name
     if priority:
         issue_body["Priority"] = priority
     if due_date:
@@ -1047,13 +1082,10 @@ async def create_field_issue(
         except (ValueError, TypeError):
             issue_id = None
 
-    # ── Upload photos: try Aspire direct attachment, fall back to R2 ─────────
-    ONE_YEAR = 365 * 24 * 3600
-    photos_uploaded = 0
-    photo_urls: list[str] = []
-    for fname, raw in photo_data:
-        aspire_ok = False
-        if isinstance(issue_id, int) and issue_id > 0:
+    # ── Also try Aspire direct attachment (bonus — photos already in notes) ──
+    photos_uploaded = len(photo_urls)  # R2 uploads already counted
+    if isinstance(issue_id, int) and issue_id > 0:
+        for fname, raw in photo_data:
             for obj_code in ("Issue", "Issues", "ServiceIssue"):
                 try:
                     await _aspire.upload_aspire_attachment(
@@ -1063,27 +1095,10 @@ async def create_field_issue(
                         file_bytes=raw,
                         expose_to_crew=True,
                     )
-                    photos_uploaded += 1
-                    aspire_ok = True
-                    logger.info(f"Issue {issue_id}: uploaded {fname} to Aspire directly (code={obj_code})")
+                    logger.info(f"Issue {issue_id}: also attached {fname} to Aspire directly (code={obj_code})")
                     break
                 except Exception as e:
                     logger.info(f"Issue {issue_id}: Aspire attachment failed (code={obj_code}): {e}")
-
-        if not aspire_ok:
-            r2_result = await r2.upload_field_photo(
-                file_bytes=raw,
-                filename=fname,
-                submitter=submitter_name,
-                entity_type="issue",
-                entity_id=f"prop{property_id or 0}",
-                expires_in=ONE_YEAR,
-            )
-            if r2_result:
-                _key, url = r2_result
-                photo_urls.append(url)
-                photos_uploaded += 1
-                logger.info(f"Issue {issue_id}: {fname} stored in R2 (fallback)")
 
     logger.info(
         f"New issue created: ID={issue_id} '{subject}' for property {property_id} "

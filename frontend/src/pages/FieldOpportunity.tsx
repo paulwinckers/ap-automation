@@ -322,9 +322,9 @@ export default function FieldOpportunity() {
                 <div style={{fontWeight:600, fontSize:15, color:'#1a1d23', marginBottom:2}}>
                   {p.PropertyName || 'Unknown property'}
                 </div>
-                <div style={{fontSize:12, color:'#6b7280'}}>
-                  {p.DivisionName || '—'} · From: {p.OpportunityName || '—'}
-                </div>
+                {p.DivisionName && (
+                  <div style={{fontSize:12, color:'#6b7280'}}>{p.DivisionName}</div>
+                )}
               </div>
             ))}
 

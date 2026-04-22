@@ -57,6 +57,145 @@ function printLabel(key: KeyEntry) {
     </body></html>`);
 }
 
+// Label sheet formats
+type LabelFormat = {
+  id: string;
+  name: string;
+  cols: number;
+  rows: number;
+  labelW: string;   // CSS width per label
+  labelH: string;   // CSS height per label
+  pageW: string;
+  pageH: string;
+  marginTop: string;
+  marginLeft: string;
+  gutterH: string;
+  gutterV: string;
+  fontSize: number; // px
+  qrSize: number;   // px
+};
+
+const LABEL_FORMATS: LabelFormat[] = [
+  {
+    id: 'avery5160',
+    name: 'Avery 5160 — 1" × 2⅝" (30/sheet)',
+    cols: 3, rows: 10,
+    labelW: '2.625in', labelH: '1in',
+    pageW: '8.5in', pageH: '11in',
+    marginTop: '0.5in', marginLeft: '0.19in',
+    gutterH: '0.125in', gutterV: '0in',
+    fontSize: 12, qrSize: 52,
+  },
+  {
+    id: 'avery5163',
+    name: 'Avery 5163 — 2" × 4" (10/sheet)',
+    cols: 2, rows: 5,
+    labelW: '4in', labelH: '2in',
+    pageW: '8.5in', pageH: '11in',
+    marginTop: '0.5in', marginLeft: '0.15in',
+    gutterH: '0.19in', gutterV: '0in',
+    fontSize: 15, qrSize: 90,
+  },
+  {
+    id: 'avery5195',
+    name: 'Avery 5195 — ⅔" × 1¾" (60/sheet)',
+    cols: 4, rows: 15,
+    labelW: '1.75in', labelH: '0.667in',
+    pageW: '8.5in', pageH: '11in',
+    marginTop: '0.5in', marginLeft: '0.31in',
+    gutterH: '0.31in', gutterV: '0in',
+    fontSize: 11, qrSize: 36,
+  },
+  {
+    id: 'avery5167',
+    name: 'Avery 5167 — ½" × 1¾" (80/sheet)',
+    cols: 4, rows: 20,
+    labelW: '1.75in', labelH: '0.5in',
+    pageW: '8.5in', pageH: '11in',
+    marginTop: '0.5in', marginLeft: '0.31in',
+    gutterH: '0.31in', gutterV: '0in',
+    fontSize: 10, qrSize: 28,
+  },
+];
+
+function printLabelSheet(selectedKeys: KeyEntry[], format: LabelFormat) {
+  const origin = window.location.origin;
+
+  // Build one cell per key
+  const cells = selectedKeys.map(key => {
+    const url  = `${origin}/keys/scan/${key.id}`;
+    const qr   = `https://api.qrserver.com/v1/create-qr-code/?size=${format.qrSize * 2}x${format.qrSize * 2}&data=${encodeURIComponent(url)}`;
+    const type = key.key_type === 'vehicle' ? 'Vehicle' : key.key_type === 'property_owner' ? 'Prop. Owner' : 'Other';
+    return `
+      <div class="label">
+        <img src="${qr}" width="${format.qrSize}" height="${format.qrSize}" />
+        <div class="info">
+          <div class="name">${key.name}</div>
+          <div class="type">${type}</div>
+          ${key.description ? `<div class="desc">${key.description}</div>` : ''}
+          ${key.property_name ? `<div class="prop">${key.property_name}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html><html><head><title>Key Labels</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  @page {
+    size: ${format.pageW} ${format.pageH};
+    margin: 0;
+  }
+  body {
+    width: ${format.pageW};
+    font-family: Arial, Helvetica, sans-serif;
+    padding-top: ${format.marginTop};
+    padding-left: ${format.marginLeft};
+  }
+  .sheet {
+    display: grid;
+    grid-template-columns: repeat(${format.cols}, ${format.labelW});
+    column-gap: ${format.gutterH};
+    row-gap: ${format.gutterV};
+  }
+  .label {
+    width: ${format.labelW};
+    height: ${format.labelH};
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 4px;
+    overflow: hidden;
+    border: 0.5px dotted #ccc; /* remove for final print — helps alignment */
+  }
+  .label img { flex-shrink: 0; display: block; }
+  .info { flex: 1; overflow: hidden; }
+  .name { font-size: ${format.fontSize}px; font-weight: 700; line-height: 1.2; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .type { font-size: ${Math.max(format.fontSize - 1, 5)}px; color: #555; margin-top: 1px; }
+  .desc { font-size: ${Math.max(format.fontSize - 1, 5)}px; color: #333; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prop { font-size: ${Math.max(format.fontSize - 1, 5)}px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  @media print { .label { border-color: transparent; } }
+</style>
+</head><body>
+<div class="sheet">${cells}</div>
+<script>
+  // Wait for all QR images to load before printing
+  window.addEventListener('load', () => {
+    const imgs = document.querySelectorAll('img');
+    let loaded = 0;
+    if (imgs.length === 0) { window.print(); return; }
+    imgs.forEach(img => {
+      if (img.complete) { if (++loaded === imgs.length) window.print(); }
+      else { img.onload = img.onerror = () => { if (++loaded === imgs.length) window.print(); }; }
+    });
+  });
+<\/script>
+</body></html>`;
+
+  const w = window.open('', '_blank');
+  w?.document.write(html);
+  w?.document.close();
+}
+
 // ── Add Key Form ──────────────────────────────────────────────────────────────
 
 interface AddKeyFormProps {
@@ -272,9 +411,11 @@ function EditKeyForm({ keyEntry, onSaved, onCancel }: EditKeyFormProps) {
 interface KeyCardProps {
   keyEntry: KeyEntry;
   onRefresh: () => void;
+  selected: boolean;
+  onToggleSelect: (id: number) => void;
 }
 
-function KeyCard({ keyEntry: k, onRefresh }: KeyCardProps) {
+function KeyCard({ keyEntry: k, onRefresh, selected, onToggleSelect }: KeyCardProps) {
   const [editing, setEditing]         = useState(false);
   const [confirming, setConfirming]   = useState(false);
   const [deactivating, setDeactivating] = useState(false);
@@ -292,72 +433,82 @@ function KeyCard({ keyEntry: k, onRefresh }: KeyCardProps) {
   }
 
   return (
-    <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
-      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+    <div style={{
+      background: CARD,
+      border: `1px solid ${selected ? BLUE : BORDER}`,
+      borderRadius: 10, padding: '10px 14px', marginBottom: 6,
+      transition: 'border-color 0.15s',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+
+        {/* Checkbox */}
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => onToggleSelect(k.id)}
+          style={{ width: 15, height: 15, accentColor: BLUE, cursor: 'pointer', flexShrink: 0 }}
+        />
+
         {/* QR code */}
-        <div style={{ flexShrink: 0 }}>
-          <img src={qrUrl} alt={`QR for ${k.name}`} style={{ width: 80, height: 80, borderRadius: 6, background: '#fff' }} />
+        <img src={qrUrl} alt={`QR for ${k.name}`} style={{ width: 44, height: 44, borderRadius: 4, background: '#fff', flexShrink: 0 }} />
+
+        {/* Name + badge */}
+        <div style={{ flexShrink: 0, minWidth: 140, maxWidth: 200 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{k.name}</div>
+          <div style={{ marginTop: 2 }}>{typeBadge(k.key_type)}</div>
         </div>
 
-        {/* Info */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-            <div style={{ fontWeight: 700, fontSize: 15 }}>{k.name}</div>
-            {typeBadge(k.key_type)}
-          </div>
+        {/* Description */}
+        <div style={{ flex: 1, minWidth: 0, color: MUTED, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {k.description || ''}
+        </div>
 
-          {k.description && (
-            <div style={{ color: MUTED, fontSize: 12, marginBottom: 4 }}>{k.description}</div>
-          )}
-          {k.property_name && (
-            <div style={{ color: MUTED, fontSize: 12, marginBottom: 4 }}>📍 {k.property_name}</div>
-          )}
+        {/* Property */}
+        <div style={{ flex: 1, minWidth: 0, color: MUTED, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {k.property_name ? `📍 ${k.property_name}` : ''}
+        </div>
 
-          {/* Status */}
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '3px 10px', borderRadius: 20, marginBottom: 10,
-            background: isOut ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)',
-            border: `1px solid ${isOut ? RED : GREEN}`,
-          }}>
-            <span style={{ fontSize: 8, color: isOut ? RED : GREEN }}>●</span>
-            <span style={{ fontSize: 12, fontWeight: 600, color: isOut ? RED : GREEN }}>
-              {isOut ? `Out — ${k.current_holder}` : 'Available'}
+        {/* Status */}
+        <div style={{
+          flexShrink: 0,
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+          padding: '3px 10px', borderRadius: 20,
+          background: isOut ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)',
+          border: `1px solid ${isOut ? RED : GREEN}`,
+        }}>
+          <span style={{ fontSize: 7, color: isOut ? RED : GREEN }}>●</span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: isOut ? RED : GREEN, whiteSpace: 'nowrap' }}>
+            {isOut ? `Out — ${k.current_holder}` : 'Available'}
+          </span>
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+          <button onClick={() => printLabel(k)} title="Print label" style={{
+            padding: '4px 8px', borderRadius: 6, border: `1px solid ${BORDER}`,
+            background: 'transparent', color: MUTED, fontSize: 13, cursor: 'pointer',
+          }}>🖨</button>
+          <button onClick={() => setEditing(!editing)} title="Edit" style={{
+            padding: '4px 8px', borderRadius: 6, border: `1px solid ${BLUE}`,
+            background: 'transparent', color: BLUE, fontSize: 13, cursor: 'pointer',
+          }}>✏️</button>
+          {!confirming ? (
+            <button onClick={() => setConfirming(true)} title="Delete" style={{
+              padding: '4px 8px', borderRadius: 6, border: `1px solid ${RED}`,
+              background: 'transparent', color: RED, fontSize: 13, cursor: 'pointer',
+            }}>🗑</button>
+          ) : (
+            <span style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+              <span style={{ fontSize: 11, color: MUTED }}>Delete?</span>
+              <button onClick={handleDeactivate} disabled={deactivating} style={{
+                padding: '3px 8px', borderRadius: 6, border: 'none', background: RED, color: '#fff', fontSize: 11, cursor: 'pointer',
+              }}>{deactivating ? '…' : 'Yes'}</button>
+              <button onClick={() => setConfirming(false)} style={{
+                padding: '3px 8px', borderRadius: 6, border: `1px solid ${BORDER}`, background: 'transparent', color: MUTED, fontSize: 11, cursor: 'pointer',
+              }}>No</button>
             </span>
+          )}
           </div>
-
-          {/* Actions */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button onClick={() => printLabel(k)} style={{
-              padding: '5px 12px', borderRadius: 6, border: `1px solid ${BORDER}`,
-              background: 'transparent', color: MUTED, fontSize: 12, cursor: 'pointer',
-            }}>🖨 Print Label</button>
-            <button onClick={() => setEditing(!editing)} style={{
-              padding: '5px 12px', borderRadius: 6, border: `1px solid ${BLUE}`,
-              background: 'transparent', color: BLUE, fontSize: 12, cursor: 'pointer',
-            }}>✏️ Edit</button>
-            {!confirming ? (
-              <button onClick={() => setConfirming(true)} style={{
-                padding: '5px 12px', borderRadius: 6, border: `1px solid ${RED}`,
-                background: 'transparent', color: RED, fontSize: 12, cursor: 'pointer',
-              }}>🗑</button>
-            ) : (
-              <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <span style={{ fontSize: 12, color: MUTED }}>Delete?</span>
-                <button
-                  onClick={handleDeactivate}
-                  disabled={deactivating}
-                  style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: RED, color: '#fff', fontSize: 12, cursor: 'pointer' }}
-                >
-                  {deactivating ? '…' : 'Yes'}
-                </button>
-                <button onClick={() => setConfirming(false)} style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${BORDER}`, background: 'transparent', color: MUTED, fontSize: 12, cursor: 'pointer' }}>
-                  No
-                </button>
-              </span>
-            )}
-          </div>
-        </div>
       </div>
 
       {editing && (
@@ -384,6 +535,31 @@ export default function KeysAdmin() {
   const [logLoading, setLogLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [error, setError]         = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [labelFormat, setLabelFormat] = useState<string>('avery5160');
+
+  function toggleSelect(id: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(keys.map(k => k.id)));
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  function handlePrintSheet() {
+    const fmt = LABEL_FORMATS.find(f => f.id === labelFormat) ?? LABEL_FORMATS[0];
+    const selectedKeys = keys.filter(k => selectedIds.has(k.id));
+    if (selectedKeys.length === 0) return;
+    printLabelSheet(selectedKeys, fmt);
+  }
 
   // Auth guard
   useEffect(() => {
@@ -478,6 +654,70 @@ export default function KeysAdmin() {
             />
           )}
 
+          {/* ── Selection toolbar ── */}
+          {!loading && keys.length > 0 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+              background: selectedIds.size > 0 ? 'rgba(59,130,246,0.1)' : CARD,
+              border: `1px solid ${selectedIds.size > 0 ? BLUE : BORDER}`,
+              borderRadius: 10, padding: '10px 14px', marginBottom: 18,
+              transition: 'background 0.2s, border-color 0.2s',
+            }}>
+              <button
+                onClick={selectedIds.size === keys.length ? clearSelection : selectAll}
+                style={{
+                  padding: '5px 12px', borderRadius: 6, border: `1px solid ${BORDER}`,
+                  background: 'transparent', color: MUTED, fontSize: 12, cursor: 'pointer',
+                }}
+              >
+                {selectedIds.size === keys.length ? 'Deselect All' : 'Select All'}
+              </button>
+
+              <span style={{ color: MUTED, fontSize: 12 }}>
+                {selectedIds.size > 0 ? `${selectedIds.size} selected` : 'Select keys to print'}
+              </span>
+
+              {selectedIds.size > 0 && (
+                <>
+                  <select
+                    value={labelFormat}
+                    onChange={e => setLabelFormat(e.target.value)}
+                    style={{
+                      marginLeft: 'auto', padding: '5px 10px', borderRadius: 6,
+                      background: '#0f172a', border: `1px solid ${BORDER}`,
+                      color: '#fff', fontSize: 12, cursor: 'pointer',
+                    }}
+                  >
+                    {LABEL_FORMATS.map(f => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))}
+                  </select>
+
+                  <button
+                    onClick={handlePrintSheet}
+                    style={{
+                      padding: '6px 16px', borderRadius: 6, border: 'none',
+                      background: BLUE, color: '#fff', fontSize: 12,
+                      fontWeight: 700, cursor: 'pointer',
+                    }}
+                  >
+                    🖨 Print {selectedIds.size} Label{selectedIds.size !== 1 ? 's' : ''}
+                  </button>
+
+                  <button
+                    onClick={clearSelection}
+                    style={{
+                      padding: '5px 10px', borderRadius: 6, border: `1px solid ${BORDER}`,
+                      background: 'transparent', color: MUTED, fontSize: 12, cursor: 'pointer',
+                    }}
+                  >
+                    ✕
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           {loading ? (
             <div style={{ color: MUTED, textAlign: 'center', padding: 40 }}>Loading keys…</div>
           ) : keys.length === 0 ? (
@@ -498,7 +738,13 @@ export default function KeysAdmin() {
                     {group.label} ({groupKeys.length})
                   </div>
                   {groupKeys.map(k => (
-                    <KeyCard key={k.id} keyEntry={k} onRefresh={loadKeys} />
+                    <KeyCard
+                      key={k.id}
+                      keyEntry={k}
+                      onRefresh={loadKeys}
+                      selected={selectedIds.has(k.id)}
+                      onToggleSelect={toggleSelect}
+                    />
                   ))}
                 </div>
               );

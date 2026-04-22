@@ -14,9 +14,11 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   searchFieldProperties,
   getAspireEmployees,
+  getIssueCategories,
   createFieldIssue,
   type FieldPropertyResult,
   type AspireEmployee,
+  type ActivityCategory,
 } from '../lib/api';
 
 type Step = 1 | 2 | 3 | 4 | 5;
@@ -25,6 +27,7 @@ const MAX_PHOTOS = 5;
 const MAX_PX     = 1600;
 
 const PRIORITIES = ['High', 'Normal', 'Low'] as const;
+
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -315,34 +318,50 @@ function StepProperty({ onSelect }: {
 
 function StepDetails({
   propertyName, subject, setSubject,
+  categoryId, setCategoryId, categoryName, setCategoryName,
   assignedToId, setAssignedToId, assignedToName, setAssignedToName,
   priority, setPriority, dueDate, setDueDate,
   onBack, onNext,
 }: {
   propertyName: string;
   subject: string; setSubject: (v: string) => void;
+  categoryId: number | null; setCategoryId: (v: number | null) => void;
+  categoryName: string; setCategoryName: (v: string) => void;
   assignedToId: number | null; setAssignedToId: (v: number | null) => void;
   assignedToName: string; setAssignedToName: (v: string) => void;
   priority: string; setPriority: (v: string) => void;
   dueDate: string; setDueDate: (v: string) => void;
   onBack: () => void; onNext: () => void;
 }) {
-  const [employees, setEmployees] = useState<AspireEmployee[]>([]);
+  const [employees,  setEmployees]  = useState<AspireEmployee[]>([]);
+  const [categories, setCategories] = useState<ActivityCategory[]>([]);
 
   useEffect(() => {
-    getAspireEmployees().then(setEmployees).catch(() => {});
+    getAspireEmployees()
+      .then(list => setEmployees([...list].sort((a, b) => a.FullName.localeCompare(b.FullName))))
+      .catch(() => {});
+    getIssueCategories().then(setCategories).catch(() => {});
   }, []);
 
   function handleAssignee(val: string) {
     if (!val) { setAssignedToId(null); setAssignedToName(''); return; }
-    const emp = employees.find(e => String(e.UserID || e.ContactID) === val);
-    if (emp) {
-      setAssignedToId(emp.UserID || emp.ContactID);
+    const emp = employees.find(e => e.UserID && String(e.UserID) === val);
+    if (emp && emp.UserID) {
+      setAssignedToId(emp.UserID);
       setAssignedToName(emp.FullName);
     }
   }
 
-  const currentAssigneeVal = assignedToId ? String(assignedToId) : '';
+  function handleCategory(val: string) {
+    if (!val) { setCategoryId(null); setCategoryName(''); return; }
+    const cat = categories.find(c => String(c.id) === val);
+    if (cat) { setCategoryId(cat.id); setCategoryName(cat.name); }
+  }
+
+  // Only employees with a UserID can be assigned in Aspire
+  const assignableEmployees = employees.filter(e => e.UserID);
+  const currentAssigneeVal  = assignedToId  ? String(assignedToId)  : '';
+  const currentCategoryVal  = categoryId    ? String(categoryId)    : '';
 
   return (
     <div>
@@ -359,12 +378,19 @@ function StepDetails({
         />
 
         <FieldSelect
+          label="Category" required={false}
+          value={currentCategoryVal} onChange={handleCategory}
+          placeholder={categories.length === 0 ? 'Loading categories…' : 'Select category…'}
+          options={categories.map(c => ({ value: String(c.id), label: c.name }))}
+        />
+
+        <FieldSelect
           label="Assigned To" required={false}
           value={currentAssigneeVal}
           onChange={handleAssignee}
           placeholder="Select employee…"
-          options={employees.map(e => ({
-            value: String(e.UserID || e.ContactID),
+          options={assignableEmployees.map(e => ({
+            value: String(e.UserID),
             label: e.FullName,
           }))}
         />
@@ -396,33 +422,42 @@ function StepDetails({
 // ── Step 3: Comment + Photos ──────────────────────────────────────────────────
 
 function StepComment({
-  notes, setNotes, photos, setPhotos,
+  notes, setNotes, photos, setPhotos, previews, setPreviews,
   submitterName, setSubmitterName,
   onBack, onNext,
 }: {
   notes: string; setNotes: (v: string) => void;
   photos: File[]; setPhotos: (f: File[]) => void;
+  previews: string[]; setPreviews: (p: string[]) => void;
   submitterName: string; setSubmitterName: (v: string) => void;
   onBack: () => void; onNext: () => void;
 }) {
   const [compressing, setCompressing] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const previews = photos.map(f => URL.createObjectURL(f));
+  const cameraRef  = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
 
   async function handleFiles(files: FileList | null) {
     if (!files) return;
-    const arr = Array.from(files);
     const remaining = MAX_PHOTOS - photos.length;
     if (remaining <= 0) return;
+    const toAdd = Array.from(files).slice(0, remaining);
     setCompressing(true);
-    const compressed = await Promise.all(arr.slice(0, remaining).map(compressImage));
-    setPhotos([...photos, ...compressed]);
+    const processed = await Promise.all(
+      toAdd.map(f => f.type.startsWith('video/') ? Promise.resolve(f) : compressImage(f))
+    );
+    const newPreviews = processed.map(f =>
+      f.type.startsWith('image/') ? URL.createObjectURL(f) : ''
+    );
+    setPhotos([...photos, ...processed]);
+    setPreviews([...previews, ...newPreviews]);
     setCompressing(false);
   }
 
   const removePhoto = useCallback((i: number) => {
+    if (previews[i]) URL.revokeObjectURL(previews[i]);
     setPhotos(photos.filter((_, idx) => idx !== i));
-  }, [photos, setPhotos]);
+    setPreviews(previews.filter((_, idx) => idx !== i));
+  }, [photos, setPhotos, previews, setPreviews]);
 
   return (
     <div>
@@ -447,41 +482,64 @@ function StepComment({
           />
         </div>
 
-        {/* Photo upload */}
+        {/* Photo / video upload */}
         <div style={{ marginBottom: 20 }}>
           <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 8 }}>
-            Photos ({photos.length}/{MAX_PHOTOS})
+            Photos & Videos ({photos.length}/{MAX_PHOTOS})
           </label>
+
+          {/* Hidden inputs */}
+          <input ref={cameraRef}  type="file" accept="image/*,video/*" capture="environment" multiple onChange={e => handleFiles(e.target.files)} style={{ display: 'none' }} />
+          <input ref={galleryRef} type="file" accept="image/*,video/*" multiple onChange={e => handleFiles(e.target.files)} style={{ display: 'none' }} />
+
           {photos.length < MAX_PHOTOS && (
-            <>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
               <button
-                onClick={() => fileRef.current?.click()}
+                onClick={() => cameraRef.current?.click()}
                 disabled={compressing}
                 style={{
-                  width: '100%', padding: '14px', borderRadius: 10,
-                  border: `1.5px dashed ${BORDER}`,
-                  background: '#1e293b', color: '#64748b',
-                  fontSize: 14, cursor: 'pointer', marginBottom: 10,
+                  flex: 1, padding: '18px 12px', borderRadius: 10,
+                  border: `2px dashed ${BORDER}`, background: '#1e293b',
+                  color: '#64748b', cursor: 'pointer', textAlign: 'center',
                 }}
               >
-                {compressing ? 'Compressing…' : '📷 Add Photos'}
+                <div style={{ fontSize: 28 }}>📷</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#94a3b8', marginTop: 4 }}>Camera</div>
+                <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>Photo or video</div>
               </button>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                multiple
-                capture="environment"
-                onChange={e => handleFiles(e.target.files)}
-                style={{ display: 'none' }}
-              />
-            </>
+              <button
+                onClick={() => galleryRef.current?.click()}
+                disabled={compressing}
+                style={{
+                  flex: 1, padding: '18px 12px', borderRadius: 10,
+                  border: `2px dashed ${BORDER}`, background: '#1e293b',
+                  color: '#64748b', cursor: 'pointer', textAlign: 'center',
+                }}
+              >
+                <div style={{ fontSize: 28 }}>🖼️</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#94a3b8', marginTop: 4 }}>Library</div>
+                <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>Photo or video</div>
+              </button>
+            </div>
           )}
-          {previews.length > 0 && (
+
+          {compressing && (
+            <div style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginBottom: 8 }}>Compressing…</div>
+          )}
+
+          {photos.length > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
-              {previews.map((src, i) => (
-                <div key={i} style={{ position: 'relative' }}>
-                  <img src={src} alt={`Photo ${i+1}`} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 8 }} />
+              {photos.map((f, i) => (
+                <div key={i} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', aspectRatio: '1', background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {f.type.startsWith('video/')
+                    ? <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                        <span style={{ fontSize: 26 }}>🎥</span>
+                        <div style={{ fontSize: 9, color: '#64748b', textAlign: 'center', padding: '0 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{f.name}</div>
+                      </div>
+                    : previews[i]
+                      ? <img src={previews[i]} alt={`Photo ${i+1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                      : <div style={{ fontSize: 24 }}>📄</div>
+                  }
                   <button
                     onClick={() => removePhoto(i)}
                     style={{
@@ -513,10 +571,10 @@ function StepComment({
 // ── Step 4: Review ────────────────────────────────────────────────────────────
 
 function StepReview({
-  propertyName, subject, assignedToName, priority, dueDate, notes, photos,
+  propertyName, subject, categoryName, assignedToName, priority, dueDate, notes, photos,
   submitterName, onBack, onSubmit, submitting,
 }: {
-  propertyName: string; subject: string; assignedToName: string;
+  propertyName: string; subject: string; categoryName: string; assignedToName: string;
   priority: string; dueDate: string; notes: string; photos: File[];
   submitterName: string;
   onBack: () => void; onSubmit: () => void; submitting: boolean;
@@ -538,6 +596,7 @@ function StepReview({
         <div style={{ background: '#1e293b', borderRadius: 12, padding: '4px 16px', marginBottom: 20 }}>
           <Row label="Property"    value={propertyName} />
           <Row label="Subject"     value={subject} />
+          <Row label="Category"    value={categoryName} />
           <Row label="Assigned To" value={assignedToName} />
           <Row label="Priority"    value={priority} />
           <Row label="Due Date"    value={dueDate} />
@@ -601,6 +660,8 @@ export default function FieldIssue() {
 
   // Step 2
   const [subject,         setSubject]         = useState('');
+  const [categoryId,      setCategoryId]      = useState<number | null>(null);
+  const [categoryName,    setCategoryName]    = useState('');
   const [assignedToId,    setAssignedToId]    = useState<number | null>(null);
   const [assignedToName,  setAssignedToName]  = useState('');
   const [priority,        setPriority]        = useState('Normal');
@@ -609,6 +670,7 @@ export default function FieldIssue() {
   // Step 3
   const [notes,         setNotes]         = useState('');
   const [photos,        setPhotos]        = useState<File[]>([]);
+  const [previews,      setPreviews]      = useState<string[]>([]);
   const [submitterName, setSubmitterName] = useState(() => {
     try { return JSON.parse(localStorage.getItem('ap_user') || '{}').name || ''; } catch { return ''; }
   });
@@ -618,10 +680,11 @@ export default function FieldIssue() {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   function reset() {
+    previews.forEach(p => { if (p) URL.revokeObjectURL(p); });
     setStep(1); setPropertyId(null); setPropertyName('');
-    setSubject(''); setAssignedToId(null); setAssignedToName('');
+    setSubject(''); setCategoryId(null); setCategoryName(''); setAssignedToId(null); setAssignedToName('');
     setPriority('Normal'); setDueDate(''); setNotes('');
-    setPhotos([]); setSubmitError(null);
+    setPhotos([]); setPreviews([]); setSubmitError(null);
   }
 
   async function handleSubmit() {
@@ -634,6 +697,8 @@ export default function FieldIssue() {
         propertyId,
         propertyName,
         subject: subject.trim(),
+        categoryId:     categoryId    ?? undefined,
+        categoryName:   categoryName  || undefined,
         assignedToId:   assignedToId  ?? undefined,
         assignedToName: assignedToName || undefined,
         priority:       priority || undefined,
@@ -695,11 +760,13 @@ export default function FieldIssue() {
       {step === 2 && (
         <StepDetails
           propertyName={propertyName}
-          subject={subject}           setSubject={setSubject}
-          assignedToId={assignedToId} setAssignedToId={setAssignedToId}
+          subject={subject}               setSubject={setSubject}
+          categoryId={categoryId}         setCategoryId={setCategoryId}
+          categoryName={categoryName}     setCategoryName={setCategoryName}
+          assignedToId={assignedToId}     setAssignedToId={setAssignedToId}
           assignedToName={assignedToName} setAssignedToName={setAssignedToName}
-          priority={priority}         setPriority={setPriority}
-          dueDate={dueDate}           setDueDate={setDueDate}
+          priority={priority}             setPriority={setPriority}
+          dueDate={dueDate}               setDueDate={setDueDate}
           onBack={() => setStep(1)}
           onNext={() => setStep(3)}
         />
@@ -709,6 +776,7 @@ export default function FieldIssue() {
         <StepComment
           notes={notes}               setNotes={setNotes}
           photos={photos}             setPhotos={setPhotos}
+          previews={previews}         setPreviews={setPreviews}
           submitterName={submitterName} setSubmitterName={setSubmitterName}
           onBack={() => setStep(2)}
           onNext={() => setStep(4)}
@@ -718,6 +786,7 @@ export default function FieldIssue() {
       {step === 4 && (
         <StepReview
           propertyName={propertyName} subject={subject}
+          categoryName={categoryName}
           assignedToName={assignedToName} priority={priority}
           dueDate={dueDate} notes={notes} photos={photos}
           submitterName={submitterName}

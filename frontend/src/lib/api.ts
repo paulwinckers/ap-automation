@@ -395,11 +395,20 @@ export interface CreateIssueResponse {
   submitter: string;
 }
 
+export interface ActivityCategory { id: number; name: string; }
+
+export async function getIssueCategories(): Promise<ActivityCategory[]> {
+  const res = await request<{ categories: ActivityCategory[] }>('GET', '/aspire/field/issue-categories');
+  return res.categories;
+}
+
 export interface FieldIssuePayload {
   submitterName: string;
   propertyId?: number;
   propertyName?: string;
   subject: string;
+  categoryId?: number;
+  categoryName?: string;
   assignedToId?: number;
   assignedToName?: string;
   priority?: string;
@@ -414,6 +423,8 @@ export async function createFieldIssue(p: FieldIssuePayload): Promise<CreateIssu
   if (p.propertyId)      form.append('property_id',      String(p.propertyId));
   if (p.propertyName)    form.append('property_name',    p.propertyName);
   form.append('subject', p.subject);
+  if (p.categoryId)      form.append('category_id',      String(p.categoryId));
+  if (p.categoryName)    form.append('category_name',    p.categoryName);
   if (p.assignedToId)    form.append('assigned_to_id',   String(p.assignedToId));
   if (p.assignedToName)  form.append('assigned_to_name', p.assignedToName);
   if (p.priority)        form.append('priority',         p.priority);

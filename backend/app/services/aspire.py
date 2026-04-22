@@ -1281,6 +1281,48 @@ class AspireClient:
         """POST a new Issue to Aspire (links to Opportunity or WorkTicket)."""
         return await self._post("Issues", body)
 
+    async def get_activity_categories(self) -> list[dict]:
+        """
+        Return distinct activity/issue categories from Aspire.
+        Tries GET /ActivityCategories first; falls back to pulling distinct
+        ActivityCategoryID/Name values from recent Activities.
+        """
+        # Try dedicated endpoint first
+        for ep in ["ActivityCategories", "IssueCategories"]:
+            try:
+                res = await self._get(ep, {"$top": "100"})
+                records = self._extract_list(res)
+                if records:
+                    # Normalise field names across possible endpoint schemas
+                    out = []
+                    for r in records:
+                        cid   = r.get("ActivityCategoryID") or r.get("IssueCategoryID") or r.get("CategoryID") or r.get("ID")
+                        cname = r.get("ActivityCategoryName") or r.get("IssueCategoryName") or r.get("CategoryName") or r.get("Name")
+                        if cid and cname:
+                            out.append({"id": int(cid), "name": str(cname)})
+                    if out:
+                        return sorted(out, key=lambda x: x["name"])
+            except Exception:
+                pass
+
+        # Fallback: pull distinct categories from existing Activities
+        try:
+            res = await self._get("Activities", {
+                "$select": "ActivityCategoryID,ActivityCategoryName",
+                "$filter": "ActivityCategoryID ne null",
+                "$top":    "500",
+            })
+            records = self._extract_list(res)
+            seen: dict[int, str] = {}
+            for r in records:
+                cid   = r.get("ActivityCategoryID")
+                cname = r.get("ActivityCategoryName")
+                if cid and cname and cid not in seen:
+                    seen[cid] = cname
+            return sorted([{"id": k, "name": v} for k, v in seen.items()], key=lambda x: x["name"])
+        except Exception:
+            return []
+
     async def upload_aspire_attachment(
         self,
         object_id: int,

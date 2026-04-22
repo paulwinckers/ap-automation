@@ -39,14 +39,20 @@ const NAV = [
       { label: 'Crew Schedule',  path: '/ops/crew-schedule',  icon: '👥' },
       { label: 'Time Tracking',  path: '/ops/time-tracking',  icon: '⏱️' },
       { label: 'Contacts',       path: '/ops/contacts',        icon: '📞' },
+      { label: 'Key Box Admin',  path: '/keys/admin',          icon: '🔑' },
     ],
   },
-];
-
-const FIELD_LINKS = [
-  { to: '/field',             icon: '🧾', label: 'Submit Receipt' },
-  { to: '/field/work-ticket', icon: '✅', label: 'Schedule' },
-  { to: '/field/opportunity', icon: '➕', label: 'New Opportunity' },
+  {
+    section: 'Field Staff',
+    items: [
+      { label: 'Submit Receipt',  path: '/field',                icon: '🧾' },
+      { label: 'Schedule',        path: '/field/work-ticket',    icon: '✅' },
+      { label: 'Purchase Order',  path: '/field/purchase-order', icon: '🛒', color: '#f59e0b' },
+      { label: 'New Opportunity', path: '/field/opportunity',    icon: '+',  color: '#22c55e' },
+      { label: 'New Issue',       path: '/field/issue',          icon: '⚠️' },
+      { label: 'Key Box',         path: '/field/keys',           icon: '🗝️', color: '#fbbf24' },
+    ],
+  },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -145,6 +151,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 const active = item.path === '/ap'
                   ? pathname === '/ap'
                   : pathname.startsWith(item.path!);
+                const ic = 'color' in item ? (item as { color?: string }).color : undefined;
                 return (
                   <Link
                     key={item.path}
@@ -152,8 +159,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     title={collapsed ? item.label : undefined}
                     style={linkStyle(active)}
                   >
-                    <span style={{ fontSize: 18, flexShrink: 0 }}>{item.icon}</span>
-                    {!collapsed && <span>{item.label}</span>}
+                    <span style={{ fontSize: 18, flexShrink: 0, color: active ? undefined : ic, fontWeight: ic ? 700 : undefined }}>{item.icon}</span>
+                    {!collapsed && <span style={{ color: active ? undefined : ic }}>{item.label}</span>}
                   </Link>
                 );
               })}
