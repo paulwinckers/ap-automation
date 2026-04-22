@@ -1982,15 +1982,25 @@ async def daily_report_html(
     if not settings.ASPIRE_CLIENT_ID or not settings.ASPIRE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Aspire not configured")
 
-    # Default to North American Eastern time (UTC-4 EDT / UTC-5 EST).
+    # Default to Pacific time (UTC-7 PDT / UTC-8 PST).
     # Caller can pass ?date=YYYY-MM-DD to override.
     if date:
         target = date
     else:
-        tz_offset = getattr(settings, "REPORT_TZ_OFFSET", -4)  # hours behind UTC
+        tz_offset = getattr(settings, "REPORT_TZ_OFFSET", -7)  # PDT; set -8 in winter
         now_local = datetime.now(timezone(timedelta(hours=tz_offset)))
         target = now_local.strftime("%Y-%m-%d")
     display_date = datetime.strptime(target, "%Y-%m-%d").strftime("%B %d, %Y")
+
+    # Aspire stores times in UTC. A Pacific "business day" runs from midnight PST/PDT
+    # to midnight PST/PDT the following day.  UTC-7 (PDT) → day boundary = 07:00 UTC.
+    # We use 08:00 UTC as the end so the report catches crews working until midnight PST.
+    from datetime import date as _date_cls, timedelta as _td
+    _target_dt  = _date_cls.fromisoformat(target)
+    _next_dt    = _target_dt + _td(days=1)
+    next_day    = _next_dt.isoformat()          # YYYY-MM-DD of following calendar day
+    day_start_z = f"{target}T08:00:00Z"         # midnight PST (UTC-8) on target date
+    day_end_z   = f"{next_day}T07:59:59Z"       # 23:59:59 PDT / midnight PST next day
 
     # ── Fetch tickets + daily hours ───────────────────────────────────────────
     # Returns (unique_tickets, hours_today_by_wt, staff_hours_today)
@@ -2003,8 +2013,8 @@ async def daily_report_html(
 
         # Pass 1 & 2: tickets completed or scheduled on target date
         for f in [
-            f"CompleteDate ge {target}T00:00:00Z and CompleteDate le {target}T23:59:59Z",
-            f"ScheduledStartDate ge {target}T00:00:00Z and ScheduledStartDate le {target}T23:59:59Z",
+            f"CompleteDate ge {day_start_z} and CompleteDate le {day_end_z}",
+            f"ScheduledStartDate ge {day_start_z} and ScheduledStartDate le {day_end_z}",
         ]:
             try:
                 batch = await _aspire._get_all("WorkTickets", {
@@ -2019,7 +2029,7 @@ async def daily_report_html(
         # build per-ticket daily hours, and build per-staff efficiency summary.
         try:
             time_entries = await _aspire._get_all("WorkTicketTimes", {
-                "$filter": f"StartTime ge {target}T00:00:00Z and StartTime le {target}T23:59:59Z",
+                "$filter": f"StartTime ge {day_start_z} and StartTime le {day_end_z}",
                 "$top": "500",
             })
 
@@ -2086,9 +2096,9 @@ async def daily_report_html(
 
     async def _fetch_visit_notes():
         for date_filter in [
-            f"ScheduledDate ge {target}T00:00:00Z and ScheduledDate le {target}T23:59:59Z",
-            f"ScheduledDate ge {target} and ScheduledDate le {target}T23:59:59",
-            f"CreatedDateTime ge {target}T00:00:00Z and CreatedDateTime le {target}T23:59:59Z",
+            f"ScheduledDate ge {day_start_z} and ScheduledDate le {day_end_z}",
+            f"ScheduledDate ge {target} and ScheduledDate le {next_day}",
+            f"CreatedDateTime ge {day_start_z} and CreatedDateTime le {day_end_z}",
         ]:
             try:
                 result = await _aspire._get_all("WorkTicketVisitNotes", {
@@ -2120,7 +2130,7 @@ async def daily_report_html(
         try:
             return await _aspire._get_all("Attachments", {
                 "$select": "AttachmentID,WorkTicketID,AttachmentName,FileExtension,DateUploaded,ExternalContentID",
-                "$filter": f"DateUploaded ge {target}T00:00:00Z and DateUploaded le {target}T23:59:59Z and WorkTicketID ne null",
+                "$filter": f"DateUploaded ge {day_start_z} and DateUploaded le {day_end_z} and WorkTicketID ne null",
                 "$top": "500",
             })
         except Exception as ex:
