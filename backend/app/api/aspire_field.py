@@ -966,12 +966,12 @@ async def debug_probe_issue_fields(property_id: int = 1, category_id: int = 16):
     _check_credentials()
     import datetime
     test_body = {
-        "Subject":            f"[API TEST {datetime.datetime.now().strftime('%H:%M:%S')}] DELETE ME",
-        "Notes":              "Test issue created by debug probe — safe to delete.",
-        "PropertyID":         property_id,
-        "ActivityCategoryID": category_id,
-        "CategoryID":         category_id,
-        "PublicComment":      False,
+        "Subject":       f"[API TEST {datetime.datetime.now().strftime('%H:%M:%S')}] DELETE ME",
+        "Notes":         "Test issue created by debug probe — safe to delete.",
+        "PropertyID":    property_id,
+        "CategoryID":    category_id,
+        "AssignedTo":    settings.ASPIRE_DEFAULT_USER_ID,
+        "PublicComment": False,
     }
     try:
         result = await _aspire.create_issue(test_body)
@@ -1017,7 +1017,6 @@ async def create_field_issue(
 
     # ── Resolve AssignedTo UserID ─────────────────────────────────────────────
     # assigned_to_id from frontend is already a UserID (we only send UserIDs now).
-    # Only fall back to default if nothing was selected.
     assigned_uid = assigned_to_id if assigned_to_id else None
     if not assigned_uid and assigned_to_name:
         try:
@@ -1030,8 +1029,9 @@ async def create_field_issue(
                     break
         except Exception:
             pass
-    # No default fallback — leave unassigned if nothing selected so Aspire
-    # doesn't silently assign to the wrong person.
+    # AssignedTo is required by Aspire — fall back to default if nothing selected.
+    if not assigned_uid:
+        assigned_uid = settings.ASPIRE_DEFAULT_USER_ID
 
     # ── Upload photos to R2 first so URLs are always in the notes ────────────
     ONE_YEAR = 365 * 24 * 3600
@@ -1085,9 +1085,7 @@ async def create_field_issue(
     if property_id:
         issue_body["PropertyID"] = property_id
     if category_id:
-        issue_body["ActivityCategoryID"] = category_id
-    if category_name and not category_id:
-        issue_body["ActivityCategoryName"] = category_name
+        issue_body["CategoryID"] = category_id
     if priority:
         issue_body["Priority"] = priority
     if due_date:
