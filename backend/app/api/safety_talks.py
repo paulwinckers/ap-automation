@@ -3,19 +3,32 @@ Safety Talks API.
 Field crew leaders submit toolbox / safety talk records from their phones.
 Data is stored in the local D1/SQLite database (not Aspire).
 """
+import json as _json
 import logging
 import uuid
 from typing import List, Optional
 
+import anthropic as _anthropic
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
+from app.core.config import settings
 from app.core.database import Database
 from app.services import r2
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/safety", tags=["safety"])
+
+# ── AI client (lazy singleton) ────────────────────────────────────────────────
+
+_ai_client: Optional[_anthropic.AsyncAnthropic] = None
+
+def _get_ai() -> _anthropic.AsyncAnthropic:
+    global _ai_client
+    if _ai_client is None:
+        _ai_client = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    return _ai_client
 
 MAX_PHOTO_SIZE = 15 * 1024 * 1024  # 15 MB
 
@@ -223,3 +236,40 @@ async def get_safety_talk(talk_id: int, db: Database = Depends(get_db)):
         created_at=row["created_at"],
         attendees=attendees,
     )
+
+
+# ── AI: topic talking points ──────────────────────────────────────────────────
+
+TIPS_PROMPT = """\
+You are a safety trainer for a Canadian landscaping and grounds maintenance company.
+Generate exactly 5 concise toolbox talk bullet points for the topic: "{topic}"
+
+Rules:
+- Be specific to outdoor landscaping / grounds maintenance field work
+- Each point is 1–2 short sentences — crew leaders read these aloud on site
+- Use plain, everyday language (no jargon)
+- Cover what to do, what to watch for, and one consequence/why it matters
+- Return ONLY a JSON array of 5 strings, no markdown, no commentary
+
+Example format: ["Tip one.", "Tip two.", "Tip three.", "Tip four.", "Tip five."]"""
+
+
+@router.get("/topic-tips")
+async def get_topic_tips(topic: str = Query(..., min_length=2, max_length=120)):
+    """Return 5 AI-generated talking points for a given safety topic."""
+    ai = _get_ai()
+    try:
+        msg = await ai.messages.create(
+            model="claude-3-haiku-20240307",
+            max_tokens=512,
+            messages=[{"role": "user", "content": TIPS_PROMPT.format(topic=topic)}],
+        )
+        raw = msg.content[0].text.strip()
+        start, end = raw.find("["), raw.rfind("]") + 1
+        tips: list[str] = _json.loads(raw[start:end]) if start != -1 else []
+        tips = [t for t in tips if isinstance(t, str)][:5]
+        logger.info(f"Generated {len(tips)} tips for topic: {topic!r}")
+        return {"topic": topic, "tips": tips}
+    except Exception as e:
+        logger.warning(f"AI tip generation failed for '{topic}': {e}")
+        raise HTTPException(status_code=503, detail="Could not generate tips — please try again")

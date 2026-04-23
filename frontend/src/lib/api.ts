@@ -1012,3 +1012,7 @@ export async function listSafetyTalks(start?: string, end?: string): Promise<Saf
 export async function getSafetyTalk(id: number): Promise<SafetyTalkDetail> {
   return request<SafetyTalkDetail>('GET', `/safety/talks/${id}`);
 }
+
+export async function getSafetyTopicTips(topic: string): Promise<{ topic: string; tips: string[] }> {
+  return request('GET', `/safety/topic-tips?topic=${encodeURIComponent(topic)}`);
+}

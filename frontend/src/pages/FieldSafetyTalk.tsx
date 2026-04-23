@@ -10,7 +10,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { createSafetyTalk, getAspireEmployees, searchAspireProperties, type AspireEmployee } from '../lib/api';
+import { createSafetyTalk, getAspireEmployees, searchAspireProperties, getSafetyTopicTips, type AspireEmployee } from '../lib/api';
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -283,6 +283,122 @@ function StepAttendees({
   );
 }
 
+// ── Topic video links ─────────────────────────────────────────────────────────
+// YouTube search URLs — always return fresh, relevant results
+
+const TOPIC_VIDEOS: Record<string, string> = {
+  'Heat illness prevention':          'https://www.youtube.com/results?search_query=heat+illness+prevention+landscaping+toolbox+talk',
+  'WHMIS / Hazard communication':     'https://www.youtube.com/results?search_query=WHMIS+hazard+communication+toolbox+talk',
+  'PPE requirements':                  'https://www.youtube.com/results?search_query=PPE+personal+protective+equipment+landscaping+safety',
+  'Slips, trips & falls':             'https://www.youtube.com/results?search_query=slips+trips+falls+prevention+outdoor+workers',
+  'Equipment & machinery safety':     'https://www.youtube.com/results?search_query=landscaping+equipment+machinery+safety+toolbox+talk',
+  'Chemical safety (pesticides)':     'https://www.youtube.com/results?search_query=pesticide+chemical+safety+landscaping+toolbox+talk',
+  'Hand & power tool safety':         'https://www.youtube.com/results?search_query=hand+power+tool+safety+toolbox+talk',
+  'Back safety & lifting':            'https://www.youtube.com/results?search_query=back+safety+safe+lifting+techniques+toolbox+talk',
+  'Traffic control & roadside safety':'https://www.youtube.com/results?search_query=traffic+control+roadside+work+zone+safety+toolbox+talk',
+  'Electrical safety':                'https://www.youtube.com/results?search_query=electrical+safety+outdoor+workers+toolbox+talk',
+  'Emergency procedures':             'https://www.youtube.com/results?search_query=emergency+procedures+workplace+safety+toolbox+talk',
+  'Wildlife & bee safety':            'https://www.youtube.com/results?search_query=bee+wasp+wildlife+safety+outdoor+workers',
+  'Distracted work prevention':       'https://www.youtube.com/results?search_query=distracted+work+prevention+safety+toolbox+talk',
+  'First aid & incident reporting':   'https://www.youtube.com/results?search_query=first+aid+workplace+incident+reporting+toolbox+talk',
+};
+
+// ── AI talking points card ────────────────────────────────────────────────────
+
+function TopicTips({ topic }: { topic: string }) {
+  const [tips,    setTips]    = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState<string | null>(null);
+  const lastTopicRef = useRef('');
+
+  const load = useCallback(async (t: string) => {
+    setLoading(true); setError(null); setTips([]);
+    try {
+      const res = await getSafetyTopicTips(t);
+      setTips(res.tips);
+    } catch {
+      setError('Could not load tips — check your connection.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!topic || topic === lastTopicRef.current) return;
+    lastTopicRef.current = topic;
+    load(topic);
+  }, [topic, load]);
+
+  const videoUrl = TOPIC_VIDEOS[topic];
+
+  if (!topic) return null;
+
+  return (
+    <div style={{
+      marginTop: 16, borderRadius: 12,
+      border: `1px solid #1e3a5f`,
+      background: 'linear-gradient(135deg, #0f2744 0%, #0f172a 100%)',
+      overflow: 'hidden',
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: '12px 16px',
+        borderBottom: '1px solid #1e3a5f',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 16 }}>🤖</span>
+          <span style={{ color: '#93c5fd', fontWeight: 700, fontSize: 13 }}>AI Talking Points</span>
+          <span style={{ color: '#334155', fontSize: 12 }}>for {topic}</span>
+        </div>
+        <button
+          onClick={() => load(topic)}
+          disabled={loading}
+          style={{
+            background: 'none', border: 'none', color: loading ? '#334155' : '#3b82f6',
+            fontSize: 12, fontWeight: 600, cursor: loading ? 'default' : 'pointer', padding: '2px 6px',
+          }}
+        >{loading ? '…' : '↺ Refresh'}</button>
+      </div>
+
+      {/* Tips */}
+      <div style={{ padding: '12px 16px' }}>
+        {loading && (
+          <div style={{ color: '#64748b', fontSize: 13, padding: '8px 0' }}>Generating talking points…</div>
+        )}
+        {error && (
+          <div style={{ color: '#f87171', fontSize: 13 }}>{error}</div>
+        )}
+        {!loading && !error && tips.length > 0 && (
+          <ol style={{ margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {tips.map((tip, i) => (
+              <li key={i} style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 1.55 }}>{tip}</li>
+            ))}
+          </ol>
+        )}
+      </div>
+
+      {/* Video link */}
+      {videoUrl && (
+        <div style={{ padding: '10px 16px', borderTop: '1px solid #1e3a5f' }}>
+          <a
+            href={videoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 7,
+              color: '#f87171', fontWeight: 600, fontSize: 13, textDecoration: 'none',
+            }}
+          >
+            <span style={{ fontSize: 16 }}>▶️</span>
+            Watch training videos on YouTube
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Property search (Aspire) ──────────────────────────────────────────────────
 
 interface PropertyHit { property_id: number; property_name: string; address: string; }
@@ -503,6 +619,9 @@ function StepTalkInfo({
               }}
             />
           )}
+
+          {/* AI talking points — shown for preset topics */}
+          {topic && !customTopic && <TopicTips topic={topic} />}
         </div>
 
         {/* Job site — Aspire property search */}
