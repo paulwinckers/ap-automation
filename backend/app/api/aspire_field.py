@@ -946,31 +946,38 @@ async def get_issue_categories():
     return {"categories": categories}
 
 
-@router.get("/debug-issue-raw")
-async def debug_issue_raw(issue_id: int):
-    """Temp: fetch a raw Aspire Issue record to inspect available fields."""
+# In-memory store for last issue creation Aspire response
+_last_issue_aspire_response: dict = {}
+
+
+@router.get("/debug-last-issue-response")
+async def debug_last_issue_response():
+    """Return the raw Aspire response from the most recent issue creation."""
+    return _last_issue_aspire_response
+
+
+@router.post("/debug-probe-issue-fields")
+async def debug_probe_issue_fields(property_id: int = 1, category_id: int = 16):
+    """
+    Temp: POST a minimal test Issue to Aspire with both ActivityCategoryID and
+    CategoryID to see which one Aspire accepts and returns in the response.
+    The created issue will need to be deleted manually in Aspire.
+    """
     _check_credentials()
-    errors = {}
-    # Try multiple approaches to fetch an Issue
-    for approach, params in [
-        ("no_filter",   {"$top": "1"}),
-        ("select_all",  {"$top": "1", "$select": "IssueID,ActivityCategoryID,ActivityCategoryName,CategoryID,AssignedTo,AssignedToName,Subject,PropertyID"}),
-        ("activities_filter", None),  # Try /Activities endpoint for issues
-    ]:
-        try:
-            if approach == "activities_filter":
-                result = await _aspire._get("Activities", {
-                    "$filter": "ActivityType eq 'Issue'",
-                    "$top": "1",
-                    "$select": "ActivityID,ActivityCategoryID,ActivityCategoryName,AssignedTo",
-                })
-            else:
-                result = await _aspire._get("Issues", params or {})
-            records = _aspire._extract_list(result)
-            return {"approach": approach, "raw": records[0] if records else None, "count": len(records)}
-        except Exception as e:
-            errors[approach] = str(e)
-    return {"errors": errors}
+    import datetime
+    test_body = {
+        "Subject":            f"[API TEST {datetime.datetime.now().strftime('%H:%M:%S')}] DELETE ME",
+        "Notes":              "Test issue created by debug probe — safe to delete.",
+        "PropertyID":         property_id,
+        "ActivityCategoryID": category_id,
+        "CategoryID":         category_id,
+        "PublicComment":      False,
+    }
+    try:
+        result = await _aspire.create_issue(test_body)
+        return {"sent": test_body, "aspire_response": result, "response_keys": list(result.keys()) if isinstance(result, dict) else str(type(result))}
+    except Exception as e:
+        return {"error": str(e), "sent": test_body}
 
 
 @router.post("/issue")
@@ -1089,6 +1096,13 @@ async def create_field_issue(
     logger.info(f"Issue POST body: {issue_body}")
     try:
         result = await _aspire.create_issue(issue_body)
+        # Store response for debugging
+        global _last_issue_aspire_response
+        _last_issue_aspire_response = {
+            "sent":             issue_body,
+            "aspire_response":  result,
+            "response_keys":    list(result.keys()) if isinstance(result, dict) else str(type(result)),
+        }
     except Exception as e:
         logger.error(f"Issue creation failed: {e}")
         raise HTTPException(status_code=502, detail=f"Failed to create issue in Aspire: {e}")
