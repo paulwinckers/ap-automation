@@ -986,18 +986,35 @@ async def create_field_issue(
     # ── Resolve AssignedTo UserID ─────────────────────────────────────────────
     # assigned_to_id from frontend is already a UserID (we only send UserIDs now).
     assigned_uid = assigned_to_id if assigned_to_id else None
+
+    # Fetch employee list once — used for both explicit assignee name lookup
+    # and submitter fallback below.
+    _employees_cache: list[dict] = []
+    try:
+        _employees_cache = await _aspire.get_aspire_employees()
+    except Exception:
+        pass
+
     if not assigned_uid and assigned_to_name:
-        try:
-            employees = await _aspire.get_aspire_employees()
-            for emp in employees:
-                if emp.get("FullName", "").lower() == assigned_to_name.lower():
-                    uid = emp.get("UserID")
-                    if uid:
-                        assigned_uid = uid
-                    break
-        except Exception:
-            pass
-    # AssignedTo is required by Aspire — fall back to default if nothing selected.
+        for emp in _employees_cache:
+            if emp.get("FullName", "").lower() == assigned_to_name.lower():
+                uid = emp.get("UserID")
+                if uid:
+                    assigned_uid = uid
+                break
+
+    # If still no assignee, default to the submitter's own Aspire account so the
+    # issue lands on the person who created it (not a hardcoded default user).
+    if not assigned_uid:
+        for emp in _employees_cache:
+            if emp.get("FullName", "").lower() == submitter_name.lower():
+                uid = emp.get("UserID")
+                if uid:
+                    assigned_uid = uid
+                    logger.info(f"Defaulting AssignedTo to submitter: {submitter_name} (UserID={uid})")
+                break
+
+    # Last resort — hardcoded default.
     if not assigned_uid:
         assigned_uid = settings.ASPIRE_DEFAULT_USER_ID
 
