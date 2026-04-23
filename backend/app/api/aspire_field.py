@@ -946,43 +946,6 @@ async def get_issue_categories():
     return {"categories": categories}
 
 
-# In-memory store for last issue creation Aspire response
-_last_issue_aspire_response: dict = {}
-
-
-@router.get("/debug-last-issue-response")
-async def debug_last_issue_response():
-    """Return the raw Aspire response from the most recent issue creation."""
-    return _last_issue_aspire_response
-
-
-@router.post("/debug-probe-issue-fields")
-async def debug_probe_issue_fields(property_id: int = 1, category_id: int = 16):
-    """
-    Temp: POST a minimal test Issue to Aspire with both ActivityCategoryID and
-    CategoryID to see which one Aspire accepts and returns in the response.
-    The created issue will need to be deleted manually in Aspire.
-    """
-    _check_credentials()
-    import datetime
-    # Try multiple possible category field names to find the correct one
-    test_body = {
-        "Subject":            f"[API TEST {datetime.datetime.now().strftime('%H:%M:%S')}] DELETE ME",
-        "Notes":              "Test issue — safe to delete. Testing category fields.",
-        "PropertyID":         property_id,
-        "AssignedTo":         settings.ASPIRE_DEFAULT_USER_ID,
-        "PublicComment":      False,
-        # Try all candidate field names
-        "ActivityCategoryID": category_id,
-        "CategoryID":         category_id,
-        "Category":           category_id,
-        "IssueCategoryID":    category_id,
-    }
-    try:
-        result = await _aspire.create_issue(test_body)
-        return {"sent": test_body, "aspire_response": result, "response_keys": list(result.keys()) if isinstance(result, dict) else str(type(result))}
-    except Exception as e:
-        return {"error": str(e), "sent": test_body}
 
 
 @router.post("/issue")
@@ -1089,8 +1052,8 @@ async def create_field_issue(
         issue_body["AssignedTo"] = assigned_uid
     if property_id:
         issue_body["PropertyID"] = property_id
-    if category_id:
-        issue_body["CategoryID"] = category_id
+    # Note: Aspire POST /Issues API does not expose a Category field.
+    # Category is documented in the Notes text instead.
     if priority:
         issue_body["Priority"] = priority
     if due_date:
@@ -1099,13 +1062,6 @@ async def create_field_issue(
     logger.info(f"Issue POST body: {issue_body}")
     try:
         result = await _aspire.create_issue(issue_body)
-        # Store response for debugging
-        global _last_issue_aspire_response
-        _last_issue_aspire_response = {
-            "sent":             issue_body,
-            "aspire_response":  result,
-            "response_keys":    list(result.keys()) if isinstance(result, dict) else str(type(result)),
-        }
     except Exception as e:
         logger.error(f"Issue creation failed: {e}")
         raise HTTPException(status_code=502, detail=f"Failed to create issue in Aspire: {e}")
@@ -1130,7 +1086,7 @@ async def create_field_issue(
     photos_uploaded = len(photo_urls)  # R2 uploads already counted
     if isinstance(issue_id, int) and issue_id > 0:
         for fname, raw in photo_data:
-            for obj_code in ("Issue", "Issues", "ServiceIssue"):
+            for obj_code in ("Issue", "Issues", "Activity", "ServiceIssue", "WorkTicket"):
                 try:
                     await _aspire.upload_aspire_attachment(
                         object_id=issue_id,
