@@ -965,13 +965,18 @@ async def debug_probe_issue_fields(property_id: int = 1, category_id: int = 16):
     """
     _check_credentials()
     import datetime
+    # Try multiple possible category field names to find the correct one
     test_body = {
-        "Subject":       f"[API TEST {datetime.datetime.now().strftime('%H:%M:%S')}] DELETE ME",
-        "Notes":         "Test issue created by debug probe — safe to delete.",
-        "PropertyID":    property_id,
-        "CategoryID":    category_id,
-        "AssignedTo":    settings.ASPIRE_DEFAULT_USER_ID,
-        "PublicComment": False,
+        "Subject":            f"[API TEST {datetime.datetime.now().strftime('%H:%M:%S')}] DELETE ME",
+        "Notes":              "Test issue — safe to delete. Testing category fields.",
+        "PropertyID":         property_id,
+        "AssignedTo":         settings.ASPIRE_DEFAULT_USER_ID,
+        "PublicComment":      False,
+        # Try all candidate field names
+        "ActivityCategoryID": category_id,
+        "CategoryID":         category_id,
+        "Category":           category_id,
+        "IssueCategoryID":    category_id,
     }
     try:
         result = await _aspire.create_issue(test_body)
