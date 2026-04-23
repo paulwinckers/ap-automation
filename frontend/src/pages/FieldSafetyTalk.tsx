@@ -10,7 +10,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { createSafetyTalk, getAspireEmployees, searchAspireProperties, getSafetyTopicTips, type AspireEmployee } from '../lib/api';
+import { createSafetyTalk, getAspireEmployees, searchFieldProperties, getSafetyTopicTips, type AspireEmployee } from '../lib/api';
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -449,8 +449,18 @@ function PropertySearch({
     timerRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const hits = await searchAspireProperties(q.trim());
-        setResults(hits.slice(0, 8));
+        const res = await searchFieldProperties(q.trim());
+        const hits: PropertyHit[] = res.properties
+          .filter(p => p.PropertyName && p.PropertyID)
+          .map(p => ({
+            property_id:   p.PropertyID!,
+            property_name: p.PropertyName!,
+            address:       p.OpportunityName ?? '',
+          }))
+          // deduplicate by property_id
+          .filter((p, i, arr) => arr.findIndex(x => x.property_id === p.property_id) === i)
+          .slice(0, 8);
+        setResults(hits);
       } catch { setResults([]); }
       finally { setLoading(false); }
     }, 320);
