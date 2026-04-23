@@ -946,6 +946,31 @@ async def get_issue_categories():
     return {"categories": categories}
 
 
+@router.get("/debug-attach-issue")
+async def debug_attach_issue(issue_id: int):
+    """Temp: try attaching a tiny test file to an Issue with various ObjectCodes."""
+    _check_credentials()
+    import base64
+    tiny_png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    results = {}
+    for code in ("Issue", "Issues", "Activity", "ServiceIssue", "WorkOrder", "Property", "Contact"):
+        try:
+            await _aspire.upload_aspire_attachment(
+                object_id=issue_id,
+                object_code=code,
+                filename="test.png",
+                file_bytes=tiny_png,
+                attachment_type_id=3,
+                expose_to_crew=True,
+            )
+            results[code] = "✅ SUCCESS"
+        except Exception as e:
+            results[code] = f"❌ {str(e)[:120]}"
+    return {"issue_id": issue_id, "results": results}
+
+
 
 
 @router.post("/issue")
