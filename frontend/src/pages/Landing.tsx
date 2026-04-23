@@ -16,6 +16,7 @@ const FIELD_LINKS = [
   { to: '/field/amend-po',         icon: '✏️', label: 'Amend PO Vendor',  sub: 'Change vendor on an open PO' },
   { to: '/field/opportunity',      icon: '➕', label: 'New Opportunity',   sub: 'Create a job in Aspire' },
   { to: '/field/issue',            icon: '⚠️', label: 'New Issue',         sub: 'Log a site issue' },
+  { to: '/field/safety',           icon: '🦺', label: 'Safety Talk',       sub: 'Record a toolbox talk' },
   { to: '/field/keys',             icon: '🔑', label: 'Key Box',            sub: 'Check keys in / out' },
 ];
 
@@ -31,9 +32,10 @@ const OFFICE_GROUPS = [
   {
     label: 'Field Ops',
     items: [
-      { to: '/ops/crew-schedule', icon: '👥', label: 'Crew Schedule', sub: 'Assign staff to routes' },
-      { to: '/ops/contacts',      icon: '📞', label: 'Contacts',      sub: 'Property & client lookup' },
-      { to: '/keys/admin',        icon: '🔑', label: 'Key Box Admin', sub: 'Manage keys & view log' },
+      { to: '/ops/crew-schedule', icon: '👥', label: 'Crew Schedule',  sub: 'Assign staff to routes' },
+      { to: '/ops/contacts',      icon: '📞', label: 'Contacts',       sub: 'Property & client lookup' },
+      { to: '/ops/safety-talks',  icon: '🦺', label: 'Safety Talks',   sub: 'Toolbox talk records' },
+      { to: '/keys/admin',        icon: '🔑', label: 'Key Box Admin',  sub: 'Manage keys & view log' },
     ],
   },
   {
