@@ -946,29 +946,6 @@ async def get_issue_categories():
     return {"categories": categories}
 
 
-@router.get("/debug-attach-issue")
-async def debug_attach_issue(issue_id: int):
-    """Temp: try attaching a tiny test file to an Issue with various ObjectCodes."""
-    _check_credentials()
-    import base64
-    tiny_png = base64.b64decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-    )
-    results = {}
-    for code in ("Issue", "Issues", "Activity", "ServiceIssue", "WorkOrder", "Property", "Contact"):
-        try:
-            await _aspire.upload_aspire_attachment(
-                object_id=issue_id,
-                object_code=code,
-                filename="test.png",
-                file_bytes=tiny_png,
-                attachment_type_id=3,
-                expose_to_crew=True,
-            )
-            results[code] = "✅ SUCCESS"
-        except Exception as e:
-            results[code] = f"❌ {str(e)[:120]}"
-    return {"issue_id": issue_id, "results": results}
 
 
 
@@ -1124,23 +1101,23 @@ async def create_field_issue(
         except (ValueError, TypeError):
             issue_id = None
 
-    # ── Also try Aspire direct attachment (bonus — photos already in notes) ──
+    # ── Also attach to the Property in Aspire (Issues have no attachment ObjectCode) ──
+    # Aspire's /Attachments API does not support an "Issue" ObjectCode — attaching
+    # to the Property is the closest we can get and shows up in the property record.
     photos_uploaded = len(photo_urls)  # R2 uploads already counted
-    if isinstance(issue_id, int) and issue_id > 0:
+    if property_id:
         for fname, raw in photo_data:
-            for obj_code in ("Issue", "Issues", "Activity", "ServiceIssue", "WorkTicket"):
-                try:
-                    await _aspire.upload_aspire_attachment(
-                        object_id=issue_id,
-                        object_code=obj_code,
-                        filename=fname,
-                        file_bytes=raw,
-                        expose_to_crew=True,
-                    )
-                    logger.info(f"Issue {issue_id}: also attached {fname} to Aspire directly (code={obj_code})")
-                    break
-                except Exception as e:
-                    logger.info(f"Issue {issue_id}: Aspire attachment failed (code={obj_code}): {e}")
+            try:
+                await _aspire.upload_aspire_attachment(
+                    object_id=property_id,
+                    object_code="Property",
+                    filename=fname,
+                    file_bytes=raw,
+                    expose_to_crew=True,
+                )
+                logger.info(f"Issue {issue_id}: attached {fname} to Property {property_id} in Aspire")
+            except Exception as e:
+                logger.info(f"Issue {issue_id}: Property attachment failed for {fname}: {e}")
 
     logger.info(
         f"New issue created: ID={issue_id} '{subject}' for property {property_id} "
