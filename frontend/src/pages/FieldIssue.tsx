@@ -14,11 +14,9 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   searchFieldProperties,
   getAspireEmployees,
-  getIssueCategories,
   createFieldIssue,
   type FieldPropertyResult,
   type AspireEmployee,
-  type ActivityCategory,
 } from '../lib/api';
 
 type Step = 1 | 2 | 3 | 4 | 5;
@@ -318,29 +316,39 @@ function StepProperty({ onSelect }: {
 
 function StepDetails({
   propertyName, subject, setSubject,
-  categoryId, setCategoryId, categoryName, setCategoryName,
   assignedToId, setAssignedToId, assignedToName, setAssignedToName,
   priority, setPriority, dueDate, setDueDate,
+  submitterName,
   onBack, onNext,
 }: {
   propertyName: string;
   subject: string; setSubject: (v: string) => void;
-  categoryId: number | null; setCategoryId: (v: number | null) => void;
-  categoryName: string; setCategoryName: (v: string) => void;
   assignedToId: number | null; setAssignedToId: (v: number | null) => void;
   assignedToName: string; setAssignedToName: (v: string) => void;
   priority: string; setPriority: (v: string) => void;
   dueDate: string; setDueDate: (v: string) => void;
+  submitterName: string;
   onBack: () => void; onNext: () => void;
 }) {
-  const [employees,  setEmployees]  = useState<AspireEmployee[]>([]);
-  const [categories, setCategories] = useState<ActivityCategory[]>([]);
+  const [employees, setEmployees] = useState<AspireEmployee[]>([]);
 
   useEffect(() => {
     getAspireEmployees()
-      .then(list => setEmployees([...list].sort((a, b) => a.FullName.localeCompare(b.FullName))))
+      .then(list => {
+        const sorted = [...list].sort((a, b) => a.FullName.localeCompare(b.FullName));
+        setEmployees(sorted);
+        // Auto-select submitter as default assignee if none chosen yet
+        if (!assignedToId && submitterName) {
+          const match = sorted.find(
+            e => e.UserID && e.FullName.toLowerCase() === submitterName.toLowerCase()
+          );
+          if (match && match.UserID) {
+            setAssignedToId(match.UserID);
+            setAssignedToName(match.FullName);
+          }
+        }
+      })
       .catch(() => {});
-    getIssueCategories().then(setCategories).catch(() => {});
   }, []);
 
   function handleAssignee(val: string) {
@@ -352,16 +360,9 @@ function StepDetails({
     }
   }
 
-  function handleCategory(val: string) {
-    if (!val) { setCategoryId(null); setCategoryName(''); return; }
-    const cat = categories.find(c => String(c.id) === val);
-    if (cat) { setCategoryId(cat.id); setCategoryName(cat.name); }
-  }
-
   // Only employees with a UserID can be assigned in Aspire
   const assignableEmployees = employees.filter(e => e.UserID);
-  const currentAssigneeVal  = assignedToId  ? String(assignedToId)  : '';
-  const currentCategoryVal  = categoryId    ? String(categoryId)    : '';
+  const currentAssigneeVal  = assignedToId ? String(assignedToId) : '';
 
   return (
     <div>
@@ -378,17 +379,10 @@ function StepDetails({
         />
 
         <FieldSelect
-          label="Category" required={false}
-          value={currentCategoryVal} onChange={handleCategory}
-          placeholder={categories.length === 0 ? 'Loading categories…' : 'Select category…'}
-          options={categories.map(c => ({ value: String(c.id), label: c.name }))}
-        />
-
-        <FieldSelect
           label="Assigned To" required={false}
           value={currentAssigneeVal}
           onChange={handleAssignee}
-          placeholder="Select employee…"
+          placeholder={employees.length === 0 ? 'Loading…' : 'Select employee…'}
           options={assignableEmployees.map(e => ({
             value: String(e.UserID),
             label: e.FullName,
@@ -571,10 +565,10 @@ function StepComment({
 // ── Step 4: Review ────────────────────────────────────────────────────────────
 
 function StepReview({
-  propertyName, subject, categoryName, assignedToName, priority, dueDate, notes, photos,
+  propertyName, subject, assignedToName, priority, dueDate, notes, photos,
   submitterName, onBack, onSubmit, submitting,
 }: {
-  propertyName: string; subject: string; categoryName: string; assignedToName: string;
+  propertyName: string; subject: string; assignedToName: string;
   priority: string; dueDate: string; notes: string; photos: File[];
   submitterName: string;
   onBack: () => void; onSubmit: () => void; submitting: boolean;
@@ -596,7 +590,6 @@ function StepReview({
         <div style={{ background: '#1e293b', borderRadius: 12, padding: '4px 16px', marginBottom: 20 }}>
           <Row label="Property"    value={propertyName} />
           <Row label="Subject"     value={subject} />
-          <Row label="Category"    value={categoryName} />
           <Row label="Assigned To" value={assignedToName} />
           <Row label="Priority"    value={priority} />
           <Row label="Due Date"    value={dueDate} />
@@ -660,8 +653,6 @@ export default function FieldIssue() {
 
   // Step 2
   const [subject,         setSubject]         = useState('');
-  const [categoryId,      setCategoryId]      = useState<number | null>(null);
-  const [categoryName,    setCategoryName]    = useState('');
   const [assignedToId,    setAssignedToId]    = useState<number | null>(null);
   const [assignedToName,  setAssignedToName]  = useState('');
   const [priority,        setPriority]        = useState('Normal');
@@ -682,7 +673,7 @@ export default function FieldIssue() {
   function reset() {
     previews.forEach(p => { if (p) URL.revokeObjectURL(p); });
     setStep(1); setPropertyId(null); setPropertyName('');
-    setSubject(''); setCategoryId(null); setCategoryName(''); setAssignedToId(null); setAssignedToName('');
+    setSubject(''); setAssignedToId(null); setAssignedToName('');
     setPriority('Normal'); setDueDate(''); setNotes('');
     setPhotos([]); setPreviews([]); setSubmitError(null);
   }
@@ -697,8 +688,6 @@ export default function FieldIssue() {
         propertyId,
         propertyName,
         subject: subject.trim(),
-        categoryId:     categoryId    ?? undefined,
-        categoryName:   categoryName  || undefined,
         assignedToId:   assignedToId  ?? undefined,
         assignedToName: assignedToName || undefined,
         priority:       priority || undefined,
@@ -761,12 +750,11 @@ export default function FieldIssue() {
         <StepDetails
           propertyName={propertyName}
           subject={subject}               setSubject={setSubject}
-          categoryId={categoryId}         setCategoryId={setCategoryId}
-          categoryName={categoryName}     setCategoryName={setCategoryName}
           assignedToId={assignedToId}     setAssignedToId={setAssignedToId}
           assignedToName={assignedToName} setAssignedToName={setAssignedToName}
           priority={priority}             setPriority={setPriority}
           dueDate={dueDate}               setDueDate={setDueDate}
+          submitterName={submitterName}
           onBack={() => setStep(1)}
           onNext={() => setStep(3)}
         />
@@ -786,7 +774,6 @@ export default function FieldIssue() {
       {step === 4 && (
         <StepReview
           propertyName={propertyName} subject={subject}
-          categoryName={categoryName}
           assignedToName={assignedToName} priority={priority}
           dueDate={dueDate} notes={notes} photos={photos}
           submitterName={submitterName}

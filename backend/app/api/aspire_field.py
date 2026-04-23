@@ -1060,7 +1060,9 @@ async def create_field_issue(
     def _as_dt(d: Optional[str]) -> Optional[str]:
         if not d:
             return None
-        return d if "T" in d else f"{d}T00:00:00"
+        if "T" in d:
+            return d if d.endswith("Z") else d + "Z"
+        return f"{d}T00:00:00Z"
 
     issue_body: dict = {
         "Subject":       subject,
