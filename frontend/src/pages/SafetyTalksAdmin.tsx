@@ -200,7 +200,7 @@ export default function SafetyTalksAdmin() {
                         </div>
                       )}
 
-                      <div>
+                      <div style={{ marginBottom: detail.photo_url ? 16 : 0 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8 }}>
                           ATTENDEES ({detail.attendees.length})
                         </div>
@@ -216,6 +216,22 @@ export default function SafetyTalksAdmin() {
                           ))}
                         </div>
                       </div>
+
+                      {detail.photo_url && (
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8 }}>GROUP PHOTO</div>
+                          <a href={detail.photo_url} target="_blank" rel="noopener noreferrer">
+                            <img
+                              src={detail.photo_url}
+                              alt="Group photo"
+                              style={{
+                                maxWidth: '100%', maxHeight: 320, borderRadius: 10,
+                                objectFit: 'cover', display: 'block', cursor: 'pointer',
+                              }}
+                            />
+                          </a>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>

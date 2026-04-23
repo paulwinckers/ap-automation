@@ -4,16 +4,20 @@ Field crew leaders submit toolbox / safety talk records from their phones.
 Data is stored in the local D1/SQLite database (not Aspire).
 """
 import logging
+import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from app.core.database import Database
+from app.services import r2
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/safety", tags=["safety"])
+
+MAX_PHOTO_SIZE = 15 * 1024 * 1024  # 15 MB
 
 
 # ── DB dependency ─────────────────────────────────────────────────────────────
@@ -28,17 +32,6 @@ async def get_db() -> Database:
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
-class AttendeeIn(BaseModel):
-    name: str
-
-class SafetyTalkIn(BaseModel):
-    talk_date:      str              # YYYY-MM-DD
-    topic:          str
-    presenter_name: str
-    job_site:       Optional[str] = None
-    notes:          Optional[str] = None
-    attendees:      List[str] = []   # list of names
-
 class SafetyTalkOut(BaseModel):
     id:             int
     talk_date:      str
@@ -46,6 +39,7 @@ class SafetyTalkOut(BaseModel):
     presenter_name: str
     job_site:       Optional[str]
     notes:          Optional[str]
+    photo_url:      Optional[str]
     attendee_count: int
     created_at:     str
 
@@ -56,30 +50,74 @@ class SafetyTalkDetail(SafetyTalkOut):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/talks", response_model=SafetyTalkDetail)
-async def create_safety_talk(payload: SafetyTalkIn, db: Database = Depends(get_db)):
-    """Create a new safety talk record with attendees."""
-    if not payload.topic.strip():
+async def create_safety_talk(
+    talk_date:      str               = Form(...),
+    topic:          str               = Form(...),
+    presenter_name: str               = Form(...),
+    job_site:       Optional[str]     = Form(default=None),
+    notes:          Optional[str]     = Form(default=None),
+    attendees_json: str               = Form(...),   # JSON array of names
+    photo:          Optional[UploadFile] = File(default=None),
+    db: Database = Depends(get_db),
+):
+    """Create a new safety talk record with attendees and optional group photo."""
+    import json as _json
+
+    if not topic.strip():
         raise HTTPException(status_code=400, detail="Topic is required")
-    if not payload.presenter_name.strip():
+    if not presenter_name.strip():
         raise HTTPException(status_code=400, detail="Presenter name is required")
-    if not payload.attendees:
+
+    try:
+        attendee_names: list[str] = _json.loads(attendees_json)
+    except Exception:
+        raise HTTPException(status_code=400, detail="attendees_json must be a valid JSON array")
+
+    clean_names = [n.strip() for n in attendee_names if n.strip()]
+    if not clean_names:
         raise HTTPException(status_code=400, detail="At least one attendee is required")
 
-    # Insert talk
-    talk_id = await db._x(
-        """INSERT INTO safety_talks (talk_date, topic, presenter_name, job_site, notes)
-           VALUES (?, ?, ?, ?, ?)""",
+    # ── Upload group photo to R2 if provided ──────────────────────────────────
+    photo_url: Optional[str] = None
+    if photo and photo.filename:
+        raw = await photo.read()
+        if len(raw) > MAX_PHOTO_SIZE:
+            raise HTTPException(status_code=413, detail="Photo too large (max 15 MB)")
+        try:
+            result = await r2.upload_field_photo(
+                file_bytes=raw,
+                filename=photo.filename,
+                submitter=presenter_name.strip(),
+                entity_type="safety-talk",
+                entity_id=str(uuid.uuid4())[:8],
+                expires_in=365 * 24 * 3600,
+            )
+            if result:
+                _, photo_url = result
+                logger.info(f"Safety talk group photo uploaded: {photo_url[:60]}…")
+        except Exception as e:
+            logger.warning(f"Safety talk photo upload failed: {e}")
+
+    # ── Insert talk — use RETURNING id to get reliable ID from D1 ────────────
+    rows = await db._q(
+        """INSERT INTO safety_talks (talk_date, topic, presenter_name, job_site, notes, photo_url)
+           VALUES (?, ?, ?, ?, ?, ?) RETURNING id, created_at""",
         [
-            payload.talk_date,
-            payload.topic.strip(),
-            payload.presenter_name.strip(),
-            (payload.job_site or "").strip() or None,
-            (payload.notes or "").strip() or None,
+            talk_date,
+            topic.strip(),
+            presenter_name.strip(),
+            (job_site or "").strip() or None,
+            (notes or "").strip() or None,
+            photo_url,
         ],
     )
+    if not rows:
+        raise HTTPException(status_code=500, detail="Failed to create safety talk record")
 
-    # Insert attendees
-    clean_names = [n.strip() for n in payload.attendees if n.strip()]
+    talk_id   = rows[0]["id"]
+    created_at = rows[0]["created_at"]
+
+    # ── Insert attendees ──────────────────────────────────────────────────────
     for name in clean_names:
         await db._x(
             "INSERT INTO safety_talk_attendees (talk_id, name) VALUES (?, ?)",
@@ -87,23 +125,20 @@ async def create_safety_talk(payload: SafetyTalkIn, db: Database = Depends(get_d
         )
 
     logger.info(
-        f"Safety talk created: id={talk_id} topic='{payload.topic}' "
-        f"presenter='{payload.presenter_name}' attendees={len(clean_names)}"
+        f"Safety talk created: id={talk_id} topic='{topic}' "
+        f"presenter='{presenter_name}' attendees={len(clean_names)} photo={'yes' if photo_url else 'no'}"
     )
-
-    # Fetch created_at
-    rows_ca = await db._q("SELECT created_at FROM safety_talks WHERE id = ?", [talk_id])
-    row = rows_ca[0] if rows_ca else None
 
     return SafetyTalkDetail(
         id=talk_id,
-        talk_date=payload.talk_date,
-        topic=payload.topic.strip(),
-        presenter_name=payload.presenter_name.strip(),
-        job_site=(payload.job_site or "").strip() or None,
-        notes=(payload.notes or "").strip() or None,
+        talk_date=talk_date,
+        topic=topic.strip(),
+        presenter_name=presenter_name.strip(),
+        job_site=(job_site or "").strip() or None,
+        notes=(notes or "").strip() or None,
+        photo_url=photo_url,
         attendee_count=len(clean_names),
-        created_at=row["created_at"] if row else "",
+        created_at=created_at,
         attendees=clean_names,
     )
 
@@ -130,7 +165,7 @@ async def list_safety_talks(
 
     rows = await db._q(
         f"""SELECT t.id, t.talk_date, t.topic, t.presenter_name, t.job_site,
-                   t.notes, t.created_at,
+                   t.notes, t.photo_url, t.created_at,
                    COUNT(a.id) AS attendee_count
             FROM safety_talks t
             LEFT JOIN safety_talk_attendees a ON a.talk_id = t.id
@@ -149,6 +184,7 @@ async def list_safety_talks(
             presenter_name=r["presenter_name"],
             job_site=r["job_site"],
             notes=r["notes"],
+            photo_url=r.get("photo_url"),
             attendee_count=r["attendee_count"],
             created_at=r["created_at"],
         )
@@ -161,7 +197,7 @@ async def get_safety_talk(talk_id: int, db: Database = Depends(get_db)):
     """Get a single safety talk with full attendee list."""
     talk_rows = await db._q(
         """SELECT t.id, t.talk_date, t.topic, t.presenter_name, t.job_site,
-                  t.notes, t.created_at
+                  t.notes, t.photo_url, t.created_at
            FROM safety_talks t WHERE t.id = ?""",
         [talk_id],
     )
@@ -182,6 +218,7 @@ async def get_safety_talk(talk_id: int, db: Database = Depends(get_db)):
         presenter_name=row["presenter_name"],
         job_site=row["job_site"],
         notes=row["notes"],
+        photo_url=row.get("photo_url"),
         attendee_count=len(attendees),
         created_at=row["created_at"],
         attendees=attendees,

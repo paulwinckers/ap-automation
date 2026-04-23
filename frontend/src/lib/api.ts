@@ -970,6 +970,7 @@ export interface SafetyTalkSummary {
   presenter_name: string;
   job_site:       string | null;
   notes:          string | null;
+  photo_url:      string | null;
   attendee_count: number;
   created_at:     string;
 }
@@ -985,10 +986,19 @@ export interface SafetyTalkPayload {
   job_site?:      string;
   notes?:         string;
   attendees:      string[];
+  photo?:         File;
 }
 
 export async function createSafetyTalk(p: SafetyTalkPayload): Promise<SafetyTalkDetail> {
-  return request<SafetyTalkDetail>('POST', '/safety/talks', p);
+  const form = new FormData();
+  form.append('talk_date',      p.talk_date);
+  form.append('topic',          p.topic);
+  form.append('presenter_name', p.presenter_name);
+  if (p.job_site) form.append('job_site', p.job_site);
+  if (p.notes)    form.append('notes',    p.notes);
+  form.append('attendees_json', JSON.stringify(p.attendees));
+  if (p.photo)    form.append('photo',    p.photo, p.photo.name);
+  return request<SafetyTalkDetail>('POST', '/safety/talks', form, true);
 }
 
 export async function listSafetyTalks(start?: string, end?: string): Promise<SafetyTalkSummary[]> {
