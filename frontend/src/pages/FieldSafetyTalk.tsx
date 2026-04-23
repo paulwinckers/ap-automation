@@ -87,12 +87,16 @@ const PRESET_TOPICS = [
 function StepAttendees({
   attendees, setAttendees,
   presenterName, setPresenterName,
+  jobSite, setJobSite, setPropertyId,
   onNext,
 }: {
   attendees: string[];
   setAttendees: (a: string[]) => void;
   presenterName: string;
   setPresenterName: (v: string) => void;
+  jobSite: string;
+  setJobSite: (v: string) => void;
+  setPropertyId: (id: number | null) => void;
   onNext: () => void;
 }) {
   const [employees,   setEmployees]   = useState<AspireEmployee[]>([]);
@@ -157,6 +161,17 @@ function StepAttendees({
             }}
             onFocus={e => (e.currentTarget.style.borderColor = GREEN)}
             onBlur={e  => (e.currentTarget.style.borderColor = BORDER)}
+          />
+        </div>
+
+        {/* Job site / property */}
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>
+            Job site / property <span style={{ color: '#475569', fontWeight: 400 }}>(optional)</span>
+          </label>
+          <PropertySearch
+            value={jobSite}
+            onChange={(name, id) => { setJobSite(name); setPropertyId(id); }}
           />
         </div>
 
@@ -504,17 +519,14 @@ function PropertySearch({
 function StepTalkInfo({
   talkDate, setTalkDate,
   topic, setTopic,
-  jobSite, setJobSite, setPropertyId,
   notes, setNotes,
   photo, setPhoto,
   onBack, onNext,
 }: {
-  talkDate: string;   setTalkDate:  (v: string) => void;
-  topic: string;      setTopic:     (v: string) => void;
-  jobSite: string;    setJobSite:   (v: string) => void;
-  setPropertyId:      (id: number | null) => void;
-  notes: string;      setNotes:     (v: string) => void;
-  photo: File | null; setPhoto:     (f: File | null) => void;
+  talkDate: string;   setTalkDate: (v: string) => void;
+  topic: string;      setTopic:    (v: string) => void;
+  notes: string;      setNotes:    (v: string) => void;
+  photo: File | null; setPhoto:    (f: File | null) => void;
   onBack: () => void; onNext: () => void;
 }) {
   const [customTopic,  setCustomTopic]  = useState(!PRESET_TOPICS.includes(topic) && topic !== '');
@@ -622,17 +634,6 @@ function StepTalkInfo({
 
           {/* AI talking points — shown for preset topics */}
           {topic && !customTopic && <TopicTips topic={topic} />}
-        </div>
-
-        {/* Job site — Aspire property search */}
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>
-            Job site / property <span style={{ color: '#475569', fontWeight: 400 }}>(optional)</span>
-          </label>
-          <PropertySearch
-            value={jobSite}
-            onChange={(name, id) => { setJobSite(name); setPropertyId(id); }}
-          />
         </div>
 
         {/* Notes */}
@@ -897,8 +898,10 @@ export default function FieldSafetyTalk() {
 
       {step === 1 && (
         <StepAttendees
-          attendees={attendees}       setAttendees={setAttendees}
+          attendees={attendees}         setAttendees={setAttendees}
           presenterName={presenterName} setPresenterName={setPresenterName}
+          jobSite={jobSite}             setJobSite={setJobSite}
+          setPropertyId={setPropertyId}
           onNext={() => setStep(2)}
         />
       )}
@@ -907,8 +910,6 @@ export default function FieldSafetyTalk() {
         <StepTalkInfo
           talkDate={talkDate} setTalkDate={setTalkDate}
           topic={topic}       setTopic={setTopic}
-          jobSite={jobSite}   setJobSite={setJobSite}
-          setPropertyId={setPropertyId}
           notes={notes}       setNotes={setNotes}
           photo={photo}       setPhoto={setPhoto}
           onBack={() => setStep(1)}

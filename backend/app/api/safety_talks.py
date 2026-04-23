@@ -260,7 +260,7 @@ async def get_topic_tips(topic: str = Query(..., min_length=2, max_length=120)):
     ai = _get_ai()
     try:
         msg = await ai.messages.create(
-            model="claude-3-haiku-20240307",
+            model="claude-sonnet-4-5",
             max_tokens=512,
             messages=[{"role": "user", "content": TIPS_PROMPT.format(topic=topic)}],
         )
