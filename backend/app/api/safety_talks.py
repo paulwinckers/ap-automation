@@ -18,10 +18,12 @@ router = APIRouter(prefix="/safety", tags=["safety"])
 
 # ── DB dependency ─────────────────────────────────────────────────────────────
 
-async def get_db():
-    db = Database()
-    await db.connect()
-    return db
+_db = Database()
+
+async def get_db() -> Database:
+    if _db._db is None:
+        await _db.connect()
+    return _db
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
