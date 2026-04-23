@@ -10,8 +10,8 @@
  *   5. Success
  */
 
-import { useState, useRef } from 'react';
-import { createSafetyTalk } from '../lib/api';
+import { useState, useRef, useEffect } from 'react';
+import { createSafetyTalk, getCrewAssignments, type CrewAssignment } from '../lib/api';
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
@@ -238,22 +238,49 @@ function StepDetails({
 
 function StepAttendees({
   attendees, setAttendees,
-  presenterName,
+  presenterName, talkDate,
   onBack, onNext,
 }: {
   attendees: string[]; setAttendees: (a: string[]) => void;
-  presenterName: string;
+  presenterName: string; talkDate: string;
   onBack: () => void; onNext: () => void;
 }) {
-  const [current, setCurrent] = useState('');
+  const [current,    setCurrent]    = useState('');
+  const [routes,     setRoutes]     = useState<Record<string, CrewAssignment[]>>({});
+  const [routeLoad,  setRouteLoad]  = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  function addAttendee() {
-    const name = current.trim();
-    if (!name) return;
-    if (!attendees.includes(name)) {
+  // Load crew assignments for the talk date
+  useEffect(() => {
+    setRouteLoad(true);
+    getCrewAssignments(talkDate)
+      .then(setRoutes)
+      .catch(() => setRoutes({}))
+      .finally(() => setRouteLoad(false));
+  }, [talkDate]);
+
+  const attendeeSet = new Set(attendees.map(n => n.toLowerCase()));
+
+  function toggle(name: string) {
+    const lower = name.toLowerCase();
+    if (attendeeSet.has(lower)) {
+      setAttendees(attendees.filter(n => n.toLowerCase() !== lower));
+    } else {
       setAttendees([...attendees, name]);
     }
+  }
+
+  function addAllFromRoute(members: CrewAssignment[]) {
+    const toAdd = members
+      .map(m => m.employee_name)
+      .filter(n => !attendeeSet.has(n.toLowerCase()));
+    if (toAdd.length) setAttendees([...attendees, ...toAdd]);
+  }
+
+  function addManual() {
+    const name = current.trim();
+    if (!name) return;
+    if (!attendeeSet.has(name.toLowerCase())) setAttendees([...attendees, name]);
     setCurrent('');
     inputRef.current?.focus();
   }
@@ -262,28 +289,79 @@ function StepAttendees({
     setAttendees(attendees.filter((_, idx) => idx !== i));
   }
 
-  function handleKey(e: React.KeyboardEvent) {
-    if (e.key === 'Enter') { e.preventDefault(); addAttendee(); }
-  }
+  const routeNames = Object.keys(routes).sort();
+  const hasRoutes  = routeNames.length > 0;
 
   return (
     <div>
       <StepHeader step={2} label="Attendees" />
       <div style={{ padding: '16px 20px' }}>
 
-        <div style={{ background: '#1e293b', borderRadius: 10, padding: '10px 14px', marginBottom: 20, fontSize: 13, color: '#94a3b8' }}>
-          💡 Type each crew member's name and tap <strong style={{ color: '#f8fafc' }}>Add</strong>
-        </div>
+        {/* Route crew selector */}
+        {routeLoad && (
+          <div style={{ color: '#64748b', fontSize: 13, marginBottom: 16 }}>Loading crew assignments…</div>
+        )}
 
-        {/* Name input */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        {!routeLoad && hasRoutes && (
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
+              Today's Routes — tap to add crew
+            </div>
+            {routeNames.map(route => {
+              const members = routes[route] || [];
+              const allAdded = members.every(m => attendeeSet.has(m.employee_name.toLowerCase()));
+              return (
+                <div key={route} style={{ marginBottom: 12, background: '#1e293b', borderRadius: 12, overflow: 'hidden' }}>
+                  {/* Route header */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid #0f172a' }}>
+                    <span style={{ color: '#f8fafc', fontWeight: 700, fontSize: 14 }}>🚛 {route}</span>
+                    <button
+                      onClick={() => addAllFromRoute(members)}
+                      disabled={allAdded}
+                      style={{
+                        padding: '5px 12px', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 700,
+                        background: allAdded ? '#374151' : GREEN,
+                        color: allAdded ? '#6b7280' : '#fff',
+                        cursor: allAdded ? 'default' : 'pointer',
+                      }}
+                    >{allAdded ? '✓ All added' : `+ Add all (${members.length})`}</button>
+                  </div>
+                  {/* Member chips */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '10px 14px' }}>
+                    {members.map(m => {
+                      const added = attendeeSet.has(m.employee_name.toLowerCase());
+                      return (
+                        <button
+                          key={m.employee_id}
+                          onClick={() => toggle(m.employee_name)}
+                          style={{
+                            padding: '7px 14px', borderRadius: 20, fontSize: 13, fontWeight: 600,
+                            cursor: 'pointer', border: `1.5px solid ${added ? GREEN : '#334155'}`,
+                            background: added ? '#14532d' : '#0f172a',
+                            color: added ? '#fff' : '#94a3b8',
+                          }}
+                        >{added ? '✓ ' : ''}{m.employee_name}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Manual entry */}
+        <div style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+          {hasRoutes ? 'Add someone not on a route' : 'Add attendees'}
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
           <input
             ref={inputRef}
             type="text"
             value={current}
             onChange={e => setCurrent(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder="Employee name…"
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addManual(); } }}
+            placeholder="Type a name…"
             style={{
               flex: 1, padding: '12px 14px', borderRadius: 10,
               border: `1.5px solid ${BORDER}`, background: '#1e293b',
@@ -293,7 +371,7 @@ function StepAttendees({
             onBlur={e  => (e.currentTarget.style.borderColor = BORDER)}
           />
           <button
-            onClick={addAttendee}
+            onClick={addManual}
             disabled={!current.trim()}
             style={{
               padding: '12px 20px', borderRadius: 10, border: 'none',
@@ -305,24 +383,21 @@ function StepAttendees({
           >Add</button>
         </div>
 
-        {/* Attendee list */}
+        {/* Selected attendees summary */}
         {attendees.length > 0 && (
-          <div style={{ marginBottom: 20 }}>
+          <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8 }}>
-              {attendees.length} attendee{attendees.length !== 1 ? 's' : ''} added
+              {attendees.length} attendee{attendees.length !== 1 ? 's' : ''} selected
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {attendees.map((name, i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    background: '#1e293b', borderRadius: 10, padding: '12px 16px',
-                  }}
-                >
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  background: '#1e293b', borderRadius: 10, padding: '11px 16px',
+                }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: 18 }}>👤</span>
-                    <span style={{ color: '#f8fafc', fontWeight: 600, fontSize: 15 }}>{name}</span>
+                    <span style={{ fontSize: 16 }}>👤</span>
+                    <span style={{ color: '#f8fafc', fontWeight: 600, fontSize: 14 }}>{name}</span>
                     {name.toLowerCase() === presenterName.toLowerCase() && (
                       <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 700, background: '#14532d', padding: '2px 7px', borderRadius: 10 }}>
                         Presenter
@@ -331,10 +406,7 @@ function StepAttendees({
                   </div>
                   <button
                     onClick={() => removeAttendee(i)}
-                    style={{
-                      background: 'none', border: 'none', color: '#475569',
-                      fontSize: 18, cursor: 'pointer', lineHeight: 1, padding: '0 4px',
-                    }}
+                    style={{ background: 'none', border: 'none', color: '#475569', fontSize: 18, cursor: 'pointer', padding: '0 4px' }}
                   >✕</button>
                 </div>
               ))}
@@ -574,7 +646,7 @@ export default function FieldSafetyTalk() {
       {step === 2 && (
         <StepAttendees
           attendees={attendees} setAttendees={setAttendees}
-          presenterName={presenterName}
+          presenterName={presenterName} talkDate={talkDate}
           onBack={() => setStep(1)}
           onNext={() => setStep(3)}
         />
