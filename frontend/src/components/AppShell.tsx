@@ -40,6 +40,7 @@ const NAV = [
       { label: 'Time Tracking',  path: '/ops/time-tracking',  icon: '⏱️' },
       { label: 'Contacts',       path: '/ops/contacts',        icon: '📞' },
       { label: 'Key Box Admin',  path: '/keys/admin',          icon: '🔑' },
+      { label: 'Safety Talks',   path: '/ops/safety-talks',    icon: '🦺' },
     ],
   },
   {
@@ -50,6 +51,7 @@ const NAV = [
       { label: 'Purchase Order',  path: '/field/purchase-order', icon: '🛒', color: '#f59e0b' },
       { label: 'New Opportunity', path: '/field/opportunity',    icon: '+',  color: '#22c55e' },
       { label: 'New Issue',       path: '/field/issue',          icon: '⚠️' },
+      { label: 'Safety Talk',     path: '/field/safety',         icon: '🦺' },
       { label: 'Key Box',         path: '/field/keys',           icon: '🗝️', color: '#fbbf24' },
     ],
   },

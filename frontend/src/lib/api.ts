@@ -960,3 +960,45 @@ export async function searchAspireProperties(q: string): Promise<{ property_id: 
   const r = await request<{ results: { property_id: number; property_name: string; address: string }[] }>('GET', `/keys/properties/search?q=${encodeURIComponent(q)}`);
   return r.results;
 }
+
+// ── Safety Talks ──────────────────────────────────────────────────────────────
+
+export interface SafetyTalkSummary {
+  id:             number;
+  talk_date:      string;
+  topic:          string;
+  presenter_name: string;
+  job_site:       string | null;
+  notes:          string | null;
+  attendee_count: number;
+  created_at:     string;
+}
+
+export interface SafetyTalkDetail extends SafetyTalkSummary {
+  attendees: string[];
+}
+
+export interface SafetyTalkPayload {
+  talk_date:      string;
+  topic:          string;
+  presenter_name: string;
+  job_site?:      string;
+  notes?:         string;
+  attendees:      string[];
+}
+
+export async function createSafetyTalk(p: SafetyTalkPayload): Promise<SafetyTalkDetail> {
+  return request<SafetyTalkDetail>('POST', '/safety/talks', p);
+}
+
+export async function listSafetyTalks(start?: string, end?: string): Promise<SafetyTalkSummary[]> {
+  const params = new URLSearchParams();
+  if (start) params.set('start_date', start);
+  if (end)   params.set('end_date',   end);
+  const qs = params.toString() ? '?' + params.toString() : '';
+  return request<SafetyTalkSummary[]>('GET', `/safety/talks${qs}`);
+}
+
+export async function getSafetyTalk(id: number): Promise<SafetyTalkDetail> {
+  return request<SafetyTalkDetail>('GET', `/safety/talks/${id}`);
+}

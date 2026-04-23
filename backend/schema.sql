@@ -288,3 +288,24 @@ CREATE TABLE IF NOT EXISTS key_logs (
 
 CREATE INDEX IF NOT EXISTS idx_key_logs_key_id    ON key_logs(key_id);
 CREATE INDEX IF NOT EXISTS idx_key_logs_scanned_at ON key_logs(scanned_at);
+
+-- ── Safety Talks ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS safety_talks (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    talk_date      TEXT NOT NULL,             -- YYYY-MM-DD
+    topic          TEXT NOT NULL,
+    presenter_name TEXT NOT NULL,
+    job_site       TEXT,                      -- route / crew name
+    notes          TEXT,                      -- key points covered
+    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS safety_talk_attendees (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    talk_id  INTEGER NOT NULL REFERENCES safety_talks(id) ON DELETE CASCADE,
+    name     TEXT NOT NULL,
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_safety_talks_date      ON safety_talks(talk_date);
+CREATE INDEX IF NOT EXISTS idx_safety_attendees_talk  ON safety_talk_attendees(talk_id);
