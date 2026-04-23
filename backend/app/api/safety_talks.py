@@ -64,7 +64,7 @@ async def create_safety_talk(payload: SafetyTalkIn, db: Database = Depends(get_d
         raise HTTPException(status_code=400, detail="At least one attendee is required")
 
     # Insert talk
-    talk_id = await db.execute(
+    talk_id = await db._x(
         """INSERT INTO safety_talks (talk_date, topic, presenter_name, job_site, notes)
            VALUES (?, ?, ?, ?, ?)""",
         [
@@ -79,7 +79,7 @@ async def create_safety_talk(payload: SafetyTalkIn, db: Database = Depends(get_d
     # Insert attendees
     clean_names = [n.strip() for n in payload.attendees if n.strip()]
     for name in clean_names:
-        await db.execute(
+        await db._x(
             "INSERT INTO safety_talk_attendees (talk_id, name) VALUES (?, ?)",
             [talk_id, name],
         )
