@@ -1048,12 +1048,8 @@ async def create_field_issue(
         lines.append(f"Category: {category_name}")
     if notes:
         lines.append(f"\n{notes}")
-    if photo_urls:
-        lines.append(f"\nPhotos ({len(photo_urls)}):")
-        for url in photo_urls:
-            lines.append(url)
-    elif photo_data:
-        lines.append(f"\n{len(photo_data)} photo(s) attached.")
+    if photo_data:
+        lines.append(f"\n{len(photo_data)} photo(s) attached to property.")
     notes_text = "\n".join(lines)
 
     # ── POST to Aspire Issues ─────────────────────────────────────────────────
