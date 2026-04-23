@@ -10,7 +10,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { createSafetyTalk, getAspireEmployees, type AspireEmployee } from '../lib/api';
+import { createSafetyTalk, getAspireEmployees, searchAspireProperties, type AspireEmployee } from '../lib/api';
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -283,21 +283,122 @@ function StepAttendees({
   );
 }
 
+// ── Property search (Aspire) ──────────────────────────────────────────────────
+
+interface PropertyHit { property_id: number; property_name: string; address: string; }
+
+function PropertySearch({
+  value, onChange,
+}: {
+  value: string;
+  onChange: (name: string, id: number | null) => void;
+}) {
+  const [query,   setQuery]   = useState(value);
+  const [results, setResults] = useState<PropertyHit[]>([]);
+  const [open,    setOpen]    = useState(false);
+  const [loading, setLoading] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wrapRef  = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  function handleInput(q: string) {
+    setQuery(q);
+    onChange(q, null);           // propagate raw text while typing
+    setOpen(true);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (q.trim().length < 2) { setResults([]); return; }
+    timerRef.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const hits = await searchAspireProperties(q.trim());
+        setResults(hits.slice(0, 8));
+      } catch { setResults([]); }
+      finally { setLoading(false); }
+    }, 320);
+  }
+
+  function pick(hit: PropertyHit) {
+    setQuery(hit.property_name);
+    onChange(hit.property_name, hit.property_id);
+    setResults([]);
+    setOpen(false);
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <input
+        type="search"
+        value={query}
+        onChange={e => handleInput(e.target.value)}
+        onFocus={e => { if (results.length) setOpen(true); e.currentTarget.style.borderColor = GREEN; }}
+        onBlur={e  => (e.currentTarget.style.borderColor = BORDER)}
+        placeholder="Search Aspire properties…"
+        style={{
+          width: '100%', boxSizing: 'border-box', padding: '12px 14px',
+          borderRadius: 10, border: `1.5px solid ${BORDER}`,
+          background: '#1e293b', color: '#f8fafc', fontSize: 16, outline: 'none',
+        }}
+      />
+      {loading && (
+        <div style={{
+          position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)',
+          color: '#64748b', fontSize: 12, pointerEvents: 'none',
+        }}>Searching…</div>
+      )}
+      {open && results.length > 0 && (
+        <div style={{
+          position: 'absolute', zIndex: 50, left: 0, right: 0, top: '100%', marginTop: 4,
+          background: '#1e293b', borderRadius: 10, border: `1px solid ${BORDER}`,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)', overflow: 'hidden',
+        }}>
+          {results.map(hit => (
+            <button
+              key={hit.property_id}
+              onMouseDown={() => pick(hit)}  // mousedown fires before blur
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                padding: '11px 14px', background: 'none', border: 'none',
+                cursor: 'pointer', borderBottom: `1px solid ${BORDER}`,
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#0f172a')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+            >
+              <div style={{ color: '#f8fafc', fontWeight: 600, fontSize: 14 }}>{hit.property_name}</div>
+              {hit.address && (
+                <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>{hit.address}</div>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Step 2: Topic, Date, Notes & Photo ────────────────────────────────────────
 
 function StepTalkInfo({
   talkDate, setTalkDate,
   topic, setTopic,
-  jobSite, setJobSite,
+  jobSite, setJobSite, setPropertyId,
   notes, setNotes,
   photo, setPhoto,
   onBack, onNext,
 }: {
-  talkDate: string;   setTalkDate: (v: string) => void;
-  topic: string;      setTopic:    (v: string) => void;
-  jobSite: string;    setJobSite:  (v: string) => void;
-  notes: string;      setNotes:    (v: string) => void;
-  photo: File | null; setPhoto:    (f: File | null) => void;
+  talkDate: string;   setTalkDate:  (v: string) => void;
+  topic: string;      setTopic:     (v: string) => void;
+  jobSite: string;    setJobSite:   (v: string) => void;
+  setPropertyId:      (id: number | null) => void;
+  notes: string;      setNotes:     (v: string) => void;
+  photo: File | null; setPhoto:     (f: File | null) => void;
   onBack: () => void; onNext: () => void;
 }) {
   const [customTopic,  setCustomTopic]  = useState(!PRESET_TOPICS.includes(topic) && topic !== '');
@@ -404,23 +505,14 @@ function StepTalkInfo({
           )}
         </div>
 
-        {/* Crew / Job site */}
+        {/* Job site — Aspire property search */}
         <div style={{ marginBottom: 20 }}>
           <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>
-            Crew / Job site <span style={{ color: '#475569', fontWeight: 400 }}>(optional)</span>
+            Job site / property <span style={{ color: '#475569', fontWeight: 400 }}>(optional)</span>
           </label>
-          <input
-            type="text"
+          <PropertySearch
             value={jobSite}
-            onChange={e => setJobSite(e.target.value)}
-            placeholder="e.g. Route 3, North Crew, Main St…"
-            style={{
-              width: '100%', boxSizing: 'border-box', padding: '12px 14px',
-              borderRadius: 10, border: `1.5px solid ${BORDER}`,
-              background: '#1e293b', color: '#f8fafc', fontSize: 16, outline: 'none',
-            }}
-            onFocus={e => (e.currentTarget.style.borderColor = GREEN)}
-            onBlur={e  => (e.currentTarget.style.borderColor = BORDER)}
+            onChange={(name, id) => { setJobSite(name); setPropertyId(id); }}
           />
         </div>
 
@@ -605,11 +697,12 @@ export default function FieldSafetyTalk() {
     try { return JSON.parse(localStorage.getItem('ap_user') || '{}').name || ''; } catch { return ''; }
   });
   const [attendees,  setAttendees]  = useState<string[]>([]);
-  const [talkDate,   setTalkDate]   = useState(todayStr());
-  const [topic,      setTopic]      = useState('');
-  const [jobSite,    setJobSite]    = useState('');
-  const [notes,      setNotes]      = useState('');
-  const [photo,      setPhoto]      = useState<File | null>(null);
+  const [talkDate,    setTalkDate]    = useState(todayStr());
+  const [topic,       setTopic]       = useState('');
+  const [jobSite,     setJobSite]     = useState('');
+  const [propertyId,  setPropertyId]  = useState<number | null>(null);
+  const [notes,       setNotes]       = useState('');
+  const [photo,       setPhoto]       = useState<File | null>(null);
 
   const [submitting,   setSubmitting]   = useState(false);
   const [submitError,  setSubmitError]  = useState<string | null>(null);
@@ -617,7 +710,8 @@ export default function FieldSafetyTalk() {
 
   function reset() {
     setStep(1); setAttendees([]); setTalkDate(todayStr()); setTopic('');
-    setJobSite(''); setNotes(''); setPhoto(null); setSubmitError(null); setLastTalkInfo(null);
+    setJobSite(''); setPropertyId(null); setNotes(''); setPhoto(null);
+    setSubmitError(null); setLastTalkInfo(null);
   }
 
   async function handleSubmit() {
@@ -695,6 +789,7 @@ export default function FieldSafetyTalk() {
           talkDate={talkDate} setTalkDate={setTalkDate}
           topic={topic}       setTopic={setTopic}
           jobSite={jobSite}   setJobSite={setJobSite}
+          setPropertyId={setPropertyId}
           notes={notes}       setNotes={setNotes}
           photo={photo}       setPhoto={setPhoto}
           onBack={() => setStep(1)}
