@@ -18,15 +18,9 @@ const FIELD_LINKS = [
   { to: '/field/keys',             icon: '🔑', label: 'Key Box',            sub: 'Check keys in / out' },
 ];
 
+const ACCOUNTING_URL = 'https://darios-accounting.pages.dev';
+
 const OFFICE_GROUPS = [
-  {
-    label: 'AP & Finance',
-    items: [
-      { to: '/ap',           icon: '💳', label: 'Invoices',   sub: 'Review & post invoices' },
-      { to: '/ap/vendors',   icon: '🏪', label: 'Vendors',    sub: 'Routing & Aspire links' },
-      { to: '/ap/reconcile', icon: '🔄', label: 'Reconcile',  sub: 'Vendor statement matching' },
-    ],
-  },
   {
     label: 'Field Ops',
     items: [
@@ -37,14 +31,10 @@ const OFFICE_GROUPS = [
     ],
   },
   {
-    label: 'Dashboards',
+    label: 'Accounting & Dashboards',
     items: [
-      { to: '/dashboards/sales',        icon: '📊', label: 'Sales',         sub: 'Pipeline & won jobs' },
-      { to: '/dashboards/ops',          icon: '⚙️', label: 'Operations',    sub: 'Job progress' },
-      { to: '/dashboards/construction', icon: '🏗️', label: 'Construction',  sub: 'Active builds' },
-      { to: '/dashboards/estimating',   icon: '📋', label: 'Estimating',    sub: 'Quotes & bids' },
-      { to: '/dashboards/activities',   icon: '📅', label: 'Activities',    sub: 'Team activity log' },
-      { to: 'https://ap-automation-production.up.railway.app/dashboard/daily-report', icon: '📝', label: 'Daily Report', sub: 'Completion report by division', external: true },
+      { to: ACCOUNTING_URL,                           icon: '💳', label: 'AP & Finance',  sub: 'Invoices, vendors & reconcile',   external: true },
+      { to: `${ACCOUNTING_URL}/dashboards/sales`,     icon: '📊', label: 'Dashboards',    sub: 'Sales, ops & construction views', external: true },
     ],
   },
 ];

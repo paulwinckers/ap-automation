@@ -1,43 +1,43 @@
 /**
- * AppShell — persistent sidebar nav for all office/AP pages.
- * Sidebar is collapsible: full (220px) or icon-only (56px).
+ * AppShell — sidebar nav for the Accounting & Dashboards app.
+ * Collapsible: full (220px) or icon-only (56px).
  */
 
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { logout, currentUser } from '../lib/api';
 
-const SIDEBAR_FULL  = 220;
-const SIDEBAR_MINI  = 56;
+const SIDEBAR_FULL = 220;
+const SIDEBAR_MINI = 56;
 
-const ACCOUNTING_URL = 'https://darios-accounting.pages.dev';
+const DAILY_REPORT_URL = 'https://ap-automation-production.up.railway.app/dashboard/daily-report';
+const FIELD_APP_URL    = 'https://darios-ap.pages.dev';
 
 const NAV = [
   {
-    section: 'Field Ops',
+    section: 'AP & Finance',
     items: [
-      { label: 'Crew Schedule', path: '/ops/crew-schedule', icon: '👥' },
-      { label: 'Time Tracking', path: '/ops/time-tracking', icon: '⏱️' },
-      { label: 'Contacts',      path: '/ops/contacts',      icon: '📞' },
-      { label: 'Key Box Admin', path: '/keys/admin',        icon: '🔑' },
-      { label: 'Safety Talks',  path: '/ops/safety-talks',  icon: '🦺' },
+      { label: 'Invoices',  path: '/ap',           icon: '💳' },
+      { label: 'Vendors',   path: '/ap/vendors',   icon: '🏪' },
+      { label: 'Reconcile', path: '/ap/reconcile', icon: '🔄' },
+      { label: 'Users',     path: '/ap/users',     icon: '👤' },
     ],
   },
   {
-    section: 'Field Staff',
+    section: 'Dashboards',
     items: [
-      { label: 'Submit Receipt',  path: '/field',                icon: '🧾' },
-      { label: 'Purchase Order',  path: '/field/purchase-order', icon: '🛒', color: '#f59e0b' },
-      { label: 'New Opportunity', path: '/field/opportunity',    icon: '+',  color: '#22c55e' },
-      { label: 'New Issue',       path: '/field/issue',          icon: '⚠️' },
-      { label: 'Safety Talk',     path: '/field/safety',         icon: '🦺' },
-      { label: 'Key Box',         path: '/field/keys',           icon: '🗝️', color: '#fbbf24' },
+      { label: 'Sales',         path: '/dashboards/sales',        icon: '📊' },
+      { label: 'Operations',    path: '/dashboards/ops',          icon: '⚙️' },
+      { label: 'Construction',  path: '/dashboards/construction', icon: '🏗️' },
+      { label: 'Estimating',    path: '/dashboards/estimating',   icon: '📋' },
+      { label: 'Activities',    path: '/dashboards/activities',   icon: '📅' },
+      { label: 'Daily Report',  href: DAILY_REPORT_URL,           icon: '📝' },
     ],
   },
   {
-    section: 'Accounting',
+    section: 'Field App',
     items: [
-      { label: 'AP & Dashboards', href: ACCOUNTING_URL, icon: '💳' },
+      { label: 'Field Portal', href: FIELD_APP_URL, icon: '📱' },
     ],
   },
 ];
@@ -45,13 +45,12 @@ const NAV = [
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const [collapsed, setCollapsed] = useState(false);
-
   const w = collapsed ? SIDEBAR_MINI : SIDEBAR_FULL;
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc' }}>
 
-      {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
+      {/* Sidebar */}
       <nav style={{
         width: w, minWidth: w,
         background: '#0f172a',
@@ -71,11 +70,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           gap: 8,
         }}>
           {!collapsed && (
-            <img
-              src="/darios-logo.png"
-              alt="Darios Landscaping"
-              style={{ height: 36, objectFit: 'contain' }}
-            />
+            <img src="/darios-logo.png" alt="Darios Landscaping"
+              style={{ height: 36, objectFit: 'contain' }} />
           )}
           <button
             onClick={() => setCollapsed(c => !c)}
@@ -95,7 +91,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '8px 0' }}>
           {NAV.map(group => (
             <div key={group.section} style={{ marginBottom: 8 }}>
-              {/* Section label — hidden when collapsed */}
               {!collapsed && (
                 <div style={{
                   color: '#475569', fontSize: 10, fontWeight: 700,
@@ -120,13 +115,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   transition: 'color 0.15s, background 0.15s',
                   whiteSpace: 'nowrap' as const,
                 });
+
                 if ('href' in item && item.href) {
                   return (
-                    <a
-                      key={item.label}
-                      href={item.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <a key={item.label} href={item.href}
+                      target="_blank" rel="noopener noreferrer"
                       title={collapsed ? item.label : undefined}
                       style={linkStyle(false)}
                     >
@@ -135,19 +128,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     </a>
                   );
                 }
-                const active = 'path' in item
-                  ? pathname.startsWith(item.path as string)
-                  : false;
-                const ic = 'color' in item ? (item as { color?: string }).color : undefined;
+
+                const active = item.path === '/ap'
+                  ? pathname === '/ap'
+                  : pathname.startsWith(item.path!);
+
                 return (
-                  <Link
-                    key={'path' in item ? item.path : item.label}
-                    to={('path' in item ? item.path : '/') as string}
+                  <Link key={item.path} to={item.path!}
                     title={collapsed ? item.label : undefined}
                     style={linkStyle(active)}
                   >
-                    <span style={{ fontSize: 18, flexShrink: 0, color: active ? undefined : ic, fontWeight: ic ? 700 : undefined }}>{item.icon}</span>
-                    {!collapsed && <span style={{ color: active ? undefined : ic }}>{item.label}</span>}
+                    <span style={{ fontSize: 18, flexShrink: 0 }}>{item.icon}</span>
+                    {!collapsed && <span>{item.label}</span>}
                   </Link>
                 );
               })}
@@ -187,14 +179,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </nav>
 
-      {/* ── Main content ────────────────────────────────────────────────────── */}
+      {/* Main content */}
       <main style={{
         marginLeft: w, flex: 1, minHeight: '100vh', overflowX: 'hidden',
         transition: 'margin-left 0.2s ease',
       }}>
         {children}
       </main>
-
     </div>
   );
 }
