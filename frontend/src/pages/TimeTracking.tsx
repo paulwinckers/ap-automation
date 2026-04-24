@@ -64,6 +64,22 @@ interface WorkTicket {
   _RouteName:       string;
 }
 
+interface WorkTicketHistory {
+  WorkTicketID:         number;
+  WorkTicketNumber:     string | null;
+  WorkTicketTitle:      string | null;
+  WorkTicketStatusName: string | null;
+  WorkTicketStatus:     number | null;
+  Notes:                string | null;
+  ActualLaborHours:     number | null;
+  HoursAct:             number | null;
+  ScheduledStartDate:   string | null;
+  CompleteDate:         string | null;
+  CrewLeaderName:       string | null;
+  PropertyName:         string | null;
+  OpportunityName:      string | null;
+}
+
 interface DriveTicket {
   ticket_id:    number | null;
   ticket_num:   string | null;
@@ -644,6 +660,393 @@ function EditSingleTimeModal({ title, initValue, onSave, onClose }: {
   );
 }
 
+// ── AddNotesModal — add notes / photos to a work ticket ──────────────────────
+
+interface AddNotesModalProps {
+  ticketId:   number;
+  ticketName: string;
+  employeeName: string;
+  onClose:    () => void;
+  onSuccess:  () => void;
+}
+
+function AddNotesModal({ ticketId, ticketName, employeeName, onClose, onSuccess }: AddNotesModalProps) {
+  const [comment,  setComment]  = useState('');
+  const [photos,   setPhotos]   = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState<string | null>(null);
+  const [done,     setDone]     = useState(false);
+
+  const cameraRef  = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
+
+  const addFiles = (files: FileList | null) => {
+    if (!files) return;
+    const newFiles = Array.from(files).slice(0, 10 - photos.length);
+    setPhotos(prev => [...prev, ...newFiles]);
+    newFiles.forEach(f => {
+      const url = URL.createObjectURL(f);
+      setPreviews(prev => [...prev, url]);
+    });
+  };
+
+  const removePhoto = (i: number) => {
+    URL.revokeObjectURL(previews[i]);
+    setPhotos(prev => prev.filter((_, idx) => idx !== i));
+    setPreviews(prev => prev.filter((_, idx) => idx !== i));
+  };
+
+  const handleSubmit = async () => {
+    if (!comment.trim() && photos.length === 0) {
+      setError('Add a note or at least one photo.');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append('submitter_name', employeeName);
+      form.append('comment', comment.trim() || '(no comment)');
+      for (const p of photos) form.append('photos', p);
+      const res = await fetch(
+        `${BASE}/aspire/field/work-ticket/${ticketId}/complete`,
+        { method: 'POST', body: form }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      setDone(true);
+      setTimeout(onSuccess, 1200);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      zIndex: 300, display: 'flex', alignItems: 'flex-end',
+    }}>
+      <div style={{
+        background: '#fff', width: '100%', borderRadius: '18px 18px 0 0',
+        maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+        overflow: 'hidden',
+      }}>
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 20px', borderBottom: '1px solid #e2e8f0', background: '#f8fafc',
+          flexShrink: 0,
+        }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 17 }}>📷 Add Notes / Photos</div>
+            <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>{ticketName}</div>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', color: '#64748b',
+          }}>×</button>
+        </div>
+
+        {done ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+            <div style={{ fontWeight: 700, fontSize: 18, color: '#15803d' }}>Saved to Aspire!</div>
+          </div>
+        ) : (
+          <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+            {/* Notes */}
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#475569', marginBottom: 6 }}>Visit Notes</div>
+              <textarea
+                rows={4}
+                placeholder="Describe the work completed, any issues, etc…"
+                value={comment}
+                onChange={e => setComment(e.target.value)}
+                style={{
+                  width: '100%', padding: '12px 14px', fontSize: 15,
+                  border: '2px solid #cbd5e1', borderRadius: 10, outline: 'none',
+                  resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit',
+                }}
+              />
+            </div>
+
+            {/* Photo buttons */}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => cameraRef.current?.click()}
+                style={{
+                  flex: 1, padding: '14px', borderRadius: 12,
+                  background: '#0f172a', color: '#fff', border: 'none',
+                  fontSize: 15, fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                📷 Camera
+              </button>
+              <button
+                onClick={() => galleryRef.current?.click()}
+                style={{
+                  flex: 1, padding: '14px', borderRadius: 12,
+                  background: '#1e293b', color: '#fff', border: 'none',
+                  fontSize: 15, fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                🖼 Gallery
+              </button>
+              <input ref={cameraRef} type="file" accept="image/*,video/*" capture="environment" multiple style={{ display: 'none' }} onChange={e => addFiles(e.target.files)} />
+              <input ref={galleryRef} type="file" accept="image/*,video/*" multiple style={{ display: 'none' }} onChange={e => addFiles(e.target.files)} />
+            </div>
+
+            {/* Photo previews */}
+            {previews.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {previews.map((url, i) => (
+                  <div key={i} style={{ position: 'relative', width: 80, height: 80 }}>
+                    <img src={url} style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8 }} />
+                    <button
+                      onClick={() => removePhoto(i)}
+                      style={{
+                        position: 'absolute', top: -6, right: -6,
+                        background: '#ef4444', color: '#fff', border: 'none',
+                        borderRadius: '50%', width: 22, height: 22,
+                        fontSize: 14, cursor: 'pointer', lineHeight: 1,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                    >×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {error && (
+              <div style={{ background: '#fee2e2', color: '#dc2626', borderRadius: 8, padding: '10px 14px', fontSize: 14 }}>
+                {error}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!done && (
+          <div style={{ padding: '16px 20px', borderTop: '1px solid #e2e8f0', background: '#f8fafc', flexShrink: 0 }}>
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              style={{
+                width: '100%', padding: 16, borderRadius: 12, border: 'none',
+                background: loading ? '#e2e8f0' : '#22c55e', color: loading ? '#94a3b8' : '#fff',
+                fontSize: 16, fontWeight: 700, cursor: loading ? 'default' : 'pointer',
+              }}
+            >
+              {loading ? 'Saving…' : `✓ Save${photos.length > 0 ? ` (${photos.length} photo${photos.length > 1 ? 's' : ''})` : ''}`}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── TicketHistoryModal — view all tickets for the same opportunity ─────────────
+
+interface TicketHistoryModalProps {
+  workTicketId:  number;
+  ticketName:    string;
+  onClose:       () => void;
+}
+
+function statusColour(status: string | null): { bg: string; text: string } {
+  const s = (status || '').toLowerCase();
+  if (s.includes('complete')) return { bg: '#dcfce7', text: '#15803d' };
+  if (s.includes('progress') || s.includes('active')) return { bg: '#dbeafe', text: '#1d4ed8' };
+  if (s.includes('cancel'))   return { bg: '#fee2e2', text: '#dc2626' };
+  if (s.includes('hold'))     return { bg: '#fef9c3', text: '#92400e' };
+  return { bg: '#f1f5f9', text: '#475569' };
+}
+
+function TicketHistoryModal({ workTicketId, ticketName, onClose }: TicketHistoryModalProps) {
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState<string | null>(null);
+  const [data,    setData]    = useState<{
+    opportunity_name: string | null;
+    property_name:    string | null;
+    tickets:          WorkTicketHistory[];
+  } | null>(null);
+  const [expanded, setExpanded] = useState<number | null>(null);
+
+  useEffect(() => {
+    apiFetch<{
+      opportunity_id:   number | null;
+      opportunity_name: string | null;
+      property_name:    string | null;
+      tickets:          WorkTicketHistory[];
+    }>('GET', `/aspire/field/work-ticket/${workTicketId}/opportunity-history`)
+      .then(r => setData({ opportunity_name: r.opportunity_name, property_name: r.property_name, tickets: r.tickets }))
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [workTicketId]);
+
+  const fmtHours = (h: number | null | undefined) => {
+    if (h == null) return null;
+    return `${h.toFixed(1)}h`;
+  };
+
+  const fmtShortDate = (iso: string | null | undefined) => {
+    if (!iso) return null;
+    try {
+      return new Date(iso.slice(0, 10) + 'T12:00:00').toLocaleDateString('en-CA', {
+        month: 'short', day: 'numeric',
+      });
+    } catch { return iso.slice(0, 10); }
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      zIndex: 300, display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{
+        background: '#fff', flex: 1, display: 'flex', flexDirection: 'column',
+        marginTop: 40, borderRadius: '16px 16px 0 0', overflow: 'hidden',
+      }}>
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+          padding: '16px 20px', borderBottom: '1px solid #e2e8f0', background: '#f8fafc',
+          flexShrink: 0,
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 17 }}>📋 Visit History</div>
+            <div style={{ fontSize: 13, color: '#475569', marginTop: 2, fontWeight: 600 }}>
+              {data?.opportunity_name ?? ticketName}
+            </div>
+            {data?.property_name && (
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 1 }}>
+                📍 {data.property_name}
+              </div>
+            )}
+          </div>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', fontSize: 24, cursor: 'pointer',
+            color: '#64748b', flexShrink: 0, lineHeight: 1,
+          }}>×</button>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          {loading && (
+            <div style={{ padding: 32, textAlign: 'center', color: '#64748b' }}>Loading history…</div>
+          )}
+          {error && (
+            <div style={{ padding: 24, color: '#dc2626', textAlign: 'center' }}>{error}</div>
+          )}
+          {!loading && !error && data && data.tickets.length === 0 && (
+            <div style={{ padding: 32, textAlign: 'center', color: '#94a3b8' }}>No visit history found</div>
+          )}
+          {data?.tickets.map(t => {
+            const sc = statusColour(t.WorkTicketStatusName);
+            const hours = t.ActualLaborHours ?? t.HoursAct;
+            const isOpen = expanded === t.WorkTicketID;
+            const hasNotes = !!(t.Notes?.trim());
+            return (
+              <div key={t.WorkTicketID} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                <button
+                  onClick={() => setExpanded(isOpen ? null : t.WorkTicketID)}
+                  style={{
+                    display: 'flex', width: '100%', textAlign: 'left',
+                    padding: '12px 20px', background: 'none', border: 'none', cursor: 'pointer',
+                    alignItems: 'center', gap: 10,
+                  }}
+                >
+                  {/* Date */}
+                  <div style={{ flexShrink: 0, minWidth: 50, textAlign: 'center' }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
+                      {fmtShortDate(t.ScheduledStartDate) ?? '—'}
+                    </div>
+                    {t.CompleteDate && (
+                      <div style={{ fontSize: 11, color: '#22c55e', marginTop: 1 }}>
+                        ✓ {fmtShortDate(t.CompleteDate)}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Info */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span style={{
+                        display: 'inline-block', padding: '2px 8px', borderRadius: 10,
+                        fontSize: 11, fontWeight: 700,
+                        background: sc.bg, color: sc.text,
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {t.WorkTicketStatusName || 'Unknown'}
+                      </span>
+                      {hasNotes && (
+                        <span style={{ fontSize: 11, color: '#94a3b8' }}>📝</span>
+                      )}
+                    </div>
+                    {t.CrewLeaderName && (
+                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>
+                        👷 {t.CrewLeaderName}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Hours */}
+                  <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                    {hours != null && (
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>
+                        {fmtHours(hours)}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                      {isOpen ? '▲' : '▼'}
+                    </div>
+                  </div>
+                </button>
+
+                {/* Expanded: notes */}
+                {isOpen && (
+                  <div style={{
+                    padding: '0 20px 14px 20px',
+                    borderTop: '1px solid #f8fafc',
+                    background: '#fafafa',
+                  }}>
+                    {t.WorkTicketTitle && (
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+                        {t.WorkTicketTitle}
+                        {t.WorkTicketNumber && (
+                          <span style={{ color: '#94a3b8', fontWeight: 400 }}> · #{t.WorkTicketNumber}</span>
+                        )}
+                      </div>
+                    )}
+                    {hasNotes ? (
+                      <div style={{
+                        fontSize: 13, color: '#334155', lineHeight: 1.6,
+                        background: '#fff', border: '1px solid #e2e8f0',
+                        borderRadius: 8, padding: '10px 12px',
+                        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                      }}>
+                        {t.Notes}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic' }}>No notes recorded</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function TimeTracking() {
@@ -685,6 +1088,10 @@ export default function TimeTracking() {
   const [actionLoading,    setActionLoading]    = useState(false);
   const [submitError,      setSubmitError]      = useState<string | null>(null);
   const [submitOk,         setSubmitOk]         = useState(false);
+
+  // ── Notes/Photos + Ticket history modals
+  const [addNotesSegment,  setAddNotesSegment]  = useState<TimeSegment | null>(null);
+  const [historySegment,   setHistorySegment]   = useState<TimeSegment | null>(null);
 
   // Elapsed timer for active segment
   const openSegment = segments.find(s => !s.end_time) ?? null;
@@ -1691,10 +2098,30 @@ export default function TimeTracking() {
                         {fmtTime(seg.start_time)} – {fmtTime(seg.end_time)}
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <div style={{ fontWeight: 700, fontSize: 15, color: '#0f172a', minWidth: 44, textAlign: 'right' }}>
                         {fmtDuration(seg.duration_minutes)}
                       </div>
+                      {seg.segment_type === 'onsite' && seg.work_ticket_id && (
+                        <>
+                          <button
+                            onClick={() => setAddNotesSegment(seg)}
+                            title="Add notes / photos"
+                            style={{
+                              background: '#ecfdf5', border: '1px solid #86efac', borderRadius: 8,
+                              padding: '6px 8px', cursor: 'pointer', fontSize: 15, color: '#15803d',
+                            }}
+                          >📷</button>
+                          <button
+                            onClick={() => setHistorySegment(seg)}
+                            title="Visit history"
+                            style={{
+                              background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 8,
+                              padding: '6px 8px', cursor: 'pointer', fontSize: 15, color: '#1d4ed8',
+                            }}
+                          >📋</button>
+                        </>
+                      )}
                       <button
                         onClick={() => setEditSegment(seg)}
                         title="Edit times"
@@ -1768,6 +2195,26 @@ export default function TimeTracking() {
           current={driveTicket}
           onSave={handleSaveDriveTicket}
           onClose={() => setShowDriveSettings(false)}
+        />
+      )}
+
+      {/* ── Add Notes / Photos modal ─────────────────────────────────────── */}
+      {addNotesSegment && addNotesSegment.work_ticket_id && (
+        <AddNotesModal
+          ticketId={addNotesSegment.work_ticket_id}
+          ticketName={addNotesSegment.work_ticket_name ?? `Ticket #${addNotesSegment.work_ticket_id}`}
+          employeeName={employee?.FullName ?? 'Crew Member'}
+          onClose={() => setAddNotesSegment(null)}
+          onSuccess={() => setAddNotesSegment(null)}
+        />
+      )}
+
+      {/* ── Ticket history modal ─────────────────────────────────────────── */}
+      {historySegment && historySegment.work_ticket_id && (
+        <TicketHistoryModal
+          workTicketId={historySegment.work_ticket_id}
+          ticketName={historySegment.work_ticket_name ?? `Ticket #${historySegment.work_ticket_id}`}
+          onClose={() => setHistorySegment(null)}
         />
       )}
     </div>

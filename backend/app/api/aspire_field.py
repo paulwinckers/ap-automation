@@ -517,6 +517,65 @@ async def get_opportunity_work_tickets(opportunity_id: int):
     return {"opportunity_id": opportunity_id, "tickets": tickets}
 
 
+# ── Work ticket history (all tickets for the same opportunity) ────────────────
+
+@router.get("/work-ticket/{ticket_id}/opportunity-history")
+async def get_work_ticket_opportunity_history(ticket_id: int):
+    """
+    Given a work ticket ID, return all work tickets for the same opportunity.
+    Used in Time Tracking to show previous visits / completion notes.
+    """
+    _check_credentials()
+
+    # Step 1: look up this ticket to get its OpportunityID + Property
+    try:
+        res = await _aspire._get("WorkTickets", {
+            "$filter": f"WorkTicketID eq {ticket_id}",
+            "$select": "WorkTicketID,OpportunityID,OpportunityName,PropertyName",
+            "$top": "1",
+        })
+        rows = _aspire._extract_list(res)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="Work ticket not found")
+
+    opp_id       = rows[0].get("OpportunityID")
+    opp_name     = rows[0].get("OpportunityName")
+    property_name = rows[0].get("PropertyName")
+
+    if not opp_id:
+        return {"opportunity_id": None, "opportunity_name": opp_name,
+                "property_name": property_name, "tickets": []}
+
+    # Step 2: fetch all tickets for that opportunity
+    try:
+        res2 = await _aspire._get("WorkTickets", {
+            "$filter": f"OpportunityID eq {opp_id}",
+            "$select": ",".join([
+                "WorkTicketID", "WorkTicketNumber", "WorkTicketTitle",
+                "WorkTicketStatusName", "WorkTicketStatus",
+                "Notes", "ActualLaborHours", "HoursAct",
+                "ScheduledStartDate", "CompleteDate",
+                "CrewLeaderName", "OpportunityID",
+                "OpportunityName", "PropertyName",
+            ]),
+            "$orderby": "ScheduledStartDate desc",
+            "$top": "60",
+        })
+        tickets = _aspire._extract_list(res2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {
+        "opportunity_id":   opp_id,
+        "opportunity_name": opp_name,
+        "property_name":    property_name,
+        "tickets":          tickets,
+    }
+
+
 # ── Work ticket completion ────────────────────────────────────────────────────
 
 @router.post("/work-ticket/{ticket_id}/complete")
