@@ -519,40 +519,34 @@ async def get_opportunity_work_tickets(opportunity_id: int):
 
 # ── Work ticket history (all tickets for the same opportunity) ────────────────
 
-@router.get("/work-ticket/{ticket_id}/opportunity-history")
-async def get_work_ticket_opportunity_history(ticket_id: int):
+@router.get("/opportunity/{opportunity_id}/ticket-history")
+async def get_opportunity_ticket_history(opportunity_id: int):
     """
-    Given a work ticket ID, return all work tickets for the same opportunity.
-    Used in Time Tracking to show previous visits / completion notes.
+    Return all work tickets for an opportunity, ordered by scheduled date desc.
+    Used in Time Tracking to show visit history with notes.
     """
     _check_credentials()
 
-    # Step 1: look up this ticket to get its OpportunityID + Property
+    # Fetch opportunity name + property name
+    opp_name:     str | None = None
+    property_name: str | None = None
     try:
-        res = await _aspire._get("WorkTickets", {
-            "$filter": f"WorkTicketID eq {ticket_id}",
-            "$select": "WorkTicketID,OpportunityID,OpportunityName,PropertyName",
+        opp_res = await _aspire._get("Opportunities", {
+            "$filter": f"OpportunityID eq {opportunity_id}",
+            "$select": "OpportunityID,OpportunityName,PropertyName",
             "$top": "1",
         })
-        rows = _aspire._extract_list(res)
+        opp_rows = _aspire._extract_list(opp_res)
+        if opp_rows:
+            opp_name      = opp_rows[0].get("OpportunityName")
+            property_name = opp_rows[0].get("PropertyName")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.warning(f"Opportunity lookup failed for {opportunity_id}: {e}")
 
-    if not rows:
-        raise HTTPException(status_code=404, detail="Work ticket not found")
-
-    opp_id       = rows[0].get("OpportunityID")
-    opp_name     = rows[0].get("OpportunityName")
-    property_name = rows[0].get("PropertyName")
-
-    if not opp_id:
-        return {"opportunity_id": None, "opportunity_name": opp_name,
-                "property_name": property_name, "tickets": []}
-
-    # Step 2: fetch all tickets for that opportunity
+    # Fetch all tickets for this opportunity
     try:
-        res2 = await _aspire._get("WorkTickets", {
-            "$filter": f"OpportunityID eq {opp_id}",
+        res = await _aspire._get("WorkTickets", {
+            "$filter": f"OpportunityID eq {opportunity_id}",
             "$select": ",".join([
                 "WorkTicketID", "WorkTicketNumber", "WorkTicketTitle",
                 "WorkTicketStatusName", "WorkTicketStatus",
@@ -564,12 +558,12 @@ async def get_work_ticket_opportunity_history(ticket_id: int):
             "$orderby": "ScheduledStartDate desc",
             "$top": "60",
         })
-        tickets = _aspire._extract_list(res2)
+        tickets = _aspire._extract_list(res)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
     return {
-        "opportunity_id":   opp_id,
+        "opportunity_id":   opportunity_id,
         "opportunity_name": opp_name,
         "property_name":    property_name,
         "tickets":          tickets,

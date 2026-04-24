@@ -57,6 +57,7 @@ interface WorkTicket {
   WorkTicketID:     number;
   WorkTicketNumber: string | null;
   WorkTicketTitle:  string;
+  OpportunityID:    number | null;
   OpportunityName:  string;
   PropertyName:     string;
   ScheduledDate:    string | null;
@@ -853,7 +854,7 @@ function AddNotesModal({ ticketId, ticketName, employeeName, onClose, onSuccess 
 // ── TicketHistoryModal — view all tickets for the same opportunity ─────────────
 
 interface TicketHistoryModalProps {
-  workTicketId:  number;
+  opportunityId: number;
   ticketName:    string;
   onClose:       () => void;
 }
@@ -867,7 +868,7 @@ function statusColour(status: string | null): { bg: string; text: string } {
   return { bg: '#f1f5f9', text: '#475569' };
 }
 
-function TicketHistoryModal({ workTicketId, ticketName, onClose }: TicketHistoryModalProps) {
+function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistoryModalProps) {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
   const [data,    setData]    = useState<{
@@ -883,11 +884,11 @@ function TicketHistoryModal({ workTicketId, ticketName, onClose }: TicketHistory
       opportunity_name: string | null;
       property_name:    string | null;
       tickets:          WorkTicketHistory[];
-    }>('GET', `/aspire/field/work-ticket/${workTicketId}/opportunity-history`)
+    }>('GET', `/aspire/field/opportunity/${opportunityId}/ticket-history`)
       .then(r => setData({ opportunity_name: r.opportunity_name, property_name: r.property_name, tickets: r.tickets }))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  }, [workTicketId]);
+  }, [opportunityId]);
 
   const fmtHours = (h: number | null | undefined) => {
     if (h == null) return null;
@@ -1092,6 +1093,12 @@ export default function TimeTracking() {
   // ── Notes/Photos + Ticket history modals
   const [addNotesSegment,  setAddNotesSegment]  = useState<TimeSegment | null>(null);
   const [historySegment,   setHistorySegment]   = useState<TimeSegment | null>(null);
+
+  /** Look up OpportunityID for a segment via the loaded tickets list */
+  const segmentOpportunityId = (seg: TimeSegment | null): number | null => {
+    if (!seg?.work_ticket_id) return null;
+    return tickets.find(t => t.WorkTicketID === seg.work_ticket_id)?.OpportunityID ?? null;
+  };
 
   // Elapsed timer for active segment
   const openSegment = segments.find(s => !s.end_time) ?? null;
@@ -1940,19 +1947,43 @@ export default function TimeTracking() {
               </div>
             </div>
 
-            {/* Switch ticket (onsite only) */}
+            {/* Switch ticket + notes/history buttons (onsite only) */}
             {openSegment.segment_type === 'onsite' && (
-              <button
-                onClick={() => { setPickerMode('switch'); setShowTicketPicker(true); }}
-                style={{
-                  marginTop: 12, width: '100%', padding: '10px',
-                  background: '#f8fafc', border: '1px solid #e2e8f0',
-                  borderRadius: 10, fontSize: 14, color: '#475569',
-                  cursor: 'pointer', fontWeight: 600,
-                }}
-              >
-                Switch Ticket
-              </button>
+              <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => { setPickerMode('switch'); setShowTicketPicker(true); }}
+                  style={{
+                    flex: 1, padding: '10px',
+                    background: '#f8fafc', border: '1px solid #e2e8f0',
+                    borderRadius: 10, fontSize: 14, color: '#475569',
+                    cursor: 'pointer', fontWeight: 600,
+                  }}
+                >
+                  Switch Ticket
+                </button>
+                {openSegment.work_ticket_id && (
+                  <>
+                    <button
+                      onClick={() => setAddNotesSegment(openSegment)}
+                      title="Add notes / photos"
+                      style={{
+                        padding: '10px 14px', borderRadius: 10, fontSize: 18,
+                        background: '#ecfdf5', border: '1px solid #86efac',
+                        cursor: 'pointer', color: '#15803d',
+                      }}
+                    >📷</button>
+                    <button
+                      onClick={() => setHistorySegment(openSegment)}
+                      title="Visit history"
+                      style={{
+                        padding: '10px 14px', borderRadius: 10, fontSize: 18,
+                        background: '#eff6ff', border: '1px solid #93c5fd',
+                        cursor: 'pointer', color: '#1d4ed8',
+                      }}
+                    >📋</button>
+                  </>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -2210,13 +2241,17 @@ export default function TimeTracking() {
       )}
 
       {/* ── Ticket history modal ─────────────────────────────────────────── */}
-      {historySegment && historySegment.work_ticket_id && (
-        <TicketHistoryModal
-          workTicketId={historySegment.work_ticket_id}
-          ticketName={historySegment.work_ticket_name ?? `Ticket #${historySegment.work_ticket_id}`}
-          onClose={() => setHistorySegment(null)}
-        />
-      )}
+      {historySegment && (() => {
+        const oppId = segmentOpportunityId(historySegment);
+        if (!oppId) return null;
+        return (
+          <TicketHistoryModal
+            opportunityId={oppId}
+            ticketName={historySegment.work_ticket_name ?? `Ticket #${historySegment.work_ticket_id}`}
+            onClose={() => setHistorySegment(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
