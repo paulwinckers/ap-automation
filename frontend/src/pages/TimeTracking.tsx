@@ -1279,7 +1279,14 @@ export default function TimeTracking() {
     if (phase !== 'main') return;
     setTicketsLoading(true);
     apiFetch<{ work_tickets: WorkTicket[] }>('GET', `/time/work-tickets?work_date=${today}`)
-      .then(r => setTickets(r.work_tickets))
+      .then(r => {
+        const sorted = (r.work_tickets || []).slice().sort((a, b) => {
+          const da = a.ScheduledDate ?? '';
+          const db = b.ScheduledDate ?? '';
+          return da < db ? -1 : da > db ? 1 : 0;  // past → future
+        });
+        setTickets(sorted);
+      })
       .catch(e => console.error('work-tickets:', e))
       .finally(() => setTicketsLoading(false));
 
