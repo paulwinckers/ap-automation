@@ -967,8 +967,8 @@ function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistor
                     alignItems: 'center', gap: 10,
                   }}
                 >
-                  {/* Date */}
-                  <div style={{ flexShrink: 0, minWidth: 50, textAlign: 'center' }}>
+                  {/* Scheduled Date */}
+                  <div style={{ flexShrink: 0, minWidth: 52, textAlign: 'center' }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
                       {fmtShortDate(scheduledDate) ?? '—'}
                     </div>
@@ -979,8 +979,16 @@ function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistor
                     )}
                   </div>
 
-                  {/* Info */}
+                  {/* Service + Status */}
                   <div style={{ flex: 1, minWidth: 0 }}>
+                    {/* Service name */}
+                    <div style={{
+                      fontSize: 13, fontWeight: 600, color: '#0f172a',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      marginBottom: 3,
+                    }}>
+                      {(t.WorkTicketTitle as string | null) || `#${t.WorkTicketNumber || t.WorkTicketID}`}
+                    </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       <span style={{
                         display: 'inline-block', padding: '2px 8px', borderRadius: 10,
@@ -996,12 +1004,12 @@ function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistor
                     </div>
                     {t.CrewLeaderName && (
                       <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>
-                        👷 {t.CrewLeaderName}
+                        👷 {t.CrewLeaderName as string}
                       </div>
                     )}
                   </div>
 
-                  {/* Hours */}
+                  {/* Hours + expand */}
                   <div style={{ flexShrink: 0, textAlign: 'right' }}>
                     {hours != null && (
                       <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>
