@@ -58,11 +58,15 @@ interface WorkTicket {
   WorkTicketID:     number;
   WorkTicketNumber: string | null;
   WorkTicketTitle:  string;
+  ServiceName:      string | null;
   OpportunityID:    number | null;
   OpportunityName:  string;
   PropertyName:     string;
+  PropertyAddress:  string | null;
   ScheduledDate:    string | null;
   HoursEst:         number | null;
+  Notes:            string | null;
+  ProductionNote:   string | null;
   _RouteName:       string;
 }
 
@@ -222,26 +226,98 @@ function TicketRow({ ticket: t, onSelect, highlight }: {
   onSelect: (t: WorkTicket) => void;
   highlight?: boolean;
 }) {
+  const [opsOpen,   setOpsOpen]   = useState(false);
+  const [visitOpen, setVisitOpen] = useState(false);
+  const serviceName = t.ServiceName || t.WorkTicketTitle || null;
+  const hasOpsNote   = !!(t.ProductionNote?.trim());
+  const hasVisitNote = !!(t.Notes?.trim());
+
   return (
-    <button
-      onClick={() => onSelect(t)}
-      style={{
-        display: 'block', width: '100%', textAlign: 'left',
-        padding: '14px 20px', background: highlight ? '#f0f9ff' : 'none',
-        border: 'none', borderBottom: '1px solid #f1f5f9', cursor: 'pointer',
-      }}
-    >
-      <div style={{ fontWeight: 600, fontSize: 15, color: '#0f172a' }}>
-        {t.OpportunityName || t.WorkTicketTitle || `Ticket #${t.WorkTicketNumber || t.WorkTicketID}`}
-      </div>
-      {t.PropertyName && (
-        <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>{t.PropertyName}</div>
+    <div style={{
+      borderBottom: '1px solid #f1f5f9',
+      background: highlight ? '#f0f9ff' : 'none',
+    }}>
+      {/* Main tap target */}
+      <button
+        onClick={() => onSelect(t)}
+        style={{
+          display: 'block', width: '100%', textAlign: 'left',
+          padding: '14px 20px 10px', background: 'none',
+          border: 'none', cursor: 'pointer',
+        }}
+      >
+        {/* Property name */}
+        <div style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>
+          {t.PropertyName || t.OpportunityName || `Ticket #${t.WorkTicketNumber || t.WorkTicketID}`}
+        </div>
+        {/* Service name */}
+        {serviceName && (
+          <div style={{ fontSize: 13, color: '#475569', marginTop: 2 }}>{serviceName}</div>
+        )}
+        {/* Address */}
+        {t.PropertyAddress && (
+          <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{t.PropertyAddress}</div>
+        )}
+        {/* Meta row */}
+        <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <span>#{t.WorkTicketNumber || t.WorkTicketID}</span>
+          {t.HoursEst != null && <span>· Est {t.HoursEst}h</span>}
+          {t._RouteName && <span>· {t._RouteName}</span>}
+        </div>
+      </button>
+
+      {/* Ops Note / Visit Note toggles */}
+      {(hasOpsNote || hasVisitNote) && (
+        <div style={{ display: 'flex', gap: 8, padding: '0 20px 10px', flexWrap: 'wrap' }}>
+          {hasOpsNote && (
+            <div>
+              <button
+                onClick={e => { e.stopPropagation(); setOpsOpen(o => !o); }}
+                style={{
+                  fontSize: 12, padding: '3px 10px', borderRadius: 20,
+                  background: '#fefce8', border: '1px solid #fbbf24',
+                  color: '#92400e', cursor: 'pointer', fontWeight: 600,
+                }}
+              >
+                📋 Ops Note {opsOpen ? '▲' : '▼'}
+              </button>
+              {opsOpen && (
+                <div style={{
+                  marginTop: 6, padding: '8px 12px', background: '#fefce8',
+                  border: '1px solid #fde68a', borderRadius: 8,
+                  fontSize: 13, color: '#78350f', whiteSpace: 'pre-wrap',
+                }}>
+                  {t.ProductionNote}
+                </div>
+              )}
+            </div>
+          )}
+          {hasVisitNote && (
+            <div>
+              <button
+                onClick={e => { e.stopPropagation(); setVisitOpen(o => !o); }}
+                style={{
+                  fontSize: 12, padding: '3px 10px', borderRadius: 20,
+                  background: '#f0f9ff', border: '1px solid #7dd3fc',
+                  color: '#075985', cursor: 'pointer', fontWeight: 600,
+                }}
+              >
+                📝 Visit Note {visitOpen ? '▲' : '▼'}
+              </button>
+              {visitOpen && (
+                <div style={{
+                  marginTop: 6, padding: '8px 12px', background: '#f0f9ff',
+                  border: '1px solid #bae6fd', borderRadius: 8,
+                  fontSize: 13, color: '#0c4a6e', whiteSpace: 'pre-wrap',
+                }}>
+                  {t.Notes}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
-      <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
-        #{t.WorkTicketNumber || t.WorkTicketID} · {t._RouteName || ''}
-        {t.ScheduledDate ? ` · ${fmtDate(t.ScheduledDate.slice(0, 10))}` : ''}
-      </div>
-    </button>
+    </div>
   );
 }
 
@@ -1363,13 +1439,10 @@ export default function TimeTracking() {
   // ── Ticket selected from picker ───────────────────────────────────────────
   const handleTicketSelect = (t: WorkTicket) => {
     setShowTicketPicker(false);
-    startSegment(
-      'onsite',
-      t.WorkTicketID,
-      String(t.WorkTicketNumber || t.WorkTicketID),
-      t.OpportunityName || t.WorkTicketTitle || `#${t.WorkTicketID}`,
-      t.OpportunityID,
-    );
+    // Use service name (e.g. "Site Maintenance") as the label shown on the tracking screen,
+    // falling back to opportunity name then ticket number.
+    const label = t.ServiceName || t.WorkTicketTitle || t.OpportunityName || `#${t.WorkTicketID}`;
+    startSegment('onsite', t.WorkTicketID, String(t.WorkTicketNumber || t.WorkTicketID), label, t.OpportunityID);
   };
 
   const handleTicketManual = (id: string, num: string, name: string) => {
