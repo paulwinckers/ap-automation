@@ -597,6 +597,35 @@ async def get_opportunity_ticket_history(opportunity_id: int):
 
     tickets.sort(key=lambda t: t.get("ScheduledDate") or "", reverse=True)
 
+    # ── Fetch WorkTicketVisitNotes for all tickets in one batch ───────────────
+    # Build an OR filter: WorkTicketID eq 1 or WorkTicketID eq 2 ...
+    ticket_ids = [t.get("WorkTicketID") for t in tickets if t.get("WorkTicketID")]
+    visit_notes_map: dict = {}  # WorkTicketID → list of note dicts
+    if ticket_ids:
+        try:
+            chunk_size = 15  # keep URL short to avoid 400
+            for i in range(0, len(ticket_ids), chunk_size):
+                chunk = ticket_ids[i:i + chunk_size]
+                or_filter = " or ".join(f"WorkTicketID eq {wid}" for wid in chunk)
+                notes_res = await _aspire._get("WorkTicketVisitNotes", {
+                    "$filter": f"({or_filter})",
+                    "$select": "WorkTicketVisitNoteID,WorkTicketID,Note,CreatedDateTime,CreatedByUserName,IsPublic,ScheduledDate,StartDateTime,EndDateTime",
+                    "$top": "200",
+                })
+                for note in _aspire._extract_list(notes_res):
+                    wid = note.get("WorkTicketID")
+                    if wid is not None:
+                        visit_notes_map.setdefault(wid, []).append(note)
+        except Exception as e:
+            logger.warning(f"WorkTicketVisitNotes fetch failed (non-fatal): {e}")
+
+    # Sort each ticket's notes newest-first, attach to ticket
+    for t in tickets:
+        wid = t.get("WorkTicketID")
+        notes = visit_notes_map.get(wid, [])
+        notes.sort(key=lambda n: n.get("CreatedDateTime") or "", reverse=True)
+        t["VisitNotes"] = notes
+
     return {
         "opportunity_id":   opportunity_id,
         "opportunity_name": opp_name,

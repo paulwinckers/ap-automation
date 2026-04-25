@@ -72,12 +72,26 @@ interface WorkTicket {
   _RouteName:           string;
 }
 
+interface VisitNote {
+  WorkTicketVisitNoteID: number;
+  WorkTicketID:          number | null;
+  Note:                  string | null;
+  CreatedDateTime:       string | null;
+  CreatedByUserName:     string | null;
+  IsPublic:              boolean;
+  ScheduledDate:         string | null;
+  StartDateTime:         string | null;
+  EndDateTime:           string | null;
+  RouteName:             string | null;
+}
+
 interface WorkTicketHistory {
   WorkTicketID:         number;
   WorkTicketNumber:     string | null;
   WorkTicketTitle:      string | null;
   WorkTicketStatusName: string | null;
   Notes:                string | null;
+  VisitNotes:           VisitNote[];
   // Aspire may return different field names depending on API version — accept both
   ActualLaborHours?:    number | null;
   HoursAct?:            number | null;
@@ -1054,7 +1068,8 @@ function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistor
             const scheduledDate = (t.ScheduledDate ?? t.ScheduledStartDate) as string | null | undefined;
             const completeDate = t.CompleteDate as string | null | undefined;
             const isOpen = expanded === t.WorkTicketID;
-            const hasNotes = !!(t.Notes?.trim());
+            const visitNotes: VisitNote[] = (t.VisitNotes as VisitNote[] | undefined) ?? [];
+            const hasNotes = !!(t.Notes?.trim()) || visitNotes.length > 0;
             return (
               <div key={t.WorkTicketID} style={{ borderBottom: '1px solid #f1f5f9' }}>
                 <button
@@ -1096,8 +1111,10 @@ function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistor
                       }}>
                         {t.WorkTicketStatusName || 'Unknown'}
                       </span>
-                      {hasNotes && (
-                        <span style={{ fontSize: 11, color: '#94a3b8' }}>📝</span>
+                      {visitNotes.length > 0 && (
+                        <span style={{ fontSize: 11, color: '#475569' }}>
+                          📝 {visitNotes.length}
+                        </span>
                       )}
                     </div>
                     {t.CrewLeaderName && (
@@ -1120,32 +1137,92 @@ function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistor
                   </div>
                 </button>
 
-                {/* Expanded: notes */}
+                {/* Expanded: visit notes */}
                 {isOpen && (
                   <div style={{
-                    padding: '0 20px 14px 20px',
-                    borderTop: '1px solid #f8fafc',
-                    background: '#fafafa',
+                    borderTop: '1px solid #e2e8f0',
+                    background: '#f8fafc',
                   }}>
-                    {t.WorkTicketTitle && (
-                      <div style={{ fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
-                        {t.WorkTicketTitle}
-                        {t.WorkTicketNumber && (
-                          <span style={{ color: '#94a3b8', fontWeight: 400 }}> · #{t.WorkTicketNumber}</span>
-                        )}
-                      </div>
-                    )}
-                    {hasNotes ? (
-                      <div style={{
-                        fontSize: 13, color: '#334155', lineHeight: 1.6,
-                        background: '#fff', border: '1px solid #e2e8f0',
-                        borderRadius: 8, padding: '10px 12px',
-                        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                      }}>
-                        {t.Notes}
+                    {visitNotes.length === 0 && !hasNotes ? (
+                      <div style={{ padding: '12px 20px', fontSize: 12, color: '#94a3b8', fontStyle: 'italic' }}>
+                        No notes recorded for this visit
                       </div>
                     ) : (
-                      <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic' }}>No notes recorded</div>
+                      <>
+                        {/* ── WorkTicketVisitNotes — one card per note ── */}
+                        {visitNotes.map((vn, i) => {
+                          const noteDate = vn.ScheduledDate || vn.CreatedDateTime;
+                          const formattedDate = noteDate ? (() => {
+                            try {
+                              return new Date(noteDate).toLocaleDateString('en-CA', {
+                                month: 'long', day: 'numeric', year: 'numeric',
+                              });
+                            } catch { return noteDate.slice(0, 10); }
+                          })() : null;
+                          const formattedCreated = vn.CreatedDateTime ? (() => {
+                            try {
+                              return new Date(vn.CreatedDateTime).toLocaleString('en-CA', {
+                                month: 'numeric', day: 'numeric', year: 'numeric',
+                                hour: 'numeric', minute: '2-digit', hour12: true,
+                              });
+                            } catch { return vn.CreatedDateTime; }
+                          })() : null;
+                          return (
+                            <div key={vn.WorkTicketVisitNoteID ?? i} style={{
+                              borderBottom: '1px solid #e2e8f0',
+                              background: '#fff',
+                            }}>
+                              {/* Route | Date header */}
+                              <div style={{
+                                background: '#f1f5f9', padding: '6px 16px',
+                                fontSize: 12, fontWeight: 600, color: '#334155',
+                                display: 'flex', alignItems: 'center', gap: 8,
+                              }}>
+                                {vn.RouteName && <span>{vn.RouteName}</span>}
+                                {vn.RouteName && formattedDate && <span style={{ color: '#94a3b8' }}>|</span>}
+                                {formattedDate && <span style={{ color: '#475569', fontWeight: 400 }}>{formattedDate}</span>}
+                                {vn.IsPublic && (
+                                  <span style={{
+                                    marginLeft: 'auto', fontSize: 10, fontWeight: 700,
+                                    background: '#dcfce7', color: '#15803d',
+                                    borderRadius: 10, padding: '1px 6px',
+                                  }}>Public</span>
+                                )}
+                              </div>
+                              {/* Note text */}
+                              {vn.Note?.trim() && (
+                                <div style={{
+                                  padding: '8px 16px 4px', fontSize: 13, color: '#1e293b',
+                                  lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                }}>
+                                  {vn.Note}
+                                </div>
+                              )}
+                              {/* Created by + time */}
+                              {(vn.CreatedByUserName || formattedCreated) && (
+                                <div style={{ padding: '2px 16px 8px', fontSize: 11, color: '#64748b' }}>
+                                  {vn.CreatedByUserName && <strong>{vn.CreatedByUserName}</strong>}
+                                  {formattedCreated && ` · ${formattedCreated}`}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {/* ── Ticket Notes (WorkTicket.Notes field) ── */}
+                        {hasNotes && (
+                          <div style={{ padding: '10px 16px', borderTop: visitNotes.length ? '2px solid #e2e8f0' : undefined }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: 4 }}>
+                              Ticket Notes
+                            </div>
+                            <div style={{
+                              fontSize: 13, color: '#334155', lineHeight: 1.6,
+                              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                            }}>
+                              {t.Notes}
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
