@@ -544,10 +544,30 @@ async def get_opportunity_ticket_history(opportunity_id: int):
     except Exception as e:
         logger.warning(f"Opportunity lookup failed for {opportunity_id}: {e}")
 
-    # Re-use get_work_tickets_summary — already proven to work with OpportunityID filter.
-    # It selects: WorkTicketID, WorkTicketTitle, WorkTicketStatusName, ScheduledDate,
-    # CompleteDate, ActualLaborHours (all confirmed valid with this filter type).
-    tickets = await _aspire.get_work_tickets_summary(opportunity_id)
+    # Fetch without $select — every $select combo we've tried causes 400.
+    # Aspire returns all fields; we normalise inconsistent names in Python.
+    try:
+        res = await _aspire._get("WorkTickets", {
+            "$filter": f"OpportunityID eq {opportunity_id}",
+            "$top": "60",
+        })
+        raw_tickets = _aspire._extract_list(res)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Normalise: ensure frontend always sees ScheduledDate and WorkTicketTitle
+    # regardless of which variant Aspire returned in this response.
+    tickets = []
+    for t in raw_tickets:
+        t = dict(t)
+        # Date: Aspire may return ScheduledStartDate (datetime) instead of ScheduledDate
+        if not t.get("ScheduledDate") and t.get("ScheduledStartDate"):
+            t["ScheduledDate"] = t["ScheduledStartDate"][:10]  # strip time portion
+        # Title: log all keys on first ticket so we can see what Aspire gives us
+        if not tickets:
+            logger.info(f"WorkTicket fields from Aspire (no $select): {list(t.keys())}")
+        tickets.append(t)
+
     tickets.sort(key=lambda t: t.get("ScheduledDate") or "", reverse=True)
 
     return {
