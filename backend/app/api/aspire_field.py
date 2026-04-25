@@ -556,28 +556,37 @@ async def get_opportunity_ticket_history(opportunity_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # ── Secondary query: fetch WorkTicketTitle via minimal $select ────────────
-    # WorkTicketTitle is a computed/virtual field — only available via $select.
-    title_map: dict = {}
+    # ── Secondary query: OpportunityServices → service name per ticket ────────
+    # WorkTicketTitle is blank for maintenance contracts; the real service label
+    # comes from OpportunityServices.ServiceNameAbr / ServiceName.
+    service_map: dict = {}  # OpportunityServiceID → display label
     try:
-        title_res = await _aspire._get("WorkTickets", {
+        svc_res = await _aspire._get("OpportunityServices", {
             "$filter": f"OpportunityID eq {opportunity_id}",
-            "$select": "WorkTicketID,WorkTicketTitle",
-            "$top": "60",
+            "$top": "50",
         })
-        for row in _aspire._extract_list(title_res):
-            wid = row.get("WorkTicketID")
-            if wid:
-                title_map[wid] = row.get("WorkTicketTitle")
+        for svc in _aspire._extract_list(svc_res):
+            sid = svc.get("OpportunityServiceID")
+            if sid:
+                service_map[sid] = (
+                    svc.get("ServiceNameAbr")
+                    or svc.get("DisplayName")
+                    or svc.get("ServiceName")
+                    or ""
+                )
     except Exception as e:
-        logger.warning(f"WorkTicketTitle fetch failed (non-fatal): {e}")
+        logger.warning(f"OpportunityServices fetch failed (non-fatal): {e}")
 
     # ── Normalise field names ─────────────────────────────────────────────────
     tickets = []
     for t in raw_tickets:
         t = dict(t)
-        # Merge in title from secondary query
-        t["WorkTicketTitle"] = title_map.get(t.get("WorkTicketID"))
+        # Service label: use OpportunityServices name, fall back to ticket number
+        svc_id = t.get("OpportunityServiceID")
+        t["WorkTicketTitle"] = (
+            (service_map.get(svc_id) if svc_id else None)
+            or f"#{t.get('WorkTicketNumber') or t.get('WorkTicketID')}"
+        )
         # Normalise hours field name (entity uses HoursAct, not ActualLaborHours)
         if "HoursAct" in t:
             t["ActualLaborHours"] = t["HoursAct"]
