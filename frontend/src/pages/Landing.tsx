@@ -11,6 +11,7 @@ import { Link } from 'react-router-dom';
 const FIELD_LINKS = [
   { to: '/field',                  icon: '🧾', label: 'Submit Receipt',   sub: 'Invoices, MC & expenses' },
   { to: '/ops/time-tracking',      icon: '⏱️', label: 'Time Tracking',    sub: 'Clock in / out' },
+  { to: '/field/work-ticket',      icon: '✅', label: 'Schedule',         sub: 'View routes & complete tickets' },
   { to: '/field/purchase-order',   icon: '🛒', label: 'Purchase Order',   sub: 'Create a PO for materials' },
   { to: '/field/amend-po',         icon: '✏️', label: 'Amend PO Vendor',  sub: 'Change vendor on an open PO' },
   { to: '/field/opportunity',      icon: '➕', label: 'New Opportunity',   sub: 'Create a job in Aspire' },
