@@ -71,15 +71,11 @@ interface WorkTicketHistory {
   WorkTicketNumber:     string | null;
   WorkTicketTitle:      string | null;
   WorkTicketStatusName: string | null;
-  WorkTicketStatus:     number | null;
   Notes:                string | null;
   ActualLaborHours:     number | null;
-  HoursAct:             number | null;
-  ScheduledStartDate:   string | null;
+  ScheduledDate:        string | null;
   CompleteDate:         string | null;
   CrewLeaderName:       string | null;
-  PropertyName:         string | null;
-  OpportunityName:      string | null;
 }
 
 interface DriveTicket {
@@ -952,7 +948,7 @@ function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistor
           )}
           {data?.tickets.map(t => {
             const sc = statusColour(t.WorkTicketStatusName);
-            const hours = t.ActualLaborHours ?? t.HoursAct;
+            const hours = t.ActualLaborHours;
             const isOpen = expanded === t.WorkTicketID;
             const hasNotes = !!(t.Notes?.trim());
             return (
@@ -968,7 +964,7 @@ function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistor
                   {/* Date */}
                   <div style={{ flexShrink: 0, minWidth: 50, textAlign: 'center' }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
-                      {fmtShortDate(t.ScheduledStartDate) ?? '—'}
+                      {fmtShortDate(t.ScheduledDate) ?? '—'}
                     </div>
                     {t.CompleteDate && (
                       <div style={{ fontSize: 11, color: '#22c55e', marginTop: 1 }}>

@@ -545,21 +545,22 @@ async def get_opportunity_ticket_history(opportunity_id: int):
         logger.warning(f"Opportunity lookup failed for {opportunity_id}: {e}")
 
     # Fetch all tickets for this opportunity
+    # Field names validated against get_work_tickets_summary which uses the same filter
     try:
         res = await _aspire._get("WorkTickets", {
             "$filter": f"OpportunityID eq {opportunity_id}",
             "$select": ",".join([
                 "WorkTicketID", "WorkTicketNumber", "WorkTicketTitle",
-                "WorkTicketStatusName", "WorkTicketStatus",
-                "Notes", "ActualLaborHours", "HoursAct",
-                "ScheduledStartDate", "CompleteDate",
+                "WorkTicketStatusName",
+                "Notes", "ActualLaborHours",
+                "ScheduledDate", "CompleteDate",
                 "CrewLeaderName", "OpportunityID",
-                "OpportunityName", "PropertyName",
             ]),
-            "$orderby": "ScheduledStartDate desc",
             "$top": "60",
         })
         tickets = _aspire._extract_list(res)
+        # Sort newest first in Python (avoid $orderby which can also cause 400s)
+        tickets.sort(key=lambda t: t.get("ScheduledDate") or "", reverse=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
