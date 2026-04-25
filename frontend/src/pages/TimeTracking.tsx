@@ -72,10 +72,14 @@ interface WorkTicketHistory {
   WorkTicketTitle:      string | null;
   WorkTicketStatusName: string | null;
   Notes:                string | null;
-  ActualLaborHours:     number | null;
-  ScheduledDate:        string | null;
-  CompleteDate:         string | null;
-  CrewLeaderName:       string | null;
+  // Aspire may return different field names depending on API version — accept both
+  ActualLaborHours?:    number | null;
+  HoursAct?:            number | null;
+  ScheduledDate?:       string | null;
+  ScheduledStartDate?:  string | null;
+  CompleteDate?:        string | null;
+  CrewLeaderName?:      string | null;
+  [key: string]:        unknown;   // allow any extra fields Aspire returns
 }
 
 interface DriveTicket {
@@ -948,7 +952,9 @@ function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistor
           )}
           {data?.tickets.map(t => {
             const sc = statusColour(t.WorkTicketStatusName);
-            const hours = t.ActualLaborHours;
+            const hours = (t.ActualLaborHours ?? t.HoursAct) as number | null | undefined;
+            const scheduledDate = (t.ScheduledDate ?? t.ScheduledStartDate) as string | null | undefined;
+            const completeDate = t.CompleteDate as string | null | undefined;
             const isOpen = expanded === t.WorkTicketID;
             const hasNotes = !!(t.Notes?.trim());
             return (
@@ -964,11 +970,11 @@ function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistor
                   {/* Date */}
                   <div style={{ flexShrink: 0, minWidth: 50, textAlign: 'center' }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
-                      {fmtShortDate(t.ScheduledDate) ?? '—'}
+                      {fmtShortDate(scheduledDate) ?? '—'}
                     </div>
-                    {t.CompleteDate && (
+                    {completeDate && (
                       <div style={{ fontSize: 11, color: '#22c55e', marginTop: 1 }}>
-                        ✓ {fmtShortDate(t.CompleteDate)}
+                        ✓ {fmtShortDate(completeDate)}
                       </div>
                     )}
                   </div>

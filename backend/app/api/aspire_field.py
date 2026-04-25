@@ -545,17 +545,10 @@ async def get_opportunity_ticket_history(opportunity_id: int):
         logger.warning(f"Opportunity lookup failed for {opportunity_id}: {e}")
 
     # Fetch all tickets for this opportunity
-    # Field names validated against get_work_tickets_summary which uses the same filter
+    # No $select — avoid 400s from invalid field names; just return everything Aspire gives us
     try:
         res = await _aspire._get("WorkTickets", {
             "$filter": f"OpportunityID eq {opportunity_id}",
-            "$select": ",".join([
-                "WorkTicketID", "WorkTicketNumber", "WorkTicketTitle",
-                "WorkTicketStatusName",
-                "Notes", "ActualLaborHours",
-                "ScheduledDate", "CompleteDate",
-                "CrewLeaderName", "OpportunityID",
-            ]),
             "$top": "60",
         })
         tickets = _aspire._extract_list(res)
