@@ -2301,77 +2301,86 @@ export default function TimeTracking() {
             </button>
             {showHistory && (
               <div style={{ borderTop: '1px solid #f1f5f9' }}>
-                {completedSegments.map(seg => (
-                  <div key={seg.id} style={{
-                    padding: '12px 20px', borderBottom: '1px solid #f1f5f9',
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  }}>
-                    <div style={{ flex: 1 }}>
-                      <span style={{
-                        display: 'inline-block', padding: '2px 8px', borderRadius: 12,
-                        fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-                        background: seg.segment_type === 'onsite' ? '#dcfce7' :
-                                    seg.segment_type === 'drive'  ? '#dbeafe' : '#fef9c3',
-                        color:      seg.segment_type === 'onsite' ? '#15803d' :
-                                    seg.segment_type === 'drive'  ? '#1d4ed8' : '#92400e',
-                        marginBottom: 4,
-                      }}>
-                        {seg.segment_type}
-                      </span>
-                      {seg.work_ticket_name && (
-                        <div style={{ fontSize: 14, color: '#0f172a', fontWeight: 500 }}>
-                          {seg.work_ticket_name}
-                        </div>
-                      )}
-                      {(() => {
-                        const t = tickets.find(t => t.WorkTicketID === seg.work_ticket_id);
-                        return t?.PropertyName ? (
-                          <div style={{ fontSize: 12, color: '#475569', marginTop: 1 }}>
-                            {t.PropertyName}
+                {completedSegments.map(seg => {
+                  const tk = tickets.find(t => t.WorkTicketID === seg.work_ticket_id);
+                  const serviceName = tk ? (tk.WorkTicketTitle || tk.ServiceName) : null;
+                  const propertyName = tk?.PropertyName ?? null;
+                  const isOnsite = seg.segment_type === 'onsite';
+                  return (
+                    <div key={seg.id} style={{
+                      padding: '10px 16px', borderBottom: '1px solid #f1f5f9',
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      borderLeft: isOnsite ? '3px solid #86efac' :
+                                  seg.segment_type === 'drive' ? '3px solid #93c5fd' : '3px solid #fcd34d',
+                    }}>
+                      {/* Left: type badge + info */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{
+                          display: 'inline-block', padding: '1px 8px', borderRadius: 12,
+                          fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                          background: isOnsite ? '#dcfce7' : seg.segment_type === 'drive' ? '#dbeafe' : '#fef9c3',
+                          color:      isOnsite ? '#15803d' : seg.segment_type === 'drive' ? '#1d4ed8' : '#92400e',
+                          marginBottom: 3,
+                        }}>
+                          {seg.segment_type === 'onsite' ? 'On-Site' : seg.segment_type === 'drive' ? 'Drive' : 'Lunch'}
+                        </span>
+                        {/* Property name — primary label */}
+                        {(propertyName || seg.work_ticket_name) && (
+                          <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1d23', lineHeight: 1.3 }}>
+                            {propertyName || seg.work_ticket_name}
                           </div>
-                        ) : null;
-                      })()}
-                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
-                        {fmtTime(seg.start_time)} – {fmtTime(seg.end_time)}
+                        )}
+                        {/* Service name — secondary */}
+                        {serviceName && (
+                          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 1 }}>
+                            {serviceName}
+                          </div>
+                        )}
+                        {/* Time range */}
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                          {fmtTime(seg.start_time)} – {fmtTime(seg.end_time)}
+                        </div>
                       </div>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ fontWeight: 700, fontSize: 15, color: '#0f172a', minWidth: 44, textAlign: 'right' }}>
-                        {fmtDuration(seg.duration_minutes)}
-                      </div>
-                      {seg.segment_type === 'onsite' && seg.work_ticket_id && (
-                        <>
-                          <button
-                            onClick={() => setAddNotesSegment(seg)}
-                            title="Add notes / photos"
-                            style={{
-                              background: '#ecfdf5', border: '1px solid #86efac', borderRadius: 8,
-                              padding: '6px 8px', cursor: 'pointer', fontSize: 15, color: '#15803d',
-                            }}
-                          >📷</button>
-                          {seg.opportunity_id && (
+
+                      {/* Right: duration + action buttons */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: '#0f172a', minWidth: 36, textAlign: 'right' }}>
+                          {fmtDuration(seg.duration_minutes)}
+                        </div>
+                        {isOnsite && seg.work_ticket_id && (
+                          <>
                             <button
-                              onClick={() => setHistorySegment(seg)}
-                              title="Visit history"
+                              onClick={() => setAddNotesSegment(seg)}
+                              title="Add notes / photos"
                               style={{
-                                background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 8,
-                                padding: '6px 8px', cursor: 'pointer', fontSize: 15, color: '#1d4ed8',
+                                background: '#ecfdf5', border: '1px solid #86efac', borderRadius: 8,
+                                padding: '5px 7px', cursor: 'pointer', fontSize: 14, color: '#15803d',
                               }}
-                            >📋</button>
-                          )}
-                        </>
-                      )}
-                      <button
-                        onClick={() => setEditSegment(seg)}
-                        title="Edit times"
-                        style={{
-                          background: '#f1f5f9', border: 'none', borderRadius: 8,
-                          padding: '6px 10px', cursor: 'pointer', fontSize: 16, color: '#475569',
-                        }}
-                      >✏️</button>
+                            >📷</button>
+                            {seg.opportunity_id && (
+                              <button
+                                onClick={() => setHistorySegment(seg)}
+                                title="Visit history"
+                                style={{
+                                  background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 8,
+                                  padding: '5px 7px', cursor: 'pointer', fontSize: 14, color: '#1d4ed8',
+                                }}
+                              >📋</button>
+                            )}
+                          </>
+                        )}
+                        <button
+                          onClick={() => setEditSegment(seg)}
+                          title="Edit times"
+                          style={{
+                            background: '#f1f5f9', border: 'none', borderRadius: 8,
+                            padding: '5px 8px', cursor: 'pointer', fontSize: 14, color: '#475569',
+                          }}
+                        >✏️</button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
