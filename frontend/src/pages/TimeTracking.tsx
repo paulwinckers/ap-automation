@@ -55,19 +55,21 @@ interface TimeSegment {
 }
 
 interface WorkTicket {
-  WorkTicketID:     number;
-  WorkTicketNumber: string | null;
-  WorkTicketTitle:  string;
-  ServiceName:      string | null;
-  OpportunityID:    number | null;
-  OpportunityName:  string;
-  PropertyName:     string;
-  PropertyAddress:  string | null;
-  ScheduledDate:    string | null;
-  HoursEst:         number | null;
-  Notes:            string | null;
-  ProductionNote:   string | null;
-  _RouteName:       string;
+  WorkTicketID:         number;
+  WorkTicketNumber:     string | null;
+  WorkTicketTitle:      string;
+  ServiceName:          string | null;
+  OpportunityID:        number | null;
+  OpportunityName:      string;
+  PropertyName:         string;
+  PropertyAddress:      string | null;
+  ScheduledDate:        string | null;
+  HoursEst:             number | null;
+  EstimatedLaborHours:  number | null;
+  WorkTicketStatusName: string | null;
+  Notes:                string | null;
+  ProductionNote:       string | null;
+  _RouteName:           string;
 }
 
 interface WorkTicketHistory {
@@ -221,6 +223,14 @@ function fmtDate(iso: string): string {
 
 // ── Shared ticket row ─────────────────────────────────────────────────────────
 
+function ticketStatusColor(s: string | null) {
+  const l = (s || '').toLowerCase();
+  if (l.includes('complete')) return '#059669';
+  if (l.includes('progress') || l.includes('active')) return '#2563eb';
+  if (l.includes('not started')) return '#6b7280';
+  return '#d97706';
+}
+
 function TicketRow({ ticket: t, onSelect, highlight }: {
   ticket: WorkTicket;
   onSelect: (t: WorkTicket) => void;
@@ -228,94 +238,106 @@ function TicketRow({ ticket: t, onSelect, highlight }: {
 }) {
   const [opsOpen,   setOpsOpen]   = useState(false);
   const [visitOpen, setVisitOpen] = useState(false);
-  const serviceName = t.ServiceName || t.WorkTicketTitle || null;
-  const hasOpsNote   = !!(t.ProductionNote?.trim());
-  const hasVisitNote = !!(t.Notes?.trim());
+  const serviceName = t.WorkTicketTitle || t.ServiceName || null;
+  const hours = t.EstimatedLaborHours ?? t.HoursEst;
+  const sc = ticketStatusColor(t.WorkTicketStatusName);
 
   return (
-    <div style={{
-      borderBottom: '1px solid #f1f5f9',
-      background: highlight ? '#f0f9ff' : 'none',
-    }}>
-      {/* Main tap target */}
+    <div>
       <button
         onClick={() => onSelect(t)}
         style={{
-          display: 'block', width: '100%', textAlign: 'left',
-          padding: '14px 20px 10px', background: 'none',
-          border: 'none', cursor: 'pointer',
+          width: '100%', display: 'flex', alignItems: 'center',
+          padding: '10px 16px', background: highlight ? '#eff6ff' : 'transparent',
+          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+          borderBottom: '1px solid #f1f5f9',
+          borderLeft: highlight ? '3px solid #2563eb' : '3px solid transparent',
         }}
       >
-        {/* Property name */}
-        <div style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>
-          {t.PropertyName || t.OpportunityName || `Ticket #${t.WorkTicketNumber || t.WorkTicketID}`}
-        </div>
-        {/* Service name */}
-        {serviceName && (
-          <div style={{ fontSize: 13, color: '#475569', marginTop: 2 }}>{serviceName}</div>
-        )}
-        {/* Address */}
-        {t.PropertyAddress && (
-          <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{t.PropertyAddress}</div>
-        )}
-        {/* Meta row */}
-        <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <span>#{t.WorkTicketNumber || t.WorkTicketID}</span>
-          {t.HoursEst != null && <span>· Est {t.HoursEst}h</span>}
-          {t._RouteName && <span>· {t._RouteName}</span>}
-        </div>
-      </button>
-
-      {/* Ops Note / Visit Note toggles */}
-      {(hasOpsNote || hasVisitNote) && (
-        <div style={{ display: 'flex', gap: 8, padding: '0 20px 10px', flexWrap: 'wrap' }}>
-          {hasOpsNote && (
-            <div>
+        <div style={{ flex: 1, textAlign: 'left' }}>
+          {/* Property name */}
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1d23', marginBottom: 2 }}>
+            {t.PropertyName || t.OpportunityName || `Ticket #${t.WorkTicketID}`}
+          </div>
+          {/* Service · hours */}
+          <div style={{ fontSize: 11, color: '#6b7280' }}>
+            {serviceName || ''}
+            {hours ? ` · Total Hours Est: ${hours}` : ''}
+          </div>
+          {/* Address — tappable maps link */}
+          {t.PropertyAddress && (
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(t.PropertyAddress)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              style={{ fontSize: 11, color: '#2563eb', marginTop: 1, display: 'block', textDecoration: 'underline' }}
+            >
+              {t.PropertyAddress}
+            </a>
+          )}
+          {/* Note buttons */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: (t.ProductionNote || t.Notes) ? 6 : 0 }}>
+            {t.ProductionNote && (
               <button
                 onClick={e => { e.stopPropagation(); setOpsOpen(o => !o); }}
                 style={{
-                  fontSize: 12, padding: '3px 10px', borderRadius: 20,
-                  background: '#fefce8', border: '1px solid #fbbf24',
-                  color: '#92400e', cursor: 'pointer', fontWeight: 600,
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  background: '#fef9c3', border: '1px solid #fde047',
+                  borderRadius: 20, padding: '2px 10px',
+                  fontSize: 11, fontWeight: 600, color: '#854d0e', cursor: 'pointer',
                 }}
               >
                 📋 Ops Note {opsOpen ? '▲' : '▼'}
               </button>
-              {opsOpen && (
-                <div style={{
-                  marginTop: 6, padding: '8px 12px', background: '#fefce8',
-                  border: '1px solid #fde68a', borderRadius: 8,
-                  fontSize: 13, color: '#78350f', whiteSpace: 'pre-wrap',
-                }}>
-                  {t.ProductionNote}
-                </div>
-              )}
-            </div>
-          )}
-          {hasVisitNote && (
-            <div>
+            )}
+            {t.Notes && (
               <button
                 onClick={e => { e.stopPropagation(); setVisitOpen(o => !o); }}
                 style={{
-                  fontSize: 12, padding: '3px 10px', borderRadius: 20,
-                  background: '#f0f9ff', border: '1px solid #7dd3fc',
-                  color: '#075985', cursor: 'pointer', fontWeight: 600,
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  background: '#dbeafe', border: '1px solid #93c5fd',
+                  borderRadius: 20, padding: '2px 10px',
+                  fontSize: 11, fontWeight: 600, color: '#1e40af', cursor: 'pointer',
                 }}
               >
-                📝 Visit Note {visitOpen ? '▲' : '▼'}
+                📝 Ticket Note {visitOpen ? '▲' : '▼'}
               </button>
-              {visitOpen && (
-                <div style={{
-                  marginTop: 6, padding: '8px 12px', background: '#f0f9ff',
-                  border: '1px solid #bae6fd', borderRadius: 8,
-                  fontSize: 13, color: '#0c4a6e', whiteSpace: 'pre-wrap',
-                }}>
-                  {t.Notes}
-                </div>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
+        {/* Status badge */}
+        {t.WorkTicketStatusName && (
+          <span style={{
+            fontSize: 10, fontWeight: 600, borderRadius: 6, padding: '2px 8px',
+            background: sc + '18', color: sc, flexShrink: 0, marginLeft: 8,
+          }}>
+            {t.WorkTicketStatusName}
+          </span>
+        )}
+      </button>
+
+      {/* Expanded Ops Note */}
+      {opsOpen && t.ProductionNote && (
+        <div
+          dangerouslySetInnerHTML={{ __html: t.ProductionNote }}
+          style={{
+            margin: '0 16px 6px', padding: '10px 12px',
+            background: '#fefce8', border: '1px solid #fde047',
+            borderRadius: 8, fontSize: 13, color: '#713f12', lineHeight: 1.6,
+          }}
+        />
+      )}
+      {/* Expanded Ticket Note */}
+      {visitOpen && t.Notes && (
+        <div
+          dangerouslySetInnerHTML={{ __html: t.Notes }}
+          style={{
+            margin: '0 16px 10px', padding: '10px 12px',
+            background: '#eff6ff', border: '1px solid #93c5fd',
+            borderRadius: 8, fontSize: 13, color: '#1e3a5f', lineHeight: 1.6,
+          }}
+        />
       )}
     </div>
   );
@@ -1182,6 +1204,8 @@ export default function TimeTracking() {
   // ── Notes/Photos + Ticket history modals
   const [addNotesSegment,  setAddNotesSegment]  = useState<TimeSegment | null>(null);
   const [historySegment,   setHistorySegment]   = useState<TimeSegment | null>(null);
+  const [activeOpsOpen,    setActiveOpsOpen]    = useState(false);
+  const [activeVisitOpen,  setActiveVisitOpen]  = useState(false);
 
   // ── Change Route
   const [showChangeRoute, setShowChangeRoute] = useState(false);
@@ -2041,6 +2065,7 @@ export default function TimeTracking() {
                 )}
                 {(() => {
                   const t = tickets.find(t => t.WorkTicketID === openSegment.work_ticket_id);
+                  const hrs = t ? (t.EstimatedLaborHours ?? t.HoursEst) : null;
                   return t ? (
                     <>
                       {t.PropertyName && (
@@ -2050,10 +2075,59 @@ export default function TimeTracking() {
                       )}
                       <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 3, display: 'flex', gap: 8 }}>
                         {openSegment.work_ticket_num && <span>#{openSegment.work_ticket_num}</span>}
-                        {t.HoursEst != null && (
-                          <span>· Est {fmtDuration(Math.round(t.HoursEst * 60))}</span>
-                        )}
+                        {hrs != null && <span>· Est {fmtDuration(Math.round(hrs * 60))}</span>}
                       </div>
+                      {/* Ops Note + Ticket Note */}
+                      {(t.ProductionNote || t.Notes) && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                          {t.ProductionNote && (
+                            <button
+                              onClick={() => setActiveOpsOpen(o => !o)}
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                background: '#fef9c3', border: '1px solid #fde047',
+                                borderRadius: 20, padding: '2px 10px',
+                                fontSize: 11, fontWeight: 600, color: '#854d0e', cursor: 'pointer',
+                              }}
+                            >
+                              📋 Ops Note {activeOpsOpen ? '▲' : '▼'}
+                            </button>
+                          )}
+                          {t.Notes && (
+                            <button
+                              onClick={() => setActiveVisitOpen(o => !o)}
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                background: '#dbeafe', border: '1px solid #93c5fd',
+                                borderRadius: 20, padding: '2px 10px',
+                                fontSize: 11, fontWeight: 600, color: '#1e40af', cursor: 'pointer',
+                              }}
+                            >
+                              📝 Ticket Note {activeVisitOpen ? '▲' : '▼'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {activeOpsOpen && t.ProductionNote && (
+                        <div
+                          dangerouslySetInnerHTML={{ __html: t.ProductionNote }}
+                          style={{
+                            marginTop: 8, padding: '10px 12px',
+                            background: '#fefce8', border: '1px solid #fde047',
+                            borderRadius: 8, fontSize: 13, color: '#713f12', lineHeight: 1.6,
+                          }}
+                        />
+                      )}
+                      {activeVisitOpen && t.Notes && (
+                        <div
+                          dangerouslySetInnerHTML={{ __html: t.Notes }}
+                          style={{
+                            marginTop: 8, padding: '10px 12px',
+                            background: '#eff6ff', border: '1px solid #93c5fd',
+                            borderRadius: 8, fontSize: 13, color: '#1e3a5f', lineHeight: 1.6,
+                          }}
+                        />
+                      )}
                     </>
                   ) : openSegment.work_ticket_num ? (
                     <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
