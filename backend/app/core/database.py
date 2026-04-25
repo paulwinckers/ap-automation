@@ -880,12 +880,13 @@ class Database:
         work_ticket_num: Optional[str],
         work_ticket_name: Optional[str],
         start_time: str,
+        opportunity_id: Optional[int] = None,
     ) -> int:
         return await self._x(
             """INSERT INTO time_segments
-               (session_id, segment_type, work_ticket_id, work_ticket_num, work_ticket_name, start_time)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            [session_id, segment_type, work_ticket_id, work_ticket_num, work_ticket_name, start_time],
+               (session_id, segment_type, work_ticket_id, work_ticket_num, work_ticket_name, start_time, opportunity_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [session_id, segment_type, work_ticket_id, work_ticket_num, work_ticket_name, start_time, opportunity_id],
         )
 
     async def end_time_segment(

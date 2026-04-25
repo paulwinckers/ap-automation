@@ -146,6 +146,7 @@ class SegmentStartBody(BaseModel):
     work_ticket_id:   Optional[int]  = None
     work_ticket_num:  Optional[str]  = None
     work_ticket_name: Optional[str]  = None
+    opportunity_id:   Optional[int]  = None
 
 
 class DriveTicketBody(BaseModel):
@@ -351,6 +352,7 @@ async def start_segment(body: SegmentStartBody, db: Database = Depends(get_db)):
         work_ticket_num=body.work_ticket_num,
         work_ticket_name=body.work_ticket_name,
         start_time=now,
+        opportunity_id=body.opportunity_id,
     )
 
     segments = await db.get_time_segments(body.session_id)
@@ -358,6 +360,32 @@ async def start_segment(body: SegmentStartBody, db: Database = Depends(get_db)):
         "new_segment_id": seg_id,
         "segments": [dict(s) for s in segments],
     }
+
+
+class RouteUpdateBody(BaseModel):
+    route_id:               Optional[int]  = None
+    route_name:             Optional[str]  = None
+    crew_leader_contact_id: Optional[int]  = None
+    crew_leader_name:       Optional[str]  = None
+
+
+@router.patch("/session/{session_id}/route")
+async def update_session_route(session_id: int, body: RouteUpdateBody, db: Database = Depends(get_db)):
+    """Update the route assignment on an existing session."""
+    session = await db.get_time_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await db._x(
+        """UPDATE time_sessions
+           SET route_id = ?, route_name = ?,
+               crew_leader_contact_id = ?, crew_leader_name = ?
+           WHERE id = ?""",
+        [body.route_id, body.route_name,
+         body.crew_leader_contact_id, body.crew_leader_name,
+         session_id],
+    )
+    updated = await db.get_time_session(session_id)
+    return {"session": dict(updated)}
 
 
 class SegmentTimesBody(BaseModel):

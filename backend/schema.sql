@@ -266,6 +266,9 @@ ALTER TABLE time_sessions ADD COLUMN route_name TEXT;
 ALTER TABLE time_sessions ADD COLUMN crew_leader_contact_id INTEGER;
 ALTER TABLE time_sessions ADD COLUMN crew_leader_name TEXT;
 
+-- ── Time Tracking — opportunity_id on segments (migration) ───────────────────
+ALTER TABLE time_segments ADD COLUMN opportunity_id INTEGER;
+
 -- ── Key management ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS keys (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,

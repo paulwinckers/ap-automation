@@ -47,6 +47,7 @@ interface TimeSegment {
   work_ticket_id:   number | null;
   work_ticket_num:  string | null;
   work_ticket_name: string | null;
+  opportunity_id:   number | null;
   start_time:       string;
   end_time:         string | null;
   duration_minutes: number | null;
@@ -118,7 +119,9 @@ interface StoredSession {
 const LS_KEY = 'time_tracking_session';
 
 function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  // Use local date (not UTC) so the date doesn't flip at 5 PM / 8 PM PST
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /**
@@ -854,9 +857,9 @@ function AddNotesModal({ ticketId, ticketName, employeeName, onClose, onSuccess 
 // ── TicketHistoryModal — view all tickets for the same opportunity ─────────────
 
 interface TicketHistoryModalProps {
-  workTicketId: number;
-  ticketName:   string;
-  onClose:      () => void;
+  opportunityId: number;
+  ticketName:    string;
+  onClose:       () => void;
 }
 
 function statusColour(status: string | null): { bg: string; text: string } {
@@ -868,7 +871,7 @@ function statusColour(status: string | null): { bg: string; text: string } {
   return { bg: '#f1f5f9', text: '#475569' };
 }
 
-function TicketHistoryModal({ workTicketId, ticketName, onClose }: TicketHistoryModalProps) {
+function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistoryModalProps) {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
   const [data,    setData]    = useState<{
@@ -884,11 +887,11 @@ function TicketHistoryModal({ workTicketId, ticketName, onClose }: TicketHistory
       opportunity_name: string | null;
       property_name:    string | null;
       tickets:          WorkTicketHistory[];
-    }>('GET', `/aspire/field/work-ticket/${workTicketId}/opportunity-history`)
+    }>('GET', `/aspire/field/opportunity/${opportunityId}/ticket-history`)
       .then(r => setData({ opportunity_name: r.opportunity_name, property_name: r.property_name, tickets: r.tickets }))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  }, [workTicketId]);
+  }, [opportunityId]);
 
   const fmtHours = (h: number | null | undefined) => {
     if (h == null) return null;
@@ -1094,6 +1097,9 @@ export default function TimeTracking() {
   const [addNotesSegment,  setAddNotesSegment]  = useState<TimeSegment | null>(null);
   const [historySegment,   setHistorySegment]   = useState<TimeSegment | null>(null);
 
+  // ── Change Route
+  const [showChangeRoute, setShowChangeRoute] = useState(false);
+
   // Elapsed timer for active segment
   const openSegment = segments.find(s => !s.end_time) ?? null;
   const elapsed = useElapsed(openSegment?.start_time ?? null);
@@ -1292,7 +1298,7 @@ export default function TimeTracking() {
   // ── Start segment ─────────────────────────────────────────────────────────
   const startSegment = async (
     type: 'onsite' | 'drive' | 'lunch',
-    wtId?: number, wtNum?: string, wtName?: string
+    wtId?: number, wtNum?: string, wtName?: string, oppId?: number | null,
   ) => {
     if (!session) return;
     setActionLoading(true);
@@ -1305,6 +1311,7 @@ export default function TimeTracking() {
           work_ticket_id:   wtId ?? null,
           work_ticket_num:  wtNum ?? null,
           work_ticket_name: wtName ?? null,
+          opportunity_id:   oppId ?? null,
         }
       );
       setSegments(r.segments);
@@ -1351,6 +1358,7 @@ export default function TimeTracking() {
       t.WorkTicketID,
       String(t.WorkTicketNumber || t.WorkTicketID),
       t.OpportunityName || t.WorkTicketTitle || `#${t.WorkTicketID}`,
+      t.OpportunityID,
     );
   };
 
@@ -1495,6 +1503,31 @@ export default function TimeTracking() {
       setEditClockField(null);
     } catch (e: unknown) {
       alert(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  // ── Load routes if needed when Change Route is opened ────────────────────
+  useEffect(() => {
+    if (!showChangeRoute || allRoutes.length > 0) return;
+    apiFetch<{ routes: AspireRoute[] }>('GET', '/time/routes')
+      .then(r => setAllRoutes(r.routes ?? []))
+      .catch(e => console.error('routes:', e));
+  }, [showChangeRoute]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Change Route (save new route to existing session) ────────────────────
+  const handleChangeRoute = async (newRoute: RouteInfo) => {
+    setRouteInfo(newRoute);
+    setShowChangeRoute(false);
+    if (!session) return;
+    try {
+      await apiFetch('PATCH', `/time/session/${session.id}/route`, {
+        route_id:               newRoute.route_id,
+        route_name:             newRoute.route_name,
+        crew_leader_contact_id: newRoute.crew_leader_contact_id,
+        crew_leader_name:       newRoute.crew_leader_name,
+      });
+    } catch (e) {
+      console.error('Route update failed:', e);
     }
   };
 
@@ -1775,15 +1808,28 @@ export default function TimeTracking() {
             <div style={{ color: '#64748b', fontSize: 13, marginTop: 2 }}>
               {fmtDate(today)}
             </div>
-            {routeInfo?.route_name && (
-              <div style={{
-                display: 'inline-block', marginTop: 4, padding: '2px 8px',
-                background: '#0f3460', borderRadius: 6, color: '#38bdf8',
-                fontSize: 12, fontWeight: 600,
-              }}>
-                🗺️ {routeInfo.route_name}
-              </div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+              {routeInfo?.route_name ? (
+                <div style={{
+                  display: 'inline-block', padding: '2px 8px',
+                  background: '#0f3460', borderRadius: 6, color: '#38bdf8',
+                  fontSize: 12, fontWeight: 600,
+                }}>
+                  🗺️ {routeInfo.route_name}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: '#475569' }}>No route set</div>
+              )}
+              <button
+                onClick={() => setShowChangeRoute(true)}
+                style={{
+                  background: 'none', border: '1px solid #334155', borderRadius: 6,
+                  color: '#64748b', fontSize: 11, padding: '1px 7px', cursor: 'pointer',
+                }}
+              >
+                Change
+              </button>
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
@@ -1966,15 +2012,17 @@ export default function TimeTracking() {
                         cursor: 'pointer', color: '#15803d',
                       }}
                     >📷</button>
-                    <button
-                      onClick={() => setHistorySegment(openSegment)}
-                      title="Visit history"
-                      style={{
-                        padding: '10px 14px', borderRadius: 10, fontSize: 18,
-                        background: '#eff6ff', border: '1px solid #93c5fd',
-                        cursor: 'pointer', color: '#1d4ed8',
-                      }}
-                    >📋</button>
+                    {openSegment.opportunity_id && (
+                      <button
+                        onClick={() => setHistorySegment(openSegment)}
+                        title="Visit history"
+                        style={{
+                          padding: '10px 14px', borderRadius: 10, fontSize: 18,
+                          background: '#eff6ff', border: '1px solid #93c5fd',
+                          cursor: 'pointer', color: '#1d4ed8',
+                        }}
+                      >📋</button>
+                    )}
                   </>
                 )}
               </div>
@@ -2137,14 +2185,16 @@ export default function TimeTracking() {
                               padding: '6px 8px', cursor: 'pointer', fontSize: 15, color: '#15803d',
                             }}
                           >📷</button>
-                          <button
-                            onClick={() => setHistorySegment(seg)}
-                            title="Visit history"
-                            style={{
-                              background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 8,
-                              padding: '6px 8px', cursor: 'pointer', fontSize: 15, color: '#1d4ed8',
-                            }}
-                          >📋</button>
+                          {seg.opportunity_id && (
+                            <button
+                              onClick={() => setHistorySegment(seg)}
+                              title="Visit history"
+                              style={{
+                                background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 8,
+                                padding: '6px 8px', cursor: 'pointer', fontSize: 15, color: '#1d4ed8',
+                              }}
+                            >📋</button>
+                          )}
                         </>
                       )}
                       <button
@@ -2223,6 +2273,80 @@ export default function TimeTracking() {
         />
       )}
 
+      {/* ── Change Route modal ───────────────────────────────────────────── */}
+      {showChangeRoute && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+          zIndex: 300, display: 'flex', alignItems: 'flex-end',
+        }}>
+          <div style={{
+            background: '#fff', width: '100%', borderRadius: '18px 18px 0 0',
+            maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '16px 20px', borderBottom: '1px solid #e2e8f0', background: '#f8fafc',
+              flexShrink: 0,
+            }}>
+              <span style={{ fontWeight: 700, fontSize: 17 }}>🗺️ Change Route</span>
+              <button onClick={() => setShowChangeRoute(false)} style={{
+                background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', color: '#64748b',
+              }}>×</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {allRoutes.length === 0 ? (
+                <div style={{ padding: 32, textAlign: 'center', color: '#64748b' }}>
+                  No routes available
+                </div>
+              ) : allRoutes.map(r => (
+                <button
+                  key={r.RouteID}
+                  onClick={() => handleChangeRoute({
+                    route_id:               r.RouteID,
+                    route_name:             r.RouteName,
+                    crew_leader_contact_id: r.CrewLeaderContactID,
+                    crew_leader_name:       r.CrewLeaderContactName,
+                  })}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    width: '100%', textAlign: 'left', padding: '16px 20px',
+                    background: routeInfo?.route_id === r.RouteID ? '#eff6ff' : 'none',
+                    border: 'none', borderBottom: '1px solid #f1f5f9', cursor: 'pointer',
+                  }}
+                >
+                  <div>
+                    <div style={{
+                      fontWeight: 700, fontSize: 16,
+                      color: routeInfo?.route_id === r.RouteID ? '#1d4ed8' : '#0f172a',
+                    }}>
+                      {r.RouteName}
+                    </div>
+                    {r.CrewLeaderContactName && (
+                      <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>
+                        Lead: {r.CrewLeaderContactName}
+                      </div>
+                    )}
+                  </div>
+                  {routeInfo?.route_id === r.RouteID && (
+                    <span style={{ color: '#1d4ed8', fontSize: 18 }}>✓</span>
+                  )}
+                </button>
+              ))}
+              <button
+                onClick={() => handleChangeRoute({ route_id: null, route_name: null, crew_leader_contact_id: null, crew_leader_name: null })}
+                style={{
+                  display: 'block', width: '100%', padding: '14px 20px',
+                  background: 'none', border: 'none', borderTop: '2px solid #f1f5f9',
+                  color: '#94a3b8', fontSize: 13, cursor: 'pointer', textAlign: 'left',
+                }}
+              >
+                Clear route (no route)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Add Notes / Photos modal ─────────────────────────────────────── */}
       {addNotesSegment && addNotesSegment.work_ticket_id && (
         <AddNotesModal
@@ -2235,9 +2359,9 @@ export default function TimeTracking() {
       )}
 
       {/* ── Ticket history modal ─────────────────────────────────────────── */}
-      {historySegment && historySegment.work_ticket_id && (
+      {historySegment && historySegment.opportunity_id && (
         <TicketHistoryModal
-          workTicketId={historySegment.work_ticket_id}
+          opportunityId={historySegment.opportunity_id}
           ticketName={historySegment.work_ticket_name ?? `Ticket #${historySegment.work_ticket_id}`}
           onClose={() => setHistorySegment(null)}
         />
