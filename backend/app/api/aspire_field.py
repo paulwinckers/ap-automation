@@ -519,34 +519,35 @@ async def get_opportunity_work_tickets(opportunity_id: int):
 
 # ── Work ticket history (all tickets for the same opportunity) ────────────────
 
-@router.get("/opportunity/{opportunity_id}/ticket-history")
-async def get_opportunity_ticket_history(opportunity_id: int):
+@router.get("/work-ticket/{ticket_id}/opportunity-history")
+async def get_work_ticket_opportunity_history(ticket_id: int):
     """
-    Return all work tickets for an opportunity, ordered by scheduled date desc.
-    Used in Time Tracking to show visit history with notes.
+    Given a work ticket ID, return all tickets for the same opportunity.
+    Uses OData direct key access (WorkTickets(id)) to avoid $filter on primary key.
     """
     _check_credentials()
 
-    # Fetch opportunity name + property name
-    opp_name:     str | None = None
-    property_name: str | None = None
+    # Step 1: direct key access — no $filter on primary key
     try:
-        opp_res = await _aspire._get("Opportunities", {
-            "$filter": f"OpportunityID eq {opportunity_id}",
-            "$select": "OpportunityID,OpportunityName,PropertyName",
-            "$top": "1",
-        })
-        opp_rows = _aspire._extract_list(opp_res)
-        if opp_rows:
-            opp_name      = opp_rows[0].get("OpportunityName")
-            property_name = opp_rows[0].get("PropertyName")
+        ticket = await _aspire._get(
+            f"WorkTickets({ticket_id})",
+            {"$select": "WorkTicketID,OpportunityID,OpportunityName,PropertyName"},
+        )
     except Exception as e:
-        logger.warning(f"Opportunity lookup failed for {opportunity_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # Fetch all tickets for this opportunity
+    opp_id        = ticket.get("OpportunityID")
+    opp_name      = ticket.get("OpportunityName")
+    property_name = ticket.get("PropertyName")
+
+    if not opp_id:
+        return {"opportunity_id": None, "opportunity_name": opp_name,
+                "property_name": property_name, "tickets": []}
+
+    # Step 2: fetch all tickets for that opportunity ($filter on OpportunityID works fine)
     try:
         res = await _aspire._get("WorkTickets", {
-            "$filter": f"OpportunityID eq {opportunity_id}",
+            "$filter": f"OpportunityID eq {opp_id}",
             "$select": ",".join([
                 "WorkTicketID", "WorkTicketNumber", "WorkTicketTitle",
                 "WorkTicketStatusName", "WorkTicketStatus",
@@ -563,7 +564,7 @@ async def get_opportunity_ticket_history(opportunity_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
     return {
-        "opportunity_id":   opportunity_id,
+        "opportunity_id":   opp_id,
         "opportunity_name": opp_name,
         "property_name":    property_name,
         "tickets":          tickets,

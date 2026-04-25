@@ -854,9 +854,9 @@ function AddNotesModal({ ticketId, ticketName, employeeName, onClose, onSuccess 
 // ── TicketHistoryModal — view all tickets for the same opportunity ─────────────
 
 interface TicketHistoryModalProps {
-  opportunityId: number;
-  ticketName:    string;
-  onClose:       () => void;
+  workTicketId: number;
+  ticketName:   string;
+  onClose:      () => void;
 }
 
 function statusColour(status: string | null): { bg: string; text: string } {
@@ -868,7 +868,7 @@ function statusColour(status: string | null): { bg: string; text: string } {
   return { bg: '#f1f5f9', text: '#475569' };
 }
 
-function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistoryModalProps) {
+function TicketHistoryModal({ workTicketId, ticketName, onClose }: TicketHistoryModalProps) {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
   const [data,    setData]    = useState<{
@@ -884,11 +884,11 @@ function TicketHistoryModal({ opportunityId, ticketName, onClose }: TicketHistor
       opportunity_name: string | null;
       property_name:    string | null;
       tickets:          WorkTicketHistory[];
-    }>('GET', `/aspire/field/opportunity/${opportunityId}/ticket-history`)
+    }>('GET', `/aspire/field/work-ticket/${workTicketId}/opportunity-history`)
       .then(r => setData({ opportunity_name: r.opportunity_name, property_name: r.property_name, tickets: r.tickets }))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  }, [opportunityId]);
+  }, [workTicketId]);
 
   const fmtHours = (h: number | null | undefined) => {
     if (h == null) return null;
@@ -1093,12 +1093,6 @@ export default function TimeTracking() {
   // ── Notes/Photos + Ticket history modals
   const [addNotesSegment,  setAddNotesSegment]  = useState<TimeSegment | null>(null);
   const [historySegment,   setHistorySegment]   = useState<TimeSegment | null>(null);
-
-  /** Look up OpportunityID for a segment via the loaded tickets list */
-  const segmentOpportunityId = (seg: TimeSegment | null): number | null => {
-    if (!seg?.work_ticket_id) return null;
-    return tickets.find(t => t.WorkTicketID === seg.work_ticket_id)?.OpportunityID ?? null;
-  };
 
   // Elapsed timer for active segment
   const openSegment = segments.find(s => !s.end_time) ?? null;
@@ -2241,17 +2235,13 @@ export default function TimeTracking() {
       )}
 
       {/* ── Ticket history modal ─────────────────────────────────────────── */}
-      {historySegment && (() => {
-        const oppId = segmentOpportunityId(historySegment);
-        if (!oppId) return null;
-        return (
-          <TicketHistoryModal
-            opportunityId={oppId}
-            ticketName={historySegment.work_ticket_name ?? `Ticket #${historySegment.work_ticket_id}`}
-            onClose={() => setHistorySegment(null)}
-          />
-        );
-      })()}
+      {historySegment && historySegment.work_ticket_id && (
+        <TicketHistoryModal
+          workTicketId={historySegment.work_ticket_id}
+          ticketName={historySegment.work_ticket_name ?? `Ticket #${historySegment.work_ticket_id}`}
+          onClose={() => setHistorySegment(null)}
+        />
+      )}
     </div>
   );
 }
