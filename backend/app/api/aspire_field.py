@@ -544,8 +544,9 @@ async def get_opportunity_ticket_history(opportunity_id: int):
     except Exception as e:
         logger.warning(f"Opportunity lookup failed for {opportunity_id}: {e}")
 
-    # Fetch without $select — every $select combo we've tried causes 400.
-    # Aspire returns all fields; we normalise inconsistent names in Python.
+    # ── Main query: no $select — returns all real entity fields ─────────────────
+    # (Any $select combo with invalid field names causes 400; ActualLaborHours,
+    #  WorkTicketTitle etc. are NOT in the real entity — use HoursAct instead.)
     try:
         res = await _aspire._get("WorkTickets", {
             "$filter": f"OpportunityID eq {opportunity_id}",
@@ -555,17 +556,34 @@ async def get_opportunity_ticket_history(opportunity_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Normalise: ensure frontend always sees ScheduledDate and WorkTicketTitle
-    # regardless of which variant Aspire returned in this response.
+    # ── Secondary query: fetch WorkTicketTitle via minimal $select ────────────
+    # WorkTicketTitle is a computed/virtual field — only available via $select.
+    title_map: dict = {}
+    try:
+        title_res = await _aspire._get("WorkTickets", {
+            "$filter": f"OpportunityID eq {opportunity_id}",
+            "$select": "WorkTicketID,WorkTicketTitle",
+            "$top": "60",
+        })
+        for row in _aspire._extract_list(title_res):
+            wid = row.get("WorkTicketID")
+            if wid:
+                title_map[wid] = row.get("WorkTicketTitle")
+    except Exception as e:
+        logger.warning(f"WorkTicketTitle fetch failed (non-fatal): {e}")
+
+    # ── Normalise field names ─────────────────────────────────────────────────
     tickets = []
     for t in raw_tickets:
         t = dict(t)
-        # Date: Aspire may return ScheduledStartDate (datetime) instead of ScheduledDate
+        # Merge in title from secondary query
+        t["WorkTicketTitle"] = title_map.get(t.get("WorkTicketID"))
+        # Normalise hours field name (entity uses HoursAct, not ActualLaborHours)
+        if "HoursAct" in t:
+            t["ActualLaborHours"] = t["HoursAct"]
+        # Normalise date (ScheduledDate is in full entity; ScheduledStartDate is fallback)
         if not t.get("ScheduledDate") and t.get("ScheduledStartDate"):
-            t["ScheduledDate"] = t["ScheduledStartDate"][:10]  # strip time portion
-        # Title: log all keys on first ticket so we can see what Aspire gives us
-        if not tickets:
-            logger.info(f"WorkTicket fields from Aspire (no $select): {list(t.keys())}")
+            t["ScheduledDate"] = str(t["ScheduledStartDate"])[:10]
         tickets.append(t)
 
     tickets.sort(key=lambda t: t.get("ScheduledDate") or "", reverse=True)
