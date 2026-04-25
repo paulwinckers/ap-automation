@@ -544,27 +544,11 @@ async def get_opportunity_ticket_history(opportunity_id: int):
     except Exception as e:
         logger.warning(f"Opportunity lookup failed for {opportunity_id}: {e}")
 
-    # Fetch all tickets for this opportunity.
-    # Field names are validated against get_work_tickets_summary which uses the same
-    # OpportunityID filter — those exact names are confirmed to work.
-    try:
-        res = await _aspire._get("WorkTickets", {
-            "$filter": f"OpportunityID eq {opportunity_id}",
-            "$select": ",".join([
-                "WorkTicketID", "WorkTicketNumber", "WorkTicketTitle",
-                "WorkTicketStatusName",
-                "ScheduledDate", "CompleteDate",
-                "ActualLaborHours",
-                "CrewLeaderName",
-                "Notes",
-            ]),
-            "$top": "60",
-        })
-        tickets = _aspire._extract_list(res)
-        # Sort newest first in Python (avoid $orderby which can also cause 400s)
-        tickets.sort(key=lambda t: t.get("ScheduledDate") or "", reverse=True)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Re-use get_work_tickets_summary — already proven to work with OpportunityID filter.
+    # It selects: WorkTicketID, WorkTicketTitle, WorkTicketStatusName, ScheduledDate,
+    # CompleteDate, ActualLaborHours (all confirmed valid with this filter type).
+    tickets = await _aspire.get_work_tickets_summary(opportunity_id)
+    tickets.sort(key=lambda t: t.get("ScheduledDate") or "", reverse=True)
 
     return {
         "opportunity_id":   opportunity_id,
