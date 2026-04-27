@@ -73,12 +73,12 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
     #    Filter by status in OData (no $select = safe), sort newest first.
     try:
         res = await _aspire._get("WorkTickets", {
-            "$filter": "WorkTicketStatusName ne 'Complete' and WorkTicketStatusName ne 'Canceled'",
+            "$filter": "WorkTicketStatusName eq 'Scheduled'",
             "$orderby": "WorkTicketID desc",
             "$top": "500",
         })
         all_tickets = _aspire._extract_list(res)
-        logger.info(f"Construction report: {len(all_tickets)} active (non-complete) tickets fetched")
+        logger.info(f"Construction report: {len(all_tickets)} Scheduled tickets fetched")
         if all_tickets:
             sample = all_tickets[0]
             logger.info(f"Sample ticket fields: {list(sample.keys())}")
@@ -118,7 +118,7 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
 
     logger.info(
         f"Construction report: {len(tickets)} tickets after Python filter "
-        f"(branch={branch_name!r}, HoursAct>0)"
+        f"(division={branch_name!r}, HoursAct>0)"
     )
 
     if not tickets:
