@@ -382,13 +382,13 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
 
 # ── Shared send helper ────────────────────────────────────────────────────────
 
-async def send_report_now(branch_name: str | None = None) -> dict:
+async def send_report_now(branch_name: str | None = None, override_recipients: list[str] | None = None) -> dict:
     """Build and email the construction report. Called by the scheduler and the POST endpoint."""
     branch_name  = branch_name or settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction"
     base_url     = settings.APP_BASE_URL.rstrip("/")
     generated_at = datetime.now(timezone.utc).strftime("%-d %b %Y, %-I:%M %p UTC")
     mailbox      = settings.MS_AP_INBOX
-    recipients   = [r.strip() for r in settings.CONSTRUCTION_REPORT_RECIPIENTS.split(",") if r.strip()]
+    recipients   = override_recipients or [r.strip() for r in settings.CONSTRUCTION_REPORT_RECIPIENTS.split(",") if r.strip()]
 
     tickets = await _build_report_data(branch_name)
     html    = _render_html(tickets, generated_at, branch_name, base_url)
@@ -516,10 +516,13 @@ async def send_nightly_report(branch: Optional[str] = Query(None)):
 
 
 @router.get("/nightly-report/send-test", response_class=HTMLResponse)
-async def send_nightly_report_test(branch: Optional[str] = Query(None)):
+async def send_nightly_report_test(
+    branch: Optional[str] = Query(None),
+    to: Optional[str] = Query(None, description="Override recipients — single address for testing"),
+):
     """Browser-friendly trigger — sends the report and shows a confirmation page."""
     try:
-        result = await send_report_now(branch)
+        result = await send_report_now(branch, override_recipients=[to] if to else None)
         recipients_html = "".join(f"<li>{r}</li>" for r in result["recipients"])
         return HTMLResponse(content=f"""
         <html><body style="font-family:sans-serif;max-width:500px;margin:60px auto;text-align:center;">
