@@ -69,24 +69,39 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
     Optionally filter to a specific branch (e.g. "Construction").
     Returns list of tickets enriched with OpportunityName + PropertyName.
     """
-    # 1. Fetch active work tickets (HoursAct > 0, not complete/cancelled)
-    base_filter = (
-        "HoursAct gt 0"
-        " and WorkTicketStatusName ne 'Complete'"
-        " and WorkTicketStatusName ne 'Cancelled'"
-    )
-    if branch_name:
-        base_filter += f" and BranchName eq '{branch_name}'"
-
+    # 1. Fetch active work tickets — no $select (causes 400), filter minimally
+    #    We post-filter branch + status in Python because OData field names may vary.
     try:
         res = await _aspire._get("WorkTickets", {
-            "$filter": base_filter,
+            "$filter": "HoursAct gt 0",
             "$top": "500",
         })
-        tickets = _aspire._extract_list(res)
+        all_tickets = _aspire._extract_list(res)
+        logger.info(f"Construction report: {len(all_tickets)} tickets with HoursAct > 0")
+        if all_tickets:
+            sample = all_tickets[0]
+            logger.info(f"Sample ticket fields: {list(sample.keys())}")
+            logger.info(f"Sample ticket values: BranchName={sample.get('BranchName')!r}, "
+                        f"WorkTicketStatusName={sample.get('WorkTicketStatusName')!r}, "
+                        f"HoursAct={sample.get('HoursAct')!r}, HoursEst={sample.get('HoursEst')!r}")
     except Exception as e:
         logger.error(f"WorkTickets fetch failed: {e}")
         return []
+
+    # Post-filter: exclude complete/cancelled and optionally filter by branch
+    tickets = []
+    for t in all_tickets:
+        status = (t.get("WorkTicketStatusName") or "").lower()
+        if status in ("complete", "cancelled"):
+            continue
+        if branch_name:
+            branch = (t.get("BranchName") or "").lower()
+            if branch_name.lower() not in branch:
+                continue
+        tickets.append(t)
+
+    logger.info(f"Construction report: {len(tickets)} tickets after branch/status filter "
+                f"(branch={branch_name!r})")
 
     if not tickets:
         return []
