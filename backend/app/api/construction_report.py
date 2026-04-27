@@ -8,9 +8,11 @@ Shows all work tickets that are actively being worked on:
   - Status is not Complete / Cancelled
 Grouped by Opportunity (job), sorted by % budget used descending.
 """
+import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -378,6 +380,69 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
 </html>"""
 
 
+# ── Shared send helper ────────────────────────────────────────────────────────
+
+async def send_report_now(branch_name: str | None = None) -> dict:
+    """Build and email the construction report. Called by the scheduler and the POST endpoint."""
+    branch_name  = branch_name or settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction"
+    base_url     = settings.APP_BASE_URL.rstrip("/")
+    generated_at = datetime.now(timezone.utc).strftime("%-d %b %Y, %-I:%M %p UTC")
+    mailbox      = settings.CONSTRUCTION_REPORT_FROM or settings.MS_AP_INBOX
+    recipients   = [r.strip() for r in settings.CONSTRUCTION_REPORT_RECIPIENTS.split(",") if r.strip()]
+
+    tickets = await _build_report_data(branch_name)
+    html    = _render_html(tickets, generated_at, branch_name, base_url)
+    subject = f"🏗️ Construction Work Ticket Report — {datetime.now(timezone.utc).strftime('%a %b %-d, %Y')}"
+
+    graph = GraphClient()
+    await graph.send_email(
+        mailbox=mailbox,
+        to_addresses=recipients,
+        subject=subject,
+        body_html=html,
+    )
+    logger.info(f"Construction report sent from {mailbox} to {len(recipients)} recipients ({len(tickets)} tickets)")
+    return {"recipients": recipients, "ticket_count": len(tickets), "branch": branch_name}
+
+
+# ── Nightly scheduler ─────────────────────────────────────────────────────────
+
+_scheduler_task: asyncio.Task | None = None
+
+
+async def _scheduler_loop():
+    """Fire send_report_now() every day at 19:00 in the configured timezone."""
+    tz = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Edmonton")
+    while True:
+        now    = datetime.now(tz)
+        target = now.replace(hour=19, minute=0, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+        wait = (target - now).total_seconds()
+        logger.info(
+            f"Construction nightly report scheduled in {wait/3600:.1f}h "
+            f"({target.strftime('%a %b %d %H:%M %Z')})"
+        )
+        await asyncio.sleep(wait)
+        try:
+            await send_report_now()
+        except Exception as e:
+            logger.error(f"Nightly construction report send failed: {e}")
+
+
+def start_scheduler():
+    global _scheduler_task
+    _scheduler_task = asyncio.ensure_future(_scheduler_loop())
+    logger.info("Construction report nightly scheduler started (fires 7 PM Mountain)")
+
+
+def stop_scheduler():
+    global _scheduler_task
+    if _scheduler_task:
+        _scheduler_task.cancel()
+        _scheduler_task = None
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/nightly-report", response_class=HTMLResponse)
@@ -440,45 +505,11 @@ async def get_nightly_report(
 
 
 @router.post("/nightly-report/send")
-async def send_nightly_report(
-    branch: Optional[str] = Query(None),
-):
-    """
-    Build the construction report and email it to all recipients.
-    Triggered manually or by a scheduler (no auth required on this endpoint).
-    """
-    branch_name  = branch or settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction"
-    base_url     = settings.APP_BASE_URL.rstrip("/")
-    generated_at = datetime.now(timezone.utc).strftime("%-d %b %Y, %-I:%M %p UTC")
-
-    recipients = [r.strip() for r in settings.CONSTRUCTION_REPORT_RECIPIENTS.split(",") if r.strip()]
-    if not recipients:
-        return JSONResponse(status_code=400, content={"detail": "No recipients configured."})
-
-    mailbox = settings.MS_AP_INBOX
-    if not mailbox:
-        return JSONResponse(status_code=500, content={"detail": "MS_AP_INBOX not configured — cannot send."})
-
-    tickets = await _build_report_data(branch_name)
-    html    = _render_html(tickets, generated_at, branch_name, base_url)
-
-    subject = f"🏗️ Construction Work Ticket Report — {datetime.now(timezone.utc).strftime('%a %b %-d, %Y')}"
-
-    graph = GraphClient()
+async def send_nightly_report(branch: Optional[str] = Query(None)):
+    """Manually trigger the construction report email."""
     try:
-        await graph.send_email(
-            mailbox=mailbox,
-            to_addresses=recipients,
-            subject=subject,
-            body_html=html,
-        )
-        logger.info(f"Construction report sent to {len(recipients)} recipients ({branch_name})")
-        return JSONResponse(content={
-            "status": "sent",
-            "recipients": recipients,
-            "ticket_count": len(tickets),
-            "branch": branch_name,
-        })
+        result = await send_report_now(branch)
+        return JSONResponse(content={"status": "sent", **result})
     except Exception as e:
         logger.error(f"Failed to send construction report: {e}")
         return JSONResponse(status_code=500, content={"detail": str(e)})
