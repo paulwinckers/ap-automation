@@ -63,19 +63,24 @@ def _variance_cell(variance) -> str:
 
 # ── Main report builder ───────────────────────────────────────────────────────
 
-async def _build_report_data() -> list[dict]:
+async def _build_report_data(branch_name: str | None = None) -> list[dict]:
     """
     Fetch work tickets with actual hours that are not yet complete.
+    Optionally filter to a specific branch (e.g. "Construction").
     Returns list of tickets enriched with OpportunityName + PropertyName.
     """
     # 1. Fetch active work tickets (HoursAct > 0, not complete/cancelled)
+    base_filter = (
+        "HoursAct gt 0"
+        " and WorkTicketStatusName ne 'Complete'"
+        " and WorkTicketStatusName ne 'Cancelled'"
+    )
+    if branch_name:
+        base_filter += f" and BranchName eq '{branch_name}'"
+
     try:
         res = await _aspire._get("WorkTickets", {
-            "$filter": (
-                "HoursAct gt 0"
-                " and WorkTicketStatusName ne 'Complete'"
-                " and WorkTicketStatusName ne 'Cancelled'"
-            ),
+            "$filter": base_filter,
             "$top": "500",
         })
         tickets = _aspire._extract_list(res)
@@ -142,7 +147,7 @@ async def _build_report_data() -> list[dict]:
     return enriched
 
 
-def _render_html(tickets: list[dict], generated_at: str) -> str:
+def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Construction") -> str:
     if not tickets:
         body = '<p style="padding:32px;text-align:center;color:#64748b;">No active work tickets found.</p>'
         jobs_html = body
@@ -277,7 +282,7 @@ def _render_html(tickets: list[dict], generated_at: str) -> str:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Construction Work Ticket Status</title>
+  <title>{branch_name} Work Ticket Status</title>
 </head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
   <div style="max-width:900px;margin:0 auto;padding:24px 16px;">
@@ -286,7 +291,7 @@ def _render_html(tickets: list[dict], generated_at: str) -> str:
     <div style="background:#0f172a;border-radius:12px 12px 0 0;padding:20px 28px;margin-bottom:0;">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <div>
-          <div style="color:#fff;font-size:20px;font-weight:700;">🏗️ Construction Work Ticket Status</div>
+          <div style="color:#fff;font-size:20px;font-weight:700;">🏗️ {branch_name} · Work Ticket Status</div>
           <div style="color:#64748b;font-size:13px;margin-top:4px;">Active tickets with labour posted · not yet complete</div>
         </div>
         <div style="text-align:right;">
@@ -324,11 +329,18 @@ def _render_html(tickets: list[dict], generated_at: str) -> str:
 @router.get("/nightly-report", response_class=HTMLResponse)
 async def get_nightly_report(
     preview: bool = Query(False, description="If true, use sample data instead of live Aspire"),
+    branch:  Optional[str] = Query(
+        None,
+        description="Filter to a specific Aspire branch name. Defaults to ASPIRE_CONSTRUCTION_BRANCH setting.",
+    ),
 ):
     """
     Returns the HTML construction nightly report.
     Open in a browser to preview exactly what the email will look like.
+    Pass ?branch=Construction (or whatever your Aspire branch is named).
     """
+    # Use query param → env var → default "Construction"
+    branch_name = branch or settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction"
     generated_at = datetime.now(timezone.utc).strftime("%-d %b %Y, %-I:%M %p UTC")
 
     if preview:
@@ -358,9 +370,9 @@ async def get_nightly_report(
                  crew_leader="Kiano De Boeck", hrs_est=55, hrs_act=47, hrs_remaining=8,
                  pct_used=85, budget_variance=-3.5, scheduled_date=None, percent_complete=78),
         ]
-        html = _render_html(tickets, generated_at + " (PREVIEW)")
+        html = _render_html(tickets, generated_at + " (PREVIEW)", branch_name)
     else:
-        tickets = await _build_report_data()
-        html = _render_html(tickets, generated_at)
+        tickets = await _build_report_data(branch_name)
+        html = _render_html(tickets, generated_at, branch_name)
 
     return HTMLResponse(content=html)
