@@ -276,9 +276,6 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
                   <td style="padding:10px 12px;font-size:13px;color:#334155;font-weight:500;white-space:nowrap;">
                     #{t['ticket_number'] or t['ticket_id']}
                   </td>
-                  <td style="padding:10px 12px;font-size:12px;color:#475569;max-width:160px;">
-                    {t.get('opportunity_name') or '—'}
-                  </td>
                   <td style="padding:10px 12px;font-size:13px;color:#0f172a;font-weight:600;">
                     {t.get('service_name') or '—'}
                   </td>
@@ -293,7 +290,6 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
                       <span style="font-size:12px;font-weight:700;color:{r_col};min-width:36px;">{pct:.0f}%</span>
                     </div>
                   </td>
-                  {_variance_cell(t['budget_variance'])}
                 </tr>
                 """
 
@@ -315,15 +311,13 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
                 <thead>
                   <tr style="background:#334155;border-bottom:2px solid #e2e8f0;">
                     <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Ticket</th>
-                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Opportunity</th>
                     <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Service</th>
                     <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Status</th>
                     <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Crew Leader</th>
                     <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Est Hrs</th>
                     <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Actual</th>
-                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Remaining</th>
+                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Remaining/Over</th>
                     <th style="padding:8px 12px;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Budget Used</th>
-                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Variance</th>
                   </tr>
                 </thead>
                 <tbody>{rows}</tbody>
