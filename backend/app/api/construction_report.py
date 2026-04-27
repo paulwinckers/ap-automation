@@ -299,11 +299,11 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
               <div style="background:#1e293b;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
                 <div>
                   <div style="color:#fff;font-size:16px;font-weight:700;">📍 {job['property']}</div>
-                  {f'<div style="color:#94a3b8;font-size:12px;margin-top:3px;">{opp_labels}</div>' if opp_labels else ''}
+                  {f'<div style="color:#fff;font-size:12px;font-weight:700;margin-top:3px;">{opp_labels}</div>' if opp_labels else ''}
                 </div>
                 <div style="text-align:right;">
                   <div style="color:{j_col};font-size:18px;font-weight:700;">{j_act:.1f} / {j_est:.1f}h</div>
-                  <div style="color:#64748b;font-size:11px;">{j_rem:.1f}h remaining · {j_pct:.0f}% used</div>
+                  <div style="color:#fff;font-size:11px;font-weight:700;">{j_rem:.1f}h remaining · {j_pct:.0f}% used</div>
                 </div>
               </div>
               <!-- Tickets table -->
