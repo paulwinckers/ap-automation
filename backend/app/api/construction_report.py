@@ -387,7 +387,7 @@ async def send_report_now(branch_name: str | None = None) -> dict:
     branch_name  = branch_name or settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction"
     base_url     = settings.APP_BASE_URL.rstrip("/")
     generated_at = datetime.now(timezone.utc).strftime("%-d %b %Y, %-I:%M %p UTC")
-    mailbox      = settings.CONSTRUCTION_REPORT_FROM or settings.MS_AP_INBOX
+    mailbox      = settings.MS_AP_INBOX
     recipients   = [r.strip() for r in settings.CONSTRUCTION_REPORT_RECIPIENTS.split(",") if r.strip()]
 
     tickets = await _build_report_data(branch_name)
