@@ -313,17 +313,17 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
               <!-- Tickets table -->
               <table style="width:100%;border-collapse:collapse;background:#fff;">
                 <thead>
-                  <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">
-                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Ticket</th>
-                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Opportunity</th>
-                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Service</th>
-                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Status</th>
-                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Crew Leader</th>
-                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Est Hrs</th>
-                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Actual</th>
-                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Remaining</th>
-                    <th style="padding:8px 12px;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Budget Used</th>
-                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Variance</th>
+                  <tr style="background:#334155;border-bottom:2px solid #e2e8f0;">
+                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Ticket</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Opportunity</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Service</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Status</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Crew Leader</th>
+                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Est Hrs</th>
+                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Actual</th>
+                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Remaining</th>
+                    <th style="padding:8px 12px;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Budget Used</th>
+                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Variance</th>
                   </tr>
                 </thead>
                 <tbody>{rows}</tbody>
