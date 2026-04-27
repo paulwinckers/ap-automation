@@ -192,7 +192,7 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
     return enriched
 
 
-def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Construction", base_url: str = "") -> str:
+def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Construction") -> str:
     if not tickets:
         body = '<p style="padding:32px;text-align:center;color:#64748b;">No active work tickets found.</p>'
         jobs_html = body
@@ -368,11 +368,11 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
 
     <!-- Footer -->
     <div style="text-align:center;padding:20px;">
-      {f'''<a href="{base_url}/construction/nightly-report"
-           style="display:inline-block;background:#1e293b;color:#fff;text-decoration:none;
-                  padding:10px 24px;border-radius:6px;font-size:13px;font-weight:600;margin-bottom:12px;">
-        🔗 View Live Report
-      </a><br>''' if base_url else ''}
+      <a href="{settings.CONSTRUCTION_DASHBOARD_URL}"
+         style="display:inline-block;background:#1e293b;color:#fff;text-decoration:none;
+                padding:10px 24px;border-radius:6px;font-size:13px;font-weight:600;margin-bottom:12px;">
+        🔗 View Construction Dashboard
+      </a><br>
       <span style="color:#94a3b8;font-size:11px;">Darios Landscaping · Generated automatically from Aspire</span>
     </div>
   </div>
@@ -385,13 +385,12 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
 async def send_report_now(branch_name: str | None = None, override_recipients: list[str] | None = None) -> dict:
     """Build and email the construction report. Called by the scheduler and the POST endpoint."""
     branch_name  = branch_name or settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction"
-    base_url     = settings.APP_BASE_URL.rstrip("/")
     generated_at = datetime.now(timezone.utc).strftime("%-d %b %Y, %-I:%M %p UTC")
     mailbox      = settings.MS_AP_INBOX
     recipients   = override_recipients or [r.strip() for r in settings.CONSTRUCTION_REPORT_RECIPIENTS.split(",") if r.strip()]
 
     tickets = await _build_report_data(branch_name)
-    html    = _render_html(tickets, generated_at, branch_name, base_url)
+    html    = _render_html(tickets, generated_at, branch_name)
     subject = f"🏗️ Construction Work Ticket Report — {datetime.now(timezone.utc).strftime('%a %b %-d, %Y')}"
 
     graph = GraphClient()
@@ -462,8 +461,6 @@ async def get_nightly_report(
     branch_name = branch or settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction"
     generated_at = datetime.now(timezone.utc).strftime("%-d %b %Y, %-I:%M %p UTC")
 
-    base_url = settings.APP_BASE_URL.rstrip("/")
-
     if preview:
         # ── Sample data for design preview ───────────────────────────────────
         tickets = [
@@ -496,10 +493,10 @@ async def get_nightly_report(
                  crew_leader="Kiano De Boeck", hrs_est=55, hrs_act=47, hrs_remaining=8,
                  pct_used=85, budget_variance=-3.5, scheduled_date=None, percent_complete=78),
         ]
-        html = _render_html(tickets, generated_at + " (PREVIEW)", branch_name, base_url)
+        html = _render_html(tickets, generated_at + " (PREVIEW)", branch_name)
     else:
         tickets = await _build_report_data(branch_name)
-        html = _render_html(tickets, generated_at, branch_name, base_url)
+        html = _render_html(tickets, generated_at, branch_name)
 
     return HTMLResponse(content=html)
 
