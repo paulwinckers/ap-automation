@@ -13,10 +13,11 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.core.config import settings
 from app.services.aspire import AspireClient
+from app.services.email_intake import GraphClient
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/construction", tags=["construction"])
@@ -436,3 +437,48 @@ async def get_nightly_report(
         html = _render_html(tickets, generated_at, branch_name, base_url)
 
     return HTMLResponse(content=html)
+
+
+@router.post("/nightly-report/send")
+async def send_nightly_report(
+    branch: Optional[str] = Query(None),
+):
+    """
+    Build the construction report and email it to all recipients.
+    Triggered manually or by a scheduler (no auth required on this endpoint).
+    """
+    branch_name  = branch or settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction"
+    base_url     = settings.APP_BASE_URL.rstrip("/")
+    generated_at = datetime.now(timezone.utc).strftime("%-d %b %Y, %-I:%M %p UTC")
+
+    recipients = [r.strip() for r in settings.CONSTRUCTION_REPORT_RECIPIENTS.split(",") if r.strip()]
+    if not recipients:
+        return JSONResponse(status_code=400, content={"detail": "No recipients configured."})
+
+    mailbox = settings.MS_AP_INBOX
+    if not mailbox:
+        return JSONResponse(status_code=500, content={"detail": "MS_AP_INBOX not configured — cannot send."})
+
+    tickets = await _build_report_data(branch_name)
+    html    = _render_html(tickets, generated_at, branch_name, base_url)
+
+    subject = f"🏗️ Construction Work Ticket Report — {datetime.now(timezone.utc).strftime('%a %b %-d, %Y')}"
+
+    graph = GraphClient()
+    try:
+        await graph.send_email(
+            mailbox=mailbox,
+            to_addresses=recipients,
+            subject=subject,
+            body_html=html,
+        )
+        logger.info(f"Construction report sent to {len(recipients)} recipients ({branch_name})")
+        return JSONResponse(content={
+            "status": "sent",
+            "recipients": recipients,
+            "ticket_count": len(tickets),
+            "branch": branch_name,
+        })
+    except Exception as e:
+        logger.error(f"Failed to send construction report: {e}")
+        return JSONResponse(status_code=500, content={"detail": str(e)})
