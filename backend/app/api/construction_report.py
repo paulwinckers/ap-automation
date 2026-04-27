@@ -189,7 +189,7 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
     return enriched
 
 
-def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Construction") -> str:
+def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Construction", base_url: str = "") -> str:
     if not tickets:
         body = '<p style="padding:32px;text-align:center;color:#64748b;">No active work tickets found.</p>'
         jobs_html = body
@@ -314,16 +314,16 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
               <table style="width:100%;border-collapse:collapse;background:#fff;">
                 <thead>
                   <tr style="background:#334155;border-bottom:2px solid #e2e8f0;">
-                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Ticket</th>
-                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Opportunity</th>
-                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Service</th>
-                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Status</th>
-                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Crew Leader</th>
-                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Est Hrs</th>
-                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Actual</th>
-                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Remaining</th>
-                    <th style="padding:8px 12px;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Budget Used</th>
-                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Variance</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Ticket</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Opportunity</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Service</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Status</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Crew Leader</th>
+                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Est Hrs</th>
+                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Actual</th>
+                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Remaining</th>
+                    <th style="padding:8px 12px;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Budget Used</th>
+                    <th style="padding:8px 12px;text-align:right;font-size:11px;color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Variance</th>
                   </tr>
                 </thead>
                 <tbody>{rows}</tbody>
@@ -370,8 +370,13 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
     {jobs_html}
 
     <!-- Footer -->
-    <div style="text-align:center;padding:20px;color:#94a3b8;font-size:11px;">
-      Darios Landscaping · Generated automatically from Aspire
+    <div style="text-align:center;padding:20px;">
+      {f'''<a href="{base_url}/construction/nightly-report"
+           style="display:inline-block;background:#1e293b;color:#fff;text-decoration:none;
+                  padding:10px 24px;border-radius:6px;font-size:13px;font-weight:600;margin-bottom:12px;">
+        🔗 View Live Report
+      </a><br>''' if base_url else ''}
+      <span style="color:#94a3b8;font-size:11px;">Darios Landscaping · Generated automatically from Aspire</span>
     </div>
   </div>
 </body>
@@ -396,6 +401,8 @@ async def get_nightly_report(
     # Use query param → env var → default "Construction"
     branch_name = branch or settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction"
     generated_at = datetime.now(timezone.utc).strftime("%-d %b %Y, %-I:%M %p UTC")
+
+    base_url = settings.APP_BASE_URL.rstrip("/")
 
     if preview:
         # ── Sample data for design preview ───────────────────────────────────
@@ -429,9 +436,9 @@ async def get_nightly_report(
                  crew_leader="Kiano De Boeck", hrs_est=55, hrs_act=47, hrs_remaining=8,
                  pct_used=85, budget_variance=-3.5, scheduled_date=None, percent_complete=78),
         ]
-        html = _render_html(tickets, generated_at + " (PREVIEW)", branch_name)
+        html = _render_html(tickets, generated_at + " (PREVIEW)", branch_name, base_url)
     else:
         tickets = await _build_report_data(branch_name)
-        html = _render_html(tickets, generated_at, branch_name)
+        html = _render_html(tickets, generated_at, branch_name, base_url)
 
     return HTMLResponse(content=html)

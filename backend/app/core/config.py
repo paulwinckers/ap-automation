@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     # App
     DEBUG:               bool = False
     LOG_LEVEL:           str = "INFO"
+    APP_BASE_URL:        str = ""   # e.g. https://your-app.railway.app — used for report links
 
     class Config:
         env_file = ".env"
