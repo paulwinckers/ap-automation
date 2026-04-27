@@ -28,6 +28,7 @@ from app.api.time_tracking import router as time_tracking_router
 from app.api.auth import router as auth_router
 from app.api.keys import router as keys_router
 from app.api.safety_talks import router as safety_talks_router
+from app.api.construction_report import router as construction_report_router
 from app.core.config import settings
 from app.core.database import Database
 from app.services.qbo import qbo_auth_router
@@ -142,3 +143,4 @@ app.include_router(auth_router)
 app.include_router(qbo_auth_router)
 app.include_router(keys_router)
 app.include_router(safety_talks_router)
+app.include_router(construction_report_router)
