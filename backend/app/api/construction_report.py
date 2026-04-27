@@ -81,36 +81,22 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
         logger.info(f"Construction report: {len(all_tickets)} Scheduled tickets fetched")
         if all_tickets:
             sample = all_tickets[0]
-            logger.info(f"Sample ticket fields: {list(sample.keys())}")
-            logger.info(
-                f"Sample ticket: BranchName={sample.get('BranchName')!r}, "
-                f"DivisionName={sample.get('DivisionName')!r}, "
-                f"WorkTicketStatusName={sample.get('WorkTicketStatusName')!r}, "
-                f"HoursAct={sample.get('HoursAct')!r}, HoursEst={sample.get('HoursEst')!r}"
-            )
-            # Log all unique values for potential division/branch fields
-            for field in ("BranchName", "DivisionName", "Division", "ServiceTypeName", "WorkTypeName"):
-                vals = sorted({t.get(field) or "" for t in all_tickets if t.get(field)})
-                if vals:
-                    logger.info(f"  {field} values: {vals}")
-            statuses = sorted({t.get("WorkTicketStatusName") or "" for t in all_tickets})
-            logger.info(f"Status names in results: {statuses}")
+            logger.info(f"Sample ticket ALL fields: {dict(sample)}")
     except Exception as e:
         logger.error(f"WorkTickets fetch failed: {e}")
         return []
 
-    # Post-filter in Python: has actual hours, optionally filter by branch/division
+    # Post-filter in Python: optionally filter by division (field name TBD from logs)
     tickets = []
     for t in all_tickets:
-        hrs_act = float(t.get("HoursAct") or 0)
-        if hrs_act <= 0:
-            continue
         if branch_name:
-            # Check all likely division/branch fields
+            # Check all likely division/branch fields — will narrow once we see the field name
             candidate = " ".join([
                 t.get("BranchName") or "",
                 t.get("DivisionName") or "",
                 t.get("Division") or "",
+                t.get("ServiceTypeName") or "",
+                t.get("WorkTypeName") or "",
             ]).lower()
             if branch_name.lower() not in candidate:
                 continue
