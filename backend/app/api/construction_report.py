@@ -115,11 +115,35 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
         except Exception as e:
             logger.warning(f"Opportunity batch fetch failed: {e}")
 
+    # 2b. Fetch OpportunityServices to get service Display Name per OpportunityServiceID
+    svc_ids  = list({t.get("OpportunityServiceID") for t in tickets if t.get("OpportunityServiceID")})
+    svc_map: dict = {}   # OpportunityServiceID → display label
+    for i in range(0, len(svc_ids), chunk_size):
+        chunk = svc_ids[i:i + chunk_size]
+        or_filter = " or ".join(f"OpportunityServiceID eq {sid}" for sid in chunk)
+        try:
+            svc_res = await _aspire._get("OpportunityServices", {
+                "$filter": f"({or_filter})",
+                "$top": "200",
+            })
+            for svc in _aspire._extract_list(svc_res):
+                sid = svc.get("OpportunityServiceID")
+                if sid:
+                    svc_map[sid] = (
+                        svc.get("DisplayName")
+                        or svc.get("ServiceNameAbr")
+                        or svc.get("ServiceName")
+                        or ""
+                    )
+        except Exception as e:
+            logger.warning(f"OpportunityServices fetch failed (non-fatal): {e}")
+
     # 3. Enrich tickets
     enriched = []
     for t in tickets:
-        oid  = t.get("OpportunityID")
-        info = opp_map.get(oid, {})
+        oid    = t.get("OpportunityID")
+        svc_id = t.get("OpportunityServiceID")
+        info   = opp_map.get(oid, {})
         hrs_est = float(t.get("HoursEst") or 0)
         hrs_act = float(t.get("HoursAct") or 0)
         remaining   = hrs_est - hrs_act
@@ -131,6 +155,7 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
             "opportunity_name": info.get("name", f"Job #{oid}"),
             "property_name":    info.get("property", ""),
             "opp_number":       info.get("number"),
+            "service_name":     svc_map.get(svc_id, "") if svc_id else "",
             "ticket_id":        t.get("WorkTicketID"),
             "ticket_number":    t.get("WorkTicketNumber"),
             "status":           t.get("WorkTicketStatusName"),
@@ -227,8 +252,11 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
                 r_col  = "#ef4444" if pct > 100 else ("#f59e0b" if pct >= 80 else "#22c55e")
                 rows += f"""
                 <tr style="border-top:1px solid #f1f5f9;">
-                  <td style="padding:10px 12px;font-size:13px;color:#334155;font-weight:500;">
+                  <td style="padding:10px 12px;font-size:13px;color:#334155;font-weight:500;white-space:nowrap;">
                     #{t['ticket_number'] or t['ticket_id']}
+                  </td>
+                  <td style="padding:10px 12px;font-size:13px;color:#0f172a;font-weight:600;">
+                    {t.get('service_name') or '—'}
                   </td>
                   <td style="padding:10px 12px;">{_status_badge(t['status'])}</td>
                   <td style="padding:10px 12px;font-size:13px;color:#475569;">{t['crew_leader']}</td>
@@ -263,6 +291,7 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
                 <thead>
                   <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">
                     <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Ticket</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Service</th>
                     <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Status</th>
                     <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Crew Leader</th>
                     <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Est Hrs</th>
@@ -348,25 +377,30 @@ async def get_nightly_report(
         tickets = [
             # Job 1 — over budget
             dict(opportunity_id=1001, opportunity_name="Downtown Plaza Renovation", property_name="123 Main St",
-                 opp_number=None, ticket_id=24001, ticket_number=24001, status="In Progress",
+                 opp_number=None, service_name="Hardscape Installation",
+                 ticket_id=24001, ticket_number=24001, status="In Progress",
                  crew_leader="Ryan Stolz", hrs_est=80, hrs_act=92, hrs_remaining=-12,
                  pct_used=115, budget_variance=-12.0, scheduled_date=None, percent_complete=85),
             dict(opportunity_id=1001, opportunity_name="Downtown Plaza Renovation", property_name="123 Main St",
-                 opp_number=None, ticket_id=24002, ticket_number=24002, status="In Progress",
+                 opp_number=None, service_name="Planting & Mulch",
+                 ticket_id=24002, ticket_number=24002, status="In Progress",
                  crew_leader="Kiano De Boeck", hrs_est=40, hrs_act=28, hrs_remaining=12,
                  pct_used=70, budget_variance=12.0, scheduled_date=None, percent_complete=60),
             # Job 2 — on track
             dict(opportunity_id=1002, opportunity_name="Orchard Walk Landscaping Phase 2", property_name="(Devon) Orchard Walk 1&2",
-                 opp_number=None, ticket_id=24003, ticket_number=24003, status="In Progress",
+                 opp_number=None, service_name="Irrigation Install",
+                 ticket_id=24003, ticket_number=24003, status="In Progress",
                  crew_leader="Shantel Way", hrs_est=120, hrs_act=65, hrs_remaining=55,
                  pct_used=54, budget_variance=8.0, scheduled_date=None, percent_complete=50),
             dict(opportunity_id=1002, opportunity_name="Orchard Walk Landscaping Phase 2", property_name="(Devon) Orchard Walk 1&2",
-                 opp_number=None, ticket_id=24004, ticket_number=24004, status="Scheduled",
+                 opp_number=None, service_name="Sod & Grading",
+                 ticket_id=24004, ticket_number=24004, status="Scheduled",
                  crew_leader="Ryan Stolz", hrs_est=30, hrs_act=4, hrs_remaining=26,
                  pct_used=13, budget_variance=None, scheduled_date=None, percent_complete=10),
             # Job 3 — watch zone
             dict(opportunity_id=1003, opportunity_name="Kelowna Credit Union Hardscape", property_name="1450 KLO Rd",
-                 opp_number=None, ticket_id=24005, ticket_number=24005, status="In Progress",
+                 opp_number=None, service_name="Concrete & Paving",
+                 ticket_id=24005, ticket_number=24005, status="In Progress",
                  crew_leader="Kiano De Boeck", hrs_est=55, hrs_act=47, hrs_remaining=8,
                  pct_used=85, budget_variance=-3.5, scheduled_date=None, percent_complete=78),
         ]
