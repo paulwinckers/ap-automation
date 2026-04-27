@@ -69,47 +69,56 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
     Optionally filter to a specific branch (e.g. "Construction").
     Returns list of tickets enriched with OpportunityName + PropertyName.
     """
-    # 1. Fetch work tickets — no $select, no $filter (both cause 400 or empty results).
-    #    All filtering is done in Python after fetch.
+    # 1. Fetch active work tickets — no $select (causes 400).
+    #    Filter by status in OData (no $select = safe), sort newest first.
     try:
-        res = await _aspire._get("WorkTickets", {"$top": "500"})
+        res = await _aspire._get("WorkTickets", {
+            "$filter": "WorkTicketStatusName ne 'Complete' and WorkTicketStatusName ne 'Canceled'",
+            "$orderby": "WorkTicketID desc",
+            "$top": "500",
+        })
         all_tickets = _aspire._extract_list(res)
-        logger.info(f"Construction report: {len(all_tickets)} total tickets fetched (no filter)")
+        logger.info(f"Construction report: {len(all_tickets)} active (non-complete) tickets fetched")
         if all_tickets:
             sample = all_tickets[0]
             logger.info(f"Sample ticket fields: {list(sample.keys())}")
             logger.info(
                 f"Sample ticket: BranchName={sample.get('BranchName')!r}, "
+                f"DivisionName={sample.get('DivisionName')!r}, "
                 f"WorkTicketStatusName={sample.get('WorkTicketStatusName')!r}, "
                 f"HoursAct={sample.get('HoursAct')!r}, HoursEst={sample.get('HoursEst')!r}"
             )
-            # Log all unique branch names so we know what the filter should be
-            branches = sorted({t.get("BranchName") or "" for t in all_tickets})
-            logger.info(f"Branch names in results: {branches}")
+            # Log all unique values for potential division/branch fields
+            for field in ("BranchName", "DivisionName", "Division", "ServiceTypeName", "WorkTypeName"):
+                vals = sorted({t.get(field) or "" for t in all_tickets if t.get(field)})
+                if vals:
+                    logger.info(f"  {field} values: {vals}")
             statuses = sorted({t.get("WorkTicketStatusName") or "" for t in all_tickets})
             logger.info(f"Status names in results: {statuses}")
     except Exception as e:
         logger.error(f"WorkTickets fetch failed: {e}")
         return []
 
-    # Post-filter in Python: has actual hours, not complete/cancelled, optionally branch
+    # Post-filter in Python: has actual hours, optionally filter by branch/division
     tickets = []
     for t in all_tickets:
         hrs_act = float(t.get("HoursAct") or 0)
         if hrs_act <= 0:
             continue
-        status = (t.get("WorkTicketStatusName") or "").lower()
-        if status in ("complete", "cancelled"):
-            continue
         if branch_name:
-            branch = (t.get("BranchName") or "").lower()
-            if branch_name.lower() not in branch:
+            # Check all likely division/branch fields
+            candidate = " ".join([
+                t.get("BranchName") or "",
+                t.get("DivisionName") or "",
+                t.get("Division") or "",
+            ]).lower()
+            if branch_name.lower() not in candidate:
                 continue
         tickets.append(t)
 
     logger.info(
         f"Construction report: {len(tickets)} tickets after Python filter "
-        f"(branch={branch_name!r}, HoursAct>0, not complete/cancelled)"
+        f"(branch={branch_name!r}, HoursAct>0)"
     )
 
     if not tickets:
