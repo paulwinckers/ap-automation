@@ -513,3 +513,29 @@ async def send_nightly_report(branch: Optional[str] = Query(None)):
     except Exception as e:
         logger.error(f"Failed to send construction report: {e}")
         return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@router.get("/nightly-report/send-test", response_class=HTMLResponse)
+async def send_nightly_report_test(branch: Optional[str] = Query(None)):
+    """Browser-friendly trigger — sends the report and shows a confirmation page."""
+    try:
+        result = await send_report_now(branch)
+        recipients_html = "".join(f"<li>{r}</li>" for r in result["recipients"])
+        return HTMLResponse(content=f"""
+        <html><body style="font-family:sans-serif;max-width:500px;margin:60px auto;text-align:center;">
+          <div style="font-size:48px;">✅</div>
+          <h2 style="color:#15803d;">Report Sent</h2>
+          <p style="color:#475569;">{result['ticket_count']} tickets · {result['branch']} division</p>
+          <ul style="text-align:left;color:#334155;line-height:1.8;">{recipients_html}</ul>
+          <a href="/construction/nightly-report" style="color:#2563eb;">View Report →</a>
+        </body></html>
+        """)
+    except Exception as e:
+        logger.error(f"Failed to send construction report: {e}")
+        return HTMLResponse(status_code=500, content=f"""
+        <html><body style="font-family:sans-serif;max-width:500px;margin:60px auto;text-align:center;">
+          <div style="font-size:48px;">❌</div>
+          <h2 style="color:#dc2626;">Send Failed</h2>
+          <pre style="text-align:left;background:#f1f5f9;padding:16px;border-radius:8px;font-size:13px;">{e}</pre>
+        </body></html>
+        """)
