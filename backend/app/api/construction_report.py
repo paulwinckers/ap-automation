@@ -194,18 +194,19 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
         body = '<p style="padding:32px;text-align:center;color:#64748b;">No active work tickets found.</p>'
         jobs_html = body
     else:
-        # Group by opportunity
+        # Group by property name so all opportunities (estimate + POs) for the
+        # same site appear in one card.
         jobs: dict = {}
         for t in tickets:
-            oid = t["opportunity_id"] or 0
-            if oid not in jobs:
-                jobs[oid] = {
-                    "name":     t["opportunity_name"],
-                    "property": t["property_name"],
-                    "number":   t["opp_number"],
-                    "tickets":  [],
+            prop_key = t["property_name"] or t["opportunity_name"] or "Unknown"
+            if prop_key not in jobs:
+                jobs[prop_key] = {
+                    "property": t["property_name"] or t["opportunity_name"],
+                    "opp_names": set(),
+                    "tickets":   [],
                 }
-            jobs[oid]["tickets"].append(t)
+            jobs[prop_key]["opp_names"].add(t["opportunity_name"] or "")
+            jobs[prop_key]["tickets"].append(t)
 
         # Sort jobs: most hours used (highest total % used) first
         def job_sort_key(j):
@@ -229,7 +230,7 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
           <tr>
             <td style="padding:16px 20px;text-align:center;border-right:1px solid #e2e8f0;">
               <div style="font-size:28px;font-weight:700;color:#0f172a;">{len(jobs)}</div>
-              <div style="font-size:12px;color:#64748b;margin-top:2px;">Active Jobs</div>
+              <div style="font-size:12px;color:#64748b;margin-top:2px;">Active Sites</div>
             </td>
             <td style="padding:16px 20px;text-align:center;border-right:1px solid #e2e8f0;">
               <div style="font-size:28px;font-weight:700;color:#0f172a;">{len(tickets)}</div>
@@ -263,6 +264,9 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
             # Sort tickets within job: most % used first
             job["tickets"].sort(key=lambda t: -t["pct_used"])
 
+            # Sorted opportunity names shown under property header
+            opp_labels = " · ".join(sorted(n for n in job["opp_names"] if n))
+
             rows = ""
             for t in job["tickets"]:
                 pct    = t["pct_used"]
@@ -271,6 +275,9 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
                 <tr style="border-top:1px solid #f1f5f9;">
                   <td style="padding:10px 12px;font-size:13px;color:#334155;font-weight:500;white-space:nowrap;">
                     #{t['ticket_number'] or t['ticket_id']}
+                  </td>
+                  <td style="padding:10px 12px;font-size:12px;color:#475569;max-width:160px;">
+                    {t.get('opportunity_name') or '—'}
                   </td>
                   <td style="padding:10px 12px;font-size:13px;color:#0f172a;font-weight:600;">
                     {t.get('service_name') or '—'}
@@ -295,8 +302,8 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
               <!-- Job header -->
               <div style="background:#1e293b;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
                 <div>
-                  <div style="color:#fff;font-size:15px;font-weight:700;">{job['name']}</div>
-                  {f'<div style="color:#94a3b8;font-size:12px;margin-top:2px;">📍 {job["property"]}</div>' if job["property"] else ''}
+                  <div style="color:#fff;font-size:16px;font-weight:700;">📍 {job['property']}</div>
+                  {f'<div style="color:#94a3b8;font-size:12px;margin-top:3px;">{opp_labels}</div>' if opp_labels else ''}
                 </div>
                 <div style="text-align:right;">
                   <div style="color:{j_col};font-size:18px;font-weight:700;">{j_act:.1f} / {j_est:.1f}h</div>
@@ -308,6 +315,7 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
                 <thead>
                   <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">
                     <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Ticket</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Opportunity</th>
                     <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Service</th>
                     <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Status</th>
                     <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Crew Leader</th>
