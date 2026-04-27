@@ -86,33 +86,14 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
         logger.error(f"WorkTickets fetch failed: {e}")
         return []
 
-    # Post-filter in Python: optionally filter by division (field name TBD from logs)
-    tickets = []
-    for t in all_tickets:
-        if branch_name:
-            # Check all likely division/branch fields — will narrow once we see the field name
-            candidate = " ".join([
-                t.get("BranchName") or "",
-                t.get("DivisionName") or "",
-                t.get("Division") or "",
-                t.get("ServiceTypeName") or "",
-                t.get("WorkTypeName") or "",
-            ]).lower()
-            if branch_name.lower() not in candidate:
-                continue
-        tickets.append(t)
-
-    logger.info(
-        f"Construction report: {len(tickets)} tickets after Python filter "
-        f"(division={branch_name!r}, HoursAct>0)"
-    )
-
-    if not tickets:
+    # No division field on WorkTickets — fetch from Opportunities below and filter there.
+    # Dedupe tickets by OpportunityID for batch lookup.
+    if not all_tickets:
         return []
 
-    # 2. Get unique OpportunityIDs and batch-fetch names + property names
-    opp_ids = list({t.get("OpportunityID") for t in tickets if t.get("OpportunityID")})
-    opp_map: dict = {}   # OpportunityID → {name, property}
+    # 2. Get unique OpportunityIDs and batch-fetch names + property names + DivisionName
+    opp_ids = list({t.get("OpportunityID") for t in all_tickets if t.get("OpportunityID")})
+    opp_map: dict = {}   # OpportunityID → {name, property, division}
     chunk_size = 15
     for i in range(0, len(opp_ids), chunk_size):
         chunk = opp_ids[i:i + chunk_size]
@@ -120,7 +101,7 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
         try:
             opp_res = await _aspire._get("Opportunities", {
                 "$filter": f"({or_filter})",
-                "$select": "OpportunityID,OpportunityName,PropertyName,OpportunityNumber",
+                "$select": "OpportunityID,OpportunityName,PropertyName,OpportunityNumber,DivisionName",
                 "$top": "200",
             })
             for o in _aspire._extract_list(opp_res):
@@ -130,9 +111,26 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
                         "name":     o.get("OpportunityName") or f"Job #{oid}",
                         "property": o.get("PropertyName") or "",
                         "number":   o.get("OpportunityNumber"),
+                        "division": o.get("DivisionName") or "",
                     }
         except Exception as e:
             logger.warning(f"Opportunity batch fetch failed: {e}")
+
+    # Log unique division names so we know exact values
+    divisions = sorted({v.get("division") for v in opp_map.values() if v.get("division")})
+    logger.info(f"Division names from Opportunities: {divisions}")
+
+    # Filter tickets to the requested division
+    tickets = all_tickets
+    if branch_name:
+        tickets = [
+            t for t in all_tickets
+            if branch_name.lower() in (opp_map.get(t.get("OpportunityID"), {}).get("division") or "").lower()
+        ]
+    logger.info(f"Construction report: {len(tickets)} tickets after division filter (division={branch_name!r})")
+
+    if not tickets:
+        return []
 
     # 2b. Fetch OpportunityServices to get service Display Name per OpportunityServiceID
     svc_ids  = list({t.get("OpportunityServiceID") for t in tickets if t.get("OpportunityServiceID")})
@@ -159,7 +157,7 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
 
     # 3. Enrich tickets
     enriched = []
-    for t in tickets:
+    for t in tickets:  # already division-filtered above
         oid    = t.get("OpportunityID")
         svc_id = t.get("OpportunityServiceID")
         info   = opp_map.get(oid, {})
