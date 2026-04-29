@@ -796,22 +796,155 @@ function StepReview({
 
 // ── Step 4: Success ───────────────────────────────────────────────────────────
 
+const CELEBRATIONS = [
+  {
+    emoji: '🤜💥',
+    heading: 'FIST PUMP!',
+    sub: 'Safety squad showing up!',
+    animation: 'fistpump',
+    bg: 'linear-gradient(135deg,#1e293b,#0f172a)',
+    accent: '#f59e0b',
+  },
+  {
+    emoji: '🦺⭐',
+    heading: 'SAFETY STAR!',
+    sub: 'The crew is protected. Legend.',
+    animation: 'spin',
+    bg: 'linear-gradient(135deg,#1e3a1e,#0f172a)',
+    accent: '#22c55e',
+  },
+  {
+    emoji: '🎉🏆',
+    heading: 'SAFETY CHAMP!',
+    sub: 'Trophy-worthy talk right there.',
+    animation: 'bounce',
+    bg: 'linear-gradient(135deg,#1e1e3a,#0f172a)',
+    accent: '#818cf8',
+  },
+  {
+    emoji: '🦅🔥',
+    heading: 'EAGLE SCOUT MODE',
+    sub: 'Keeping it sharp out there.',
+    animation: 'shake',
+    bg: 'linear-gradient(135deg,#2d1e0f,#0f172a)',
+    accent: '#f97316',
+  },
+  {
+    emoji: '🪖💪',
+    heading: 'HARD HAT HERO!',
+    sub: 'Geared up and ready to go.',
+    animation: 'fistpump',
+    bg: 'linear-gradient(135deg,#1e2a2a,#0f172a)',
+    accent: '#06b6d4',
+  },
+  {
+    emoji: '🚨🎊',
+    heading: 'SAFETY ALARM!',
+    sub: '(The good kind.) Team is locked in.',
+    animation: 'bounce',
+    bg: 'linear-gradient(135deg,#2d0f0f,#0f172a)',
+    accent: '#ef4444',
+  },
+];
+
+const celebrationCss = `
+@keyframes fistpump {
+  0%   { transform: translateY(0) rotate(0deg); }
+  20%  { transform: translateY(-30px) rotate(-10deg); }
+  40%  { transform: translateY(-50px) rotate(10deg); }
+  60%  { transform: translateY(-30px) rotate(-10deg); }
+  80%  { transform: translateY(-10px) rotate(5deg); }
+  100% { transform: translateY(0) rotate(0deg); }
+}
+@keyframes bounce {
+  0%,100% { transform: translateY(0) scale(1); }
+  30%     { transform: translateY(-40px) scale(1.2); }
+  60%     { transform: translateY(-20px) scale(1.05); }
+}
+@keyframes spin {
+  0%   { transform: rotate(0deg) scale(0.5); opacity:0; }
+  50%  { transform: rotate(360deg) scale(1.3); opacity:1; }
+  100% { transform: rotate(720deg) scale(1); opacity:1; }
+}
+@keyframes shake {
+  0%,100% { transform: translateX(0) rotate(0deg); }
+  15%     { transform: translateX(-12px) rotate(-8deg); }
+  30%     { transform: translateX(12px) rotate(8deg); }
+  45%     { transform: translateX(-8px) rotate(-5deg); }
+  60%     { transform: translateX(8px) rotate(5deg); }
+  75%     { transform: translateX(-4px) rotate(-2deg); }
+}
+@keyframes confetti {
+  0%   { transform: translateY(-20px) rotate(0deg); opacity:1; }
+  100% { transform: translateY(120px) rotate(720deg); opacity:0; }
+}
+@keyframes fadeSlideUp {
+  from { opacity:0; transform:translateY(20px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+`;
+
+function Confetti({ accent }: { accent: string }) {
+  const pieces = Array.from({ length: 18 }, (_, i) => i);
+  const colours = [accent, '#fff', '#f59e0b', '#22c55e', '#818cf8', '#f97316'];
+  return (
+    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 140, overflow: 'hidden', pointerEvents: 'none' }}>
+      {pieces.map(i => (
+        <div key={i} style={{
+          position: 'absolute',
+          left: `${(i / pieces.length) * 100}%`,
+          top: -10,
+          width: i % 3 === 0 ? 10 : 6,
+          height: i % 3 === 0 ? 10 : 14,
+          borderRadius: i % 2 === 0 ? '50%' : 2,
+          background: colours[i % colours.length],
+          animation: `confetti ${0.8 + (i % 5) * 0.2}s ease-in ${(i % 7) * 0.1}s both`,
+        }} />
+      ))}
+    </div>
+  );
+}
+
 function StepSuccess({ topic, attendeeCount, onAnother }: {
   topic: string; attendeeCount: number; onAnother: () => void;
 }) {
+  const cel = useRef(CELEBRATIONS[Math.floor(Math.random() * CELEBRATIONS.length)]).current;
   return (
-    <div style={{ textAlign: 'center', padding: '60px 28px 40px' }}>
-      <div style={{ fontSize: 64, marginBottom: 16 }}>✅</div>
-      <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 22, fontWeight: 800 }}>Talk Recorded!</h2>
-      <p style={{ color: '#94a3b8', margin: '0 0 6px', fontSize: 15 }}>{topic}</p>
-      <p style={{ color: '#64748b', margin: '0 0 40px', fontSize: 13 }}>
+    <div style={{ textAlign: 'center', padding: '52px 28px 40px', position: 'relative', background: cel.bg, minHeight: 340, borderRadius: 16 }}>
+      <style>{celebrationCss}</style>
+      <Confetti accent={cel.accent} />
+
+      <div style={{
+        fontSize: 72, marginBottom: 12,
+        display: 'inline-block',
+        animation: `${cel.animation} 0.8s ease-out both`,
+      }}>
+        {cel.emoji}
+      </div>
+
+      <h2 style={{
+        color: cel.accent, margin: '0 0 6px', fontSize: 26, fontWeight: 900,
+        letterSpacing: 1, animation: 'fadeSlideUp 0.5s 0.3s both',
+      }}>
+        {cel.heading}
+      </h2>
+
+      <p style={{ color: '#cbd5e1', margin: '0 0 4px', fontSize: 15, animation: 'fadeSlideUp 0.5s 0.45s both' }}>
+        {cel.sub}
+      </p>
+      <p style={{ color: '#94a3b8', margin: '0 0 6px', fontSize: 14, animation: 'fadeSlideUp 0.5s 0.5s both' }}>
+        {topic}
+      </p>
+      <p style={{ color: '#64748b', margin: '0 0 36px', fontSize: 13, animation: 'fadeSlideUp 0.5s 0.55s both' }}>
         👥 {attendeeCount} attendee{attendeeCount !== 1 ? 's' : ''} logged
       </p>
+
       <button
         onClick={onAnother}
         style={{
           padding: '14px 32px', borderRadius: 12, border: 'none',
-          background: GREEN, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer',
+          background: cel.accent, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer',
+          animation: 'fadeSlideUp 0.5s 0.65s both',
         }}
       >+ New Safety Talk</button>
     </div>
