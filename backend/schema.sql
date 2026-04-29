@@ -327,6 +327,48 @@ CREATE TABLE IF NOT EXISTS safety_talk_attendees (
 CREATE INDEX IF NOT EXISTS idx_safety_talks_date      ON safety_talks(talk_date);
 CREATE INDEX IF NOT EXISTS idx_safety_attendees_talk  ON safety_talk_attendees(talk_id);
 
+-- ── Site Safety Inspections ──────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS site_inspections (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    inspection_date TEXT NOT NULL,              -- YYYY-MM-DD
+    site_name       TEXT NOT NULL,              -- property / job site name
+    inspector_name  TEXT NOT NULL,
+    crew_present    TEXT,                       -- JSON array of names
+    overall_result  TEXT NOT NULL DEFAULT 'pass'
+                        CHECK(overall_result IN ('pass','conditional','fail')),
+    notes           TEXT,                       -- general observations
+    photo_r2_key    TEXT,                       -- optional site photo
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS inspection_checklist (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    inspection_id   INTEGER NOT NULL REFERENCES site_inspections(id) ON DELETE CASCADE,
+    category        TEXT NOT NULL,              -- e.g. 'PPE', 'Equipment'
+    item            TEXT NOT NULL,              -- e.g. 'Vests worn by all crew'
+    result          TEXT NOT NULL DEFAULT 'na'
+                        CHECK(result IN ('pass','fail','na')),
+    notes           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS inspection_action_items (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    inspection_id   INTEGER NOT NULL REFERENCES site_inspections(id) ON DELETE CASCADE,
+    description     TEXT NOT NULL,
+    assigned_to     TEXT,
+    due_date        TEXT,                       -- YYYY-MM-DD
+    status          TEXT NOT NULL DEFAULT 'open'
+                        CHECK(status IN ('open','resolved')),
+    resolved_notes  TEXT,
+    resolved_at     TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_inspections_date     ON site_inspections(inspection_date);
+CREATE INDEX IF NOT EXISTS idx_checklist_inspection ON inspection_checklist(inspection_id);
+CREATE INDEX IF NOT EXISTS idx_action_inspection    ON inspection_action_items(inspection_id);
+CREATE INDEX IF NOT EXISTS idx_action_status        ON inspection_action_items(status);
+
 -- ── Push notification subscriptions ───────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS push_subscriptions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

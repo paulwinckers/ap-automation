@@ -31,6 +31,7 @@ from app.api.safety_talks import router as safety_talks_router
 from app.api.construction_report import router as construction_report_router, start_scheduler as start_construction_scheduler, stop_scheduler as stop_construction_scheduler
 from app.api.documents import router as documents_router
 from app.api.push import router as push_router
+from app.api.site_inspections import router as site_inspections_router
 from app.core.config import settings
 from app.core.database import Database
 from app.services.qbo import qbo_auth_router
@@ -151,3 +152,4 @@ app.include_router(safety_talks_router)
 app.include_router(construction_report_router)
 app.include_router(documents_router)
 app.include_router(push_router)
+app.include_router(site_inspections_router)

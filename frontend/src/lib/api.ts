@@ -962,6 +962,111 @@ export async function sendPushNotification(payload: {
   return request('POST', '/push/notify', { url: '/field/documents', ...payload });
 }
 
+// ── Site Inspections ──────────────────────────────────────────────────────────
+
+export interface ChecklistItem {
+  category: string;
+  item:     string;
+  result:   'pass' | 'fail' | 'na';
+  notes?:   string;
+}
+
+export interface ActionItem {
+  id?:           number;
+  description:   string;
+  assigned_to?:  string;
+  due_date?:     string;
+  status?:       'open' | 'resolved';
+  resolved_notes?: string;
+  resolved_at?:  string;
+  created_at?:   string;
+  // joined from site_inspections
+  site_name?:        string;
+  inspection_date?:  string;
+  inspection_id?:    number;
+}
+
+export interface InspectionSummary {
+  id:              number;
+  inspection_date: string;
+  site_name:       string;
+  inspector_name:  string;
+  overall_result:  'pass' | 'conditional' | 'fail';
+  notes:           string | null;
+  crew_present:    string;
+  checklist_count: number;
+  fail_count:      number;
+  action_count:    number;
+  open_actions:    number;
+  created_at:      string;
+}
+
+export interface InspectionDetail extends Omit<InspectionSummary, 'crew_present'> {
+  crew_present:  string[];
+  checklist:     (ChecklistItem & { id: number; inspection_id: number })[];
+  action_items:  ActionItem[];
+  photo_r2_key:  string | null;
+}
+
+export interface InspectionPayload {
+  inspection_date: string;
+  site_name:       string;
+  inspector_name:  string;
+  crew_present:    string[];
+  overall_result:  'pass' | 'conditional' | 'fail';
+  notes?:          string;
+  checklist:       ChecklistItem[];
+  actions:         Omit<ActionItem, 'id' | 'status' | 'resolved_notes' | 'resolved_at' | 'created_at'>[];
+  photo?:          File;
+}
+
+export async function submitInspection(p: InspectionPayload): Promise<{ id: number }> {
+  const form = new FormData();
+  form.append('inspection_date', p.inspection_date);
+  form.append('site_name',       p.site_name);
+  form.append('inspector_name',  p.inspector_name);
+  form.append('crew_present',    JSON.stringify(p.crew_present));
+  form.append('overall_result',  p.overall_result);
+  if (p.notes) form.append('notes', p.notes);
+  form.append('checklist_json',  JSON.stringify(p.checklist));
+  form.append('actions_json',    JSON.stringify(p.actions));
+  if (p.photo) form.append('photo', p.photo, p.photo.name);
+  return request('POST', '/safety/inspections', form, true);
+}
+
+export async function listInspections(params?: {
+  start_date?: string; end_date?: string; site_name?: string; result?: string;
+}): Promise<InspectionSummary[]> {
+  const qs = new URLSearchParams();
+  if (params?.start_date) qs.set('start_date', params.start_date);
+  if (params?.end_date)   qs.set('end_date',   params.end_date);
+  if (params?.site_name)  qs.set('site_name',  params.site_name);
+  if (params?.result)     qs.set('result',      params.result);
+  const r = await request<{ inspections: InspectionSummary[] }>(
+    'GET', `/safety/inspections${qs.toString() ? '?' + qs : ''}`
+  );
+  return r.inspections;
+}
+
+export async function getInspection(id: number): Promise<InspectionDetail> {
+  return request('GET', `/safety/inspections/${id}`);
+}
+
+export async function listOpenActionItems(): Promise<ActionItem[]> {
+  const r = await request<{ action_items: ActionItem[] }>(
+    'GET', '/safety/inspections/action-items/open'
+  );
+  return r.action_items;
+}
+
+export async function resolveActionItem(id: number, notes?: string): Promise<void> {
+  await request('PATCH', `/safety/inspections/action-items/${id}/resolve`, { resolved_notes: notes });
+}
+
+export async function reopenActionItem(id: number): Promise<void> {
+  await request('PATCH', `/safety/inspections/action-items/${id}/reopen`, {});
+}
+
 // ── Key management ────────────────────────────────────────────────────────────
 
 export interface KeyEntry {

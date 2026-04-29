@@ -16,6 +16,7 @@ const FIELD_LINKS = [
   { to: '/field/safety',           icon: '🦺', label: 'Safety Talk',       sub: 'Record a toolbox talk' },
   { to: '/field/keys',             icon: '🔑', label: 'Key Box',            sub: 'Check keys in / out' },
   { to: '/field/documents',        icon: '📋', label: 'Documents',           sub: 'Policies & procedures' },
+  { to: '/field/inspection',       icon: '🔍', label: 'Site Inspection',      sub: 'Safety & compliance check' },
 ];
 
 const ACCOUNTING_URL = 'https://darios-accounting.pages.dev';

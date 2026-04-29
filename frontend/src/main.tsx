@@ -22,7 +22,9 @@ import CrewSchedule       from './pages/CrewSchedule';
 import TimeTracking       from './pages/TimeTracking';
 import PropertyLookup     from './pages/PropertyLookup';
 import KeysAdmin          from './pages/KeysAdmin';
-import SafetyTalksAdmin   from './pages/SafetyTalksAdmin';
+import SafetyTalksAdmin       from './pages/SafetyTalksAdmin';
+import FieldInspection        from './pages/FieldInspection';
+import SafetyInspectionsAdmin from './pages/SafetyInspectionsAdmin';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -51,7 +53,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/keys/scan/:id"        element={<KeyScan />} />
         <Route path="/field/keys"           element={<FieldKeys />} />
         <Route path="/field/safety"           element={<FieldSafetyTalk />} />
-        <Route path="/field/documents"        element={<FieldDocuments />} />
+        <Route path="/field/documents"          element={<FieldDocuments />} />
+        <Route path="/field/inspection"         element={<FieldInspection />} />
 
         {/* Field Ops — login required */}
         <Route path="/ops/crew-schedule" element={<RequireAuth><Office><CrewSchedule /></Office></RequireAuth>} />
@@ -59,7 +62,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/ops/time-tracking" element={<TimeTracking />} />
         <Route path="/ops/contacts"      element={<RequireAuth><Office><PropertyLookup /></Office></RequireAuth>} />
         <Route path="/keys/admin"        element={<RequireAuth><Office><KeysAdmin /></Office></RequireAuth>} />
-        <Route path="/ops/documents"     element={<RequireAuth><Office><DocumentsAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/documents"          element={<RequireAuth><Office><DocumentsAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/safety-inspections" element={<RequireAuth><Office><SafetyInspectionsAdmin /></Office></RequireAuth>} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />

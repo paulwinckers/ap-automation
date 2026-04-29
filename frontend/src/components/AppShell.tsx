@@ -20,8 +20,9 @@ const NAV = [
       { label: 'Time Tracking', path: '/ops/time-tracking', icon: '⏱️' },
       { label: 'Contacts',      path: '/ops/contacts',      icon: '📞' },
       { label: 'Key Box Admin', path: '/keys/admin',        icon: '🔑' },
-      { label: 'Safety Talks',  path: '/ops/safety-talks',  icon: '🦺' },
-      { label: 'Documents',     path: '/ops/documents',      icon: '📋' },
+      { label: 'Safety Talks',  path: '/ops/safety-talks',       icon: '🦺' },
+      { label: 'Inspections',   path: '/ops/safety-inspections', icon: '🔍' },
+      { label: 'Documents',     path: '/ops/documents',           icon: '📋' },
     ],
   },
   {
