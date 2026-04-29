@@ -3,8 +3,11 @@
  * Mobile-first, 4-step: Site Info → Checklist → Findings & Actions → Submit
  * Public, no login required. /field/inspection
  */
-import React, { useState, useRef } from 'react';
-import { submitInspection, type ChecklistItem, type ActionItem } from '../lib/api';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  submitInspection, searchAspireProperties, getAspireEmployees,
+  type ChecklistItem, type ActionItem, type AspireEmployee,
+} from '../lib/api';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const BG   = '#0f172a';
@@ -144,18 +147,131 @@ function ResultToggle({
   );
 }
 
+// ── Autocomplete component ────────────────────────────────────────────────────
+function Autocomplete<T>({
+  value, onChange, onSelect, placeholder, getSuggestions, renderSuggestion, getLabel,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSelect: (item: T) => void;
+  placeholder?: string;
+  getSuggestions: (q: string) => Promise<T[]>;
+  renderSuggestion: (item: T) => React.ReactNode;
+  getLabel: (item: T) => string;
+}) {
+  const [suggestions, setSuggestions] = useState<T[]>([]);
+  const [open, setOpen]               = useState(false);
+  const [loading, setLoading]         = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function handleChange(v: string) {
+    onChange(v);
+    if (timer.current) clearTimeout(timer.current);
+    if (v.length < 2) { setSuggestions([]); setOpen(false); return; }
+    setLoading(true);
+    timer.current = setTimeout(async () => {
+      try {
+        const results = await getSuggestions(v);
+        setSuggestions(results);
+        setOpen(results.length > 0);
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+  }
+
+  function pick(item: T) {
+    onSelect(item);
+    onChange(getLabel(item));
+    setSuggestions([]);
+    setOpen(false);
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        style={inp}
+        placeholder={placeholder}
+        value={value}
+        onChange={e => handleChange(e.target.value)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onFocus={() => suggestions.length > 0 && setOpen(true)}
+        autoComplete="off"
+      />
+      {loading && (
+        <div style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: '#475569', fontSize: 12 }}>
+          …
+        </div>
+      )}
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
+          background: '#1e293b', border: '1px solid #334155', borderRadius: 10,
+          marginTop: 4, maxHeight: 220, overflowY: 'auto',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+        }}>
+          {suggestions.map((item, i) => (
+            <div
+              key={i}
+              onMouseDown={() => pick(item)}
+              style={{
+                padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #0f172a',
+                color: '#f1f5f9', fontSize: 14,
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#334155')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              {renderSuggestion(item)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function FieldInspection() {
   const [step, setStep] = useState(1);
-  const TOTAL_STEPS = 4;
 
   // Step 1 — Site info
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const today = new Date().toISOString().split('T')[0];
   const [date, setDate]         = useState(today);
   const [site, setSite]         = useState('');
   const [inspector, setInspector] = useState('');
-  const [crewInput, setCrewInput] = useState('');
-  const [crew, setCrew]         = useState<string[]>([]);
+  const [crewSearch, setCrewSearch] = useState('');
+  const [crew, setCrew]           = useState<string[]>([]);
+
+  // Employee list for inspector + crew (loaded once on mount)
+  const [employees, setEmployees] = useState<AspireEmployee[]>([]);
+  const [empLoading, setEmpLoading] = useState(true);
+  const [showCrewPicker, setShowCrewPicker] = useState(false);
+
+  useEffect(() => {
+    getAspireEmployees()
+      .then(setEmployees)
+      .catch(() => {}) // graceful — fall back to manual entry
+      .finally(() => setEmpLoading(false));
+  }, []);
+
+  const filteredEmployees = employees.filter(e =>
+    !crew.includes(e.FullName) &&
+    (crewSearch === '' || e.FullName.toLowerCase().includes(crewSearch.toLowerCase()))
+  );
+
+  const getPropertySuggestions = useCallback(
+    (q: string) => searchAspireProperties(q),
+    []
+  );
+
+  const getInspectorSuggestions = useCallback(
+    async (q: string) => {
+      const lower = q.toLowerCase();
+      return employees.filter(e => e.FullName.toLowerCase().includes(lower)).slice(0, 8);
+    },
+    [employees]
+  );
 
   // Step 2 — Checklist
   const [checklist, setChecklist] = useState<ChecklistItem[]>(buildChecklist());
@@ -185,11 +301,11 @@ export default function FieldInspection() {
     setOverall(fails === 0 ? 'pass' : fails <= 2 ? 'conditional' : 'fail');
   }
 
-  function addCrewMember() {
-    const name = crewInput.trim();
-    if (name && !crew.includes(name)) {
-      setCrew(prev => [...prev, name]);
-      setCrewInput('');
+  function addCrewMember(name: string) {
+    const n = name.trim();
+    if (n && !crew.includes(n)) {
+      setCrew(prev => [...prev, n]);
+      setCrewSearch('');
     }
   }
 
@@ -258,7 +374,7 @@ export default function FieldInspection() {
         </p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', maxWidth: 320 }}>
           <button
-            onClick={() => { setSubmitted(false); setStep(1); setSite(''); setInspector(''); setCrew([]); setChecklist(buildChecklist()); setNotes(''); setOverall('pass'); setActions([{ description: '', assigned_to: '', due_date: '' }]); setPhoto(null); }}
+            onClick={() => { setSubmitted(false); setStep(1); setSite(''); setInspector(''); setCrew([]); setCrewSearch(''); setShowCrewPicker(false); setChecklist(buildChecklist()); setNotes(''); setOverall('pass'); setActions([{ description: '', assigned_to: '', due_date: '' }]); setPhoto(null); }}
             style={{ padding: '14px', borderRadius: 12, background: '#1e293b', border: `1px solid ${BORDER}`, color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer' }}
           >
             New Inspection
@@ -315,56 +431,161 @@ export default function FieldInspection() {
       <div style={wrap}>
         {header}
         <div style={{ padding: '20px 16px' }}>
+
+          {/* Date */}
           <div style={{ marginBottom: 16 }}>
             <label style={label}>Date</label>
             <input type="date" style={inp} value={date} onChange={e => setDate(e.target.value)} />
           </div>
+
+          {/* Site — autocomplete from Aspire properties */}
           <div style={{ marginBottom: 16 }}>
             <label style={label}>Site / Property *</label>
-            <input style={inp} placeholder="e.g. 123 Elm St — Smith Residence" value={site} onChange={e => setSite(e.target.value)} />
+            <Autocomplete<{ property_id: number; property_name: string; address: string }>
+              value={site}
+              onChange={setSite}
+              onSelect={p => setSite(p.property_name)}
+              placeholder="Search property name or address…"
+              getSuggestions={getPropertySuggestions}
+              getLabel={p => p.property_name}
+              renderSuggestion={p => (
+                <div>
+                  <div style={{ fontWeight: 600 }}>{p.property_name}</div>
+                  {p.address && <div style={{ color: '#64748b', fontSize: 12 }}>{p.address}</div>}
+                </div>
+              )}
+            />
           </div>
+
+          {/* Inspector — autocomplete from employee list */}
           <div style={{ marginBottom: 16 }}>
             <label style={label}>Inspector Name *</label>
-            <input style={inp} placeholder="Your full name" value={inspector} onChange={e => setInspector(e.target.value)} />
+            <Autocomplete<AspireEmployee>
+              value={inspector}
+              onChange={setInspector}
+              onSelect={e => setInspector(e.FullName)}
+              placeholder={empLoading ? 'Loading employees…' : 'Search your name…'}
+              getSuggestions={getInspectorSuggestions}
+              getLabel={e => e.FullName}
+              renderSuggestion={e => (
+                <div>
+                  <div style={{ fontWeight: 600 }}>{e.FullName}</div>
+                  {e.Email && <div style={{ color: '#64748b', fontSize: 12 }}>{e.Email}</div>}
+                </div>
+              )}
+            />
           </div>
+
+          {/* Crew — pick from employee list */}
           <div style={{ marginBottom: 24 }}>
             <label style={label}>Crew Present</label>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-              <input
-                style={{ ...inp, flex: 1 }}
-                placeholder="Add crew member name"
-                value={crewInput}
-                onChange={e => setCrewInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addCrewMember()}
-              />
-              <button
-                onClick={addCrewMember}
-                style={{
-                  padding: '11px 16px', borderRadius: 10, border: 'none',
-                  background: '#3b82f6', color: '#fff', fontWeight: 700,
-                  fontSize: 18, cursor: 'pointer', flexShrink: 0,
-                }}
-              >+</button>
-            </div>
+
+            {/* Selected crew tags */}
             {crew.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
                 {crew.map(name => (
                   <div key={name} style={{
-                    background: '#1e293b', border: `1px solid ${BORDER}`,
-                    borderRadius: 20, padding: '4px 12px',
+                    background: '#1e3a2f', border: '1px solid #22c55e',
+                    borderRadius: 20, padding: '5px 12px',
                     display: 'flex', alignItems: 'center', gap: 8,
-                    color: '#f1f5f9', fontSize: 13,
+                    color: '#86efac', fontSize: 13, fontWeight: 600,
                   }}>
-                    {name}
+                    👤 {name}
                     <span
                       onClick={() => setCrew(prev => prev.filter(n => n !== name))}
-                      style={{ color: '#64748b', cursor: 'pointer', fontSize: 16 }}
+                      style={{ color: '#64748b', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
                     >×</span>
                   </div>
                 ))}
               </div>
             )}
+
+            {/* Toggle employee picker */}
+            <button
+              onClick={() => setShowCrewPicker(p => !p)}
+              style={{
+                width: '100%', padding: '10px 14px', borderRadius: 10,
+                border: `1px dashed ${BORDER}`, background: 'none',
+                color: '#64748b', fontWeight: 600, fontSize: 14,
+                cursor: 'pointer', textAlign: 'left',
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}
+            >
+              <span style={{ fontSize: 18 }}>👥</span>
+              {showCrewPicker ? 'Hide employee list' : 'Add crew members…'}
+            </button>
+
+            {showCrewPicker && (
+              <div style={{
+                background: CARD, border: `1px solid ${BORDER}`,
+                borderRadius: 12, marginTop: 8, overflow: 'hidden',
+              }}>
+                {/* Search within picker */}
+                <div style={{ padding: '10px 12px', borderBottom: `1px solid ${BORDER}` }}>
+                  <input
+                    style={{ ...inp, padding: '8px 12px', fontSize: 13 }}
+                    placeholder="Filter employees…"
+                    value={crewSearch}
+                    onChange={e => setCrewSearch(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+                <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                  {empLoading && (
+                    <div style={{ padding: '16px', color: '#64748b', fontSize: 13, textAlign: 'center' }}>
+                      Loading employees…
+                    </div>
+                  )}
+                  {!empLoading && filteredEmployees.length === 0 && (
+                    <div style={{ padding: '16px', color: '#64748b', fontSize: 13, textAlign: 'center' }}>
+                      {crewSearch ? 'No match' : 'All employees already added'}
+                    </div>
+                  )}
+                  {filteredEmployees.map(e => (
+                    <div
+                      key={e.ContactID}
+                      onClick={() => addCrewMember(e.FullName)}
+                      style={{
+                        padding: '10px 14px', cursor: 'pointer',
+                        borderBottom: `1px solid #0f172a`,
+                        color: '#f1f5f9', fontSize: 14, fontWeight: 600,
+                        display: 'flex', alignItems: 'center', gap: 10,
+                      }}
+                      onMouseEnter={ev => (ev.currentTarget.style.background = '#334155')}
+                      onMouseLeave={ev => (ev.currentTarget.style.background = 'transparent')}
+                    >
+                      <span style={{ fontSize: 16 }}>👤</span>
+                      <div>
+                        <div>{e.FullName}</div>
+                        {e.Email && <div style={{ color: '#64748b', fontSize: 11, fontWeight: 400 }}>{e.Email}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {/* Manual entry fallback */}
+                <div style={{ padding: '10px 12px', borderTop: `1px solid ${BORDER}` }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      style={{ ...inp, flex: 1, padding: '8px 12px', fontSize: 13 }}
+                      placeholder="Or type a name manually…"
+                      value={crewSearch.includes(' ') ? crewSearch : ''}
+                      onChange={e => setCrewSearch(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && addCrewMember(crewSearch)}
+                    />
+                    <button
+                      onClick={() => addCrewMember(crewSearch)}
+                      style={{
+                        padding: '8px 14px', borderRadius: 8, border: 'none',
+                        background: '#3b82f6', color: '#fff', fontWeight: 700,
+                        fontSize: 14, cursor: 'pointer', flexShrink: 0,
+                      }}
+                    >Add</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
+
           <button
             onClick={() => setStep(2)}
             disabled={!canNext}
