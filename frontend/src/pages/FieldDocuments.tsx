@@ -28,12 +28,16 @@ function formatDate(dt: string) {
   return new Date(dt).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-/** Convert a base64url string to a Uint8Array (needed for applicationServerKey). */
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
+/** Convert a base64url string to a Uint8Array backed by a plain ArrayBuffer. */
+function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64  = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const raw     = atob(base64);
-  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+  const bytes   = [...raw].map(c => c.charCodeAt(0));
+  const buf     = new ArrayBuffer(bytes.length);
+  const view    = new Uint8Array(buf);
+  bytes.forEach((b, i) => { view[i] = b; });
+  return view;
 }
 
 // ── Push subscription hook ─────────────────────────────────────────────────────
