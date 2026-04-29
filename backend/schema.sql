@@ -217,6 +217,20 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_crew_date_route ON crew_assignments(work_date, route_name);
 
+-- ── Company Documents ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS company_documents (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT NOT NULL,
+    description TEXT,
+    r2_key      TEXT NOT NULL,
+    filename    TEXT NOT NULL,
+    file_size   INTEGER,
+    uploaded_by TEXT NOT NULL DEFAULT '',
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_company_docs_active ON company_documents(is_active);
+
 -- ── Vendor QBO links — permanent mapping from statement vendor name → QBO vendor ──
 -- Bypasses fuzzy name matching so the right QBO account is always used.
 CREATE TABLE IF NOT EXISTS vendor_qbo_links (

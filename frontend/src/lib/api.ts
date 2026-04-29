@@ -889,6 +889,53 @@ export async function createPurchaseOrder(p: {
   return request<POResult>('POST', '/aspire/field/purchase-order', form, true);
 }
 
+// ── Company Documents ─────────────────────────────────────────────────────────
+
+export interface CompanyDocument {
+  id:          number;
+  title:       string;
+  description: string | null;
+  filename:    string;
+  file_size:   number | null;
+  uploaded_by: string;
+  created_at:  string;
+}
+
+export async function listDocuments(): Promise<CompanyDocument[]> {
+  const r = await request<{ documents: CompanyDocument[] }>('GET', '/documents');
+  return r.documents;
+}
+
+export function getDocumentFileUrl(id: number): string {
+  return `${BASE}/documents/${id}/file`;
+}
+
+export async function uploadDocument(p: {
+  title:       string;
+  description?: string;
+  file:        File;
+}): Promise<CompanyDocument> {
+  const form = new FormData();
+  form.append('title', p.title);
+  if (p.description) form.append('description', p.description);
+  form.append('file', p.file);
+  const token = localStorage.getItem('ap_token');
+  const res = await fetch(`${BASE}/documents`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || 'Upload failed');
+  }
+  return res.json();
+}
+
+export async function deleteDocument(id: number): Promise<void> {
+  await request('DELETE', `/documents/${id}`);
+}
+
 // ── Key management ────────────────────────────────────────────────────────────
 
 export interface KeyEntry {

@@ -15,6 +15,8 @@ import FieldPurchaseOrder from './pages/FieldPurchaseOrder';
 import FieldAmendPO       from './pages/FieldAmendPO';
 import FieldKeys          from './pages/FieldKeys';
 import FieldSafetyTalk    from './pages/FieldSafetyTalk';
+import FieldDocuments     from './pages/FieldDocuments';
+import DocumentsAdmin     from './pages/DocumentsAdmin';
 import KeyScan            from './pages/KeyScan';
 import CrewSchedule       from './pages/CrewSchedule';
 import TimeTracking       from './pages/TimeTracking';
@@ -48,7 +50,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/field/amend-po"       element={<FieldAmendPO />} />
         <Route path="/keys/scan/:id"        element={<KeyScan />} />
         <Route path="/field/keys"           element={<FieldKeys />} />
-        <Route path="/field/safety"         element={<FieldSafetyTalk />} />
+        <Route path="/field/safety"           element={<FieldSafetyTalk />} />
+        <Route path="/field/documents"        element={<FieldDocuments />} />
 
         {/* Field Ops — login required */}
         <Route path="/ops/crew-schedule" element={<RequireAuth><Office><CrewSchedule /></Office></RequireAuth>} />
@@ -56,6 +59,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/ops/time-tracking" element={<TimeTracking />} />
         <Route path="/ops/contacts"      element={<RequireAuth><Office><PropertyLookup /></Office></RequireAuth>} />
         <Route path="/keys/admin"        element={<RequireAuth><Office><KeysAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/documents"     element={<RequireAuth><Office><DocumentsAdmin /></Office></RequireAuth>} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />

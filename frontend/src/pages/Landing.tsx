@@ -15,6 +15,7 @@ const FIELD_LINKS = [
   { to: '/field/opportunity',      icon: '➕', label: 'New Opportunity',   sub: 'Create a job in Aspire' },
   { to: '/field/safety',           icon: '🦺', label: 'Safety Talk',       sub: 'Record a toolbox talk' },
   { to: '/field/keys',             icon: '🔑', label: 'Key Box',            sub: 'Check keys in / out' },
+  { to: '/field/documents',        icon: '📋', label: 'Documents',           sub: 'Policies & procedures' },
 ];
 
 const ACCOUNTING_URL = 'https://darios-accounting.pages.dev';
