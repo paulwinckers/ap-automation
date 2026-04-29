@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     CONSTRUCTION_REPORT_TIMEZONE:   str = "America/Edmonton"  # IANA tz for 7 PM send time
     CONSTRUCTION_DASHBOARD_URL:     str = "https://darios-accounting.pages.dev/dashboards/construction"
 
+    # Web push (VAPID) — generate with scripts/generate_vapid_keys.py, then set in Railway
+    VAPID_PRIVATE_KEY: str = ""   # base64url raw EC private key (32 bytes)
+    VAPID_PUBLIC_KEY:  str = ""   # base64url uncompressed EC public key (65 bytes, starts 0x04)
+
     class Config:
         env_file = ".env"
 

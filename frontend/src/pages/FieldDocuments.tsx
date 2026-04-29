@@ -3,7 +3,7 @@
  * Public, no login required. /field/documents
  */
 import { useState, useEffect } from 'react';
-import { listDocuments, getDocumentFileUrl, type CompanyDocument } from '../lib/api';
+import { listDocuments, getDocumentFileUrl, getVapidPublicKey, savePushSubscription, type CompanyDocument } from '../lib/api';
 
 const BG   = '#0f172a';
 const CARD = '#1e293b';
@@ -28,10 +28,86 @@ function formatDate(dt: string) {
   return new Date(dt).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+/** Convert a base64url string to a Uint8Array (needed for applicationServerKey). */
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64  = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw     = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+// ── Push subscription hook ─────────────────────────────────────────────────────
+
+type NotifState = 'unsupported' | 'denied' | 'subscribed' | 'unsubscribed' | 'subscribing';
+
+function usePushSubscription() {
+  const [state, setState] = useState<NotifState>('unsubscribed');
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setState('unsupported');
+      return;
+    }
+    if (Notification.permission === 'denied') {
+      setState('denied');
+      return;
+    }
+    // Check if already subscribed
+    navigator.serviceWorker.ready.then(reg => {
+      reg.pushManager.getSubscription().then(sub => {
+        if (sub) setState('subscribed');
+      });
+    });
+  }, []);
+
+  async function subscribe() {
+    setState('subscribing');
+    try {
+      // Register service worker if not yet registered
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.ready;
+
+      // Get VAPID public key
+      const publicKey = await getVapidPublicKey();
+
+      // Request permission
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        setState('denied');
+        return;
+      }
+
+      // Subscribe
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly:      true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+
+      const json   = sub.toJSON();
+      const keys   = json.keys ?? {};
+      await savePushSubscription({
+        endpoint: sub.endpoint,
+        p256dh:   keys.p256dh   ?? '',
+        auth:     keys.auth     ?? '',
+      });
+
+      setState('subscribed');
+    } catch (err) {
+      console.error('Push subscribe failed:', err);
+      setState('unsubscribed');
+    }
+  }
+
+  return { state, subscribe };
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export default function FieldDocuments() {
   const [docs, setDocs] = useState<CompanyDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { state: notifState, subscribe } = usePushSubscription();
 
   useEffect(() => {
     listDocuments()
@@ -46,13 +122,42 @@ export default function FieldDocuments() {
     padding: '0 0 40px',
   };
 
+  const notifButton = () => {
+    if (notifState === 'unsupported' || notifState === 'denied') return null;
+    if (notifState === 'subscribed') {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6,
+          color: '#22c55e', fontSize: 12, fontWeight: 600 }}>
+          🔔 Notifications on
+        </div>
+      );
+    }
+    return (
+      <button
+        onClick={subscribe}
+        disabled={notifState === 'subscribing'}
+        style={{
+          background: 'none', border: '1px solid #334155',
+          color: '#94a3b8', fontSize: 12, borderRadius: 20,
+          padding: '4px 12px', cursor: 'pointer', display: 'flex',
+          alignItems: 'center', gap: 5,
+        }}
+      >
+        🔔 {notifState === 'subscribing' ? 'Enabling…' : 'Get notified'}
+      </button>
+    );
+  };
+
   return (
     <div style={wrap}>
       {/* Header */}
       <div style={{ background: '#1e293b', padding: '20px 20px 16px', marginBottom: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <a href="/" style={{ color: '#64748b', fontSize: 20, textDecoration: 'none' }}>←</a>
-          <h1 style={{ margin: 0, color: '#fff', fontSize: 20, fontWeight: 800 }}>📋 Company Documents</h1>
+          <h1 style={{ margin: 0, color: '#fff', fontSize: 20, fontWeight: 800, flex: 1 }}>
+            📋 Company Documents
+          </h1>
+          {notifButton()}
         </div>
         <p style={{ margin: 0, color: '#64748b', fontSize: 13 }}>Policies, procedures & resources</p>
       </div>

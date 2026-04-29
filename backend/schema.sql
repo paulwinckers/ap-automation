@@ -326,3 +326,14 @@ CREATE TABLE IF NOT EXISTS safety_talk_attendees (
 
 CREATE INDEX IF NOT EXISTS idx_safety_talks_date      ON safety_talks(talk_date);
 CREATE INDEX IF NOT EXISTS idx_safety_attendees_talk  ON safety_talk_attendees(talk_id);
+
+-- ── Push notification subscriptions ───────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    endpoint   TEXT NOT NULL UNIQUE,
+    p256dh     TEXT NOT NULL,   -- browser DH public key (base64url)
+    auth       TEXT NOT NULL,   -- browser auth secret (base64url)
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_push_subs_endpoint ON push_subscriptions(endpoint);

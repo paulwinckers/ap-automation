@@ -936,6 +936,32 @@ export async function deleteDocument(id: number): Promise<void> {
   await request('DELETE', `/documents/${id}`);
 }
 
+// ── Push notifications ────────────────────────────────────────────────────────
+
+/** Fetch the VAPID public key needed to create a push subscription. */
+export async function getVapidPublicKey(): Promise<string> {
+  const r = await request<{ public_key: string }>('GET', '/push/vapid-public-key');
+  return r.public_key;
+}
+
+/** Register (or refresh) a push subscription with the backend. */
+export async function savePushSubscription(sub: {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+}): Promise<void> {
+  await request('POST', '/push/subscribe', sub);
+}
+
+/** Send a push notification to all subscribed devices. */
+export async function sendPushNotification(payload: {
+  title: string;
+  body: string;
+  url?: string;
+}): Promise<{ sent: number; failed: number }> {
+  return request('POST', '/push/notify', { url: '/field/documents', ...payload });
+}
+
 // ── Key management ────────────────────────────────────────────────────────────
 
 export interface KeyEntry {

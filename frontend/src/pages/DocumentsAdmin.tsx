@@ -3,7 +3,7 @@
  * Accessible at /ops/documents (login required, office staff).
  */
 import { useState, useEffect, useRef } from 'react';
-import { listDocuments, uploadDocument, deleteDocument, getDocumentFileUrl, type CompanyDocument } from '../lib/api';
+import { listDocuments, uploadDocument, deleteDocument, getDocumentFileUrl, sendPushNotification, type CompanyDocument } from '../lib/api';
 
 function formatSize(bytes?: number | null) {
   if (!bytes) return '—';
@@ -31,6 +31,9 @@ export default function DocumentsAdmin() {
   const [uploading, setUploading] = useState(false);
   const [error, setError]       = useState<string | null>(null);
   const [success, setSuccess]   = useState<string | null>(null);
+  const [lastUploaded, setLastUploaded] = useState<string | null>(null);  // title of last upload
+  const [notifying, setNotifying]      = useState(false);
+  const [notifyResult, setNotifyResult] = useState<string | null>(null);
 
   // Upload form
   const [title, setTitle]       = useState('');
@@ -56,6 +59,8 @@ export default function DocumentsAdmin() {
     try {
       await uploadDocument({ title: title.trim(), description: description.trim() || undefined, file });
       setSuccess(`"${title}" uploaded successfully.`);
+      setLastUploaded(title.trim());
+      setNotifyResult(null);
       setTitle(''); setDesc(''); setFile(null);
       if (fileRef.current) fileRef.current.value = '';
       load();
@@ -63,6 +68,24 @@ export default function DocumentsAdmin() {
       setError(e instanceof Error ? e.message : 'Upload failed');
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function handleNotify() {
+    if (!lastUploaded) return;
+    setNotifying(true);
+    setNotifyResult(null);
+    try {
+      const r = await sendPushNotification({
+        title: '📋 New Document Available',
+        body:  `"${lastUploaded}" has been added to Company Documents.`,
+        url:   '/field/documents',
+      });
+      setNotifyResult(`✅ Sent to ${r.sent} device${r.sent !== 1 ? 's' : ''}${r.failed ? ` (${r.failed} failed)` : ''}`);
+    } catch (e: unknown) {
+      setNotifyResult(`⚠️ ${e instanceof Error ? e.message : 'Notify failed'}`);
+    } finally {
+      setNotifying(false);
     }
   }
 
@@ -126,7 +149,32 @@ export default function DocumentsAdmin() {
         </div>
 
         {error  && <div style={{ color: '#ef4444', fontSize: 13, marginBottom: 10 }}>⚠️ {error}</div>}
-        {success && <div style={{ color: '#22c55e', fontSize: 13, marginBottom: 10 }}>✅ {success}</div>}
+        {success && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ color: '#22c55e', fontSize: 13, marginBottom: 8 }}>✅ {success}</div>
+            {lastUploaded && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <button
+                  onClick={handleNotify}
+                  disabled={notifying}
+                  style={{
+                    padding: '8px 18px', borderRadius: 8, border: 'none',
+                    background: notifying ? '#334155' : '#7c3aed',
+                    color: '#fff', fontSize: 13, fontWeight: 700,
+                    cursor: notifying ? 'wait' : 'pointer',
+                  }}
+                >
+                  {notifying ? 'Sending…' : '📣 Notify Field Staff'}
+                </button>
+                {notifyResult && (
+                  <span style={{ fontSize: 13, color: notifyResult.startsWith('✅') ? '#22c55e' : '#f59e0b' }}>
+                    {notifyResult}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <button
           onClick={handleUpload}
