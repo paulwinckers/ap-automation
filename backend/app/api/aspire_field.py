@@ -1275,6 +1275,37 @@ async def get_po_uom_types():
         return {"uom_types": []}
 
 
+@router.get("/purchase-order/catalog-items")
+async def search_catalog_items(q: str = Query(default="", description="Search term for item name or code")):
+    """Search Aspire CatalogItems for the PO manual line item autocomplete."""
+    _check_credentials()
+    try:
+        params: dict = {
+            "$filter": "Active eq true",
+            "$select": "CatalogItemID,ItemName,ItemCode,ItemCost,PurchaseUnitCost,PurchaseUnitTypeName,AllocationUnitTypeName",
+            "$top": "50",
+            "$orderby": "ItemName asc",
+        }
+        if q.strip():
+            safe = q.strip().replace("'", "''")
+            params["$filter"] += f" and (contains(tolower(ItemName),'{safe.lower()}') or contains(tolower(ItemCode),'{safe.lower()}'))"
+        res = await _aspire._get("CatalogItems", params)
+        records = _aspire._extract_list(res)
+        return {"items": [
+            {
+                "id":          r.get("CatalogItemID"),
+                "name":        r.get("ItemName") or "",
+                "code":        r.get("ItemCode") or "",
+                "unit_cost":   r.get("PurchaseUnitCost") or r.get("ItemCost") or 0,
+                "uom":         r.get("PurchaseUnitTypeName") or r.get("AllocationUnitTypeName") or "",
+            }
+            for r in records if r.get("ItemName")
+        ]}
+    except Exception as e:
+        logger.warning(f"CatalogItems search failed: {e}")
+        return {"items": []}
+
+
 @router.get("/purchase-order/vendors")
 async def search_po_vendors(q: str = Query(default="")):
     """

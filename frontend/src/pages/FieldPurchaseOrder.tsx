@@ -21,6 +21,7 @@ import {
   createPurchaseOrder,
   getAspireEmployees,
   getPOUomTypes,
+  searchCatalogItems,
   type POVendor,
   type POJobResult,
   type POWorkTicket,
@@ -28,6 +29,7 @@ import {
   type POTicketItem,
   type AspireEmployee,
   type POUomType,
+  type CatalogItem,
 } from '../lib/api';
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
@@ -67,6 +69,11 @@ export default function FieldPurchaseOrder() {
   const [ticketItems, setTicketItems]     = useState<POTicketItem[]>([]);
   const [ticketItemsLoading, setTicketItemsLoading] = useState(false);
   const [uomTypes, setUomTypes]           = useState<POUomType[]>([]);
+
+  // Catalog item search (per row)
+  const [catalogResults, setCatalogResults] = useState<CatalogItem[][]>(Array(5).fill([]));
+  const [catalogLoading, setCatalogLoading] = useState<boolean[]>(Array(5).fill(false));
+  const catalogTimers = useRef<(ReturnType<typeof setTimeout> | null)[]>(Array(5).fill(null));
 
   // Notes + name
   const [notes, setNotes]         = useState('');
@@ -503,12 +510,61 @@ export default function FieldPurchaseOrder() {
           </div>
 
           <div style={label}>Description</div>
-          <input
-            style={{ ...inp, marginBottom: 10 }}
-            placeholder="e.g. 1″ PVC pipe 10ft"
-            value={it.description}
-            onChange={e => updateItem(i, 'description', e.target.value)}
-          />
+          <div style={{ position: 'relative', marginBottom: 10 }}>
+            <input
+              style={inp}
+              placeholder="Search catalogue or type description…"
+              value={it.description}
+              onChange={e => {
+                updateItem(i, 'description', e.target.value);
+                const q = e.target.value;
+                if (catalogTimers.current[i]) clearTimeout(catalogTimers.current[i]!);
+                if (q.length < 2) {
+                  setCatalogResults(r => { const n = [...r]; n[i] = []; return n; });
+                  return;
+                }
+                setCatalogLoading(l => { const n = [...l]; n[i] = true; return n; });
+                catalogTimers.current[i] = setTimeout(async () => {
+                  const results = await searchCatalogItems(q);
+                  setCatalogResults(r => { const n = [...r]; n[i] = results; return n; });
+                  setCatalogLoading(l => { const n = [...l]; n[i] = false; return n; });
+                }, 350);
+              }}
+            />
+            {catalogLoading[i] && (
+              <div style={{ position: 'absolute', right: 10, top: 10, color: '#94a3b8', fontSize: 12 }}>searching…</div>
+            )}
+            {catalogResults[i]?.length > 0 && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
+                maxHeight: 220, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+              }}>
+                {catalogResults[i].map(cat => (
+                  <div key={cat.id}
+                    onClick={() => {
+                      updateItem(i, 'description', cat.name);
+                      updateItem(i, 'unit_cost', cat.unit_cost);
+                      if (cat.uom) updateItem(i, 'uom', cat.uom);
+                      setCatalogResults(r => { const n = [...r]; n[i] = []; return n; });
+                    }}
+                    style={{
+                      padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #0f172a',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#334155')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <div style={{ color: '#f1f5f9', fontSize: 14, fontWeight: 600 }}>{cat.name}</div>
+                    <div style={{ color: '#94a3b8', fontSize: 12 }}>
+                      {cat.code && <span style={{ marginRight: 10 }}>{cat.code}</span>}
+                      {cat.uom && <span style={{ marginRight: 10 }}>{cat.uom}</span>}
+                      {cat.unit_cost > 0 && <span>${cat.unit_cost.toFixed(2)}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>

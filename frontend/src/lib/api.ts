@@ -796,6 +796,19 @@ export interface POResult {
 
 export interface POUomType { id: number; name: string; }
 
+export interface CatalogItem {
+  id:        number;
+  name:      string;
+  code:      string;
+  unit_cost: number;
+  uom:       string;
+}
+
+export async function searchCatalogItems(q: string): Promise<CatalogItem[]> {
+  const r = await request<{ items: CatalogItem[] }>('GET', `/aspire/field/purchase-order/catalog-items?q=${encodeURIComponent(q)}`);
+  return r.items;
+}
+
 export async function getPOUomTypes(): Promise<POUomType[]> {
   const r = await request<{ uom_types: POUomType[] }>('GET', '/aspire/field/purchase-order/uom-types');
   return r.uom_types;
