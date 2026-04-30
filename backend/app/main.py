@@ -32,6 +32,7 @@ from app.api.construction_report import router as construction_report_router, st
 from app.api.documents import router as documents_router
 from app.api.push import router as push_router
 from app.api.site_inspections import router as site_inspections_router
+from app.api.handoff import router as handoff_router
 from app.core.config import settings
 from app.core.database import Database
 from app.services.qbo import qbo_auth_router
@@ -153,3 +154,4 @@ app.include_router(construction_report_router)
 app.include_router(documents_router)
 app.include_router(push_router)
 app.include_router(site_inspections_router)
+app.include_router(handoff_router)

@@ -25,6 +25,7 @@ import KeysAdmin          from './pages/KeysAdmin';
 import SafetyTalksAdmin       from './pages/SafetyTalksAdmin';
 import FieldInspection        from './pages/FieldInspection';
 import SafetyInspectionsAdmin from './pages/SafetyInspectionsAdmin';
+import HandoffGenerator       from './pages/HandoffGenerator';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -64,6 +65,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/keys/admin"        element={<RequireAuth><Office><KeysAdmin /></Office></RequireAuth>} />
         <Route path="/ops/documents"          element={<RequireAuth><Office><DocumentsAdmin /></Office></RequireAuth>} />
         <Route path="/ops/safety-inspections" element={<RequireAuth><Office><SafetyInspectionsAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/handoff"            element={<RequireAuth><Office><HandoffGenerator /></Office></RequireAuth>} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />
