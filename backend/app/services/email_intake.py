@@ -38,8 +38,9 @@ logger = logging.getLogger(__name__)
 DEST_KEELAND  = "keeland@darios.ca"
 DEST_PAUL     = "paul@darios.ca"
 SUMMARY_TO    = ["paul@darios.ca", "keeland@darios.ca"]
-PROCESSED_FOLDER = "AP Processed"
-ASPIRE_FOLDER    = "Aspire"
+PROCESSED_FOLDER     = "AP Processed"
+ASPIRE_FOLDER        = "Aspire"
+REMITTANCE_FOLDER    = "Payment Remittances"
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_URL  = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
@@ -487,7 +488,25 @@ class EmailIntakeService:
         # Classify — invoice, receipt, or skip?
         email_type = await self._classify_email(email, body_content)
         if email_type == "skip":
-            logger.info(f"Not an invoice — leaving untouched in inbox: '{subject}' from {sender}")
+            # Check if this is a remittance — move to dedicated folder
+            subject_lower = subject.lower()
+            body_lower    = body_content.lower() if body_content else ""
+            is_remittance = any(k in subject_lower for k in [
+                "remittance advice", "payment remittance", "remittance notice",
+                "eft remittance", "ach remittance", "wire remittance",
+                "remittance confirmation", "payment advice",
+            ]) or "payment remittance advice" in body_lower or (
+                "remittance" in body_lower and "supplier or party to payee" in body_lower
+            )
+            if is_remittance:
+                logger.info(f"Payment remittance — moving to '{REMITTANCE_FOLDER}': '{subject}' from {sender}")
+                try:
+                    await self.graph.mark_as_read(settings.MS_AP_INBOX, message_id)
+                except Exception:
+                    pass
+                await self.graph.move_to_folder(settings.MS_AP_INBOX, message_id, REMITTANCE_FOLDER)
+            else:
+                logger.info(f"Not an invoice — leaving untouched in inbox: '{subject}' from {sender}")
             self._skipped.append({"subject": subject, "from": sender})
             return
 
