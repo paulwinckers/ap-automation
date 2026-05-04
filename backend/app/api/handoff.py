@@ -98,6 +98,21 @@ async def _fetch_services(opp_id: int) -> List[Dict[str, Any]]:
         return []
 
 
+async def _fetch_service_groups(opp_id: int) -> List[Dict[str, Any]]:
+    try:
+        res = await _aspire._get("OpportunityServiceGroups", {
+            "$filter": f"OpportunityID eq {opp_id}",
+            "$top": "100",
+        })
+        rows = _aspire._extract_list(res)
+        if rows:
+            logger.info(f"OpportunityServiceGroups sample keys: {sorted(rows[0].keys())}")
+        return rows
+    except Exception as e:
+        logger.warning(f"Could not fetch OpportunityServiceGroups: {e}")
+        return []
+
+
 async def _fetch_work_tickets(opp_id: int) -> List[Dict[str, Any]]:
     try:
         res = await _aspire._get("WorkTickets", {
@@ -127,10 +142,11 @@ async def _fetch_receipts(opp_id: int) -> List[Dict[str, Any]]:
 # ── DOCX builder ──────────────────────────────────────────────────────────────
 
 def _build_docx(
-    opp:      Dict[str, Any],
-    services: List[Dict[str, Any]],
-    tickets:  List[Dict[str, Any]],
-    receipts: List[Dict[str, Any]],
+    opp:            Dict[str, Any],
+    services:       List[Dict[str, Any]],
+    service_groups: List[Dict[str, Any]],
+    tickets:        List[Dict[str, Any]],
+    receipts:       List[Dict[str, Any]],
 ) -> bytes:
     """Build the complete handoff pack and return as bytes."""
     from docx import Document
@@ -313,28 +329,101 @@ def _build_docx(
         desc_p.runs[0].font.size = Pt(10)
         doc.add_paragraph()
 
-    if services:
-        _heading("Services", level=2)
-        svc_table = doc.add_table(rows=1 + len(services), cols=3)
-        svc_table.style = "Table Grid"
-        _section_table_header(svc_table, ["Service / Phase", "Description", "Estimated Amount"])
-        svc_table.columns[0].width = Inches(2.0)
-        svc_table.columns[1].width = Inches(3.5)
-        svc_table.columns[2].width = Inches(1.0)
+    # Build a map of GroupID → services for indented child rows
+    svc_by_group: Dict[Any, List[Dict[str, Any]]] = {}
+    ungrouped: List[Dict[str, Any]] = []
+    for svc in services:
+        gid = svc.get("OpportunityServiceGroupID")
+        if gid:
+            svc_by_group.setdefault(gid, []).append(svc)
+        else:
+            ungrouped.append(svc)
 
-        for i, svc in enumerate(services, start=1):
-            row = svc_table.rows[i]
-            bg = GREY if i % 2 == 0 else WHITE
-            for cell in row.cells:
-                _set_cell_bg(cell, bg)
-            # Confirmed Aspire field names from OpportunityServices endpoint
-            svc_name = svc.get("DisplayName") or svc.get("ServiceNameAbrOverride") or ""
-            svc_desc = svc.get("ServiceDescription") or svc.get("OperationNotes") or ""
-            svc_amt  = svc.get("ExtendedPrice") or svc.get("PerPrice")
-            row.cells[0].paragraphs[0].add_run(_str(svc_name)).font.size    = Pt(9)
-            row.cells[1].paragraphs[0].add_run(_str(svc_desc, "")).font.size = Pt(9)
-            row.cells[2].paragraphs[0].add_run(_fmt_money(svc_amt)).font.size = Pt(9)
-        doc.add_paragraph()
+    if service_groups or ungrouped:
+        # Log first group's keys for field-name discovery
+        if service_groups:
+            logger.info(f"OpportunityServiceGroups[0] keys: {sorted(service_groups[0].keys())}")
+
+        # ── Build flattened row list: group header + indented services ─────
+        # Each entry is ("group", group_dict) or ("service", svc_dict, indent)
+        table_rows: List[tuple] = []
+        for grp in service_groups:
+            gid = (
+                grp.get("OpportunityServiceGroupID")
+                or grp.get("ServiceGroupID")
+                or grp.get("ID")
+            )
+            table_rows.append(("group", grp))
+            for svc in svc_by_group.get(gid, []):
+                table_rows.append(("service", svc))
+        for svc in ungrouped:
+            table_rows.append(("service", svc))
+
+        if table_rows:
+            sow_table = doc.add_table(rows=1 + len(table_rows), cols=3)
+            sow_table.style = "Table Grid"
+            _section_table_header(sow_table, ["Phase / Service Group", "Notes", "Amount"])
+            # Column widths
+            for row in sow_table.rows:
+                row.cells[0].width = Inches(2.5)
+                row.cells[1].width = Inches(3.5)
+                row.cells[2].width = Inches(0.5)
+
+            for i, entry in enumerate(table_rows, start=1):
+                row = sow_table.rows[i]
+                if entry[0] == "group":
+                    grp = entry[1]
+                    # Navy-tinted header row for each group
+                    for cell in row.cells:
+                        _set_cell_bg(cell, LIGHT)
+                    grp_name = (
+                        grp.get("GroupName")
+                        or grp.get("DisplayName")
+                        or grp.get("Name")
+                        or grp.get("ServiceGroupName")
+                        or "—"
+                    )
+                    grp_note = (
+                        grp.get("GroupNote")
+                        or grp.get("Notes")
+                        or grp.get("ServiceGroupNote")
+                        or grp.get("Note")
+                        or grp.get("Description")
+                        or ""
+                    )
+                    grp_amt = (
+                        grp.get("ExtendedPrice")
+                        or grp.get("TotalPrice")
+                        or grp.get("Price")
+                    )
+                    name_run = row.cells[0].paragraphs[0].add_run(grp_name)
+                    name_run.bold = True
+                    name_run.font.size = Pt(9)
+                    name_run.font.color.rgb = _rgb(NAVY)
+                    note_run = row.cells[1].paragraphs[0].add_run(_str(grp_note, ""))
+                    note_run.font.size = Pt(9)
+                    note_run.italic = True
+                    amt_run = row.cells[2].paragraphs[0].add_run(_fmt_money(grp_amt))
+                    amt_run.bold = True
+                    amt_run.font.size = Pt(9)
+                else:
+                    svc = entry[1]
+                    bg = WHITE
+                    for cell in row.cells:
+                        _set_cell_bg(cell, bg)
+                    svc_name = svc.get("DisplayName") or svc.get("ServiceNameAbrOverride") or ""
+                    svc_desc = svc.get("ServiceDescription") or svc.get("OperationNotes") or ""
+                    svc_amt  = svc.get("ExtendedPrice") or svc.get("PerPrice")
+                    # Indent the service name slightly
+                    name_p = row.cells[0].paragraphs[0]
+                    name_p.paragraph_format.left_indent = Inches(0.2)
+                    name_p.add_run(f"  {_str(svc_name)}").font.size = Pt(9)
+                    row.cells[1].paragraphs[0].add_run(_str(svc_desc, "")).font.size = Pt(9)
+                    row.cells[2].paragraphs[0].add_run(_fmt_money(svc_amt)).font.size = Pt(9)
+
+            doc.add_paragraph()
+        else:
+            doc.add_paragraph("No service lines found in Aspire for this opportunity.").runs[0].font.size = Pt(10)
     else:
         doc.add_paragraph("No service lines found in Aspire for this opportunity.").runs[0].font.size = Pt(10)
 
@@ -561,18 +650,19 @@ async def generate_handoff(
     if not opp_id:
         raise HTTPException(status_code=404, detail="OpportunityID missing from Aspire response")
 
-    services, tickets, receipts = await asyncio.gather(
+    services, service_groups, tickets, receipts = await asyncio.gather(
         _fetch_services(opp_id),
+        _fetch_service_groups(opp_id),
         _fetch_work_tickets(opp_id),
         _fetch_receipts(opp_id),
     )
 
     logger.info(
-        f"Handoff #{opportunity_number}: {len(services)} services, "
-        f"{len(tickets)} tickets, {len(receipts)} receipts"
+        f"Handoff #{opportunity_number}: {len(service_groups)} groups, "
+        f"{len(services)} services, {len(tickets)} tickets, {len(receipts)} receipts"
     )
 
-    docx_bytes = _build_docx(opp, services, tickets, receipts)
+    docx_bytes = _build_docx(opp, services, service_groups, tickets, receipts)
 
     opp_name_slug = (opp.get("OpportunityName") or f"Opportunity-{opportunity_number}") \
         .replace(" ", "_").replace("/", "-")[:60]
