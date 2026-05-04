@@ -603,7 +603,7 @@ class AspireClient:
                 "$select": "ContactID,UserID,FirstName,LastName,Email,Active,ContactTypeName",
                 "$filter": "Active eq true and ContactTypeName eq 'Employee'",
                 "$top":    "500",
-                "$orderby": "LastName asc",
+                "$orderby": "FirstName asc",
             })
             contacts = self._extract_list(result)
             out = []
