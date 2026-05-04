@@ -187,8 +187,9 @@ export default function FieldPurchaseOrder() {
   }
 
   function updateItem(i: number, field: keyof POLineItem, val: string | number) {
+    const numericFields = new Set<keyof POLineItem>(['qty', 'unit_cost']);
     setItems(prev => prev.map((it, idx) =>
-      idx === i ? { ...it, [field]: field === 'description' ? val : Number(val) } : it
+      idx === i ? { ...it, [field]: numericFields.has(field) ? Number(val) : val } : it
     ));
   }
 
@@ -566,13 +567,22 @@ export default function FieldPurchaseOrder() {
             )}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
             <div>
               <div style={label}>Qty</div>
               <input
                 style={inp} type="number" min="0.01" step="0.01"
                 value={it.qty || ''}
                 onChange={e => updateItem(i, 'qty', e.target.value)}
+              />
+            </div>
+            <div>
+              <div style={label}>Unit Cost ($)</div>
+              <input
+                style={inp} type="number" min="0" step="0.01"
+                placeholder="0.00"
+                value={it.unit_cost || ''}
+                onChange={e => updateItem(i, 'unit_cost', e.target.value)}
               />
             </div>
             <div>
@@ -676,11 +686,26 @@ export default function FieldPurchaseOrder() {
         <div style={{ marginBottom: 10 }}>
           <div style={label}>Items</div>
           {validItems.map((it, i) => (
-            <div key={i} style={{ fontSize: 14, padding: '6px 0', borderBottom: '1px solid #0f172a' }}>
-              {it.description}
-              <span style={{ color: '#94a3b8', marginLeft: 8 }}>× {it.qty}{it.uom ? ` ${it.uom}` : ''}</span>
+            <div key={i} style={{ fontSize: 14, padding: '6px 0', borderBottom: '1px solid #0f172a', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+              <span style={{ flex: 1 }}>
+                {it.description}
+                <span style={{ color: '#94a3b8', marginLeft: 8 }}>× {it.qty}{it.uom ? ` ${it.uom}` : ''}</span>
+              </span>
+              {it.unit_cost > 0 && (
+                <span style={{ color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  ${(it.qty * it.unit_cost).toFixed(2)}
+                </span>
+              )}
             </div>
           ))}
+          {validItems.some(it => it.unit_cost > 0) && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 8, fontWeight: 700, fontSize: 15 }}>
+              <span style={{ color: '#94a3b8' }}>Total</span>
+              <span style={{ color: GRN }}>
+                ${validItems.reduce((s, it) => s + it.qty * (it.unit_cost || 0), 0).toFixed(2)}
+              </span>
+            </div>
+          )}
         </div>
 
         {notes && (
