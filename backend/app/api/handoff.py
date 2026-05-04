@@ -461,12 +461,11 @@ def _build_docx(
 
         # Materials table
         if items:
-            mat_table = doc.add_table(rows=1 + len(items), cols=5)
+            mat_table = doc.add_table(rows=1 + len(items), cols=4)
             mat_table.style = "Table Grid"
-            mat_table.paragraph_format = doc.add_paragraph().paragraph_format  # spacing
-            # Adjust left margin of the table by embedding in an indented paragraph workaround
-            _section_table_header(mat_table, ["Material", "Quantity", "Unit", "Supplier", "Notes"])
-            col_w = [2.8, 0.9, 0.8, 1.2, 1.8]
+            # Confirmed field names from OpportunityServiceItems API log
+            _section_table_header(mat_table, ["Material", "Qty", "Unit", "Notes"])
+            col_w = [3.5, 0.7, 1.2, 2.1]
             for row in mat_table.rows:
                 for ci, w in enumerate(col_w):
                     row.cells[ci].width = Inches(w)
@@ -477,34 +476,15 @@ def _build_docx(
                 for cell in irow.cells:
                     _set_cell_bg(cell, bg)
 
-                mat_name = (
-                    item.get("CatalogItemName")
-                    or item.get("ItemName")
-                    or item.get("Name")
-                    or item.get("Description")
-                    or "—"
-                )
-                qty  = item.get("Quantity") or item.get("Qty") or "—"
-                unit = (
-                    item.get("UnitTypeName")
-                    or item.get("Unit")
-                    or item.get("PurchaseUnitTypeName")
-                    or item.get("AllocationUnitTypeName")
-                    or "—"
-                )
-                supplier = (
-                    item.get("SupplierName")
-                    or item.get("VendorName")
-                    or item.get("Supplier")
-                    or ""
-                )
-                notes = item.get("Notes") or item.get("ItemNotes") or ""
+                mat_name = item.get("ItemName") or "—"
+                qty      = item.get("ItemQuantity") or "—"
+                unit     = item.get("AllocationUnitTypeName") or "—"
+                notes    = item.get("EstimatingNotes") or item.get("ItemDescription") or ""
 
-                irow.cells[0].paragraphs[0].add_run(_str(mat_name)).font.size = Pt(9)
-                irow.cells[1].paragraphs[0].add_run(str(qty)).font.size       = Pt(9)
-                irow.cells[2].paragraphs[0].add_run(_str(unit)).font.size     = Pt(9)
-                irow.cells[3].paragraphs[0].add_run(_str(supplier, "")).font.size = Pt(9)
-                irow.cells[4].paragraphs[0].add_run(_str(notes, "")).font.size    = Pt(9)
+                irow.cells[0].paragraphs[0].add_run(_str(mat_name)).font.size  = Pt(9)
+                irow.cells[1].paragraphs[0].add_run(str(qty)).font.size         = Pt(9)
+                irow.cells[2].paragraphs[0].add_run(_str(unit)).font.size       = Pt(9)
+                irow.cells[3].paragraphs[0].add_run(_str(notes, "")).font.size  = Pt(9)
 
         doc.add_paragraph()  # spacer after each service block
 
