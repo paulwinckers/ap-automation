@@ -15,7 +15,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import {
-  uploadInvoice, listEmployees,
+  uploadInvoice, listEmployees, getAspireEmployees,
   quickExtract, suggestGL,
   type QuickExtractResult,
 } from '../lib/api';
@@ -34,7 +34,8 @@ export default function FieldSubmit() {
   const [docType, setDocType]     = useState<DocType>(null);
   const [isReturn, setIsReturn]   = useState(false);
   const [employee, setEmployee]   = useState(() => localStorage.getItem('field_employee') || '');
-  const [employees, setEmployees] = useState<string[]>(FALLBACK_EMPLOYEES);
+  const [employees, setEmployees]           = useState<string[]>(FALLBACK_EMPLOYEES);
+  const [aspireEmployees, setAspireEmployees] = useState<string[]>([]);
   const [file, setFile]           = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [costType, setCostType]   = useState<CostType>('job');
@@ -48,7 +49,15 @@ export default function FieldSubmit() {
   const needsDescription = costType === 'overhead' || docType === 'mastercard';
 
   useEffect(() => {
+    // Vendor-rules employees — used for personal expense reimbursements
     listEmployees().then(names => { if (names.length > 0) setEmployees(names); }).catch(() => {});
+    // Aspire contacts (type = employee) — used for Mastercard cardholder lookup
+    getAspireEmployees()
+      .then(list => {
+        const names = list.map(e => e.FullName).filter(Boolean).sort();
+        if (names.length > 0) setAspireEmployees(names);
+      })
+      .catch(() => {});
   }, []);
 
   const canProceed = () => {
@@ -243,7 +252,10 @@ export default function FieldSubmit() {
               ) : (
                 <select style={S.sel} value={employee} onChange={e=>{ setEmployee(e.target.value); if (e.target.value) localStorage.setItem('field_employee', e.target.value); }}>
                   <option value="">Select your name...</option>
-                  {employees.map(e=><option key={e}>{e}</option>)}
+                  {(docType === 'mastercard'
+                    ? (aspireEmployees.length > 0 ? aspireEmployees : employees)
+                    : employees
+                  ).map(e=><option key={e}>{e}</option>)}
                 </select>
               )}
             </div>
