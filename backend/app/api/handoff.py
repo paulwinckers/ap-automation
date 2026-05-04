@@ -151,6 +151,33 @@ def _fmt_money(v: Any) -> str:
         return str(v)
 
 
+async def _fetch_catalog_vendors(catalog_ids: List[int]) -> Dict[int, str]:
+    """
+    Given a list of CatalogItemIDs, return a map of CatalogItemID → VendorName.
+    Fetches in one OData call; falls back to empty map on error.
+    """
+    if not catalog_ids:
+        return {}
+    unique_ids = list(set(catalog_ids))[:50]  # cap to avoid URL length issues
+    id_list = ",".join(str(i) for i in unique_ids)
+    try:
+        res = await _aspire._get("CatalogItems", {
+            "$filter": f"CatalogItemID in ({id_list})",
+            "$top": "100",
+        })
+        rows = _aspire._extract_list(res)
+        if rows:
+            logger.info(f"CatalogItems sample keys: {sorted(rows[0].keys())[:25]}")
+        return {
+            r.get("CatalogItemID"): (r.get("VendorName") or r.get("SupplierName") or "")
+            for r in rows
+            if r.get("CatalogItemID")
+        }
+    except Exception as e:
+        logger.warning(f"CatalogItems vendor fetch failed: {e}")
+        return {}
+
+
 async def _fetch_opportunity(opp_number: int) -> Dict[str, Any]:
     """Fetch opportunity by display number (OpportunityNumber)."""
     res = await _aspire._get("Opportunities", {
@@ -271,13 +298,14 @@ async def _fetch_receipts(opp_id: int) -> List[Dict[str, Any]]:
 # ── DOCX builder ──────────────────────────────────────────────────────────────
 
 def _build_docx(
-    opp:            Dict[str, Any],
-    services:       List[Dict[str, Any]],
-    service_groups: List[Dict[str, Any]],
-    service_items:  List[Dict[str, Any]],
-    scope_summary:  Dict[str, str],
-    tickets:        List[Dict[str, Any]],
-    receipts:       List[Dict[str, Any]],
+    opp:             Dict[str, Any],
+    services:        List[Dict[str, Any]],
+    service_groups:  List[Dict[str, Any]],
+    service_items:   List[Dict[str, Any]],
+    catalog_vendors: Dict[int, str],
+    scope_summary:   Dict[str, str],
+    tickets:         List[Dict[str, Any]],
+    receipts:        List[Dict[str, Any]],
 ) -> bytes:
     """Build the complete handoff pack and return as bytes."""
     from docx import Document
@@ -561,11 +589,10 @@ def _build_docx(
 
         # Materials table
         if items:
-            mat_table = doc.add_table(rows=1 + len(items), cols=4)
+            mat_table = doc.add_table(rows=1 + len(items), cols=5)
             mat_table.style = "Table Grid"
-            # Confirmed field names from OpportunityServiceItems API log
-            _section_table_header(mat_table, ["Material", "Qty", "Unit", "Notes"])
-            col_w = [3.5, 0.7, 1.2, 2.1]
+            _section_table_header(mat_table, ["Material", "Qty", "Unit", "Vendor", "Notes"])
+            col_w = [2.8, 0.65, 1.0, 1.5, 1.55]
             for row in mat_table.rows:
                 for ci, w in enumerate(col_w):
                     row.cells[ci].width = Inches(w)
@@ -579,12 +606,14 @@ def _build_docx(
                 mat_name = item.get("ItemName") or "—"
                 qty      = item.get("ItemQuantity") or "—"
                 unit     = item.get("AllocationUnitTypeName") or "—"
+                vendor   = catalog_vendors.get(item.get("CatalogItemID"), "")
                 notes    = _strip_html(item.get("EstimatingNotes") or item.get("ItemDescription"))
 
-                irow.cells[0].paragraphs[0].add_run(_str(mat_name)).font.size  = Pt(9)
-                irow.cells[1].paragraphs[0].add_run(str(qty)).font.size         = Pt(9)
-                irow.cells[2].paragraphs[0].add_run(_str(unit)).font.size       = Pt(9)
-                irow.cells[3].paragraphs[0].add_run(_str(notes, "")).font.size  = Pt(9)
+                irow.cells[0].paragraphs[0].add_run(_str(mat_name)).font.size   = Pt(9)
+                irow.cells[1].paragraphs[0].add_run(str(qty)).font.size          = Pt(9)
+                irow.cells[2].paragraphs[0].add_run(_str(unit)).font.size        = Pt(9)
+                irow.cells[3].paragraphs[0].add_run(_str(vendor, "")).font.size  = Pt(9)
+                irow.cells[4].paragraphs[0].add_run(_str(notes, "")).font.size   = Pt(9)
 
         doc.add_paragraph()  # spacer after each service block
 
@@ -876,6 +905,10 @@ async def generate_handoff(
     service_ids = [s["OpportunityServiceID"] for s in services if s.get("OpportunityServiceID")]
     service_items = await _fetch_service_items(opp_id, service_ids)
 
+    # Vendor lookup: CatalogItemID → VendorName
+    catalog_ids = [i["CatalogItemID"] for i in service_items if i.get("CatalogItemID")]
+    catalog_vendors = await _fetch_catalog_vendors(catalog_ids)
+
     logger.info(
         f"Handoff #{opportunity_number}: {len(service_groups)} groups, "
         f"{len(services)} services, {len(service_items)} items, "
@@ -893,7 +926,7 @@ async def generate_handoff(
         total_hours   = total_hours,
     )
 
-    docx_bytes = _build_docx(opp, services, service_groups, service_items, scope_summary, tickets, receipts)
+    docx_bytes = _build_docx(opp, services, service_groups, service_items, catalog_vendors, scope_summary, tickets, receipts)
 
     opp_name_slug = (opp.get("OpportunityName") or f"Opportunity-{opportunity_number}") \
         .replace(" ", "_").replace("/", "-")[:60]
