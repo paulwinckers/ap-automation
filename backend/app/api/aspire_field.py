@@ -1279,79 +1279,58 @@ async def get_po_uom_types():
 _catalog_cache: tuple[float, list] = (0.0, [])
 
 def _parse_catalog_records(records: list) -> list:
-    """Normalise raw Aspire CatalogItems records into our standard shape."""
+    """Normalise raw Aspire CatalogItems records into our standard shape.
+    Field names confirmed via /catalog-probe: PurchaseUnitCost, PurchaseUnitTypeName,
+    AllocationUnitTypeName, Active, ItemDescription all exist on this tenant.
+    """
     items = []
     for r in records:
+        # Skip inactive items (filter in Python — $filter causes 400 on this endpoint)
+        if r.get("Active") is False:
+            continue
         name = (r.get("ItemName") or "").strip()
         if not name:
             continue
-        cost = (
-            r.get("PurchaseUnitCost")
-            or r.get("ItemCost")
-            or r.get("UnitCost")
-            or r.get("Cost")
-            or 0
-        )
-        uom = (
-            r.get("PurchaseUnitTypeName")
-            or r.get("AllocationUnitTypeName")
-            or r.get("UnitTypeName")
-            or r.get("UOMName")
-            or r.get("UnitOfMeasure")
-            or ""
-        )
+        # Prefer purchase cost; fall back to allocation/standard cost
+        cost = r.get("PurchaseUnitCost") or r.get("ItemCost") or 0
+        # Prefer purchase UOM; fall back to allocation UOM
+        uom  = (r.get("PurchaseUnitTypeName") or r.get("AllocationUnitTypeName") or "").strip()
         items.append({
             "id":        r.get("CatalogItemID"),
             "name":      name,
             "code":      r.get("ItemCode") or "",
             "unit_cost": float(cost) if cost else 0,
-            "uom":       str(uom).strip(),
+            "uom":       uom,
         })
     items.sort(key=lambda x: x["name"].lower())
     return items
 
 
 async def _get_all_catalog_items() -> list:
-    """Fetch and cache all CatalogItems, trying multiple Aspire pagination styles."""
+    """Fetch and cache all CatalogItems.
+    Probe confirmed: bare GET (no params) returns up to 1000; $pageNumber/$limit
+    paginates through the full catalogue.  $top, $filter, $select, $orderby all 400.
+    """
     import time
     global _catalog_cache
     ts, cached = _catalog_cache
     if cached and (time.time() - ts) < 600:   # 10-minute TTL
         return cached
 
-    records: list = []
-    last_err: Exception | None = None
-
-    # Strategy 1: $pageNumber/$limit — Aspire's preferred pagination for large entities
-    for endpoint in ["CatalogItems", "Catalog"]:
-        try:
-            records = await _aspire._get_all(endpoint, {"$top": "500"})
-            if records:
-                logger.info(f"CatalogItems loaded via _get_all({endpoint}): {len(records)} records")
-                break
-        except Exception as e:
-            last_err = e
-            logger.warning(f"_get_all({endpoint}) failed: {e}")
-
-    # Strategy 2: completely bare GET — no query params at all
-    if not records:
-        for endpoint in ["CatalogItems", "Catalog", "Items"]:
-            try:
-                res = await _aspire._get(endpoint)
-                records = _aspire._extract_list(res)
-                if records:
-                    logger.info(f"CatalogItems loaded via bare GET({endpoint}): {len(records)} records")
-                    break
-            except Exception as e:
-                last_err = e
-                logger.warning(f"bare GET({endpoint}) failed: {e}")
-
-    if not records:
-        raise Exception(f"All CatalogItems fetch strategies failed. Last error: {last_err}")
+    # Primary: $pageNumber/$limit gets every record past Aspire's bare-GET cap
+    try:
+        records = await _aspire._get_all("CatalogItems", {"$top": "500"})
+        logger.info(f"CatalogItems: {len(records)} records via $pageNumber/$limit")
+    except Exception as e:
+        logger.warning(f"CatalogItems $pageNumber fetch failed ({e}), falling back to bare GET")
+        # Fallback: bare GET — no query params, returns up to ~1000
+        res = await _aspire._get("CatalogItems")
+        records = _aspire._extract_list(res)
+        logger.info(f"CatalogItems: {len(records)} records via bare GET")
 
     items = _parse_catalog_records(records)
     _catalog_cache = (time.time(), items)
-    logger.info(f"CatalogItems cache refreshed: {len(items)} usable items")
+    logger.info(f"CatalogItems cache ready: {len(items)} active items")
     return items
 
 
