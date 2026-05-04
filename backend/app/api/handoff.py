@@ -113,6 +113,22 @@ async def _fetch_service_groups(opp_id: int) -> List[Dict[str, Any]]:
         return []
 
 
+async def _fetch_service_items(opp_id: int) -> List[Dict[str, Any]]:
+    """Fetch catalog/material items attached to all services for this opportunity."""
+    try:
+        res = await _aspire._get("OpportunityServiceItems", {
+            "$filter": f"OpportunityID eq {opp_id}",
+            "$top": "500",
+        })
+        rows = _aspire._extract_list(res)
+        if rows:
+            logger.info(f"OpportunityServiceItems sample keys: {sorted(rows[0].keys())}")
+        return rows
+    except Exception as e:
+        logger.warning(f"Could not fetch OpportunityServiceItems: {e}")
+        return []
+
+
 async def _fetch_work_tickets(opp_id: int) -> List[Dict[str, Any]]:
     try:
         res = await _aspire._get("WorkTickets", {
@@ -145,6 +161,7 @@ def _build_docx(
     opp:            Dict[str, Any],
     services:       List[Dict[str, Any]],
     service_groups: List[Dict[str, Any]],
+    service_items:  List[Dict[str, Any]],
     tickets:        List[Dict[str, Any]],
     receipts:       List[Dict[str, Any]],
 ) -> bytes:
@@ -329,101 +346,197 @@ def _build_docx(
         desc_p.runs[0].font.size = Pt(10)
         doc.add_paragraph()
 
-    # Build a map of GroupID → services for indented child rows
+    # ── Index lookups ─────────────────────────────────────────────────────────
+    # Services grouped by their group ID
     svc_by_group: Dict[Any, List[Dict[str, Any]]] = {}
-    ungrouped: List[Dict[str, Any]] = []
+    ungrouped_svcs: List[Dict[str, Any]] = []
     for svc in services:
         gid = svc.get("OpportunityServiceGroupID")
         if gid:
             svc_by_group.setdefault(gid, []).append(svc)
         else:
-            ungrouped.append(svc)
+            ungrouped_svcs.append(svc)
 
-    if service_groups or ungrouped:
-        # Log first group's keys for field-name discovery
-        if service_groups:
-            logger.info(f"OpportunityServiceGroups[0] keys: {sorted(service_groups[0].keys())}")
+    # Service items (materials) keyed by OpportunityServiceID
+    items_by_svc: Dict[Any, List[Dict[str, Any]]] = {}
+    for item in service_items:
+        sid = (
+            item.get("OpportunityServiceID")
+            or item.get("ServiceID")
+        )
+        if sid:
+            items_by_svc.setdefault(sid, []).append(item)
 
-        # ── Build flattened row list: group header + indented services ─────
-        # Each entry is ("group", group_dict) or ("service", svc_dict, indent)
-        table_rows: List[tuple] = []
+    def _service_group_id(grp: Dict[str, Any]) -> Any:
+        return (
+            grp.get("OpportunityServiceGroupID")
+            or grp.get("ServiceGroupID")
+            or grp.get("ID")
+        )
+
+    def _group_name(grp: Dict[str, Any]) -> str:
+        return (
+            grp.get("GroupName")
+            or grp.get("DisplayName")
+            or grp.get("Name")
+            or grp.get("ServiceGroupName")
+            or "—"
+        )
+
+    def _group_note(grp: Dict[str, Any]) -> str:
+        return (
+            grp.get("GroupNote")
+            or grp.get("Notes")
+            or grp.get("ServiceGroupNote")
+            or grp.get("Note")
+            or grp.get("Description")
+            or ""
+        )
+
+    def _render_service_block(svc: Dict[str, Any], idx: int):
+        """Render one service as a rich block: name, hours, description, materials table."""
+        svc_name  = _str(svc.get("DisplayName") or svc.get("ServiceNameAbrOverride"), "—")
+        svc_desc  = svc.get("ServiceDescription") or ""
+        op_notes  = svc.get("OperationNotes") or ""
+        hours     = svc.get("ExtendedHours") or svc.get("PerHours")
+        svc_amt   = svc.get("ExtendedPrice") or svc.get("PerPrice")
+        svc_id    = svc.get("OpportunityServiceID")
+        items     = items_by_svc.get(svc_id, [])
+
+        # Service name bullet
+        name_p = doc.add_paragraph(style="List Bullet")
+        name_p.paragraph_format.space_before = Pt(6)
+        nr = name_p.add_run(svc_name)
+        nr.bold = True
+        nr.font.size = Pt(10)
+        nr.font.color.rgb = _rgb(NAVY)
+
+        if svc_desc:
+            dp = doc.add_paragraph()
+            dp.paragraph_format.left_indent = Inches(0.3)
+            dp.add_run("Description: ").font.size = Pt(9)
+            dr = dp.runs[0]
+            dp.add_run(svc_desc).font.size = Pt(9)
+
+        if op_notes:
+            kp = doc.add_paragraph()
+            kp.paragraph_format.left_indent = Inches(0.3)
+            klabel = kp.add_run("Key tasks: ")
+            klabel.bold = True
+            klabel.font.size = Pt(9)
+            kr = kp.add_run(op_notes)
+            kr.bold = True
+            kr.font.size = Pt(9)
+
+        # Hours + amount on one line
+        meta_parts = []
+        if hours:
+            try:
+                meta_parts.append(f"{float(hours):,.1f} Hours")
+            except Exception:
+                meta_parts.append(str(hours))
+        if svc_amt:
+            meta_parts.append(_fmt_money(svc_amt))
+        if meta_parts:
+            mp = doc.add_paragraph()
+            mp.paragraph_format.left_indent = Inches(0.3)
+            ml = mp.add_run("Estimated hours: ")
+            ml.font.size = Pt(9)
+            mv = mp.add_run("  ·  ".join(meta_parts))
+            mv.bold = True
+            mv.font.size = Pt(9)
+
+        # Materials table
+        if items:
+            mat_table = doc.add_table(rows=1 + len(items), cols=5)
+            mat_table.style = "Table Grid"
+            mat_table.paragraph_format = doc.add_paragraph().paragraph_format  # spacing
+            # Adjust left margin of the table by embedding in an indented paragraph workaround
+            _section_table_header(mat_table, ["Material", "Quantity", "Unit", "Supplier", "Notes"])
+            col_w = [2.8, 0.9, 0.8, 1.2, 1.8]
+            for row in mat_table.rows:
+                for ci, w in enumerate(col_w):
+                    row.cells[ci].width = Inches(w)
+
+            for j, item in enumerate(items, start=1):
+                irow = mat_table.rows[j]
+                bg = GREY if j % 2 == 0 else WHITE
+                for cell in irow.cells:
+                    _set_cell_bg(cell, bg)
+
+                mat_name = (
+                    item.get("CatalogItemName")
+                    or item.get("ItemName")
+                    or item.get("Name")
+                    or item.get("Description")
+                    or "—"
+                )
+                qty  = item.get("Quantity") or item.get("Qty") or "—"
+                unit = (
+                    item.get("UnitTypeName")
+                    or item.get("Unit")
+                    or item.get("PurchaseUnitTypeName")
+                    or item.get("AllocationUnitTypeName")
+                    or "—"
+                )
+                supplier = (
+                    item.get("SupplierName")
+                    or item.get("VendorName")
+                    or item.get("Supplier")
+                    or ""
+                )
+                notes = item.get("Notes") or item.get("ItemNotes") or ""
+
+                irow.cells[0].paragraphs[0].add_run(_str(mat_name)).font.size = Pt(9)
+                irow.cells[1].paragraphs[0].add_run(str(qty)).font.size       = Pt(9)
+                irow.cells[2].paragraphs[0].add_run(_str(unit)).font.size     = Pt(9)
+                irow.cells[3].paragraphs[0].add_run(_str(supplier, "")).font.size = Pt(9)
+                irow.cells[4].paragraphs[0].add_run(_str(notes, "")).font.size    = Pt(9)
+
+        doc.add_paragraph()  # spacer after each service block
+
+    if service_groups or ungrouped_svcs:
+        svc_counter = [0]
+
         for grp in service_groups:
-            gid = (
-                grp.get("OpportunityServiceGroupID")
-                or grp.get("ServiceGroupID")
-                or grp.get("ID")
-            )
-            table_rows.append(("group", grp))
-            for svc in svc_by_group.get(gid, []):
-                table_rows.append(("service", svc))
-        for svc in ungrouped:
-            table_rows.append(("service", svc))
+            gid      = _service_group_id(grp)
+            grp_svcs = svc_by_group.get(gid, [])
 
-        if table_rows:
-            sow_table = doc.add_table(rows=1 + len(table_rows), cols=3)
-            sow_table.style = "Table Grid"
-            _section_table_header(sow_table, ["Phase / Service Group", "Notes", "Amount"])
-            # Column widths
-            for row in sow_table.rows:
-                row.cells[0].width = Inches(2.5)
-                row.cells[1].width = Inches(3.5)
-                row.cells[2].width = Inches(0.5)
+            # Group header (navy rule)
+            gh = doc.add_paragraph()
+            gh.paragraph_format.space_before = Pt(12)
+            gh.paragraph_format.space_after  = Pt(2)
+            gr = gh.add_run(_group_name(grp))
+            gr.bold = True
+            gr.font.size = Pt(11)
+            gr.font.color.rgb = _rgb(NAVY)
+            # Underline rule
+            pPr = gh._p.get_or_add_pPr()
+            pBdr = OxmlElement("w:pBdr")
+            bottom = OxmlElement("w:bottom")
+            bottom.set(qn("w:val"),   "single")
+            bottom.set(qn("w:sz"),    "4")
+            bottom.set(qn("w:space"), "1")
+            bottom.set(qn("w:color"), NAVY)
+            pBdr.append(bottom)
+            pPr.append(pBdr)
 
-            for i, entry in enumerate(table_rows, start=1):
-                row = sow_table.rows[i]
-                if entry[0] == "group":
-                    grp = entry[1]
-                    # Navy-tinted header row for each group
-                    for cell in row.cells:
-                        _set_cell_bg(cell, LIGHT)
-                    grp_name = (
-                        grp.get("GroupName")
-                        or grp.get("DisplayName")
-                        or grp.get("Name")
-                        or grp.get("ServiceGroupName")
-                        or "—"
-                    )
-                    grp_note = (
-                        grp.get("GroupNote")
-                        or grp.get("Notes")
-                        or grp.get("ServiceGroupNote")
-                        or grp.get("Note")
-                        or grp.get("Description")
-                        or ""
-                    )
-                    grp_amt = (
-                        grp.get("ExtendedPrice")
-                        or grp.get("TotalPrice")
-                        or grp.get("Price")
-                    )
-                    name_run = row.cells[0].paragraphs[0].add_run(grp_name)
-                    name_run.bold = True
-                    name_run.font.size = Pt(9)
-                    name_run.font.color.rgb = _rgb(NAVY)
-                    note_run = row.cells[1].paragraphs[0].add_run(_str(grp_note, ""))
-                    note_run.font.size = Pt(9)
-                    note_run.italic = True
-                    amt_run = row.cells[2].paragraphs[0].add_run(_fmt_money(grp_amt))
-                    amt_run.bold = True
-                    amt_run.font.size = Pt(9)
-                else:
-                    svc = entry[1]
-                    bg = WHITE
-                    for cell in row.cells:
-                        _set_cell_bg(cell, bg)
-                    svc_name = svc.get("DisplayName") or svc.get("ServiceNameAbrOverride") or ""
-                    svc_desc = svc.get("ServiceDescription") or svc.get("OperationNotes") or ""
-                    svc_amt  = svc.get("ExtendedPrice") or svc.get("PerPrice")
-                    # Indent the service name slightly
-                    name_p = row.cells[0].paragraphs[0]
-                    name_p.paragraph_format.left_indent = Inches(0.2)
-                    name_p.add_run(f"  {_str(svc_name)}").font.size = Pt(9)
-                    row.cells[1].paragraphs[0].add_run(_str(svc_desc, "")).font.size = Pt(9)
-                    row.cells[2].paragraphs[0].add_run(_fmt_money(svc_amt)).font.size = Pt(9)
+            # Group note
+            gnote = _group_note(grp)
+            if gnote:
+                gn = doc.add_paragraph(gnote)
+                gn.runs[0].font.size = Pt(9)
+                gn.runs[0].italic = True
 
-            doc.add_paragraph()
-        else:
-            doc.add_paragraph("No service lines found in Aspire for this opportunity.").runs[0].font.size = Pt(10)
+            for svc in grp_svcs:
+                svc_counter[0] += 1
+                _render_service_block(svc, svc_counter[0])
+
+        # Ungrouped services
+        for svc in ungrouped_svcs:
+            svc_counter[0] += 1
+            _render_service_block(svc, svc_counter[0])
+
     else:
         doc.add_paragraph("No service lines found in Aspire for this opportunity.").runs[0].font.size = Pt(10)
 
@@ -650,19 +763,21 @@ async def generate_handoff(
     if not opp_id:
         raise HTTPException(status_code=404, detail="OpportunityID missing from Aspire response")
 
-    services, service_groups, tickets, receipts = await asyncio.gather(
+    services, service_groups, service_items, tickets, receipts = await asyncio.gather(
         _fetch_services(opp_id),
         _fetch_service_groups(opp_id),
+        _fetch_service_items(opp_id),
         _fetch_work_tickets(opp_id),
         _fetch_receipts(opp_id),
     )
 
     logger.info(
         f"Handoff #{opportunity_number}: {len(service_groups)} groups, "
-        f"{len(services)} services, {len(tickets)} tickets, {len(receipts)} receipts"
+        f"{len(services)} services, {len(service_items)} items, "
+        f"{len(tickets)} tickets, {len(receipts)} receipts"
     )
 
-    docx_bytes = _build_docx(opp, services, service_groups, tickets, receipts)
+    docx_bytes = _build_docx(opp, services, service_groups, service_items, tickets, receipts)
 
     opp_name_slug = (opp.get("OpportunityName") or f"Opportunity-{opportunity_number}") \
         .replace(" ", "_").replace("/", "-")[:60]
