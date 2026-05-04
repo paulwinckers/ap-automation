@@ -1275,57 +1275,70 @@ async def get_po_uom_types():
         return {"uom_types": []}
 
 
+# Module-level cache: (timestamp, list-of-items). Refreshed every 10 minutes.
+_catalog_cache: tuple[float, list] = (0.0, [])
+
+async def _get_all_catalog_items() -> list:
+    """Fetch and cache all CatalogItems from Aspire (no OData filter/orderby —
+    those operators 400 on this endpoint). Python-side filtering is used instead."""
+    import time
+    global _catalog_cache
+    ts, cached = _catalog_cache
+    if cached and (time.time() - ts) < 600:   # 10-minute TTL
+        return cached
+
+    # Minimal params — avoid $filter, $orderby, $select (all 400 on CatalogItems)
+    res = await _aspire._get("CatalogItems", {"$top": "2000"})
+    records = _aspire._extract_list(res)
+
+    items = []
+    for r in records:
+        name = (r.get("ItemName") or "").strip()
+        if not name:
+            continue
+        cost = (
+            r.get("PurchaseUnitCost")
+            or r.get("ItemCost")
+            or r.get("UnitCost")
+            or r.get("Cost")
+            or 0
+        )
+        uom = (
+            r.get("PurchaseUnitTypeName")
+            or r.get("AllocationUnitTypeName")
+            or r.get("UnitTypeName")
+            or r.get("UOMName")
+            or r.get("UnitOfMeasure")
+            or ""
+        )
+        items.append({
+            "id":        r.get("CatalogItemID"),
+            "name":      name,
+            "code":      r.get("ItemCode") or "",
+            "unit_cost": float(cost) if cost else 0,
+            "uom":       str(uom).strip(),
+        })
+
+    items.sort(key=lambda x: x["name"].lower())
+    _catalog_cache = (time.time(), items)
+    logger.info(f"CatalogItems cache refreshed: {len(items)} items")
+    return items
+
+
 @router.get("/purchase-order/catalog-items")
 async def search_catalog_items(q: str = Query(default="", description="Search term for item name or code")):
     """Search Aspire CatalogItems for the PO manual line item autocomplete."""
     _check_credentials()
     try:
-        # No $select — field names vary by Aspire tenant and any invalid name
-        # in $select causes a 400.  We get all fields and map defensively.
-        params: dict = {
-            "$top": "50",
-            "$orderby": "ItemName asc",
-        }
-        if q.strip():
-            safe = q.strip().replace("'", "''")
-            # Text search only — avoid Active filter which can also 400 on some tenants
-            params["$filter"] = (
-                f"contains(tolower(ItemName),'{safe.lower()}')"
-                f" or contains(tolower(ItemCode),'{safe.lower()}')"
-            )
-        res = await _aspire._get("CatalogItems", params)
-        records = _aspire._extract_list(res)
-
-        items = []
-        for r in records:
-            name = (r.get("ItemName") or "").strip()
-            if not name:
-                continue
-            # Cost: try multiple field names used across Aspire versions
-            cost = (
-                r.get("PurchaseUnitCost")
-                or r.get("ItemCost")
-                or r.get("UnitCost")
-                or r.get("Cost")
-                or 0
-            )
-            # UOM: try multiple field names
-            uom = (
-                r.get("PurchaseUnitTypeName")
-                or r.get("AllocationUnitTypeName")
-                or r.get("UnitTypeName")
-                or r.get("UOMName")
-                or r.get("UnitOfMeasure")
-                or ""
-            )
-            items.append({
-                "id":        r.get("CatalogItemID"),
-                "name":      name,
-                "code":      r.get("ItemCode") or "",
-                "unit_cost": float(cost) if cost else 0,
-                "uom":       str(uom).strip(),
-            })
-        return {"items": items}
+        all_items = await _get_all_catalog_items()
+        if not q.strip():
+            return {"items": all_items[:50]}
+        needle = q.strip().lower()
+        matched = [
+            it for it in all_items
+            if needle in it["name"].lower() or needle in it["code"].lower()
+        ]
+        return {"items": matched[:50]}
     except Exception as e:
         logger.warning(f"CatalogItems search failed: {e}")
         return {"items": []}
