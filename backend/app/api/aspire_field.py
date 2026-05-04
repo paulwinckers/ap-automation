@@ -1278,19 +1278,8 @@ async def get_po_uom_types():
 # Module-level cache: (timestamp, list-of-items). Refreshed every 10 minutes.
 _catalog_cache: tuple[float, list] = (0.0, [])
 
-async def _get_all_catalog_items() -> list:
-    """Fetch and cache all CatalogItems from Aspire (no OData filter/orderby —
-    those operators 400 on this endpoint). Python-side filtering is used instead."""
-    import time
-    global _catalog_cache
-    ts, cached = _catalog_cache
-    if cached and (time.time() - ts) < 600:   # 10-minute TTL
-        return cached
-
-    # Minimal params — avoid $filter, $orderby, $select (all 400 on CatalogItems)
-    res = await _aspire._get("CatalogItems", {"$top": "2000"})
-    records = _aspire._extract_list(res)
-
+def _parse_catalog_records(records: list) -> list:
+    """Normalise raw Aspire CatalogItems records into our standard shape."""
     items = []
     for r in records:
         name = (r.get("ItemName") or "").strip()
@@ -1318,10 +1307,51 @@ async def _get_all_catalog_items() -> list:
             "unit_cost": float(cost) if cost else 0,
             "uom":       str(uom).strip(),
         })
-
     items.sort(key=lambda x: x["name"].lower())
+    return items
+
+
+async def _get_all_catalog_items() -> list:
+    """Fetch and cache all CatalogItems, trying multiple Aspire pagination styles."""
+    import time
+    global _catalog_cache
+    ts, cached = _catalog_cache
+    if cached and (time.time() - ts) < 600:   # 10-minute TTL
+        return cached
+
+    records: list = []
+    last_err: Exception | None = None
+
+    # Strategy 1: $pageNumber/$limit — Aspire's preferred pagination for large entities
+    for endpoint in ["CatalogItems", "Catalog"]:
+        try:
+            records = await _aspire._get_all(endpoint, {"$top": "500"})
+            if records:
+                logger.info(f"CatalogItems loaded via _get_all({endpoint}): {len(records)} records")
+                break
+        except Exception as e:
+            last_err = e
+            logger.warning(f"_get_all({endpoint}) failed: {e}")
+
+    # Strategy 2: completely bare GET — no query params at all
+    if not records:
+        for endpoint in ["CatalogItems", "Catalog", "Items"]:
+            try:
+                res = await _aspire._get(endpoint)
+                records = _aspire._extract_list(res)
+                if records:
+                    logger.info(f"CatalogItems loaded via bare GET({endpoint}): {len(records)} records")
+                    break
+            except Exception as e:
+                last_err = e
+                logger.warning(f"bare GET({endpoint}) failed: {e}")
+
+    if not records:
+        raise Exception(f"All CatalogItems fetch strategies failed. Last error: {last_err}")
+
+    items = _parse_catalog_records(records)
     _catalog_cache = (time.time(), items)
-    logger.info(f"CatalogItems cache refreshed: {len(items)} items")
+    logger.info(f"CatalogItems cache refreshed: {len(items)} usable items")
     return items
 
 
@@ -1342,6 +1372,28 @@ async def search_catalog_items(q: str = Query(default="", description="Search te
     except Exception as e:
         logger.warning(f"CatalogItems search failed: {e}")
         return {"items": []}
+
+
+@router.get("/purchase-order/catalog-probe")
+async def probe_catalog_items():
+    """Probe CatalogItems endpoint — tries multiple strategies and reports what works."""
+    _check_credentials()
+    results: dict = {}
+    for endpoint in ["CatalogItems", "Catalog", "Items"]:
+        # Bare GET
+        try:
+            res = await _aspire._get(endpoint)
+            recs = _aspire._extract_list(res)
+            results[f"GET {endpoint} (bare)"] = {"ok": True, "count": len(recs), "sample_keys": sorted(recs[0].keys()) if recs else []}
+        except Exception as e:
+            results[f"GET {endpoint} (bare)"] = {"ok": False, "error": str(e)[:120]}
+        # $pageNumber/$limit
+        try:
+            recs = await _aspire._get_all(endpoint, {"$top": "5"})
+            results[f"GET {endpoint} ($pageNumber)"] = {"ok": True, "count": len(recs), "sample_keys": sorted(recs[0].keys()) if recs else []}
+        except Exception as e:
+            results[f"GET {endpoint} ($pageNumber)"] = {"ok": False, "error": str(e)[:120]}
+    return results
 
 
 @router.get("/purchase-order/vendors")
