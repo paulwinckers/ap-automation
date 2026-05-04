@@ -567,22 +567,13 @@ export default function FieldPurchaseOrder() {
             )}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <div style={label}>Qty</div>
               <input
                 style={inp} type="number" min="0.01" step="0.01"
                 value={it.qty || ''}
                 onChange={e => updateItem(i, 'qty', e.target.value)}
-              />
-            </div>
-            <div>
-              <div style={label}>Unit Cost ($)</div>
-              <input
-                style={inp} type="number" min="0" step="0.01"
-                placeholder="0.00"
-                value={it.unit_cost || ''}
-                onChange={e => updateItem(i, 'unit_cost', e.target.value)}
               />
             </div>
             <div>
@@ -599,6 +590,18 @@ export default function FieldPurchaseOrder() {
               </select>
             </div>
           </div>
+
+          {/* Unit cost — read-only, populated from catalogue selection */}
+          {it.unit_cost > 0 && (
+            <div style={{ marginTop: 8, color: '#64748b', fontSize: 12 }}>
+              Unit cost: <strong style={{ color: '#e2e8f0' }}>${it.unit_cost.toFixed(2)}</strong>
+              {it.qty > 0 && (
+                <span style={{ marginLeft: 10 }}>
+                  · Total: <strong style={{ color: GRN }}>${(it.qty * it.unit_cost).toFixed(2)}</strong>
+                </span>
+              )}
+            </div>
+          )}
         </div>
       ))}
 

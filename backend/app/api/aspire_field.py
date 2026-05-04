@@ -1280,27 +1280,52 @@ async def search_catalog_items(q: str = Query(default="", description="Search te
     """Search Aspire CatalogItems for the PO manual line item autocomplete."""
     _check_credentials()
     try:
+        # No $select — field names vary by Aspire tenant and any invalid name
+        # in $select causes a 400.  We get all fields and map defensively.
         params: dict = {
-            "$filter": "Active eq true",
-            "$select": "CatalogItemID,ItemName,ItemCode,ItemCost,PurchaseUnitCost,PurchaseUnitTypeName,AllocationUnitTypeName",
             "$top": "50",
             "$orderby": "ItemName asc",
         }
         if q.strip():
             safe = q.strip().replace("'", "''")
-            params["$filter"] += f" and (contains(tolower(ItemName),'{safe.lower()}') or contains(tolower(ItemCode),'{safe.lower()}'))"
+            # Text search only — avoid Active filter which can also 400 on some tenants
+            params["$filter"] = (
+                f"contains(tolower(ItemName),'{safe.lower()}')"
+                f" or contains(tolower(ItemCode),'{safe.lower()}')"
+            )
         res = await _aspire._get("CatalogItems", params)
         records = _aspire._extract_list(res)
-        return {"items": [
-            {
-                "id":          r.get("CatalogItemID"),
-                "name":        r.get("ItemName") or "",
-                "code":        r.get("ItemCode") or "",
-                "unit_cost":   r.get("PurchaseUnitCost") or r.get("ItemCost") or 0,
-                "uom":         r.get("PurchaseUnitTypeName") or r.get("AllocationUnitTypeName") or "",
-            }
-            for r in records if r.get("ItemName")
-        ]}
+
+        items = []
+        for r in records:
+            name = (r.get("ItemName") or "").strip()
+            if not name:
+                continue
+            # Cost: try multiple field names used across Aspire versions
+            cost = (
+                r.get("PurchaseUnitCost")
+                or r.get("ItemCost")
+                or r.get("UnitCost")
+                or r.get("Cost")
+                or 0
+            )
+            # UOM: try multiple field names
+            uom = (
+                r.get("PurchaseUnitTypeName")
+                or r.get("AllocationUnitTypeName")
+                or r.get("UnitTypeName")
+                or r.get("UOMName")
+                or r.get("UnitOfMeasure")
+                or ""
+            )
+            items.append({
+                "id":        r.get("CatalogItemID"),
+                "name":      name,
+                "code":      r.get("ItemCode") or "",
+                "unit_cost": float(cost) if cost else 0,
+                "uom":       str(uom).strip(),
+            })
+        return {"items": items}
     except Exception as e:
         logger.warning(f"CatalogItems search failed: {e}")
         return {"items": []}
