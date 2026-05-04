@@ -537,6 +537,10 @@ def _build_docx(
         # Confirmed field name from API log — strip HTML from rich-text field
         return _strip_html(grp.get("GroupDescription"))
 
+    def _item_type(item: Dict[str, Any]) -> str:
+        """Normalise ItemType to lowercase — used in both service blocks and section collectors."""
+        return (item.get("ItemType") or "").strip().lower()
+
     def _render_service_block(svc: Dict[str, Any], idx: int):
         """Render one service as a rich block: name, hours, description, materials table."""
         svc_name  = _str(svc.get("DisplayName") or svc.get("ServiceNameAbrOverride"), "—")
@@ -588,9 +592,6 @@ def _build_docx(
             mv.font.size = Pt(9)
 
         # ── Split items by type ───────────────────────────────────────────────
-        def _item_type(item: Dict[str, Any]) -> str:
-            return (item.get("ItemType") or "").strip().lower()
-
         mat_items = [i for i in items if _item_type(i) in ("material", "materials", "")]
         # Labor items are intentionally excluded from the document
 
