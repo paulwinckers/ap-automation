@@ -113,20 +113,47 @@ async def _fetch_service_groups(opp_id: int) -> List[Dict[str, Any]]:
         return []
 
 
-async def _fetch_service_items(opp_id: int) -> List[Dict[str, Any]]:
-    """Fetch catalog/material items attached to all services for this opportunity."""
-    try:
-        res = await _aspire._get("OpportunityServiceItems", {
-            "$filter": f"OpportunityID eq {opp_id}",
-            "$top": "500",
-        })
-        rows = _aspire._extract_list(res)
-        if rows:
-            logger.info(f"OpportunityServiceItems sample keys: {sorted(rows[0].keys())}")
-        return rows
-    except Exception as e:
-        logger.warning(f"Could not fetch OpportunityServiceItems: {e}")
+async def _fetch_service_items(opp_id: int, service_ids: List[int]) -> List[Dict[str, Any]]:
+    """
+    Fetch material/catalog items for all services.
+    Tries filtering by OpportunityID first; if empty, falls back to per-service fetches.
+    """
+    # Attempt 1 — filter by OpportunityID
+    for endpoint in ("OpportunityServiceItems", "ServiceItems"):
+        try:
+            res = await _aspire._get(endpoint, {
+                "$filter": f"OpportunityID eq {opp_id}",
+                "$top": "500",
+            })
+            rows = _aspire._extract_list(res)
+            if rows:
+                logger.info(f"{endpoint} (by opp) sample keys: {sorted(rows[0].keys())}")
+                return rows
+        except Exception as e:
+            logger.debug(f"{endpoint} by opp failed: {e}")
+
+    # Attempt 2 — per-service fetch (Aspire sometimes requires this)
+    if not service_ids:
         return []
+    all_items: List[Dict[str, Any]] = []
+    logged = False
+    for sid in service_ids[:20]:  # cap at 20 services to avoid timeout
+        for endpoint in ("OpportunityServiceItems", "ServiceItems"):
+            try:
+                res = await _aspire._get(endpoint, {
+                    "$filter": f"OpportunityServiceID eq {sid}",
+                    "$top": "100",
+                })
+                rows = _aspire._extract_list(res)
+                if rows:
+                    if not logged:
+                        logger.info(f"{endpoint} (per-svc) sample keys: {sorted(rows[0].keys())}")
+                        logged = True
+                    all_items.extend(rows)
+                break  # found working endpoint for this service
+            except Exception:
+                continue
+    return all_items
 
 
 async def _fetch_work_tickets(opp_id: int) -> List[Dict[str, Any]]:
@@ -375,23 +402,12 @@ def _build_docx(
         )
 
     def _group_name(grp: Dict[str, Any]) -> str:
-        return (
-            grp.get("GroupName")
-            or grp.get("DisplayName")
-            or grp.get("Name")
-            or grp.get("ServiceGroupName")
-            or "—"
-        )
+        # Confirmed field name from API log
+        return grp.get("GroupName") or "—"
 
     def _group_note(grp: Dict[str, Any]) -> str:
-        return (
-            grp.get("GroupNote")
-            or grp.get("Notes")
-            or grp.get("ServiceGroupNote")
-            or grp.get("Note")
-            or grp.get("Description")
-            or ""
-        )
+        # Confirmed field name from API log
+        return grp.get("GroupDescription") or ""
 
     def _render_service_block(svc: Dict[str, Any], idx: int):
         """Render one service as a rich block: name, hours, description, materials table."""
@@ -399,7 +415,6 @@ def _build_docx(
         svc_desc  = svc.get("ServiceDescription") or ""
         op_notes  = svc.get("OperationNotes") or ""
         hours     = svc.get("ExtendedHours") or svc.get("PerHours")
-        svc_amt   = svc.get("ExtendedPrice") or svc.get("PerPrice")
         svc_id    = svc.get("OpportunityServiceID")
         items     = items_by_svc.get(svc_id, [])
 
@@ -428,15 +443,13 @@ def _build_docx(
             kr.bold = True
             kr.font.size = Pt(9)
 
-        # Hours + amount on one line
+        # Hours line
         meta_parts = []
         if hours:
             try:
                 meta_parts.append(f"{float(hours):,.1f} Hours")
             except Exception:
                 meta_parts.append(str(hours))
-        if svc_amt:
-            meta_parts.append(_fmt_money(svc_amt))
         if meta_parts:
             mp = doc.add_paragraph()
             mp.paragraph_format.left_indent = Inches(0.3)
@@ -502,7 +515,13 @@ def _build_docx(
             gid      = _service_group_id(grp)
             grp_svcs = svc_by_group.get(gid, [])
 
-            # Group header (navy rule)
+            # Group header (navy rule) — name + total hours
+            grp_hours = grp.get("ExtendedHours")
+            grp_meta  = []
+            if grp_hours:
+                try:    grp_meta.append(f"{float(grp_hours):,.1f} hrs")
+                except: grp_meta.append(str(grp_hours))
+
             gh = doc.add_paragraph()
             gh.paragraph_format.space_before = Pt(12)
             gh.paragraph_format.space_after  = Pt(2)
@@ -510,6 +529,10 @@ def _build_docx(
             gr.bold = True
             gr.font.size = Pt(11)
             gr.font.color.rgb = _rgb(NAVY)
+            if grp_meta:
+                gm = gh.add_run(f"   {' · '.join(grp_meta)}")
+                gm.font.size = Pt(9)
+                gm.font.color.rgb = _rgb("475569")
             # Underline rule
             pPr = gh._p.get_or_add_pPr()
             pBdr = OxmlElement("w:pBdr")
@@ -763,13 +786,15 @@ async def generate_handoff(
     if not opp_id:
         raise HTTPException(status_code=404, detail="OpportunityID missing from Aspire response")
 
-    services, service_groups, service_items, tickets, receipts = await asyncio.gather(
+    services, service_groups, tickets, receipts = await asyncio.gather(
         _fetch_services(opp_id),
         _fetch_service_groups(opp_id),
-        _fetch_service_items(opp_id),
         _fetch_work_tickets(opp_id),
         _fetch_receipts(opp_id),
     )
+    # Service items need service IDs — fetch after services are known
+    service_ids = [s["OpportunityServiceID"] for s in services if s.get("OpportunityServiceID")]
+    service_items = await _fetch_service_items(opp_id, service_ids)
 
     logger.info(
         f"Handoff #{opportunity_number}: {len(service_groups)} groups, "
