@@ -1208,6 +1208,44 @@ export async function getSafetyTopicTips(topic: string): Promise<{ topic: string
   return request('GET', `/safety/topic-tips?topic=${encodeURIComponent(topic)}`);
 }
 
+// ── Property Hazard Intelligence ──────────────────────────────────────────────
+
+export interface PropertyHazard {
+  id:                 number;
+  property_id:        number;
+  property_name:      string;
+  hazard_description: string;
+  severity:           'low' | 'medium' | 'high';
+  mitigation?:        string;
+  photo_url?:         string;
+  ai_generated:       boolean;
+  reported_by?:       string;
+  reported_date:      string;
+  active:             boolean;
+}
+
+export async function getPropertyHazards(propertyId: number): Promise<PropertyHazard[]> {
+  return request<PropertyHazard[]>('GET', `/safety/properties/${propertyId}/hazards`);
+}
+
+export async function reportPropertyHazard(
+  propertyId: number,
+  data: { property_name: string; reported_by?: string; description?: string; photo?: File },
+): Promise<{ hazard: PropertyHazard }> {
+  const form = new FormData();
+  form.append('property_name', data.property_name);
+  if (data.reported_by) form.append('reported_by', data.reported_by);
+  if (data.description)  form.append('description',  data.description);
+  if (data.photo)        form.append('photo', data.photo, data.photo.name);
+  return request<{ hazard: PropertyHazard }>('POST', `/safety/properties/${propertyId}/hazards`, form, true);
+}
+
+export async function dismissPropertyHazard(propertyId: number, hazardId: number): Promise<void> {
+  const form = new FormData();
+  form.append('active', 'false');
+  await request('PATCH', `/safety/properties/${propertyId}/hazards/${hazardId}`, form, true);
+}
+
 // ── Handoff Pack Generator ────────────────────────────────────────────────────
 
 /**

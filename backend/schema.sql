@@ -379,3 +379,24 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_push_subs_endpoint ON push_subscriptions(endpoint);
+
+-- ── Property hazard intelligence ──────────────────────────────────────────────
+-- AI-assisted hazard records per Aspire property.
+-- Created when crew photos a hazard during a safety talk; shown as a warning
+-- the next time that property is selected.
+CREATE TABLE IF NOT EXISTS property_hazards (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id         INTEGER NOT NULL,               -- Aspire PropertyID
+    property_name       TEXT NOT NULL,
+    hazard_description  TEXT NOT NULL,
+    severity            TEXT NOT NULL DEFAULT 'medium'
+                            CHECK(severity IN ('low','medium','high')),
+    mitigation          TEXT,                           -- suggested mitigation steps
+    photo_url           TEXT,                           -- R2 public URL if photo uploaded
+    ai_generated        INTEGER NOT NULL DEFAULT 0,     -- 1 = Claude analyzed the photo
+    reported_by         TEXT,                           -- presenter name at time of report
+    reported_date       TEXT NOT NULL DEFAULT (date('now')),
+    active              INTEGER NOT NULL DEFAULT 1,     -- 0 = archived/dismissed
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_prop_hazards_property ON property_hazards(property_id, active);

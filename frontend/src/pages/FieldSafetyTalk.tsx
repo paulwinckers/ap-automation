@@ -10,7 +10,11 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { createSafetyTalk, getAspireEmployees, searchFieldProperties, getSafetyTopicTips, type AspireEmployee } from '../lib/api';
+import {
+  createSafetyTalk, getAspireEmployees, searchFieldProperties, getSafetyTopicTips,
+  getPropertyHazards, reportPropertyHazard, dismissPropertyHazard,
+  type AspireEmployee, type PropertyHazard,
+} from '../lib/api';
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -87,7 +91,7 @@ const PRESET_TOPICS = [
 function StepAttendees({
   attendees, setAttendees,
   presenterName, setPresenterName,
-  jobSite, setJobSite, setPropertyId,
+  jobSite, setJobSite, propertyId, setPropertyId,
   onNext,
 }: {
   attendees: string[];
@@ -96,6 +100,7 @@ function StepAttendees({
   setPresenterName: (v: string) => void;
   jobSite: string;
   setJobSite: (v: string) => void;
+  propertyId: number | null;
   setPropertyId: (id: number | null) => void;
   onNext: () => void;
 }) {
@@ -173,6 +178,14 @@ function StepAttendees({
             value={jobSite}
             onChange={(name, id) => { setJobSite(name); setPropertyId(id); }}
           />
+          {/* Hazard intelligence — only shown once a property is resolved */}
+          {propertyId && (
+            <PropertyHazardBanner
+              propertyId={propertyId}
+              propertyName={jobSite}
+              presenterName={presenterName}
+            />
+          )}
         </div>
 
         {/* Search employees */}
@@ -455,7 +468,7 @@ function PropertySearch({
           .map(p => ({
             property_id:   p.PropertyID!,
             property_name: p.PropertyName!,
-            address:       p.OpportunityName ?? '',
+            address:       '',
           }))
           // deduplicate by property_id
           .filter((p, i, arr) => arr.findIndex(x => x.property_id === p.property_id) === i)
@@ -524,19 +537,332 @@ function PropertySearch({
   );
 }
 
+// ── Property Hazard Intelligence ──────────────────────────────────────────────
+
+const SEVERITY_COLOR: Record<string, { bg: string; text: string; label: string }> = {
+  high:   { bg: '#7f1d1d', text: '#fca5a5', label: 'HIGH' },
+  medium: { bg: '#78350f', text: '#fcd34d', label: 'MEDIUM' },
+  low:    { bg: '#1e3a1e', text: '#86efac', label: 'LOW' },
+};
+
+function SeverityBadge({ severity }: { severity: string }) {
+  const c = SEVERITY_COLOR[severity] ?? SEVERITY_COLOR.medium;
+  return (
+    <span style={{
+      background: c.bg, color: c.text,
+      fontSize: 10, fontWeight: 800, letterSpacing: '0.08em',
+      padding: '2px 7px', borderRadius: 10,
+    }}>{c.label}</span>
+  );
+}
+
+function HazardReportForm({
+  propertyId,
+  propertyName,
+  reportedBy,
+  onDone,
+  onCancel,
+}: {
+  propertyId:  number;
+  propertyName: string;
+  reportedBy:  string;
+  onDone:      (h: PropertyHazard) => void;
+  onCancel:    () => void;
+}) {
+  const [photo,        setPhoto]        = useState<File | null>(null);
+  const [preview,      setPreview]      = useState<string | null>(null);
+  const [description,  setDescription]  = useState('');
+  const [analyzing,    setAnalyzing]    = useState(false);
+  const [saving,       setSaving]       = useState(false);
+  const [error,        setError]        = useState<string | null>(null);
+  const [aiResult,     setAiResult]     = useState<{ severity: string; mitigation: string } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0] ?? null;
+    setPhoto(f);
+    setAiResult(null);
+    if (f) {
+      setPreview(URL.createObjectURL(f));
+    } else {
+      setPreview(null);
+    }
+  }
+
+  async function analyzePhoto() {
+    if (!photo || !propertyId) return;
+    setAnalyzing(true);
+    setError(null);
+    try {
+      const res = await reportPropertyHazard(propertyId, {
+        property_name: propertyName,
+        reported_by:   reportedBy || undefined,
+        photo,
+      });
+      onDone(res.hazard);
+    } catch (e) {
+      setError((e as Error).message || 'Failed to analyze photo');
+      setAnalyzing(false);
+    }
+  }
+
+  async function saveManual() {
+    if (!description.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await reportPropertyHazard(propertyId, {
+        property_name: propertyName,
+        reported_by:   reportedBy || undefined,
+        description:   description.trim(),
+        photo:         photo ?? undefined,
+      });
+      onDone(res.hazard);
+    } catch (e) {
+      setError((e as Error).message || 'Failed to save hazard');
+      setSaving(false);
+    }
+  }
+
+  const busy = analyzing || saving;
+
+  return (
+    <div style={{ marginTop: 12, background: '#1e293b', borderRadius: 12, padding: 16, border: '1px solid #334155' }}>
+      <div style={{ color: '#f8fafc', fontWeight: 700, fontSize: 14, marginBottom: 12 }}>
+        📸 Report a Hazard at {propertyName}
+      </div>
+
+      {/* Photo */}
+      {preview ? (
+        <div style={{ position: 'relative', marginBottom: 12 }}>
+          <img src={preview} alt="Hazard" style={{ width: '100%', maxHeight: 200, objectFit: 'cover', borderRadius: 8, display: 'block' }} />
+          <button
+            onClick={() => { setPhoto(null); setPreview(null); setAiResult(null); }}
+            style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,0.7)', border: 'none', color: '#fff', borderRadius: '50%', width: 28, height: 28, fontSize: 14, cursor: 'pointer' }}
+          >✕</button>
+        </div>
+      ) : (
+        <button
+          onClick={() => fileRef.current?.click()}
+          style={{
+            width: '100%', padding: '16px', borderRadius: 10,
+            border: `2px dashed #334155`, background: '#0f172a',
+            color: '#64748b', fontSize: 14, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            marginBottom: 12,
+          }}
+        >
+          <span style={{ fontSize: 20 }}>📷</span>
+          <span>Photo the hazard (AI will analyze)</span>
+        </button>
+      )}
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: 'none' }} />
+
+      {/* Manual description (shown if no photo or as supplement) */}
+      <textarea
+        value={description}
+        onChange={e => setDescription(e.target.value)}
+        placeholder="Describe the hazard… (required if no photo)"
+        rows={3}
+        style={{
+          width: '100%', boxSizing: 'border-box', padding: '11px 14px',
+          borderRadius: 10, border: `1.5px solid ${BORDER}`,
+          background: '#0f172a', color: '#f8fafc', fontSize: 14,
+          outline: 'none', resize: 'vertical', fontFamily: 'inherit', marginBottom: 12,
+        }}
+        onFocus={e => (e.currentTarget.style.borderColor = '#f59e0b')}
+        onBlur={e  => (e.currentTarget.style.borderColor = BORDER)}
+      />
+
+      {error && <div style={{ color: '#fca5a5', fontSize: 13, marginBottom: 10 }}>⚠️ {error}</div>}
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        {photo ? (
+          <button
+            onClick={analyzePhoto}
+            disabled={busy}
+            style={{
+              flex: 1, padding: '12px', borderRadius: 10, border: 'none',
+              background: busy ? '#374151' : '#f59e0b',
+              color: busy ? '#6b7280' : '#000',
+              fontWeight: 700, fontSize: 14, cursor: busy ? 'not-allowed' : 'pointer',
+            }}
+          >{analyzing ? '🤖 Analyzing…' : '🤖 Analyze Photo & Save'}</button>
+        ) : (
+          <button
+            onClick={saveManual}
+            disabled={!description.trim() || busy}
+            style={{
+              flex: 1, padding: '12px', borderRadius: 10, border: 'none',
+              background: (!description.trim() || busy) ? '#374151' : '#f59e0b',
+              color: (!description.trim() || busy) ? '#6b7280' : '#000',
+              fontWeight: 700, fontSize: 14, cursor: (!description.trim() || busy) ? 'not-allowed' : 'pointer',
+            }}
+          >{saving ? 'Saving…' : 'Save Hazard'}</button>
+        )}
+        <button
+          onClick={onCancel}
+          disabled={busy}
+          style={{
+            padding: '12px 20px', borderRadius: 10, border: `1px solid #334155`,
+            background: 'none', color: '#64748b', fontSize: 14, cursor: 'pointer',
+          }}
+        >Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function PropertyHazardBanner({
+  propertyId,
+  propertyName,
+  presenterName,
+}: {
+  propertyId:   number;
+  propertyName: string;
+  presenterName: string;
+}) {
+  const [hazards,     setHazards]     = useState<PropertyHazard[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [showReport,  setShowReport]  = useState(false);
+  const [dismissing,  setDismissing]  = useState<number | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    getPropertyHazards(propertyId)
+      .then(setHazards)
+      .catch(() => setHazards([]))
+      .finally(() => setLoading(false));
+  }, [propertyId]);
+
+  async function dismiss(hazardId: number) {
+    setDismissing(hazardId);
+    try {
+      await dismissPropertyHazard(propertyId, hazardId);
+      setHazards(prev => prev.filter(h => h.id !== hazardId));
+    } catch { /* ignore */ }
+    setDismissing(null);
+  }
+
+  function onHazardReported(h: PropertyHazard) {
+    setHazards(prev => [h, ...prev]);
+    setShowReport(false);
+  }
+
+  if (loading) {
+    return (
+      <div style={{ marginTop: 10, color: '#475569', fontSize: 12, padding: '8px 0' }}>
+        Checking property hazards…
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      {/* Existing hazards */}
+      {hazards.length > 0 && (
+        <div style={{
+          borderRadius: 12, border: '1px solid #7f1d1d',
+          background: 'rgba(127,29,29,0.15)', overflow: 'hidden', marginBottom: 10,
+        }}>
+          <div style={{
+            padding: '10px 14px', background: 'rgba(127,29,29,0.4)',
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{ fontSize: 16 }}>⚠️</span>
+            <span style={{ color: '#fca5a5', fontWeight: 700, fontSize: 13 }}>
+              {hazards.length} Known Hazard{hazards.length !== 1 ? 's' : ''} — {propertyName}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+            {hazards.map((h, i) => (
+              <div key={h.id} style={{
+                padding: '10px 14px',
+                borderTop: i > 0 ? '1px solid rgba(127,29,29,0.3)' : undefined,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                      <SeverityBadge severity={h.severity} />
+                      {h.ai_generated && (
+                        <span style={{ fontSize: 10, color: '#93c5fd' }}>🤖 AI</span>
+                      )}
+                    </div>
+                    <div style={{ color: '#f1f5f9', fontSize: 13, lineHeight: 1.5 }}>{h.hazard_description}</div>
+                    {h.mitigation && (
+                      <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 5, lineHeight: 1.4 }}>
+                        <span style={{ fontWeight: 600 }}>Mitigation: </span>{h.mitigation}
+                      </div>
+                    )}
+                    <div style={{ color: '#475569', fontSize: 11, marginTop: 4 }}>
+                      {h.reported_by ? `Reported by ${h.reported_by} · ` : ''}{h.reported_date}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => dismiss(h.id)}
+                    disabled={dismissing === h.id}
+                    title="Dismiss hazard"
+                    style={{
+                      background: 'none', border: 'none', color: '#475569',
+                      fontSize: 14, cursor: 'pointer', padding: '2px 6px', flexShrink: 0,
+                    }}
+                  >{dismissing === h.id ? '…' : '✕'}</button>
+                </div>
+                {h.photo_url && (
+                  <img
+                    src={h.photo_url}
+                    alt="Hazard"
+                    style={{ marginTop: 8, width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 6, display: 'block' }}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Report hazard button / form */}
+      {showReport ? (
+        <HazardReportForm
+          propertyId={propertyId}
+          propertyName={propertyName}
+          reportedBy={presenterName}
+          onDone={onHazardReported}
+          onCancel={() => setShowReport(false)}
+        />
+      ) : (
+        <button
+          onClick={() => setShowReport(true)}
+          style={{
+            width: '100%', padding: '11px 16px', borderRadius: 10,
+            border: '1px dashed #334155', background: 'none',
+            color: '#64748b', fontSize: 13, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          }}
+        >
+          <span>📸</span>
+          <span>Report a Hazard at this Property</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Step 2: Topic, Date, Notes & Photo ────────────────────────────────────────
 
 function StepTalkInfo({
   talkDate, setTalkDate,
   topic, setTopic,
   notes, setNotes,
+  siteNotes, setSiteNotes,
   photo, setPhoto,
   onBack, onNext,
 }: {
-  talkDate: string;   setTalkDate: (v: string) => void;
-  topic: string;      setTopic:    (v: string) => void;
-  notes: string;      setNotes:    (v: string) => void;
-  photo: File | null; setPhoto:    (f: File | null) => void;
+  talkDate: string;   setTalkDate:   (v: string) => void;
+  topic: string;      setTopic:      (v: string) => void;
+  notes: string;      setNotes:      (v: string) => void;
+  siteNotes: string;  setSiteNotes:  (v: string) => void;
+  photo: File | null; setPhoto:      (f: File | null) => void;
   onBack: () => void; onNext: () => void;
 }) {
   const [customTopic,  setCustomTopic]  = useState(!PRESET_TOPICS.includes(topic) && topic !== '');
@@ -667,6 +993,30 @@ function StepTalkInfo({
           />
         </div>
 
+        {/* Site Specific Notes */}
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>
+            Site specific notes <span style={{ color: '#475569', fontWeight: 400 }}>(optional)</span>
+          </label>
+          <div style={{ fontSize: 11, color: '#475569', marginBottom: 8, lineHeight: 1.5 }}>
+            Hazards, access instructions, environmental conditions, or anything unique to this site.
+          </div>
+          <textarea
+            value={siteNotes}
+            onChange={e => setSiteNotes(e.target.value)}
+            placeholder="e.g. Steep slope on north side — fall arrest required. Gate code 1234. Bees nest near back fence."
+            rows={4}
+            style={{
+              width: '100%', boxSizing: 'border-box', padding: '12px 14px',
+              borderRadius: 10, border: `1.5px solid #334155`,
+              background: '#0f2233', color: '#f8fafc', fontSize: 15,
+              outline: 'none', resize: 'vertical', fontFamily: 'inherit',
+            }}
+            onFocus={e => (e.currentTarget.style.borderColor = '#3b82f6')}
+            onBlur={e  => (e.currentTarget.style.borderColor = '#334155')}
+          />
+        </div>
+
         {/* Group photo */}
         <div style={{ marginBottom: 24 }}>
           <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 8 }}>
@@ -725,11 +1075,11 @@ function StepTalkInfo({
 // ── Step 3: Review & Submit ───────────────────────────────────────────────────
 
 function StepReview({
-  talkDate, topic, presenterName, jobSite, notes, attendees, photo,
+  talkDate, topic, presenterName, jobSite, notes, siteNotes, attendees, photo,
   onBack, onSubmit, submitting,
 }: {
   talkDate: string; topic: string; presenterName: string;
-  jobSite: string; notes: string; attendees: string[];
+  jobSite: string; notes: string; siteNotes: string; attendees: string[];
   photo: File | null;
   onBack: () => void; onSubmit: () => void; submitting: boolean;
 }) {
@@ -755,7 +1105,8 @@ function StepReview({
           <Row label="Topic"      value={topic} />
           <Row label="Presenter"  value={presenterName} />
           <Row label="Crew/Site"  value={jobSite} />
-          <Row label="Notes"      value={notes} />
+          <Row label="Key Points"  value={notes} />
+          <Row label="Site Notes"  value={siteNotes} />
           <div style={{ padding: '12px 0', borderBottom: '1px solid #1e293b' }}>
             <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
               Attendees ({attendees.length})
@@ -965,6 +1316,7 @@ export default function FieldSafetyTalk() {
   const [jobSite,     setJobSite]     = useState('');
   const [propertyId,  setPropertyId]  = useState<number | null>(null);
   const [notes,       setNotes]       = useState('');
+  const [siteNotes,   setSiteNotes]   = useState('');
   const [photo,       setPhoto]       = useState<File | null>(null);
 
   const [submitting,   setSubmitting]   = useState(false);
@@ -973,7 +1325,7 @@ export default function FieldSafetyTalk() {
 
   function reset() {
     setStep(1); setAttendees([]); setTalkDate(todayStr()); setTopic('');
-    setJobSite(''); setPropertyId(null); setNotes(''); setPhoto(null);
+    setJobSite(''); setPropertyId(null); setNotes(''); setSiteNotes(''); setPhoto(null);
     setSubmitError(null); setLastTalkInfo(null);
   }
 
@@ -981,12 +1333,19 @@ export default function FieldSafetyTalk() {
     setSubmitting(true);
     setSubmitError(null);
     try {
+      // Combine key points and site-specific notes into a single notes field
+      const noteParts = [
+        notes.trim(),
+        siteNotes.trim() ? `Site Specific Notes:\n${siteNotes.trim()}` : '',
+      ].filter(Boolean);
+      const combinedNotes = noteParts.join('\n\n') || undefined;
+
       await createSafetyTalk({
         talk_date:      talkDate,
         topic:          topic.trim(),
         presenter_name: presenterName.trim(),
         job_site:       jobSite.trim() || undefined,
-        notes:          notes.trim() || undefined,
+        notes:          combinedNotes,
         attendees,
         photo:          photo ?? undefined,
       });
@@ -1044,17 +1403,18 @@ export default function FieldSafetyTalk() {
           attendees={attendees}         setAttendees={setAttendees}
           presenterName={presenterName} setPresenterName={setPresenterName}
           jobSite={jobSite}             setJobSite={setJobSite}
-          setPropertyId={setPropertyId}
+          propertyId={propertyId}       setPropertyId={setPropertyId}
           onNext={() => setStep(2)}
         />
       )}
 
       {step === 2 && (
         <StepTalkInfo
-          talkDate={talkDate} setTalkDate={setTalkDate}
-          topic={topic}       setTopic={setTopic}
-          notes={notes}       setNotes={setNotes}
-          photo={photo}       setPhoto={setPhoto}
+          talkDate={talkDate}     setTalkDate={setTalkDate}
+          topic={topic}           setTopic={setTopic}
+          notes={notes}           setNotes={setNotes}
+          siteNotes={siteNotes}   setSiteNotes={setSiteNotes}
+          photo={photo}           setPhoto={setPhoto}
           onBack={() => setStep(1)}
           onNext={() => setStep(3)}
         />
@@ -1064,7 +1424,7 @@ export default function FieldSafetyTalk() {
         <StepReview
           talkDate={talkDate} topic={topic}
           presenterName={presenterName} jobSite={jobSite}
-          notes={notes} attendees={attendees} photo={photo}
+          notes={notes} siteNotes={siteNotes} attendees={attendees} photo={photo}
           onBack={() => setStep(2)}
           onSubmit={handleSubmit}
           submitting={submitting}
