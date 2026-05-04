@@ -705,6 +705,7 @@ def _build_docx(
     # Build ticket → group name lookup:
     # ticket.OpportunityServiceID → service.OpportunityServiceGroupID → group.GroupName
     svc_id_to_group: Dict[Any, str] = {}
+    svc_id_to_hours: Dict[Any, float] = {}   # estimated hours from service record
     grp_id_to_name:  Dict[Any, str] = {
         _service_group_id(g): _group_name(g)
         for g in service_groups
@@ -712,8 +713,15 @@ def _build_docx(
     for svc in services:
         sid  = svc.get("OpportunityServiceID")
         gid  = svc.get("OpportunityServiceGroupID")
-        if sid and gid and gid in grp_id_to_name:
-            svc_id_to_group[sid] = grp_id_to_name[gid]
+        if sid:
+            if gid and gid in grp_id_to_name:
+                svc_id_to_group[sid] = grp_id_to_name[gid]
+            hrs = svc.get("ExtendedHours") or svc.get("PerHours")
+            if hrs is not None:
+                try:
+                    svc_id_to_hours[sid] = float(hrs)
+                except Exception:
+                    pass
 
     if tickets:
         sched_table = doc.add_table(rows=1 + len(tickets), cols=6)
@@ -758,25 +766,41 @@ def _build_docx(
             cells[2].paragraphs[0].add_run(
                 _fmt_date(tk.get("ScheduledStartDate") or tk.get("ScheduledDate"))
             ).font.size = Pt(9)
-            # Estimated hours — try all known Aspire field name variants
-            est_hrs = (
+            # Estimated hours — try ticket-level fields first, fall back to service record
+            tk_svc_id_for_hrs = tk.get("OpportunityServiceID")
+            est_hrs_raw = (
                 tk.get("EstimatedLaborHours")
                 or tk.get("EstimatedHours")
                 or tk.get("BudgetedHours")
-                or tk.get("PerHours")
+                or tk.get("ScheduledManHours")
+                or tk.get("ScheduledHours")
+                or tk.get("ManHours")
                 or tk.get("TotalHours")
             )
-            est_str = f"{float(est_hrs):,.1f}" if est_hrs is not None else "—"
+            try:
+                est_hrs = float(est_hrs_raw) if est_hrs_raw is not None else None
+            except Exception:
+                est_hrs = None
+            # Fall back to the service's budgeted hours if ticket has none
+            if est_hrs is None and tk_svc_id_for_hrs:
+                est_hrs = svc_id_to_hours.get(tk_svc_id_for_hrs)
+            est_str = f"{est_hrs:,.1f}" if est_hrs is not None else "—"
             cells[3].paragraphs[0].add_run(est_str).font.size = Pt(9)
 
             # Actual hours — try all known Aspire field name variants
-            act_hrs = (
+            act_hrs_raw = (
                 tk.get("ActualLaborHours")
                 or tk.get("ActualHours")
                 or tk.get("CompletedHours")
                 or tk.get("TotalActualHours")
+                or tk.get("ActualManHours")
+                or tk.get("InvoicedHours")
             )
-            act_str = f"{float(act_hrs):,.1f}" if act_hrs is not None else "—"
+            try:
+                act_hrs = float(act_hrs_raw) if act_hrs_raw is not None else None
+            except Exception:
+                act_hrs = None
+            act_str = f"{act_hrs:,.1f}" if act_hrs is not None else "—"
             cells[4].paragraphs[0].add_run(act_str).font.size = Pt(9)
             cells[5].paragraphs[0].add_run(status).font.size = Pt(9)
 
