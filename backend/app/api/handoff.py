@@ -295,16 +295,36 @@ async def _fetch_work_tickets(opp_id: int) -> List[Dict[str, Any]]:
 
 
 async def _fetch_receipts(opp_id: int) -> List[Dict[str, Any]]:
-    try:
-        res = await _aspire._get("Receipts", {
-            "$filter": f"OpportunityID eq {opp_id}",
-            "$expand": "ReceiptItems",
-            "$top": "200",
-        })
-        return _aspire._extract_list(res)
-    except Exception as e:
-        logger.warning(f"Could not fetch Receipts: {e}")
-        return []
+    """
+    Aspire stores purchase receipts linked to opportunities via allocations.
+    Try several endpoint + filter combinations until one returns data.
+    """
+    attempts = [
+        # Most likely: PurchaseReceipts filtered by OpportunityID
+        ("PurchaseReceipts", {"$filter": f"OpportunityID eq {opp_id}", "$top": "200"}),
+        # Via receipt allocations
+        ("ReceiptAllocations", {"$filter": f"OpportunityID eq {opp_id}", "$top": "200"}),
+        # Legacy endpoint name
+        ("Receipts", {"$filter": f"OpportunityID eq {opp_id}", "$top": "200"}),
+        # Maybe the field is AllocationOpportunityID
+        ("PurchaseReceipts", {"$filter": f"AllocationOpportunityID eq {opp_id}", "$top": "200"}),
+    ]
+
+    for endpoint, params in attempts:
+        try:
+            res  = await _aspire._get(endpoint, params)
+            rows = _aspire._extract_list(res)
+            if rows:
+                logger.info(f"Receipts found via {endpoint} ({params.get('$filter')}): {len(rows)} rows")
+                logger.info(f"Receipt ALL keys: {sorted(rows[0].keys())}")
+                return rows
+            else:
+                logger.debug(f"Receipts: {endpoint} returned 0 rows for filter {params.get('$filter')}")
+        except Exception as e:
+            logger.debug(f"Receipts: {endpoint} failed — {e}")
+
+    logger.warning(f"Could not fetch receipts for opportunity {opp_id} — all attempts returned empty")
+    return []
 
 
 # ── DOCX builder ──────────────────────────────────────────────────────────────
