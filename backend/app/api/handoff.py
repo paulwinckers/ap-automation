@@ -276,7 +276,10 @@ async def _fetch_work_tickets(opp_id: int) -> List[Dict[str, Any]]:
             "$orderby": "ScheduledStartDate asc",
             "$top": "200",
         })
-        return _aspire._extract_list(res)
+        rows = _aspire._extract_list(res)
+        if rows:
+            logger.info(f"WorkTickets sample keys: {sorted(rows[0].keys())}")
+        return rows
     except Exception as e:
         logger.warning(f"Could not fetch WorkTickets: {e}")
         return []
@@ -755,12 +758,26 @@ def _build_docx(
             cells[2].paragraphs[0].add_run(
                 _fmt_date(tk.get("ScheduledStartDate") or tk.get("ScheduledDate"))
             ).font.size = Pt(9)
-            cells[3].paragraphs[0].add_run(
-                _str(tk.get("EstimatedLaborHours"))
-            ).font.size = Pt(9)
-            cells[4].paragraphs[0].add_run(
-                _str(tk.get("ActualLaborHours"))
-            ).font.size = Pt(9)
+            # Estimated hours — try all known Aspire field name variants
+            est_hrs = (
+                tk.get("EstimatedLaborHours")
+                or tk.get("EstimatedHours")
+                or tk.get("BudgetedHours")
+                or tk.get("PerHours")
+                or tk.get("TotalHours")
+            )
+            est_str = f"{float(est_hrs):,.1f}" if est_hrs is not None else "—"
+            cells[3].paragraphs[0].add_run(est_str).font.size = Pt(9)
+
+            # Actual hours — try all known Aspire field name variants
+            act_hrs = (
+                tk.get("ActualLaborHours")
+                or tk.get("ActualHours")
+                or tk.get("CompletedHours")
+                or tk.get("TotalActualHours")
+            )
+            act_str = f"{float(act_hrs):,.1f}" if act_hrs is not None else "—"
+            cells[4].paragraphs[0].add_run(act_str).font.size = Pt(9)
             cells[5].paragraphs[0].add_run(status).font.size = Pt(9)
 
         doc.add_paragraph()
