@@ -89,12 +89,12 @@ async def list_hazards(property_id: int):
     db = Database()
     await db.connect()
     try:
-        rows = await db._x(
+        rows = await db._q(
             "SELECT * FROM property_hazards WHERE property_id = ? AND active = 1 "
             "ORDER BY severity DESC, created_at DESC",
             [property_id],
         )
-        return [_row_to_hazard(dict(r)) for r in (rows or [])]
+        return [_row_to_hazard(r) for r in (rows or [])]
     finally:
         await db.close()
 
@@ -195,7 +195,8 @@ async def create_hazard(
     db = Database()
     await db.connect()
     try:
-        await db._x(
+        # _x() runs INSERT/UPDATE/DELETE and returns last_row_id as int
+        new_id = await db._x(
             """
             INSERT INTO property_hazards
                 (property_id, property_name, hazard_description, severity,
@@ -208,11 +209,13 @@ async def create_hazard(
                 reported_by, today,
             ],
         )
-        rows = await db._x(
-            "SELECT * FROM property_hazards WHERE rowid = last_insert_rowid()"
-        )
-        hazard = _row_to_hazard(dict(rows[0])) if rows else HazardOut(
-            id=0, property_id=property_id, property_name=property_name,
+        # _q() runs SELECT and returns list[dict]
+        rows = await db._q(
+            "SELECT * FROM property_hazards WHERE id = ?",
+            [new_id],
+        ) if new_id else []
+        hazard = _row_to_hazard(rows[0]) if rows else HazardOut(
+            id=new_id or 0, property_id=property_id, property_name=property_name,
             hazard_description=hazard_description, severity=severity,
             mitigation=mitigation, photo_url=photo_url,
             ai_generated=ai_generated, reported_by=reported_by,
