@@ -1584,12 +1584,30 @@ async def get_po_work_tickets(opportunity_id: int):
     except Exception as e:
         logger.warning(f"OpportunityServices lookup failed for PO tickets (non-fatal): {e}")
 
-    # Prefer open/scheduled tickets; fall back to all if none found
+    current_year = str(date.today().year)
+
+    # Filter: current-year start date + no Disposal tickets
+    # Fall back to unfiltered list only if nothing passes (e.g. a project
+    # spanning years where all tickets are in a prior year).
+    def _keep(t: dict) -> bool:
+        start = (t.get("ScheduledStartDate") or "")[:4]
+        if start and start != current_year:
+            return False
+        title_check = (service_map.get(t.get("OpportunityServiceID")) or "").lower()
+        if "disposal" in title_check:
+            return False
+        return True
+
+    filtered = [t for t in all_tickets if _keep(t)]
+
+    # Prefer open/scheduled tickets within the filtered set;
+    # fall back to all filtered (then all unfiltered) if none pass.
     open_statuses = {"scheduled", "in progress", "new", "open", "active"}
+    working = filtered or all_tickets  # graceful fallback if year filter empties the list
     active = [
-        t for t in all_tickets
+        t for t in working
         if (t.get("WorkTicketStatusName") or "").lower() in open_statuses
-    ] or all_tickets
+    ] or working
 
     tickets_out = []
     for t in active:
