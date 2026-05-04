@@ -89,10 +89,12 @@ async def _fetch_services(opp_id: int) -> List[Dict[str, Any]]:
     try:
         res = await _aspire._get("OpportunityServices", {
             "$filter": f"OpportunityID eq {opp_id}",
-            "$orderby": "SortOrder asc",
             "$top": "100",
         })
-        return _aspire._extract_list(res)
+        rows = _aspire._extract_list(res)
+        if rows:
+            logger.info(f"OpportunityServices sample keys: {sorted(rows[0].keys())}")
+        return rows
     except Exception as e:
         logger.warning(f"Could not fetch OpportunityServices: {e}")
         return []
@@ -327,15 +329,33 @@ def _build_docx(
             bg = GREY if i % 2 == 0 else WHITE
             for cell in row.cells:
                 _set_cell_bg(cell, bg)
-            row.cells[0].paragraphs[0].add_run(
-                _str(svc.get("ServiceName") or svc.get("Service"))
-            ).font.size = Pt(9)
-            row.cells[1].paragraphs[0].add_run(
-                _str(svc.get("ProposalDescription") or svc.get("Description"), "")
-            ).font.size = Pt(9)
-            row.cells[2].paragraphs[0].add_run(
-                _fmt_money(svc.get("EstimatedAmount") or svc.get("ServiceAmount"))
-            ).font.size = Pt(9)
+            # Aspire field names vary — try all known variants
+            svc_name = (
+                svc.get("OpportunityServiceName")
+                or svc.get("ServiceName")
+                or svc.get("ServiceNameAbr")
+                or svc.get("Service")
+                or svc.get("Name")
+            )
+            svc_desc = (
+                svc.get("ProposalDescription")
+                or svc.get("ServiceDescription")
+                or svc.get("Description")
+                or svc.get("Notes")
+                or ""
+            )
+            svc_amt = (
+                svc.get("Revenue")
+                or svc.get("EstimatedRevenue")
+                or svc.get("EstimatedAmount")
+                or svc.get("Price")
+                or svc.get("ServiceAmount")
+                or svc.get("TotalRevenue")
+                or svc.get("BudgetedRevenue")
+            )
+            row.cells[0].paragraphs[0].add_run(_str(svc_name)).font.size  = Pt(9)
+            row.cells[1].paragraphs[0].add_run(_str(svc_desc, "")).font.size = Pt(9)
+            row.cells[2].paragraphs[0].add_run(_fmt_money(svc_amt)).font.size = Pt(9)
         doc.add_paragraph()
     else:
         doc.add_paragraph("No service lines found in Aspire for this opportunity.").runs[0].font.size = Pt(10)
