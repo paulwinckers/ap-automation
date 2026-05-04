@@ -46,6 +46,24 @@ def _str(v: Any, fallback: str = "—") -> str:
     return str(v)
 
 
+def _strip_html(html_text: Any) -> str:
+    """Strip HTML tags and decode entities from Aspire rich-text fields."""
+    if not html_text:
+        return ""
+    import html as _html
+    import re
+    text = str(html_text)
+    # Replace block-level tags with newlines so structure is preserved
+    text = re.sub(r"<(?:br|p|div|h[1-6]|blockquote|li)[^>]*>", "\n", text, flags=re.IGNORECASE)
+    # Strip all remaining tags
+    text = re.sub(r"<[^>]+>", "", text)
+    # Decode HTML entities (&nbsp; &amp; etc.)
+    text = _html.unescape(text)
+    # Collapse multiple blank lines and strip leading/trailing whitespace
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def _fmt_date(d: Optional[str]) -> str:
     if not d:
         return "—"
@@ -367,8 +385,8 @@ def _build_docx(
     doc.add_page_break()
     _heading("2. Scope of Work")
 
-    proposal_desc = _str(opp.get("ProposalDescription") or opp.get("Description"), "")
-    if proposal_desc and proposal_desc != "—":
+    proposal_desc = _strip_html(opp.get("ProposalDescription") or opp.get("Description"))
+    if proposal_desc:
         desc_p = doc.add_paragraph(proposal_desc)
         desc_p.runs[0].font.size = Pt(10)
         doc.add_paragraph()
@@ -406,14 +424,14 @@ def _build_docx(
         return grp.get("GroupName") or "—"
 
     def _group_note(grp: Dict[str, Any]) -> str:
-        # Confirmed field name from API log
-        return grp.get("GroupDescription") or ""
+        # Confirmed field name from API log — strip HTML from rich-text field
+        return _strip_html(grp.get("GroupDescription"))
 
     def _render_service_block(svc: Dict[str, Any], idx: int):
         """Render one service as a rich block: name, hours, description, materials table."""
         svc_name  = _str(svc.get("DisplayName") or svc.get("ServiceNameAbrOverride"), "—")
-        svc_desc  = svc.get("ServiceDescription") or ""
-        op_notes  = svc.get("OperationNotes") or ""
+        svc_desc  = _strip_html(svc.get("ServiceDescription"))
+        op_notes  = _strip_html(svc.get("OperationNotes"))
         hours     = svc.get("ExtendedHours") or svc.get("PerHours")
         svc_id    = svc.get("OpportunityServiceID")
         items     = items_by_svc.get(svc_id, [])
@@ -479,7 +497,7 @@ def _build_docx(
                 mat_name = item.get("ItemName") or "—"
                 qty      = item.get("ItemQuantity") or "—"
                 unit     = item.get("AllocationUnitTypeName") or "—"
-                notes    = item.get("EstimatingNotes") or item.get("ItemDescription") or ""
+                notes    = _strip_html(item.get("EstimatingNotes") or item.get("ItemDescription"))
 
                 irow.cells[0].paragraphs[0].add_run(_str(mat_name)).font.size  = Pt(9)
                 irow.cells[1].paragraphs[0].add_run(str(qty)).font.size         = Pt(9)
