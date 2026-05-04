@@ -167,7 +167,12 @@ async def _fetch_catalog_vendors(catalog_ids: List[int]) -> Dict[int, str]:
         })
         rows = _aspire._extract_list(res)
         if rows:
-            logger.info(f"CatalogItems sample keys: {sorted(rows[0].keys())[:25]}")
+            logger.info(f"CatalogItems ALL keys: {sorted(rows[0].keys())}")
+            # Log first row values for vendor-related fields to help identify the right one
+            vendor_clues = {k: v for k, v in rows[0].items() if any(
+                kw in k.lower() for kw in ("vendor", "supplier", "manufacturer", "source", "purchase")
+            )}
+            logger.info(f"CatalogItems vendor-related fields: {vendor_clues}")
         return {
             r.get("CatalogItemID"): (r.get("VendorName") or r.get("SupplierName") or "")
             for r in rows
@@ -278,7 +283,11 @@ async def _fetch_work_tickets(opp_id: int) -> List[Dict[str, Any]]:
         })
         rows = _aspire._extract_list(res)
         if rows:
-            logger.info(f"WorkTickets sample keys: {sorted(rows[0].keys())}")
+            logger.info(f"WorkTickets ALL keys: {sorted(rows[0].keys())}")
+            hours_clues = {k: v for k, v in rows[0].items() if any(
+                kw in k.lower() for kw in ("hour", "man", "labor", "actual", "estimated", "budget", "scheduled")
+            )}
+            logger.info(f"WorkTickets hours-related fields: {hours_clues}")
         return rows
     except Exception as e:
         logger.warning(f"Could not fetch WorkTickets: {e}")
