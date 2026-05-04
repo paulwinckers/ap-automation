@@ -1553,15 +1553,36 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
 async def get_po_work_tickets(opportunity_id: int):
     """Return work tickets for an opportunity so the user can pick one for a PO."""
     _check_credentials()
+
+    # No $select — WorkTicketTitle and other derived fields aren't real entity columns;
+    # fetching without $select returns all real fields including OpportunityServiceID.
     try:
         res = await _aspire._get("WorkTickets", {
             "$filter": f"OpportunityID eq {opportunity_id}",
-            "$select": "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,ScheduledStartDate",
             "$top": "50",
         })
         all_tickets = _aspire._extract_list(res)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to fetch work tickets: {e}")
+
+    # Secondary lookup: OpportunityServices → service name (same as Schedule endpoint)
+    service_map: dict = {}
+    try:
+        svc_res = await _aspire._get("OpportunityServices", {
+            "$filter": f"OpportunityID eq {opportunity_id}",
+            "$top": "50",
+        })
+        for svc in _aspire._extract_list(svc_res):
+            sid = svc.get("OpportunityServiceID")
+            if sid:
+                service_map[sid] = (
+                    svc.get("ServiceNameAbr")
+                    or svc.get("DisplayName")
+                    or svc.get("ServiceName")
+                    or ""
+                )
+    except Exception as e:
+        logger.warning(f"OpportunityServices lookup failed for PO tickets (non-fatal): {e}")
 
     # Prefer open/scheduled tickets; fall back to all if none found
     open_statuses = {"scheduled", "in progress", "new", "open", "active"}
@@ -1570,17 +1591,19 @@ async def get_po_work_tickets(opportunity_id: int):
         if (t.get("WorkTicketStatusName") or "").lower() in open_statuses
     ] or all_tickets
 
-    tickets_out = [
-        {
+    tickets_out = []
+    for t in active:
+        svc_id = t.get("OpportunityServiceID")
+        title = (service_map.get(svc_id) if svc_id else None) or None
+        tickets_out.append({
             "WorkTicketID":         t.get("WorkTicketID"),
             "WorkTicketNumber":     t.get("WorkTicketNumber"),
-            "WorkTicketTitle":      None,  # WorkTicketTitle not valid in $select
+            "WorkTicketTitle":      title,
             "WorkTicketStatusName": t.get("WorkTicketStatusName"),
             "ScheduledStartDate":   (t.get("ScheduledStartDate") or "")[:10],
-            "PropertyName":         None,
-        }
-        for t in active
-    ]
+            "PropertyName":         t.get("PropertyName"),
+        })
+
     return {"opportunity_id": opportunity_id, "tickets": tickets_out}
 
 
