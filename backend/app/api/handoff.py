@@ -724,7 +724,8 @@ def _build_docx(
                     pass
 
     if tickets:
-        sched_table = doc.add_table(rows=1 + len(tickets), cols=6)
+        # +1 header row + 1 totals row
+        sched_table = doc.add_table(rows=1 + len(tickets) + 1, cols=6)
         sched_table.style = "Table Grid"
         _section_table_header(sched_table, [
             "Service Group / Phase", "Ticket #", "Scheduled Date", "Est. Hours", "Actual Hours", "Status"
@@ -734,6 +735,11 @@ def _build_docx(
         for ci, w in enumerate(widths):
             for row in sched_table.rows:
                 row.cells[ci].width = Inches(w)
+
+        total_est = 0.0
+        total_act = 0.0
+        has_est   = False
+        has_act   = False
 
         for i, tk in enumerate(tickets, start=1):
             row   = sched_table.rows[i]
@@ -766,8 +772,8 @@ def _build_docx(
             cells[2].paragraphs[0].add_run(
                 _fmt_date(tk.get("ScheduledStartDate") or tk.get("ScheduledDate"))
             ).font.size = Pt(9)
+
             # Estimated hours — try ticket-level fields first, fall back to service record
-            tk_svc_id_for_hrs = tk.get("OpportunityServiceID")
             est_hrs_raw = (
                 tk.get("EstimatedLaborHours")
                 or tk.get("EstimatedHours")
@@ -781,9 +787,11 @@ def _build_docx(
                 est_hrs = float(est_hrs_raw) if est_hrs_raw is not None else None
             except Exception:
                 est_hrs = None
-            # Fall back to the service's budgeted hours if ticket has none
-            if est_hrs is None and tk_svc_id_for_hrs:
-                est_hrs = svc_id_to_hours.get(tk_svc_id_for_hrs)
+            if est_hrs is None and tk_svc_id:
+                est_hrs = svc_id_to_hours.get(tk_svc_id)
+            if est_hrs is not None:
+                total_est += est_hrs
+                has_est = True
             est_str = f"{est_hrs:,.1f}" if est_hrs is not None else "—"
             cells[3].paragraphs[0].add_run(est_str).font.size = Pt(9)
 
@@ -800,9 +808,28 @@ def _build_docx(
                 act_hrs = float(act_hrs_raw) if act_hrs_raw is not None else None
             except Exception:
                 act_hrs = None
+            if act_hrs is not None:
+                total_act += act_hrs
+                has_act = True
             act_str = f"{act_hrs:,.1f}" if act_hrs is not None else "—"
             cells[4].paragraphs[0].add_run(act_str).font.size = Pt(9)
             cells[5].paragraphs[0].add_run(status).font.size = Pt(9)
+
+        # ── Totals row ────────────────────────────────────────────────────────
+        tot_row = sched_table.rows[len(tickets) + 1]
+        for cell in tot_row.cells:
+            _set_cell_bg(cell, LIGHT)
+        def _tot_run(cell, text: str, bold: bool = True):
+            r = cell.paragraphs[0].add_run(text)
+            r.bold = bold
+            r.font.size = Pt(9)
+            r.font.color.rgb = _rgb(NAVY)
+        _tot_run(tot_row.cells[0], "TOTAL")
+        _tot_run(tot_row.cells[1], "")
+        _tot_run(tot_row.cells[2], "")
+        _tot_run(tot_row.cells[3], f"{total_est:,.1f}" if has_est else "—")
+        _tot_run(tot_row.cells[4], f"{total_act:,.1f}" if has_act else "—")
+        _tot_run(tot_row.cells[5], "")
 
         doc.add_paragraph()
         # Legend
