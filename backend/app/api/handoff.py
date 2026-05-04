@@ -294,36 +294,78 @@ async def _fetch_work_tickets(opp_id: int) -> List[Dict[str, Any]]:
         return []
 
 
-async def _fetch_receipts(opp_id: int) -> List[Dict[str, Any]]:
+async def _fetch_receipts(opp_id: int, ticket_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
     """
-    Aspire stores purchase receipts linked to opportunities via allocations.
-    Try several endpoint + filter combinations until one returns data.
+    Aspire purchase receipts are linked to work tickets, not directly to opportunities.
+    Strategy:
+      1. Filter PurchaseReceipts by WorkTicketID in (list of ticket IDs)  [primary]
+      2. Filter by OpportunityID as fallback
     """
-    attempts = [
-        # Most likely: PurchaseReceipts filtered by OpportunityID
-        ("PurchaseReceipts", {"$filter": f"OpportunityID eq {opp_id}", "$top": "200"}),
-        # Via receipt allocations
-        ("ReceiptAllocations", {"$filter": f"OpportunityID eq {opp_id}", "$top": "200"}),
-        # Legacy endpoint name
-        ("Receipts", {"$filter": f"OpportunityID eq {opp_id}", "$top": "200"}),
-        # Maybe the field is AllocationOpportunityID
-        ("PurchaseReceipts", {"$filter": f"AllocationOpportunityID eq {opp_id}", "$top": "200"}),
-    ]
+    all_rows: List[Dict[str, Any]] = []
+    logged = False
 
-    for endpoint, params in attempts:
+    def _log_first(rows, label):
+        nonlocal logged
+        if rows and not logged:
+            logger.info(f"Receipts found via {label}: {len(rows)} rows")
+            logger.info(f"Receipt ALL keys: {sorted(rows[0].keys())}")
+            logged = True
+
+    # ── Strategy 1: per work ticket ───────────────────────────────────────────
+    if ticket_ids:
+        # Try bulk `in` filter first (one request)
+        id_list = ",".join(str(i) for i in ticket_ids[:50])
+        for endpoint in ("PurchaseReceipts", "Receipts"):
+            try:
+                res  = await _aspire._get(endpoint, {
+                    "$filter": f"WorkTicketID in ({id_list})",
+                    "$top": "500",
+                })
+                rows = _aspire._extract_list(res)
+                if rows:
+                    _log_first(rows, f"{endpoint} WorkTicketID in (...)")
+                    return rows
+            except Exception as e:
+                logger.debug(f"Receipts {endpoint} bulk ticket filter failed: {e}")
+
+        # Fall back: per-ticket fetch (Aspire sometimes requires this)
+        seen: set = set()
+        for tid in ticket_ids[:30]:
+            for endpoint in ("PurchaseReceipts", "Receipts"):
+                try:
+                    res  = await _aspire._get(endpoint, {
+                        "$filter": f"WorkTicketID eq {tid}",
+                        "$top": "100",
+                    })
+                    rows = _aspire._extract_list(res)
+                    if rows:
+                        _log_first(rows, f"{endpoint} WorkTicketID eq {tid}")
+                        for r in rows:
+                            rid = r.get("ReceiptID") or r.get("ReceiptNumber") or id(r)
+                            if rid not in seen:
+                                seen.add(rid)
+                                all_rows.append(r)
+                        break
+                except Exception:
+                    continue
+        if all_rows:
+            return all_rows
+
+    # ── Strategy 2: filter by OpportunityID ───────────────────────────────────
+    for endpoint in ("PurchaseReceipts", "Receipts"):
         try:
-            res  = await _aspire._get(endpoint, params)
+            res  = await _aspire._get(endpoint, {
+                "$filter": f"OpportunityID eq {opp_id}",
+                "$top": "200",
+            })
             rows = _aspire._extract_list(res)
             if rows:
-                logger.info(f"Receipts found via {endpoint} ({params.get('$filter')}): {len(rows)} rows")
-                logger.info(f"Receipt ALL keys: {sorted(rows[0].keys())}")
+                _log_first(rows, f"{endpoint} OpportunityID eq {opp_id}")
                 return rows
-            else:
-                logger.debug(f"Receipts: {endpoint} returned 0 rows for filter {params.get('$filter')}")
         except Exception as e:
-            logger.debug(f"Receipts: {endpoint} failed — {e}")
+            logger.debug(f"Receipts {endpoint} OpportunityID filter failed: {e}")
 
-    logger.warning(f"Could not fetch receipts for opportunity {opp_id} — all attempts returned empty")
+    logger.warning(f"Could not fetch receipts for opportunity {opp_id} — all strategies returned empty")
     return []
 
 
@@ -872,47 +914,82 @@ def _build_docx(
     else:
         doc.add_paragraph("No work tickets found in Aspire for this opportunity.").runs[0].font.size = Pt(10)
 
-    # ── Section 4: Materials & Procurement ───────────────────────────────────
+    # ── Section 4: Purchase Receipts / Procurement ───────────────────────────
     doc.add_page_break()
     _heading("4. Materials & Procurement")
 
     if receipts:
-        for receipt in receipts:
-            vendor    = _str(receipt.get("VendorName") or receipt.get("Vendor"), "Unknown Vendor")
-            rcpt_date = _fmt_date(receipt.get("ReceivedDate") or receipt.get("ReceiptDate"))
-            total     = _fmt_money(receipt.get("TotalAmount") or receipt.get("Total"))
-            rcpt_num  = _str(receipt.get("ReceiptNumber") or receipt.get("ReceiptID"), "")
+        # Sort by vendor name then receipt number for clean grouping
+        receipts_sorted = sorted(
+            receipts,
+            key=lambda r: (
+                (r.get("VendorName") or r.get("Vendor1Name") or r.get("Vendor") or ""),
+                str(r.get("ReceiptNumber") or r.get("ReceiptID") or ""),
+            )
+        )
 
-            sub_h = doc.add_paragraph()
-            sr = sub_h.add_run(f"{vendor}  —  Receipt #{rcpt_num}  ({rcpt_date})  Total: {total}")
-            sr.bold = True
-            sr.font.size = Pt(10)
-            sr.font.color.rgb = _rgb(NAVY)
+        # Summary table: one row per receipt
+        rcpt_tbl = doc.add_table(rows=1 + len(receipts_sorted) + 1, cols=6)
+        rcpt_tbl.style = "Table Grid"
+        _section_table_header(rcpt_tbl, [
+            "Receipt #", "Vendor", "Status", "Work Ticket", "Received Date", "Total"
+        ])
+        col_w_r = [0.7, 2.2, 1.0, 0.85, 1.0, 1.25]
+        for row in rcpt_tbl.rows:
+            for ci, w in enumerate(col_w_r):
+                row.cells[ci].width = Inches(w)
 
-            items_raw = receipt.get("ReceiptItems") or []
-            if isinstance(items_raw, dict):
-                items_raw = items_raw.get("value", [])
+        grand_total = 0.0
+        has_total   = False
 
-            if items_raw:
-                item_table = doc.add_table(rows=1 + len(items_raw), cols=4)
-                item_table.style = "Table Grid"
-                _section_table_header(item_table, ["Item / Description", "Qty", "Unit Cost", "Total"])
-                for j, item in enumerate(items_raw, start=1):
-                    irow = item_table.rows[j]
-                    bg = GREY if j % 2 == 0 else WHITE
-                    for cell in irow.cells:
-                        _set_cell_bg(cell, bg)
-                    qty      = item.get("Quantity") or item.get("Qty") or "—"
-                    unit_c   = _fmt_money(item.get("UnitCost") or item.get("UnitPrice"))
-                    line_tot = _fmt_money(item.get("TotalCost") or item.get("LineTotal") or item.get("Amount"))
-                    desc     = _str(item.get("Description") or item.get("ItemName") or item.get("Name"), "")
-                    irow.cells[0].paragraphs[0].add_run(desc).font.size       = Pt(9)
-                    irow.cells[1].paragraphs[0].add_run(str(qty)).font.size   = Pt(9)
-                    irow.cells[2].paragraphs[0].add_run(unit_c).font.size     = Pt(9)
-                    irow.cells[3].paragraphs[0].add_run(line_tot).font.size   = Pt(9)
-            else:
-                doc.add_paragraph("  (No line items available)").runs[0].font.size = Pt(9)
-            doc.add_paragraph()
+        for i, receipt in enumerate(receipts_sorted, start=1):
+            # Field names confirmed from Aspire UI screenshot
+            vendor    = _str(
+                receipt.get("VendorName") or receipt.get("Vendor1Name") or receipt.get("Vendor"),
+                "—"
+            )
+            rcpt_num  = _str(receipt.get("ReceiptNumber") or receipt.get("ReceiptID"), "—")
+            status    = _str(receipt.get("ReceiptStatusName") or receipt.get("StatusName"), "—")
+            tk_num    = _str(receipt.get("WorkTicketNumber"), "—")
+            rcpt_date = _fmt_date(
+                receipt.get("ReceivedDate") or receipt.get("ReceiptDate") or receipt.get("InvoiceDate")
+            )
+            total_raw = receipt.get("ReceiptTotalCost") or receipt.get("TotalAmount") or receipt.get("Total")
+            try:
+                total_val = float(total_raw) if total_raw is not None else None
+                if total_val is not None:
+                    grand_total += total_val
+                    has_total = True
+            except Exception:
+                total_val = None
+            total_str = _fmt_money(total_val) if total_val is not None else "—"
+
+            bg = GREY if i % 2 == 0 else WHITE
+            irow = rcpt_tbl.rows[i]
+            for cell in irow.cells:
+                _set_cell_bg(cell, bg)
+            irow.cells[0].paragraphs[0].add_run(rcpt_num).font.size  = Pt(9)
+            irow.cells[1].paragraphs[0].add_run(vendor).font.size    = Pt(9)
+            irow.cells[2].paragraphs[0].add_run(status).font.size    = Pt(9)
+            irow.cells[3].paragraphs[0].add_run(tk_num).font.size    = Pt(9)
+            irow.cells[4].paragraphs[0].add_run(rcpt_date).font.size = Pt(9)
+            irow.cells[5].paragraphs[0].add_run(total_str).font.size = Pt(9)
+
+        # Totals row
+        tot_row = rcpt_tbl.rows[len(receipts_sorted) + 1]
+        for cell in tot_row.cells:
+            _set_cell_bg(cell, LIGHT)
+        def _rtot(cell, text, bold=True):
+            r = cell.paragraphs[0].add_run(text)
+            r.bold = bold
+            r.font.size = Pt(9)
+            r.font.color.rgb = _rgb(NAVY)
+        _rtot(tot_row.cells[0], "TOTAL")
+        for ci in range(1, 5):
+            _rtot(tot_row.cells[ci], "")
+        _rtot(tot_row.cells[5], _fmt_money(grand_total) if has_total else "—")
+
+        doc.add_paragraph()
     else:
         doc.add_paragraph("No purchase receipts found in Aspire for this opportunity.").runs[0].font.size = Pt(10)
 
@@ -1073,12 +1150,14 @@ async def generate_handoff(
     if not opp_id:
         raise HTTPException(status_code=404, detail="OpportunityID missing from Aspire response")
 
-    services, service_groups, tickets, receipts = await asyncio.gather(
+    services, service_groups, tickets = await asyncio.gather(
         _fetch_services(opp_id),
         _fetch_service_groups(opp_id),
         _fetch_work_tickets(opp_id),
-        _fetch_receipts(opp_id),
     )
+    # Receipts are linked to work tickets — pass ticket IDs for targeted fetch
+    ticket_ids = [t["WorkTicketID"] for t in tickets if t.get("WorkTicketID")]
+    receipts = await _fetch_receipts(opp_id, ticket_ids)
     # Service items need service IDs — fetch after services are known
     service_ids = [s["OpportunityServiceID"] for s in services if s.get("OpportunityServiceID")]
     service_items = await _fetch_service_items(opp_id, service_ids)
