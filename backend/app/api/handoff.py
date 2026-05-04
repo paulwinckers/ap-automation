@@ -8,10 +8,12 @@ Route: GET /handoff/generate?opportunity_number=1970
 Returns: application/vnd.openxmlformats-officedocument.wordprocessingml.document
 """
 import io
+import json
 import logging
 from datetime import date
 from typing import Any, Dict, List, Optional
 
+import anthropic as _anthropic
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
@@ -23,6 +25,72 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/handoff", tags=["handoff"])
 
 _aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)
+
+# ── AI client (lazy singleton) ────────────────────────────────────────────────
+
+_ai_client: Optional[_anthropic.AsyncAnthropic] = None
+
+def _get_ai() -> _anthropic.AsyncAnthropic:
+    global _ai_client
+    if _ai_client is None:
+        _ai_client = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    return _ai_client
+
+
+async def _generate_scope_summary(
+    opp_name:     str,
+    prop_name:    str,
+    proposal_desc: str,
+    group_names:  List[str],
+    total_hours:  float,
+) -> Dict[str, str]:
+    """
+    Ask Claude to produce a concise project summary from the Aspire data.
+    Returns dict with: project_description, key_objectives, major_deliverables, exclusions
+    """
+    context_parts = [f"Project: {opp_name}"]
+    if prop_name:
+        context_parts.append(f"Property: {prop_name}")
+    if proposal_desc:
+        context_parts.append(f"Proposal description: {proposal_desc[:800]}")
+    if group_names:
+        context_parts.append(f"Scope phases/groups: {', '.join(group_names)}")
+    if total_hours:
+        context_parts.append(f"Total estimated hours: {total_hours:,.1f}")
+    context = "\n".join(context_parts)
+
+    prompt = (
+        "You are a project manager summarizing a landscaping project handoff document.\n"
+        "Based on the following Aspire project data, produce a concise project overview.\n\n"
+        f"{context}\n\n"
+        "Respond ONLY with valid JSON — no markdown, no explanation:\n"
+        "{\n"
+        '  "project_description": "One sentence describing the overall project",\n'
+        '  "key_objectives": "Comma-separated list of the main work areas / deliverables",\n'
+        '  "major_deliverables": "Key notes about the job — billing type, documentation needs, etc.",\n'
+        '  "exclusions": "Any obvious exclusions or leave blank"\n'
+        "}"
+    )
+
+    try:
+        msg = await _get_ai().messages.create(
+            model="claude-opus-4-5",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = msg.content[0].text.strip()
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            raw = parts[1].lstrip("json").strip() if len(parts) > 1 else raw
+        return json.loads(raw)
+    except Exception as exc:
+        logger.warning(f"AI scope summary failed: {exc}")
+        return {
+            "project_description": opp_name,
+            "key_objectives":      ", ".join(group_names) if group_names else "—",
+            "major_deliverables":  "",
+            "exclusions":          "",
+        }
 
 # ── Brand colours (hex without #) ────────────────────────────────────────────
 NAVY   = "1B3A5C"
@@ -207,6 +275,7 @@ def _build_docx(
     services:       List[Dict[str, Any]],
     service_groups: List[Dict[str, Any]],
     service_items:  List[Dict[str, Any]],
+    scope_summary:  Dict[str, str],
     tickets:        List[Dict[str, Any]],
     receipts:       List[Dict[str, Any]],
 ) -> bytes:
@@ -385,11 +454,24 @@ def _build_docx(
     doc.add_page_break()
     _heading("2. Scope of Work")
 
-    proposal_desc = _strip_html(opp.get("ProposalDescription") or opp.get("Description"))
-    if proposal_desc:
-        desc_p = doc.add_paragraph(proposal_desc)
-        desc_p.runs[0].font.size = Pt(10)
-        doc.add_paragraph()
+    # ── AI-generated project overview box ─────────────────────────────────────
+    def _summary_row(label: str, value: str):
+        if not value:
+            return
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(3)
+        p.paragraph_format.space_after  = Pt(3)
+        label_run = p.add_run(f"{label}: ")
+        label_run.font.size = Pt(10)
+        val_run = p.add_run(value)
+        val_run.bold = True
+        val_run.font.size = Pt(10)
+
+    _summary_row("Brief project description", scope_summary.get("project_description", ""))
+    _summary_row("Key objectives",            scope_summary.get("key_objectives", ""))
+    _summary_row("Major deliverables",        scope_summary.get("major_deliverables", ""))
+    _summary_row("Exclusions (if any)",       scope_summary.get("exclusions", ""))
+    doc.add_paragraph()
 
     # ── Index lookups ─────────────────────────────────────────────────────────
     # Services grouped by their group ID
@@ -800,7 +882,18 @@ async def generate_handoff(
         f"{len(tickets)} tickets, {len(receipts)} receipts"
     )
 
-    docx_bytes = _build_docx(opp, services, service_groups, service_items, tickets, receipts)
+    # AI-generated scope summary
+    group_names  = [g.get("GroupName", "") for g in service_groups if g.get("GroupName")]
+    total_hours  = sum(float(g.get("ExtendedHours") or 0) for g in service_groups)
+    scope_summary = await _generate_scope_summary(
+        opp_name      = _str(opp.get("OpportunityName"), ""),
+        prop_name     = _str(opp.get("PropertyName"), ""),
+        proposal_desc = _strip_html(opp.get("ProposalDescription") or opp.get("Description")),
+        group_names   = group_names,
+        total_hours   = total_hours,
+    )
+
+    docx_bytes = _build_docx(opp, services, service_groups, service_items, scope_summary, tickets, receipts)
 
     opp_name_slug = (opp.get("OpportunityName") or f"Opportunity-{opportunity_number}") \
         .replace(" ", "_").replace("/", "-")[:60]
