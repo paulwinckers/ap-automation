@@ -50,7 +50,7 @@ CREDIT_MEMO — vendor credit notes, credit memos, refund notices, or store retu
 STATEMENT   — vendor account statements showing a list of invoices, payments, and the total balance owed over a period (monthly statement, account statement)
 INVOICE  — vendor bills or invoices with a PDF attachment, or emails where payment is still due
 RECEIPT  — online purchase confirmations or subscription renewal receipts with no PDF, from vendors like GoDaddy, Adobe, Microsoft, Intuit, Google, AWS, QuickBooks — payment already charged to a credit card
-NOT_INVOICE — newsletters, marketing, meeting requests, reports, HR, legal, bank notifications, calendar invites
+NOT_INVOICE — newsletters, marketing, meeting requests, reports, HR, legal, bank notifications, calendar invites, AND payment remittance advice / EFT remittance notices where a CUSTOMER is paying US (the "Supplier or Party To Payee" is our company)
 
 Reply with only: CREDIT_MEMO, STATEMENT, INVOICE, RECEIPT, or NOT_INVOICE"""
 
@@ -366,6 +366,22 @@ class EmailIntakeService:
 
         # Skip HR / legal documents
         if any(k in subject_lower for k in ["offer of employment", "employment offer", "contract of employment"]):
+            return "skip"
+
+        # Skip payment remittance advice — these are customers paying US, not vendor bills
+        # e.g. "Payment Remittance Advice" from NVA, strata corps, property managers, etc.
+        remittance_keywords = [
+            "remittance advice", "payment remittance", "remittance notice",
+            "eft remittance", "ach remittance", "wire remittance",
+            "remittance confirmation", "payment advice",
+        ]
+        if any(k in subject_lower for k in remittance_keywords):
+            return "skip"
+        # Also catch body-level remittance markers (subject may just say "Payment")
+        body_lower = body_content.lower() if body_content else ""
+        if "payment remittance advice" in body_lower or (
+            "remittance" in body_lower and "supplier or party to payee" in body_lower
+        ):
             return "skip"
 
         # Skip renewal reminders / expiry notices — no money has changed hands yet
