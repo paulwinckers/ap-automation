@@ -587,35 +587,53 @@ def _build_docx(
             mv.bold = True
             mv.font.size = Pt(9)
 
-        # Materials table
-        if items:
-            mat_table = doc.add_table(rows=1 + len(items), cols=5)
-            mat_table.style = "Table Grid"
-            _section_table_header(mat_table, ["Material", "Qty", "Unit", "Vendor", "Notes"])
+        # ── Split items by type ───────────────────────────────────────────────
+        def _item_type(item: Dict[str, Any]) -> str:
+            return (item.get("ItemType") or "").strip().lower()
+
+        mat_items = [i for i in items if _item_type(i) in ("material", "materials", "")]
+        # Labor items are intentionally excluded from the document
+
+        def _render_item_table(rows_data: List[Dict[str, Any]]):
+            tbl = doc.add_table(rows=1 + len(rows_data), cols=5)
+            tbl.style = "Table Grid"
+            _section_table_header(tbl, ["Item", "Qty", "Unit", "Vendor", "Notes"])
             col_w = [2.8, 0.65, 1.0, 1.5, 1.55]
-            for row in mat_table.rows:
+            for row in tbl.rows:
                 for ci, w in enumerate(col_w):
                     row.cells[ci].width = Inches(w)
-
-            for j, item in enumerate(items, start=1):
-                irow = mat_table.rows[j]
+            for j, item in enumerate(rows_data, start=1):
+                irow = tbl.rows[j]
                 bg = GREY if j % 2 == 0 else WHITE
                 for cell in irow.cells:
                     _set_cell_bg(cell, bg)
+                irow.cells[0].paragraphs[0].add_run(_str(item.get("ItemName"))).font.size          = Pt(9)
+                irow.cells[1].paragraphs[0].add_run(str(item.get("ItemQuantity") or "—")).font.size = Pt(9)
+                irow.cells[2].paragraphs[0].add_run(_str(item.get("AllocationUnitTypeName"))).font.size = Pt(9)
+                irow.cells[3].paragraphs[0].add_run(catalog_vendors.get(item.get("CatalogItemID"), "")).font.size = Pt(9)
+                irow.cells[4].paragraphs[0].add_run(_str(_strip_html(item.get("EstimatingNotes") or item.get("ItemDescription")), "")).font.size = Pt(9)
 
-                mat_name = item.get("ItemName") or "—"
-                qty      = item.get("ItemQuantity") or "—"
-                unit     = item.get("AllocationUnitTypeName") or "—"
-                vendor   = catalog_vendors.get(item.get("CatalogItemID"), "")
-                notes    = _strip_html(item.get("EstimatingNotes") or item.get("ItemDescription"))
-
-                irow.cells[0].paragraphs[0].add_run(_str(mat_name)).font.size   = Pt(9)
-                irow.cells[1].paragraphs[0].add_run(str(qty)).font.size          = Pt(9)
-                irow.cells[2].paragraphs[0].add_run(_str(unit)).font.size        = Pt(9)
-                irow.cells[3].paragraphs[0].add_run(_str(vendor, "")).font.size  = Pt(9)
-                irow.cells[4].paragraphs[0].add_run(_str(notes, "")).font.size   = Pt(9)
+        # Materials table (no labor, no equipment, no subs)
+        if mat_items:
+            _render_item_table(mat_items)
 
         doc.add_paragraph()  # spacer after each service block
+
+    # Lists to collect equipment and sub items across all services for Sections 6 & 7
+    # Each entry: {"phase": group_name_or_svc_name, "item": item_dict}
+    equip_rows: List[Dict[str, Any]] = []
+    sub_rows:   List[Dict[str, Any]] = []
+
+    def _collect_typed_items(svc: Dict[str, Any], phase_label: str):
+        """Pull equipment and sub items from this service into the cross-section lists."""
+        svc_id = svc.get("OpportunityServiceID")
+        items  = items_by_svc.get(svc_id, [])
+        for item in items:
+            t = _item_type(item)
+            if t in ("equipment",):
+                equip_rows.append({"phase": phase_label, "item": item})
+            elif t in ("subcontractor", "sub", "subtrade", "subcontract"):
+                sub_rows.append({"phase": phase_label, "item": item})
 
     if service_groups or ungrouped_svcs:
         svc_counter = [0]
@@ -623,6 +641,7 @@ def _build_docx(
         for grp in service_groups:
             gid      = _service_group_id(grp)
             grp_svcs = svc_by_group.get(gid, [])
+            grp_label = _group_name(grp)
 
             # Group header (navy rule) — name + total hours
             grp_hours = grp.get("ExtendedHours")
@@ -634,7 +653,7 @@ def _build_docx(
             gh = doc.add_paragraph()
             gh.paragraph_format.space_before = Pt(12)
             gh.paragraph_format.space_after  = Pt(2)
-            gr = gh.add_run(_group_name(grp))
+            gr = gh.add_run(grp_label)
             gr.bold = True
             gr.font.size = Pt(11)
             gr.font.color.rgb = _rgb(NAVY)
@@ -663,11 +682,14 @@ def _build_docx(
             for svc in grp_svcs:
                 svc_counter[0] += 1
                 _render_service_block(svc, svc_counter[0])
+                _collect_typed_items(svc, grp_label)
 
         # Ungrouped services
         for svc in ungrouped_svcs:
             svc_counter[0] += 1
+            svc_label = _str(svc.get("DisplayName") or svc.get("ServiceNameAbrOverride"), "Service")
             _render_service_block(svc, svc_counter[0])
+            _collect_typed_items(svc, svc_label)
 
     else:
         doc.add_paragraph("No service lines found in Aspire for this opportunity.").runs[0].font.size = Pt(10)
@@ -676,11 +698,24 @@ def _build_docx(
     doc.add_page_break()
     _heading("3. Project Schedule")
 
+    # Build ticket → group name lookup:
+    # ticket.OpportunityServiceID → service.OpportunityServiceGroupID → group.GroupName
+    svc_id_to_group: Dict[Any, str] = {}
+    grp_id_to_name:  Dict[Any, str] = {
+        _service_group_id(g): _group_name(g)
+        for g in service_groups
+    }
+    for svc in services:
+        sid  = svc.get("OpportunityServiceID")
+        gid  = svc.get("OpportunityServiceGroupID")
+        if sid and gid and gid in grp_id_to_name:
+            svc_id_to_group[sid] = grp_id_to_name[gid]
+
     if tickets:
         sched_table = doc.add_table(rows=1 + len(tickets), cols=6)
         sched_table.style = "Table Grid"
         _section_table_header(sched_table, [
-            "Phase / Title", "Ticket #", "Scheduled Date", "Est. Hours", "Actual Hours", "Status"
+            "Service Group / Phase", "Ticket #", "Scheduled Date", "Est. Hours", "Actual Hours", "Status"
         ])
         # Column widths
         widths = [2.3, 0.7, 1.1, 0.9, 0.9, 0.6]
@@ -700,10 +735,19 @@ def _build_docx(
             for cell in row.cells:
                 _set_cell_bg(cell, bg)
 
+            # Build Phase / Title: prefer group name, append ticket title if present
+            tk_svc_id  = tk.get("OpportunityServiceID")
+            grp_label  = svc_id_to_group.get(tk_svc_id, "")
+            tk_title   = _str(tk.get("WorkTicketTitle") or tk.get("WorkTicketName"), "")
+            if grp_label and tk_title and tk_title != "—":
+                phase_label = f"{grp_label}  —  {tk_title}"
+            elif grp_label:
+                phase_label = grp_label
+            else:
+                phase_label = tk_title
+
             cells = row.cells
-            cells[0].paragraphs[0].add_run(
-                _str(tk.get("WorkTicketTitle") or tk.get("WorkTicketName"))
-            ).font.size = Pt(9)
+            cells[0].paragraphs[0].add_run(phase_label).font.size = Pt(9)
             cells[1].paragraphs[0].add_run(
                 _str(tk.get("WorkTicketNumber"))
             ).font.size = Pt(9)
@@ -809,29 +853,65 @@ def _build_docx(
     # ── Section 6: Equipment Requirements ────────────────────────────────────
     _heading("6. Equipment Requirements")
 
-    for eq_type in ["Rental Equipment", "Company-Owned Equipment"]:
-        _heading(eq_type, level=2)
-        eq_t = doc.add_table(rows=6, cols=4)
-        eq_t.style = "Table Grid"
-        _section_table_header(eq_t, ["Equipment", "Quantity", "Duration / Dates", "Notes"])
-        for i in range(1, 6):
-            bg = GREY if i % 2 == 0 else WHITE
-            for cell in eq_t.rows[i].cells:
-                _set_cell_bg(cell, bg)
-                cell.paragraphs[0].add_run("").font.size = Pt(9)
+    if equip_rows:
+        # Group by phase label
+        from itertools import groupby as _groupby
+        equip_rows.sort(key=lambda r: r["phase"])
+        for phase_label, group_iter in _groupby(equip_rows, key=lambda r: r["phase"]):
+            phase_items = list(group_iter)
+            _heading(phase_label, level=2)
+            eq_t = doc.add_table(rows=1 + len(phase_items), cols=4)
+            eq_t.style = "Table Grid"
+            _section_table_header(eq_t, ["Equipment", "Qty", "Unit", "Notes"])
+            col_w_eq = [3.5, 0.65, 1.0, 2.35]
+            for row in eq_t.rows:
+                for ci, w in enumerate(col_w_eq):
+                    row.cells[ci].width = Inches(w)
+            for j, entry in enumerate(phase_items, start=1):
+                item = entry["item"]
+                bg = GREY if j % 2 == 0 else WHITE
+                irow = eq_t.rows[j]
+                for cell in irow.cells:
+                    _set_cell_bg(cell, bg)
+                irow.cells[0].paragraphs[0].add_run(_str(item.get("ItemName"))).font.size = Pt(9)
+                irow.cells[1].paragraphs[0].add_run(str(item.get("ItemQuantity") or "—")).font.size = Pt(9)
+                irow.cells[2].paragraphs[0].add_run(_str(item.get("AllocationUnitTypeName"))).font.size = Pt(9)
+                irow.cells[3].paragraphs[0].add_run(_str(_strip_html(item.get("EstimatingNotes") or item.get("ItemDescription")), "")).font.size = Pt(9)
+            doc.add_paragraph()
+    else:
+        doc.add_paragraph("No equipment items found in Aspire for this opportunity.").runs[0].font.size = Pt(10)
         doc.add_paragraph()
 
     # ── Section 7: Subcontractors ─────────────────────────────────────────────
     _heading("7. Subcontractors")
-    sub_t = doc.add_table(rows=6, cols=5)
-    sub_t.style = "Table Grid"
-    _section_table_header(sub_t, ["Subcontractor", "Trade / Scope", "Contact", "Scheduled Dates", "Contract Value"])
-    for i in range(1, 6):
-        bg = GREY if i % 2 == 0 else WHITE
-        for cell in sub_t.rows[i].cells:
-            _set_cell_bg(cell, bg)
-            cell.paragraphs[0].add_run("").font.size = Pt(9)
-    doc.add_paragraph()
+
+    if sub_rows:
+        from itertools import groupby as _groupby2
+        sub_rows.sort(key=lambda r: r["phase"])
+        for phase_label, group_iter in _groupby2(sub_rows, key=lambda r: r["phase"]):
+            phase_items = list(group_iter)
+            _heading(phase_label, level=2)
+            sub_t = doc.add_table(rows=1 + len(phase_items), cols=4)
+            sub_t.style = "Table Grid"
+            _section_table_header(sub_t, ["Subtrade / Item", "Qty", "Unit", "Notes"])
+            col_w_sub = [3.5, 0.65, 1.0, 2.35]
+            for row in sub_t.rows:
+                for ci, w in enumerate(col_w_sub):
+                    row.cells[ci].width = Inches(w)
+            for j, entry in enumerate(phase_items, start=1):
+                item = entry["item"]
+                bg = GREY if j % 2 == 0 else WHITE
+                irow = sub_t.rows[j]
+                for cell in irow.cells:
+                    _set_cell_bg(cell, bg)
+                irow.cells[0].paragraphs[0].add_run(_str(item.get("ItemName"))).font.size = Pt(9)
+                irow.cells[1].paragraphs[0].add_run(str(item.get("ItemQuantity") or "—")).font.size = Pt(9)
+                irow.cells[2].paragraphs[0].add_run(_str(item.get("AllocationUnitTypeName"))).font.size = Pt(9)
+                irow.cells[3].paragraphs[0].add_run(_str(_strip_html(item.get("EstimatingNotes") or item.get("ItemDescription")), "")).font.size = Pt(9)
+            doc.add_paragraph()
+    else:
+        doc.add_paragraph("No subcontractor items found in Aspire for this opportunity.").runs[0].font.size = Pt(10)
+        doc.add_paragraph()
 
     # ── Section 8: Notes & Special Instructions ────────────────────────────────
     _heading("8. Notes & Special Instructions")
