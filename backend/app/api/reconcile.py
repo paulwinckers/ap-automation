@@ -209,12 +209,18 @@ async def upload_statement(
         await db.create_statement_lines(statement_id, extraction.get("lines", []))
 
         # Upload PDF to R2 (non-fatal — statement is saved even if R2 fails)
+        pdf_saved = False
+        pdf_warning = None
         try:
             r2_key = await upload_statement_pdf(file_bytes, period, vendor_name, filename)
             if r2_key:
                 await db.save_pdf_r2_key(statement_id, r2_key)
+                pdf_saved = True
+            else:
+                pdf_warning = "PDF not stored — R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY not set in Railway"
         except Exception as e:
             logger.warning(f"R2 PDF upload failed (non-fatal): {e}")
+            pdf_warning = f"PDF storage failed: {e}"
 
         # Run live QBO diff
         from_date, to_date = _period_date_range(period)
@@ -229,6 +235,8 @@ async def upload_statement(
             "aging": extraction.get("aging"),
             "lines": extraction.get("lines", []),
             "diff": diff_result,
+            "pdf_saved": pdf_saved,
+            "pdf_warning": pdf_warning,
         }
 
     finally:

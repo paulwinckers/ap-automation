@@ -36,6 +36,7 @@ interface Statement {
   aging_61_90: number;
   aging_over_90: number;
   pdf_filename: string | null;
+  pdf_r2_key: string | null;
   intake_source: string;
 }
 
@@ -220,6 +221,10 @@ export default function Reconcile() {
         const err = await res.json().catch(() => ({}));
         alert(`Upload failed: ${err.detail || res.statusText}`);
         return;
+      }
+      const data = await res.json();
+      if (data.pdf_warning) {
+        alert(`Statement extracted successfully, but:\n\n⚠️ ${data.pdf_warning}\n\nThe statement data is saved but the original PDF file was not stored.`);
       }
       await loadStatements(activePeriod);
     } catch (err) {
@@ -486,8 +491,8 @@ export default function Reconcile() {
 
                     {/* Actions */}
                     <div style={{ display: 'flex', gap: 6, flex: '0 0 auto' }} onClick={e => e.stopPropagation()}>
-                      {/* View PDF — only shown when one is stored */}
-                      {stmt.pdf_filename && (
+                      {/* View PDF — only shown when PDF is actually stored in R2 */}
+                      {stmt.pdf_r2_key && (
                         <button onClick={async () => {
                           const res = await fetch(`${API}/reconcile/statements/${stmt.id}/pdf`);
                           if (!res.ok) { alert('No PDF stored for this statement'); return; }
@@ -501,12 +506,12 @@ export default function Reconcile() {
                       {/* Attach / replace PDF */}
                       {periodStatus === 'open' && (
                         <label style={{
-                          padding: '3px 10px', fontSize: 11, border: `1px solid ${stmt.pdf_filename ? '#e2e8f0' : '#fbbf24'}`,
-                          borderRadius: 6, background: stmt.pdf_filename ? '#f8fafc' : '#fffbeb',
-                          cursor: attachingPdf === stmt.id ? 'wait' : 'pointer', color: stmt.pdf_filename ? '#64748b' : '#d97706',
+                          padding: '3px 10px', fontSize: 11, border: `1px solid ${stmt.pdf_r2_key ? '#e2e8f0' : '#fbbf24'}`,
+                          borderRadius: 6, background: stmt.pdf_r2_key ? '#f8fafc' : '#fffbeb',
+                          cursor: attachingPdf === stmt.id ? 'wait' : 'pointer', color: stmt.pdf_r2_key ? '#64748b' : '#d97706',
                           whiteSpace: 'nowrap',
-                        }} title={stmt.pdf_filename ? 'Replace PDF' : 'Attach PDF'}>
-                          {attachingPdf === stmt.id ? '…' : stmt.pdf_filename ? '📎' : '📎 Attach PDF'}
+                        }} title={stmt.pdf_r2_key ? 'Replace PDF' : 'Attach PDF'}>
+                          {attachingPdf === stmt.id ? '…' : stmt.pdf_r2_key ? '📎' : '📎 Attach PDF'}
                           <input
                             type="file" accept=".pdf,.png,.jpg,.jpeg"
                             style={{ display: 'none' }}
