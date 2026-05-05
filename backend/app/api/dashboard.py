@@ -1662,7 +1662,8 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             parsed = _parse_issue_html(html_notes)
             _parsed_cache[aid] = parsed
             # Debug: dump raw HTML for issue #40 or Schiller entries
-            if parsed.get("issue_number") == 40 or "Schiller" in (a.get("Subject") or ""):
+            subj = a.get("Subject") or ""
+            if parsed.get("issue_number") == 40 or "40" in subj or "Schiller" in subj:
                 logger.info(f"Issue #40 parsed result: {parsed}")
                 # Dump all <b>label</b> cell labels found in the HTML
                 all_labels = _re.findall(r'<b>(.*?)</b>', html_notes, _re.IGNORECASE)
