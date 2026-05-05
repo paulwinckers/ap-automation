@@ -1655,21 +1655,25 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
 
     # Pre-parse HTML so we can filter on parsed status
     _parsed_cache: dict[int, dict] = {}
+    _debug_logged = False  # log one completed-looking issue for HTML inspection
     for a in raw:
         aid = a.get("ActivityID")
         if aid:
             html_notes = a.get("Notes") or ""
             parsed = _parse_issue_html(html_notes)
             _parsed_cache[aid] = parsed
-            # Debug: dump raw HTML for issue #40 or Schiller entries
+            # Debug: dump raw HTML for issue #40 or any issue that looks completed but has null API status
             subj = a.get("Subject") or ""
-            if parsed.get("issue_number") == 40 or "40" in subj or "Schiller" in subj:
-                logger.info(f"Issue #40 parsed result: {parsed}")
-                # Dump all <b>label</b> cell labels found in the HTML
+            is_target = parsed.get("issue_number") == 40 or "Issue #40" in subj
+            # Also log the first issue where status is null but it appears to be an issue type
+            if not _debug_logged and parsed.get("issue_number") is not None and not a.get("Status"):
+                is_target = True
+                _debug_logged = True
+            if is_target:
+                logger.info(f"DEBUG issue #{parsed.get('issue_number')} subject={subj!r} parsed={parsed}")
                 all_labels = _re.findall(r'<b>(.*?)</b>', html_notes, _re.IGNORECASE)
-                logger.info(f"Issue #40 all bold labels in HTML: {all_labels}")
-                # Dump first 3000 chars of raw HTML
-                logger.info(f"Issue #40 raw HTML[:3000]: {html_notes[:3000]}")
+                logger.info(f"DEBUG bold labels: {all_labels}")
+                logger.info(f"DEBUG raw HTML[:3000]: {html_notes[:3000]}")
 
     # Filter: keep Issues (Email with "Issue" in subject), drop plain emails/appointments/activity
     def is_active(a: dict) -> bool:
