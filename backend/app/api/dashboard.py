@@ -1582,16 +1582,6 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "$orderby": "ModifiedDate desc",
         })
         logger.info(f"Activities dashboard: fetched {len(raw)} total from Aspire")
-        if raw:
-            logger.info(f"Activities sample keys: {sorted(raw[0].keys())}")
-            # Log any issue #40 specifically so we can see its status/date fields
-            for a in raw:
-                if "40" in (a.get("Subject") or "") or "Schiller" in (a.get("Subject") or ""):
-                    date_status = {k: v for k, v in a.items() if any(
-                        kw in k.lower() for kw in ("status", "complete", "close", "date")
-                    )}
-                    logger.info(f"Issue #40 / Schiller fields: {date_status}")
-                    break
     except Exception as e:
         logger.error(f"Activities fetch failed: {e}")
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
@@ -1661,25 +1651,10 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
 
     # Pre-parse HTML so we can filter on parsed status
     _parsed_cache: dict[int, dict] = {}
-    _debug_logged = False  # log one completed-looking issue for HTML inspection
     for a in raw:
         aid = a.get("ActivityID")
         if aid:
-            html_notes = a.get("Notes") or ""
-            parsed = _parse_issue_html(html_notes)
-            _parsed_cache[aid] = parsed
-            # Debug: dump raw HTML for issue #40 or any issue that looks completed but has null API status
-            subj = a.get("Subject") or ""
-            is_target = parsed.get("issue_number") == 40 or "Issue #40" in subj
-            # Also log the first issue where status is null but it appears to be an issue type
-            if not _debug_logged and parsed.get("issue_number") is not None and not a.get("Status"):
-                is_target = True
-                _debug_logged = True
-            if is_target:
-                logger.info(f"DEBUG issue #{parsed.get('issue_number')} subject={subj!r} parsed={parsed}")
-                all_labels = _re.findall(r'<b>(.*?)</b>', html_notes, _re.IGNORECASE)
-                logger.info(f"DEBUG bold labels: {all_labels}")
-                logger.info(f"DEBUG raw HTML[:3000]: {html_notes[:3000]}")
+            _parsed_cache[aid] = _parse_issue_html(a.get("Notes") or "")
 
     # Filter: keep Issues (Email with "Issue" in subject), drop plain emails/appointments/activity
     def is_active(a: dict) -> bool:
@@ -1735,17 +1710,9 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 seen_non_issue_all[key] = a
 
     deduped = list(seen_issue_all.values()) + list(seen_non_issue_all.values())
-    logger.info(f"DEDUP-FIRST v2: {len(raw)} raw → {len(deduped)} unique issues/activities")
-
-    # Log the winning record for issue #404 so we can see what status it gets
-    for issue_num, a in seen_issue_all.items():
-        if issue_num in (40, 404, 405, 406):
-            parsed = _parsed_cache.get(a.get("ActivityID"), {})
-            logger.info(f"  Issue #{issue_num}: top ActivityID={a.get('ActivityID')} parsed_status={parsed.get('status')!r}")
 
     # ── Now apply status filter on the deduplicated set ───────────────────────
     activities = [a for a in deduped if is_active(a)]
-    logger.info(f"DEDUP-FIRST v2: {len(activities)} pass status filter")
 
     # ── Batch-fetch property + opportunity names ──────────────────────────────
     async def _fetch_names(entity: str, id_field: str, name_field: str, ids: list) -> dict:
