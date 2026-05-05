@@ -1582,6 +1582,16 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "$orderby": "ModifiedDate desc",
         })
         logger.info(f"Activities dashboard: fetched {len(raw)} total from Aspire")
+        if raw:
+            logger.info(f"Activities sample keys: {sorted(raw[0].keys())}")
+            # Log any issue #40 specifically so we can see its status/date fields
+            for a in raw:
+                if "40" in (a.get("Subject") or "") or "Schiller" in (a.get("Subject") or ""):
+                    date_status = {k: v for k, v in a.items() if any(
+                        kw in k.lower() for kw in ("status", "complete", "close", "date")
+                    )}
+                    logger.info(f"Issue #40 / Schiller fields: {date_status}")
+                    break
     except Exception as e:
         logger.error(f"Activities fetch failed: {e}")
         raise HTTPException(status_code=502, detail=f"Aspire API error: {e}")
