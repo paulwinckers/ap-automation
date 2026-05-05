@@ -1705,36 +1705,39 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 return False
         return True
 
-    activities = [a for a in raw if is_active(a)]
-
-    # ── Deduplicate Issue emails — Aspire emits one record per comment added ──
-    # Parse issue number from each, keep the record with the highest ActivityID
-    # (most recent = has all comments so far).
-    seen_issue: dict[int, dict] = {}   # issue_number -> raw activity with highest ID
-    non_issue: list[dict] = []
-    for a in activities:
+    # ── Deduplicate FIRST (before status filter) ─────────────────────────────
+    # Aspire emits one Activity record per comment. For Issues, keep only the
+    # record with the highest ActivityID — it has the complete comment history
+    # including any "Completed" status changes. Deduplicating before filtering
+    # ensures we judge status from the LATEST record, not an older open one.
+    seen_issue_all: dict[int, dict] = {}
+    seen_non_issue_all: dict[tuple, dict] = {}
+    for a in raw:
+        atype = (a.get("ActivityType") or "").strip().lower()
+        subject = (a.get("Subject") or "")
+        if _re.search(r'Time\s*Adjustment', subject, _re.IGNORECASE):
+            continue
+        if atype in ("activity", "appointment"):
+            continue
         parsed_num = _parsed_cache.get(a.get("ActivityID"), {}).get("issue_number")
         if parsed_num is not None:
-            existing = seen_issue.get(parsed_num)
+            existing = seen_issue_all.get(parsed_num)
             if existing is None or (a.get("ActivityID") or 0) > (existing.get("ActivityID") or 0):
-                seen_issue[parsed_num] = a
-        else:
-            non_issue.append(a)
+                seen_issue_all[parsed_num] = a
+        elif not (atype == "email" and not _re.search(r'Issue\s*#', subject, _re.IGNORECASE)):
+            key = (
+                subject.strip().lower(),
+                a.get("DueDate") or "",
+                a.get("PropertyID") or 0,
+            )
+            existing = seen_non_issue_all.get(key)
+            if existing is None or (a.get("ActivityID") or 0) > (existing.get("ActivityID") or 0):
+                seen_non_issue_all[key] = a
 
-    # Also deduplicate non-issue activities by (subject, due_date, property_id)
-    # Aspire can emit multiple identical records; keep the highest ActivityID.
-    seen_non_issue: dict[tuple, dict] = {}
-    for a in non_issue:
-        key = (
-            (a.get("Subject") or "").strip().lower(),
-            a.get("DueDate") or "",
-            a.get("PropertyID") or 0,
-        )
-        existing = seen_non_issue.get(key)
-        if existing is None or (a.get("ActivityID") or 0) > (existing.get("ActivityID") or 0):
-            seen_non_issue[key] = a
+    deduped = list(seen_issue_all.values()) + list(seen_non_issue_all.values())
 
-    activities = list(seen_issue.values()) + list(seen_non_issue.values())
+    # ── Now apply status filter on the deduplicated set ───────────────────────
+    activities = [a for a in deduped if is_active(a)]
 
     # ── Batch-fetch property + opportunity names ──────────────────────────────
     async def _fetch_names(entity: str, id_field: str, name_field: str, ids: list) -> dict:
