@@ -1735,9 +1735,17 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 seen_non_issue_all[key] = a
 
     deduped = list(seen_issue_all.values()) + list(seen_non_issue_all.values())
+    logger.info(f"DEDUP-FIRST v2: {len(raw)} raw → {len(deduped)} unique issues/activities")
+
+    # Log the winning record for issue #404 so we can see what status it gets
+    for issue_num, a in seen_issue_all.items():
+        if issue_num in (40, 404, 405, 406):
+            parsed = _parsed_cache.get(a.get("ActivityID"), {})
+            logger.info(f"  Issue #{issue_num}: top ActivityID={a.get('ActivityID')} parsed_status={parsed.get('status')!r}")
 
     # ── Now apply status filter on the deduplicated set ───────────────────────
     activities = [a for a in deduped if is_active(a)]
+    logger.info(f"DEDUP-FIRST v2: {len(activities)} pass status filter")
 
     # ── Batch-fetch property + opportunity names ──────────────────────────────
     async def _fetch_names(entity: str, id_field: str, name_field: str, ids: list) -> dict:
