@@ -1618,6 +1618,12 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         # Status — may be in header table, or only in comment audit trail
         result["status"]   = _cell("Status") or "Open"
         result["priority"] = _cell("Priority")
+        # If "Complete Date" cell is populated in the HTML, the issue is done —
+        # override status regardless of what the Status cell says.
+        # Aspire sometimes leaves Status="Open" while setting a Complete Date.
+        complete_date_html = _cell("Complete Date")
+        if complete_date_html and complete_date_html.strip():
+            result["status"] = "Complete"
         # Due Date — parse from HTML (MM/DD/YY) since API DueDate is null for email activities
         raw_due = _cell("Due Date")
         if raw_due:
