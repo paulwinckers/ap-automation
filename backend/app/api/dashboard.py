@@ -1655,12 +1655,16 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             return False
         if atype == "email" and not _re.search(r'Issue\s*#', subject, _re.IGNORECASE):
             return False
-        # Filter completed — check both API status field and parsed HTML status
+        # Filter completed — check API status, parsed HTML status, AND CompleteDate
         if not show_completed:
-            api_status = (a.get("Status") or "").strip().lower()
+            api_status    = (a.get("Status") or "").strip().lower()
             parsed_status = (_parsed_cache.get(a.get("ActivityID"), {}).get("status") or "").strip().lower()
-            combined = api_status + " " + parsed_status
+            combined      = api_status + " " + parsed_status
             if "complet" in combined or "closed" in combined or "cancel" in combined:
+                return False
+            # CompleteDate being set means the issue was resolved in Aspire,
+            # even if the Status field still reads "Open"
+            if a.get("CompleteDate"):
                 return False
         return True
 
