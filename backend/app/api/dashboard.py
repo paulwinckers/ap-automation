@@ -1638,6 +1638,9 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         comment_section = _re.search(r'Issue Comment History</h3>(.*)', html, _re.IGNORECASE | _re.DOTALL)
         if comment_section:
             rows = _re.findall(r'<tr>(.*?)</tr>', comment_section.group(1), _re.DOTALL)
+            # Comments are in REVERSE chronological order (newest first).
+            # We only want the MOST RECENT status change — take the first match and stop.
+            _status_set_from_history = False
             for row in rows:
                 cells = _re.findall(r'<td[^>]*>(.*?)</td>', row, _re.DOTALL)
                 if len(cells) >= 2:
@@ -1647,10 +1650,13 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                     if not comment or comment == 'Comment' or meta == 'Created Date/By':
                         continue
                     result["comments"].append({"meta": meta, "text": comment})
-                    # Detect status changes in audit trail: "ChangesStatus | 'Old' to 'New'"
-                    sm = _re.search(r"ChangesStatus\s*\|\s*'[^']*'\s*to\s*'([^']+)'", comment, _re.IGNORECASE)
-                    if sm:
-                        result["status"] = sm.group(1).strip()
+                    # Detect status changes: "ChangesStatus | 'Old' to 'New'"
+                    # Only apply the FIRST match (most recent, since newest-first order).
+                    if not _status_set_from_history:
+                        sm = _re.search(r"ChangesStatus\s*\|\s*'[^']*'\s*to\s*'([^']+)'", comment, _re.IGNORECASE)
+                        if sm:
+                            result["status"] = sm.group(1).strip()
+                            _status_set_from_history = True
         return result
 
     # Pre-parse HTML so we can filter on parsed status
