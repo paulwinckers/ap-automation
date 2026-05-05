@@ -1656,6 +1656,15 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         if aid:
             _parsed_cache[aid] = _parse_issue_html(a.get("Notes") or "")
 
+    # Build best-assigned_to map: for each issue number, find the highest-ID record
+    # that actually has names. Some newer notification emails have empty assignee fields.
+    _best_assigned: dict[int, list] = {}
+    for aid in sorted(_parsed_cache.keys(), reverse=True):  # highest ID first
+        p = _parsed_cache[aid]
+        inum = p.get("issue_number")
+        if inum and p.get("assigned_to") and inum not in _best_assigned:
+            _best_assigned[inum] = p["assigned_to"]
+
     # Filter: keep Issues (Email with "Issue" in subject), drop plain emails/appointments/activity
     def is_active(a: dict) -> bool:
         subject = (a.get("Subject") or "")
@@ -1832,7 +1841,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "status":        parsed.get("status") or a.get("Status") or "",
             "priority":      parsed.get("priority") or a.get("Priority") or "",
             "category":      a.get("ActivityCategoryName") or "",
-            "assigned_to":   parsed["assigned_to"],
+            "assigned_to":   parsed["assigned_to"] or _best_assigned.get(parsed.get("issue_number"), []),
             "comments":      parsed["comments"],
             "property_id":   resolved_pid,
             "property_name": prop_name,
