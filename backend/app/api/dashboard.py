@@ -2345,10 +2345,12 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     # ── Build metadata fallback from native Issue-type records ────────────────
     # Email notification records (kept by dedup because they have HTML) do NOT
     # carry ActivityCategoryName, OpportunityID, or PropertyID from Aspire.
-    # Native "Issue" type records DO have those fields but lack the HTML notes.
-    # We match them by issue_number (if parseable) or by subject suffix.
+    # Native "Issue" type records DO have those fields AND CreatedByUserName = creator.
+    # We match them by issue_number (if parseable) or by subject.
+    # For ambiguous subjects (e.g. "Possible Opportunity"), pick the native record
+    # whose CreatedDate is closest to the email notification's CreatedDate.
     _native_by_num: dict[int, dict] = {}
-    _native_by_subject: dict[str, dict] = {}
+    _natives_by_subject: dict[str, list] = {}  # subject → list of native records
     for a in raw:
         if (a.get("ActivityType") or "").strip().lower() != "issue":
             continue
@@ -2358,29 +2360,32 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         else:
             subj = (a.get("Subject") or "").strip().lower()
             if subj and len(subj) > 3:
-                _native_by_subject[subj] = a
+                _natives_by_subject.setdefault(subj, []).append(a)
 
-    # ── Track the FIRST (oldest) record per issue number for creator lookup ───
-    # The dedup above keeps the HIGHEST ActivityID (most recent — usually an email
-    # notification whose CreatedByUserName is the last commenter, not the creator).
-    # The LOWEST ActivityID for each issue_number is the original creation record
-    # and carries the correct CreatedByUserName.
-    _first_by_num: dict[int, dict] = {}
-    for a in raw:
-        pnum = _parsed_cache.get(a.get("ActivityID"), {}).get("issue_number")
-        if pnum is None:
-            continue
-        existing = _first_by_num.get(pnum)
-        if existing is None or (a.get("ActivityID") or 0) < (existing.get("ActivityID") or 0):
-            _first_by_num[pnum] = a
+    def _pick_closest_native(candidates: list, email_rec: dict) -> dict:
+        """Among candidate native records, pick the one closest in CreatedDate to email_rec."""
+        if len(candidates) == 1:
+            return candidates[0]
+        email_dt = email_rec.get("CreatedDate") or ""
+        def _date_dist(nat: dict) -> str:
+            nat_dt = nat.get("CreatedDate") or ""
+            # ISO strings sort correctly; return abs-ish distance via min of the two orderings
+            if not nat_dt or not email_dt:
+                return "9" * 20  # sort last if missing
+            return nat_dt if nat_dt <= email_dt else nat_dt  # prefer native created before email
+        # Prefer the native record created BEFORE (or on) the email notification date;
+        # among those, take the most recent (closest to the email).
+        before = [n for n in candidates if (n.get("CreatedDate") or "") <= email_dt]
+        pool = before if before else candidates
+        return max(pool, key=lambda n: n.get("CreatedDate") or "")
 
     # Debug: log a sample native Issue record to verify field availability
-    _sample_natives = list(_native_by_subject.values())[:3] + list(_native_by_num.values())[:3]
+    _sample_natives = [r for lst in list(_natives_by_subject.values())[:3] for r in lst[:1]]
     for _sn in _sample_natives[:2]:
         logger.info(
             f"[ACT-META] native Issue sample — cat={_sn.get('ActivityCategoryName')!r} "
-            f"oppID={_sn.get('OpportunityID')!r} propID={_sn.get('PropertyID')!r} "
-            f"wtID={_sn.get('WorkTicketID')!r} subj={(_sn.get('Subject') or '')[:60]!r}"
+            f"creator={_sn.get('CreatedByUserName')!r} "
+            f"subj={(_sn.get('Subject') or '')[:60]!r}"
         )
 
     # Start with direct issue_number matches, then try subject matching
@@ -2393,12 +2398,12 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             email_rec.get("Subject") or "",
             flags=_re.IGNORECASE,
         ).strip().lower()
-        if stripped in _native_by_subject:
-            _issue_meta[issue_num] = _native_by_subject[stripped]
+        if stripped in _natives_by_subject:
+            _issue_meta[issue_num] = _pick_closest_native(_natives_by_subject[stripped], email_rec)
             continue
-        for nat_subj, nat_rec in _native_by_subject.items():
+        for nat_subj, nat_list in _natives_by_subject.items():
             if len(nat_subj) > 5 and stripped.endswith(nat_subj):
-                _issue_meta[issue_num] = nat_rec
+                _issue_meta[issue_num] = _pick_closest_native(nat_list, email_rec)
                 break
 
     # ── Now apply status filter on the deduplicated set ───────────────────────
@@ -2580,12 +2585,13 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "priority":      parsed.get("priority") or a.get("Priority") or "",
             "category":      a.get("ActivityCategoryName") or meta.get("ActivityCategoryName") or parsed.get("category") or "",
             "assigned_to":   parsed["assigned_to"] or _best_assigned.get(issue_num, []),
-            # For creator, use the OLDEST record for this issue number — that is
-            # the original creation record with the correct CreatedByUserName.
-            # Newer records (kept by dedup) are email notifications whose
-            # CreatedByUserName is the commenter, not the original creator.
+            # For creator, use the native Issue record (original creation) matched
+            # via _issue_meta. Native records have CreatedByUserName = the actual
+            # creator. Email notification records (kept by dedup) have
+            # CreatedByUserName = commenter. Fall back to the email record only
+            # if no native match was found.
             "creator":       (
-                (_first_by_num.get(issue_num, {}).get("CreatedByUserName") or "").strip()
+                (_issue_meta.get(issue_num, {}).get("CreatedByUserName") or "").strip()
                 or (a.get("CreatedByUserName") or "").strip()
             ),
             "comments":      parsed["comments"],
