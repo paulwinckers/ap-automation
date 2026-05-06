@@ -221,7 +221,6 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
           <tr>
             <SortTh field="category"      align="left"   {...sp}>Category</SortTh>
             <SortTh field="subject"       align="left"   {...sp}>Subject</SortTh>
-            <SortTh field="property_name" align="left"   {...sp}>Property</SortTh>
             <SortTh field="creator"       align="left"   {...sp}>Created By</SortTh>
             <th style={{ ...TH_BASE, textAlign: 'left', color: '#6b7280' }}>Assigned To</th>
             <th style={{ ...TH_BASE, textAlign: 'left', color: '#6b7280' }}>Comments</th>
@@ -257,14 +256,6 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
                       <span style={{ fontWeight: 600, fontSize: 12, color: '#111827' }}>{a.subject}</span>
                     )}
                   </div>
-                </Td>
-                {/* Property */}
-                <Td>
-                  {a.property_name ? (
-                    <span style={{ fontSize: 11, color: '#374151', fontWeight: 500 }}>{a.property_name}</span>
-                  ) : (
-                    <span style={{ color: '#d1d5db' }}>—</span>
-                  )}
                 </Td>
                 {/* Created By */}
                 <Td>
@@ -337,7 +328,7 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
           })}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={10} style={{ padding: '20px', textAlign: 'center', color: '#9ca3af', fontSize: 12 }}>
+              <td colSpan={9} style={{ padding: '20px', textAlign: 'center', color: '#9ca3af', fontSize: 12 }}>
                 No activities match the current filters
               </td>
             </tr>
@@ -345,7 +336,7 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
         </tbody>
         <tfoot>
           <tr style={{ background: '#f8fafc', borderTop: '2px solid #e5e7eb' }}>
-            <td colSpan={10} style={{ padding: '6px 10px', fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
+            <td colSpan={9} style={{ padding: '6px 10px', fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
               {activities.length} activit{activities.length !== 1 ? 'ies' : 'y'}
             </td>
           </tr>

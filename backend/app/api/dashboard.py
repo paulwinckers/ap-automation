@@ -2183,7 +2183,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
 
     def _parse_issue_html(html: str) -> dict:
         """Extract issue fields and comments from Aspire Issue HTML notes."""
-        result = {"issue_number": None, "issue_url": None, "assigned_to": [], "status": "", "priority": "", "comments": []}
+        result = {"issue_number": None, "issue_url": None, "assigned_to": [], "status": "", "priority": "", "category": "", "comments": []}
         if not html:
             return result
         # Issue number + direct URL from the embedded <a href="...">
@@ -2222,8 +2222,9 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         if comment_section:
             rows = _re.findall(r'<tr>(.*?)</tr>', comment_section.group(1), _re.DOTALL)
             # Comments are in REVERSE chronological order (newest first).
-            # We only want the MOST RECENT status change — take the first match and stop.
+            # We only want the MOST RECENT status/category change — take the first match and stop.
             _status_set_from_history = False
+            _category_set_from_history = False
             for row in rows:
                 cells = _re.findall(r'<td[^>]*>(.*?)</td>', row, _re.DOTALL)
                 if len(cells) >= 2:
@@ -2234,12 +2235,17 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                         continue
                     result["comments"].append({"meta": meta, "text": comment})
                     # Detect status changes: "ChangesStatus | 'Old' to 'New'"
-                    # Only apply the FIRST match (most recent, since newest-first order).
                     if not _status_set_from_history:
                         sm = _re.search(r"ChangesStatus\s*\|\s*'[^']*'\s*to\s*'([^']+)'", comment, _re.IGNORECASE)
                         if sm:
                             result["status"] = sm.group(1).strip()
                             _status_set_from_history = True
+                    # Detect category changes: "Category | * to 'SomeCategory'"
+                    if not _category_set_from_history:
+                        cm = _re.search(r"Category\s*\|\s*[^|]*to\s*'([^']+)'", comment, _re.IGNORECASE)
+                        if cm:
+                            result["category"] = cm.group(1).strip()
+                            _category_set_from_history = True
         return result
 
     # Pre-parse HTML so we can filter on parsed status
@@ -2523,7 +2529,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "activity_type": "Issue" if issue_num else (a.get("ActivityType") or "Unknown"),
             "status":        parsed.get("status") or a.get("Status") or "",
             "priority":      parsed.get("priority") or a.get("Priority") or "",
-            "category":      a.get("ActivityCategoryName") or meta.get("ActivityCategoryName") or "",
+            "category":      a.get("ActivityCategoryName") or meta.get("ActivityCategoryName") or parsed.get("category") or "",
             "assigned_to":   parsed["assigned_to"] or _best_assigned.get(issue_num, []),
             "creator":       (a.get("CreatedByUserName") or meta.get("CreatedByUserName") or "").strip(),
             "comments":      parsed["comments"],
