@@ -35,8 +35,8 @@ const OFFICE_GROUPS = [
   {
     label: 'Accounting & Dashboards',
     items: [
-      { to: ACCOUNTING_URL,                           icon: '💳', label: 'AP & Finance',  sub: 'Invoices, vendors & reconcile',   external: true },
-      { to: `${ACCOUNTING_URL}/dashboards/sales`,     icon: '📊', label: 'Dashboards',    sub: 'Sales, ops & construction views', external: true },
+      { to: ACCOUNTING_URL,                       icon: '💳', label: 'AP & Finance',  sub: 'Invoices, vendors & reconcile',   external: true },
+      { to: `${ACCOUNTING_URL}/dashboards`,       icon: '📊', label: 'Dashboards',    sub: 'Sales, ops & construction views', external: true },
     ],
   },
 ];

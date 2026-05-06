@@ -16,6 +16,7 @@ import OpsDashboard           from './pages/OpsDashboard';
 import ConstructionDashboard  from './pages/ConstructionDashboard';
 import EstimatingDashboard    from './pages/EstimatingDashboard';
 import ActivitiesDashboard    from './pages/ActivitiesDashboard';
+import DashboardsIndex        from './pages/DashboardsIndex';
 import FieldSubmit        from './pages/FieldSubmit';
 import FieldWorkTicket    from './pages/FieldWorkTicket';
 import FieldOpportunity   from './pages/FieldOpportunity';
@@ -83,6 +84,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/users"     element={<RequireAuth><Office><UserAdmin /></Office></RequireAuth>} />
 
         {/* Dashboards */}
+        <Route path="/dashboards"              element={<RequireAuth><Office><DashboardsIndex /></Office></RequireAuth>} />
         <Route path="/dashboards/sales"        element={<RequireAuth><Office><SalesDashboard /></Office></RequireAuth>} />
         <Route path="/dashboards/ops"          element={<RequireAuth><Office><OpsDashboard /></Office></RequireAuth>} />
         <Route path="/dashboards/construction" element={<RequireAuth><Office><ConstructionDashboard /></Office></RequireAuth>} />
