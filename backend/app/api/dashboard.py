@@ -1192,6 +1192,542 @@ async def send_estimating_digest():
     }
 
 
+# ── Issues Digest Email ───────────────────────────────────────────────────────
+
+@router.post("/activities/send-issues-digest")
+async def send_issues_digest():
+    """
+    Send a daily Issues digest:
+    • Management summary email (all assignees, AI-generated highlights)
+    • Individual digest per assignee (their new / updated / closed issues)
+
+    Classification window: 24 hours.
+    NEW     — CreatedDate within 24 h
+    CLOSED  — CompleteDate within 24 h
+    UPDATED — ModifiedDate within 24 h, not new, not closed
+    """
+    import re as _re
+    import asyncio
+    from datetime import datetime, timezone, timedelta
+    from app.services.email_intake import GraphClient
+    from app.core.config import settings as cfg
+
+    if not cfg.ASPIRE_CLIENT_ID or not cfg.ASPIRE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Aspire credentials not configured")
+    if not cfg.MS_TENANT_ID or not cfg.MS_CLIENT_ID or not cfg.MS_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Microsoft Graph credentials not configured")
+
+    now       = datetime.now(timezone.utc)
+    yesterday = now - timedelta(hours=24)
+    today_str = now.strftime("%B %d, %Y")
+
+    def _pdt(s):
+        if not s: return None
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+        except Exception:
+            return None
+
+    # ── Fetch raw activities ──────────────────────────────────────────────────
+    raw = await _aspire._get_all("Activities", {
+        "$select": (
+            "ActivityID,Subject,ActivityType,Status,Priority,Notes,"
+            "DueDate,CompleteDate,CreatedDate,ModifiedDate,"
+            "PropertyID,OpportunityID,WorkTicketID,ActivityCategoryName,IsMileStone"
+        ),
+        "$filter": "CreatedDate ge 2026-01-01T00:00:00Z",
+        "$top":    "500",
+        "$orderby": "ModifiedDate desc",
+    })
+
+    # ── Parse HTML notes ─────────────────────────────────────────────────────
+    def _parse_html(html: str) -> dict:
+        out = {"issue_number": None, "issue_url": None, "assigned_to": [],
+               "status": "", "priority": "", "comments": [], "due_date_str": None}
+        if not html: return out
+        m = _re.search(r'<b>Issue\s*#</b></td><td[^>]*><a\s+href="([^"]+)"[^>]*>(\d+)</a>',
+                       html, _re.IGNORECASE | _re.DOTALL)
+        if m:
+            out["issue_url"]    = m.group(1)
+            out["issue_number"] = int(m.group(2))
+        def _cell(label):
+            m2 = _re.search(rf'<b>{label}</b></td><td[^>]*>(.*?)</td>', html, _re.IGNORECASE | _re.DOTALL)
+            return _re.sub(r'<[^>]+>', ' ', m2.group(1)).strip() if m2 else ""
+        raw_asgn = _cell("Assigned To")
+        out["assigned_to"] = [x.strip() for x in _re.split(r'[\n,]+', raw_asgn) if x.strip()]
+        out["status"]   = _cell("Status") or "Open"
+        out["priority"] = _cell("Priority")
+        if _cell("Complete Date").strip():
+            out["status"] = "Complete"
+        raw_due = _cell("Due Date")
+        if raw_due:
+            try:
+                from datetime import datetime as _dt2
+                out["due_date_str"] = _dt2.strptime(raw_due.strip(), "%m/%d/%y").strftime("%Y-%m-%d")
+            except Exception:
+                pass
+        # newest comment (first in list)
+        cs = _re.search(r'Issue Comment History</h3>(.*)', html, _re.IGNORECASE | _re.DOTALL)
+        if cs:
+            rows = _re.findall(r'<tr>(.*?)</tr>', cs.group(1), _re.DOTALL)
+            for row in rows:
+                cells = _re.findall(r'<td[^>]*>(.*?)</td>', row, _re.DOTALL)
+                if len(cells) >= 2:
+                    comment = _re.sub(r'<[^>]+>', '', cells[1]).strip()
+                    if comment and comment != 'Comment':
+                        out["comments"].append(comment)
+                        break
+        return out
+
+    # Pre-parse all
+    parsed_cache: dict[int, dict] = {
+        a["ActivityID"]: _parse_html(a.get("Notes") or "")
+        for a in raw if a.get("ActivityID")
+    }
+
+    # Best assigned_to per issue_number
+    _best_asgn: dict[int, list] = {}
+    for aid in sorted(parsed_cache.keys(), reverse=True):
+        p = parsed_cache[aid]
+        inum = p.get("issue_number")
+        if inum and p.get("assigned_to") and inum not in _best_asgn:
+            _best_asgn[inum] = p["assigned_to"]
+
+    # ── Deduplicate (keep highest-ID email record with parsed issue_number) ───
+    seen: dict[int, dict] = {}
+    for a in raw:
+        if _re.search(r'Time\s*Adjustment', a.get("Subject") or "", _re.IGNORECASE):
+            continue
+        pnum = parsed_cache.get(a.get("ActivityID"), {}).get("issue_number")
+        if pnum is not None:
+            existing = seen.get(pnum)
+            if existing is None or (a.get("ActivityID") or 0) > (existing.get("ActivityID") or 0):
+                seen[pnum] = a
+
+    # ── Metadata fallback from native Issue records ───────────────────────────
+    _nat_by_num: dict[int, dict] = {}
+    _nat_by_subj: dict[str, dict] = {}
+    for a in raw:
+        if (a.get("ActivityType") or "").strip().lower() != "issue":
+            continue
+        pnum = parsed_cache.get(a.get("ActivityID"), {}).get("issue_number")
+        if pnum is not None:
+            _nat_by_num[pnum] = a
+        else:
+            s = (a.get("Subject") or "").strip().lower()
+            if len(s) > 3:
+                _nat_by_subj[s] = a
+
+    _meta: dict[int, dict] = dict(_nat_by_num)
+    for inum, erec in seen.items():
+        if inum in _meta:
+            continue
+        stripped = _re.sub(r'^Issue\s*#\d+\s*[-–]\s*', '',
+                           erec.get("Subject") or "", flags=_re.IGNORECASE).strip().lower()
+        if stripped in _nat_by_subj:
+            _meta[inum] = _nat_by_subj[stripped]
+        else:
+            for ns, nr in _nat_by_subj.items():
+                if len(ns) > 5 and stripped.endswith(ns):
+                    _meta[inum] = nr
+                    break
+
+    # ── Resolve property names ────────────────────────────────────────────────
+    all_recs = list(seen.values()) + list(_meta.values())
+    prop_ids = list({a.get("PropertyID") for a in all_recs if a.get("PropertyID")})
+    opp_ids  = list({a.get("OpportunityID") for a in all_recs if a.get("OpportunityID")})
+    wt_ids   = list({a.get("WorkTicketID") for a in all_recs if a.get("WorkTicketID") and not a.get("PropertyID")})
+
+    async def _names(entity, id_f, name_f, ids):
+        out: dict[int, str] = {}
+        for i in range(0, len(ids), 50):
+            chunk = ids[i:i+50]
+            try:
+                res = await _aspire._get(entity, {
+                    "$filter": " or ".join(f"{id_f} eq {x}" for x in chunk),
+                    "$select": f"{id_f},{name_f}", "$top": str(len(chunk)),
+                })
+                for r in _aspire._extract_list(res):
+                    if r.get(id_f): out[r[id_f]] = r.get(name_f) or ""
+            except Exception: pass
+        return out
+
+    async def _fetch_opp_names():
+        if not opp_ids: return []
+        return await _aspire._get_all("Opportunities", {
+            "$filter": " or ".join(f"OpportunityID eq {x}" for x in opp_ids),
+            "$select": "OpportunityID,OpportunityName,PropertyID",
+            "$top": str(len(opp_ids)),
+        })
+
+    prop_map, opp_raw_map = await asyncio.gather(
+        _names("Properties", "PropertyID", "PropertyName", prop_ids),
+        _fetch_opp_names(),
+    )
+    opp_name_map: dict[int, str] = {}
+    opp_prop_map: dict[int, int] = {}
+    for r in (opp_raw_map or []):
+        oid = r.get("OpportunityID")
+        if oid:
+            opp_name_map[oid] = r.get("OpportunityName") or ""
+            if r.get("PropertyID"): opp_prop_map[oid] = r["PropertyID"]
+
+    wt_prop_map = await _names("WorkTickets", "WorkTicketID", "PropertyID", wt_ids)
+    extra_pids  = list({pid for pid in list(opp_prop_map.values()) + list(wt_prop_map.values())
+                        if pid not in prop_map})
+    if extra_pids:
+        prop_map.update(await _names("Properties", "PropertyID", "PropertyName", extra_pids))
+
+    def _resolve_prop(a, meta):
+        pid = a.get("PropertyID") or meta.get("PropertyID")
+        if not pid:
+            wt  = a.get("WorkTicketID") or meta.get("WorkTicketID")
+            pid = wt_prop_map.get(wt) if wt else None
+        if not pid:
+            oid = a.get("OpportunityID") or meta.get("OpportunityID")
+            pid = opp_prop_map.get(oid) if oid else None
+        return prop_map.get(pid, "") if pid else ""
+
+    # ── Fetch employee emails ─────────────────────────────────────────────────
+    try:
+        employees = await _aspire.get_aspire_employees()
+        email_by_name = {e["FullName"].strip().lower(): e.get("Email") or ""
+                         for e in employees if e.get("FullName")}
+    except Exception:
+        email_by_name = {}
+
+    # ── Shape issues ──────────────────────────────────────────────────────────
+    issues = []
+    for inum, a in seen.items():
+        parsed   = parsed_cache.get(a.get("ActivityID")) or {}
+        meta     = _meta.get(inum) or {}
+        prop_name = _resolve_prop(a, meta)
+        category  = a.get("ActivityCategoryName") or meta.get("ActivityCategoryName") or ""
+        assigned  = parsed.get("assigned_to") or _best_asgn.get(inum, [])
+        priority  = parsed.get("priority") or a.get("Priority") or "Normal"
+        status    = parsed.get("status") or a.get("Status") or "Open"
+        due_str   = (a.get("DueDate") or "")[:10] or parsed.get("due_date_str") or ""
+        eff_opp   = a.get("OpportunityID") or meta.get("OpportunityID")
+
+        created_dt  = _pdt(a.get("CreatedDate"))
+        modified_dt = _pdt(a.get("ModifiedDate"))
+        complete_dt = _pdt(a.get("CompleteDate"))
+
+        is_completed = (
+            complete_dt is not None
+            or any(w in (status or "").lower() for w in ("complet", "closed", "cancel"))
+        )
+
+        if created_dt and created_dt >= yesterday:
+            change_type = "new"
+        elif complete_dt and complete_dt >= yesterday:
+            change_type = "closed"
+        elif modified_dt and modified_dt >= yesterday:
+            change_type = "updated"
+        else:
+            change_type = "unchanged"
+
+        if due_str:
+            try:
+                from datetime import date as _d
+                days_left = (_d.fromisoformat(due_str) - now.date()).days
+            except Exception:
+                days_left = None
+        else:
+            days_left = None
+
+        issues.append({
+            "issue_number": inum,
+            "issue_url":    parsed.get("issue_url"),
+            "subject":      a.get("Subject") or "(no subject)",
+            "category":     category,
+            "property":     prop_name,
+            "assigned_to":  assigned,
+            "priority":     priority,
+            "status":       status,
+            "due":          due_str,
+            "days_left":    days_left,
+            "change_type":  change_type,
+            "is_completed": is_completed,
+            "comment":      (parsed.get("comments") or [""])[0][:120] if parsed.get("comments") else "",
+        })
+
+    # ── Group changes by assignee ─────────────────────────────────────────────
+    # Only include issues that changed in the last 24h per recipient
+    by_person: dict[str, list] = {}
+    for iss in issues:
+        if iss["change_type"] == "unchanged":
+            continue
+        for name in (iss["assigned_to"] or ["Unassigned"]):
+            name = name.strip()
+            if not name:
+                continue
+            by_person.setdefault(name, []).append(iss)
+
+    # ── AI-generated management summary ──────────────────────────────────────
+    open_issues    = [i for i in issues if not i["is_completed"]]
+    overdue_issues = [i for i in open_issues if (i["days_left"] or 0) < 0 and i["due"]]
+    new_today      = [i for i in issues if i["change_type"] == "new"]
+    closed_today   = [i for i in issues if i["change_type"] == "closed"]
+    updated_today  = [i for i in issues if i["change_type"] == "updated"]
+    high_priority  = [i for i in open_issues if (i["priority"] or "").lower() in ("high", "critical")]
+
+    ai_summary = ""
+    if cfg.ANTHROPIC_API_KEY:
+        try:
+            import anthropic as _ant
+            _ant_client = _ant.AsyncAnthropic(api_key=cfg.ANTHROPIC_API_KEY)
+            prompt_data = {
+                "date": today_str,
+                "total_open": len(open_issues),
+                "overdue": len(overdue_issues),
+                "new_today": len(new_today),
+                "closed_today": len(closed_today),
+                "updated_today": len(updated_today),
+                "high_priority": len(high_priority),
+                "top_overdue": [
+                    f"Issue #{i['issue_number']} — {i['property'] or 'Unknown Property'}: {i['subject'][:80]} ({abs(i['days_left'])}d overdue)"
+                    for i in sorted(overdue_issues, key=lambda x: x["days_left"] or 0)[:5]
+                ],
+                "top_high_priority": [
+                    f"Issue #{i['issue_number']} — {i['property'] or 'Unknown Property'}: {i['subject'][:80]}"
+                    for i in high_priority[:5]
+                ],
+                "new_issues": [
+                    f"Issue #{i['issue_number']} — {i['property'] or 'Unknown Property'}: {i['subject'][:80]}"
+                    for i in new_today[:5]
+                ],
+            }
+            prompt = f"""You are writing a brief executive summary for the daily Issues digest email at Dario's Landscaping.
+Write 2-3 sentences of plain English highlighting the most important things managers need to know.
+Be direct, specific, and professional. No bullet points — flowing prose only.
+
+Data for {today_str}:
+- Total open issues: {prompt_data['total_open']}
+- Overdue: {prompt_data['overdue']}
+- New today: {prompt_data['new_today']}
+- Closed today: {prompt_data['closed_today']}
+- Updated today: {prompt_data['updated_today']}
+- High priority open: {prompt_data['high_priority']}
+
+Top overdue issues: {prompt_data['top_overdue']}
+New issues opened today: {prompt_data['new_issues']}
+High priority requiring attention: {prompt_data['top_high_priority']}
+
+Write the summary now (2-3 sentences maximum):"""
+
+            resp = await _ant_client.messages.create(
+                model="claude-haiku-4-5",
+                max_tokens=200,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            ai_summary = resp.content[0].text.strip()
+        except Exception as e:
+            logger.warning(f"AI summary failed: {e}")
+
+    if not ai_summary:
+        # Rule-based fallback
+        parts = []
+        if overdue_issues:
+            parts.append(f"{len(overdue_issues)} issue(s) are overdue")
+        if new_today:
+            parts.append(f"{len(new_today)} new issue(s) opened today")
+        if closed_today:
+            parts.append(f"{len(closed_today)} closed")
+        ai_summary = (
+            f"As of {today_str}, there are {len(open_issues)} open issues across the team. "
+            + (", ".join(parts) + "." if parts else "No urgent changes in the last 24 hours.")
+        )
+
+    # ── Build HTML helpers ────────────────────────────────────────────────────
+    PRIORITY_COLOURS = {"High": "#dc2626", "Critical": "#7f1d1d", "Normal": "#6b7280", "Low": "#9ca3af"}
+    STATUS_ICON = {"new": "🆕", "updated": "🔄", "closed": "✅"}
+
+    def _due_badge(iss):
+        if not iss["due"]: return ""
+        dl = iss["days_left"]
+        if dl is None: return f'<span style="color:#6b7280;font-size:11px">Due {iss["due"]}</span>'
+        if dl < 0:   return f'<span style="background:#fee2e2;color:#dc2626;padding:2px 7px;border-radius:10px;font-size:11px">⛔ {abs(dl)}d overdue</span>'
+        if dl <= 7:  return f'<span style="background:#fef3c7;color:#d97706;padding:2px 7px;border-radius:10px;font-size:11px">⚠️ Due in {dl}d</span>'
+        return f'<span style="color:#6b7280;font-size:11px">Due {iss["due"]}</span>'
+
+    def _issue_row(iss, show_assignee=False):
+        icon   = STATUS_ICON.get(iss["change_type"], "")
+        pcolor = PRIORITY_COLOURS.get(iss["priority"], "#6b7280")
+        url    = iss["issue_url"] or "#"
+        asgn   = ", ".join(iss["assigned_to"]) if show_assignee and iss["assigned_to"] else ""
+        cat    = f'<span style="color:#6b7280;font-size:11px">{iss["category"]}</span>' if iss["category"] else ""
+        prop_s = f'<span style="font-size:11px;color:#374151">{iss["property"]}</span> · ' if iss["property"] else ""
+        comment_s = f'<div style="color:#6b7280;font-size:11px;margin-top:2px;font-style:italic">{iss["comment"]}…</div>' if iss["comment"] else ""
+        asgn_s = f'<span style="color:#6b7280;font-size:11px"> → {asgn}</span>' if asgn else ""
+        return f"""
+        <tr>
+          <td style="padding:10px 16px;border-bottom:1px solid #f3f4f6;vertical-align:top">
+            <div>{icon} <a href="{url}" style="color:#1d4ed8;font-weight:600;text-decoration:none">
+              Issue #{iss['issue_number']}
+            </a>{asgn_s}
+            <span style="margin-left:8px;background:{pcolor};color:#fff;font-size:10px;padding:1px 6px;border-radius:8px">{iss['priority']}</span>
+            </div>
+            <div style="margin-top:3px">{prop_s}{cat}</div>
+            <div style="color:#374151;font-size:13px;margin-top:2px">{iss['subject'][:100]}</div>
+            {comment_s}
+          </td>
+          <td style="padding:10px 16px;border-bottom:1px solid #f3f4f6;white-space:nowrap;vertical-align:top;text-align:right">
+            {_due_badge(iss)}
+          </td>
+        </tr>"""
+
+    def _section(title, colour, items, show_assignee=False):
+        if not items: return ""
+        rows = "".join(_issue_row(i, show_assignee) for i in items)
+        return f"""
+        <div style="margin-top:20px">
+          <div style="background:{colour};color:#fff;padding:6px 16px;border-radius:6px 6px 0 0;font-weight:700;font-size:13px">{title} ({len(items)})</div>
+          <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 6px 6px">
+            {rows}
+          </table>
+        </div>"""
+
+    # ── Management summary email ──────────────────────────────────────────────
+    # Build per-person rows for management view
+    mgmt_person_html = ""
+    for person_name, p_issues in sorted(by_person.items()):
+        p_new     = [i for i in p_issues if i["change_type"] == "new"]
+        p_updated = [i for i in p_issues if i["change_type"] == "updated"]
+        p_closed  = [i for i in p_issues if i["change_type"] == "closed"]
+        p_email   = email_by_name.get(person_name.lower(), "")
+        email_str = f' &lt;{p_email}&gt;' if p_email else ""
+        mgmt_person_html += f"""
+        <div style="margin-top:24px">
+          <div style="background:#1e293b;color:#e2e8f0;padding:8px 16px;border-radius:6px;font-weight:700;font-size:14px">
+            👤 {person_name}{email_str}
+            <span style="float:right;font-weight:400;font-size:12px">{len(p_issues)} change(s)</span>
+          </div>
+          {_section("🆕 New", "#15803d", p_new)}
+          {_section("🔄 Updated", "#2563eb", p_updated)}
+          {_section("✅ Closed", "#6b7280", p_closed)}
+        </div>"""
+
+    if not mgmt_person_html:
+        mgmt_person_html = '<p style="color:#6b7280;text-align:center;padding:24px">No issue changes in the last 24 hours.</p>'
+
+    mgmt_html = f"""
+    <div style="font-family:sans-serif;max-width:700px;margin:0 auto">
+
+      <!-- Header -->
+      <div style="background:#0f172a;padding:20px 24px;border-radius:8px 8px 0 0">
+        <h2 style="margin:0;color:#fff;font-size:20px">🔔 Issues Digest — {today_str}</h2>
+        <p style="margin:4px 0 0;color:#94a3b8;font-size:13px">Management summary · all assignees</p>
+      </div>
+
+      <!-- AI summary -->
+      <div style="background:#f0f9ff;border:1px solid #bae6fd;border-top:none;padding:16px 24px">
+        <div style="font-size:12px;color:#0369a1;font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">🧠 AI Summary</div>
+        <p style="margin:0;color:#0c4a6e;font-size:14px;line-height:1.6">{ai_summary}</p>
+      </div>
+
+      <!-- Stats bar -->
+      <div style="background:#f8fafc;border:1px solid #e5e7eb;border-top:none;padding:14px 24px;display:flex;gap:20px;flex-wrap:wrap">
+        <span style="font-size:13px"><strong>{len(open_issues)}</strong> open</span>
+        <span style="font-size:13px;color:#dc2626"><strong>{len(overdue_issues)}</strong> overdue</span>
+        <span style="font-size:13px;color:#15803d"><strong>{len(new_today)}</strong> new today</span>
+        <span style="font-size:13px;color:#6b7280"><strong>{len(closed_today)}</strong> closed today</span>
+        <span style="font-size:13px;color:#2563eb"><strong>{len(updated_today)}</strong> updated today</span>
+      </div>
+
+      <!-- Per-person sections -->
+      <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;padding:16px 24px">
+        {mgmt_person_html}
+        <p style="margin:24px 0 0;color:#9ca3af;font-size:12px;text-align:center">
+          <a href="{cfg.ISSUES_DIGEST_ACTIVITIES_URL}" style="color:#2563eb">View full Activities Dashboard ↗</a>
+          &nbsp;·&nbsp; Sent automatically each morning.
+        </p>
+      </div>
+    </div>"""
+
+    graph   = GraphClient()
+    mailbox = cfg.MS_AP_INBOX
+    sent_to: list[str] = []
+    skipped: list[str] = []
+
+    mgmt_recipients = [r.strip() for r in cfg.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if r.strip()]
+    if mgmt_recipients:
+        try:
+            await graph.send_email(
+                mailbox=mailbox,
+                to_addresses=mgmt_recipients,
+                subject=f"🔔 Issues Digest {today_str} — {len(new_today)} new · {len(updated_today)} updated · {len(closed_today)} closed",
+                body_html=mgmt_html,
+            )
+            sent_to.extend(mgmt_recipients)
+            logger.info(f"Issues digest management email sent to {mgmt_recipients}")
+        except Exception as e:
+            logger.error(f"Issues digest management email failed: {e}")
+            skipped.extend(mgmt_recipients)
+
+    # ── Individual emails per assignee ────────────────────────────────────────
+    for person_name, p_issues in by_person.items():
+        p_email = email_by_name.get(person_name.lower(), "")
+        if not p_email:
+            logger.info(f"Issues digest: no email for {person_name}, skipping")
+            skipped.append(person_name)
+            continue
+
+        p_new     = [i for i in p_issues if i["change_type"] == "new"]
+        p_updated = [i for i in p_issues if i["change_type"] == "updated"]
+        p_closed  = [i for i in p_issues if i["change_type"] == "closed"]
+
+        first_name = person_name.split()[0]
+        individual_html = f"""
+        <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
+          <div style="background:#0f172a;padding:20px 24px;border-radius:8px 8px 0 0">
+            <h2 style="margin:0;color:#fff;font-size:18px">🔔 Your Issues — {today_str}</h2>
+            <p style="margin:4px 0 0;color:#94a3b8;font-size:13px">Hi {first_name}, here are your issue updates from the last 24 hours</p>
+          </div>
+          <div style="background:#f8fafc;border:1px solid #e5e7eb;border-top:none;padding:10px 24px;display:flex;gap:16px">
+            <span style="font-size:13px;color:#15803d"><strong>{len(p_new)}</strong> new</span>
+            <span style="font-size:13px;color:#2563eb"><strong>{len(p_updated)}</strong> updated</span>
+            <span style="font-size:13px;color:#6b7280"><strong>{len(p_closed)}</strong> closed</span>
+          </div>
+          <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;padding:16px 24px">
+            {_section("🆕 New Issues", "#15803d", p_new)}
+            {_section("🔄 Updated Issues", "#2563eb", p_updated)}
+            {_section("✅ Closed Issues", "#6b7280", p_closed)}
+            <p style="margin:24px 0 0;color:#9ca3af;font-size:12px;text-align:center">
+              <a href="{cfg.ISSUES_DIGEST_ACTIVITIES_URL}" style="color:#2563eb">View Activities Dashboard ↗</a>
+              &nbsp;·&nbsp; Sent automatically each morning.
+            </p>
+          </div>
+        </div>"""
+
+        try:
+            await graph.send_email(
+                mailbox=mailbox,
+                to_addresses=[p_email],
+                subject=f"🔔 Your Issues {today_str} — {len(p_new)} new · {len(p_updated)} updated · {len(p_closed)} closed",
+                body_html=individual_html,
+            )
+            sent_to.append(f"{person_name} <{p_email}>")
+            logger.info(f"Issues digest sent to {person_name} <{p_email}>")
+        except Exception as e:
+            logger.error(f"Issues digest failed for {person_name} <{p_email}>: {e}")
+            skipped.append(person_name)
+
+    return {
+        "ok":            True,
+        "date":          today_str,
+        "open_issues":   len(open_issues),
+        "new_today":     len(new_today),
+        "updated_today": len(updated_today),
+        "closed_today":  len(closed_today),
+        "overdue":       len(overdue_issues),
+        "sent_to":       sent_to,
+        "skipped":       skipped,
+        "ai_summary":    ai_summary,
+    }
+
+
 # ── Sales Dashboard — live Aspire feeds ──────────────────────────────────────
 
 @router.get("/sales/pipeline")
