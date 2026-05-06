@@ -405,13 +405,14 @@ export default function ActivitiesDashboard() {
   const [filterAssignedTo, setFilterAssignedTo] = useState<string>(saved?.filterAssignedTo ?? 'All');
   const [filterPriority,   setFilterPriority]   = useState<string>(saved?.filterPriority ?? 'All');
   const [filterStatus,     setFilterStatus]     = useState<string>(saved?.filterStatus ?? 'All');
+  const [filterCategory,   setFilterCategory]   = useState<string>(saved?.filterCategory ?? 'All');
   const [groupBy,          setGroupBy]          = useState<'status' | 'employee' | 'flat'>(saved?.groupBy ?? 'flat');
   const [prefsReady,       setPrefsReady]       = useState<boolean>(!!saved);
 
   // Persist prefs on every change
   useEffect(() => {
-    savePrefs({ showCompleted, search, filterAssignedTo, filterPriority, filterStatus, groupBy });
-  }, [showCompleted, search, filterAssignedTo, filterPriority, filterStatus, groupBy]);
+    savePrefs({ showCompleted, search, filterAssignedTo, filterPriority, filterStatus, filterCategory, groupBy });
+  }, [showCompleted, search, filterAssignedTo, filterPriority, filterStatus, filterCategory, groupBy]);
 
   useEffect(() => {
     setLoading(true); setError(null);
@@ -445,14 +446,15 @@ export default function ActivitiesDashboard() {
     </div>
   );
 
-  const { statuses, priorities, assigned_to_list, activities } = data;
+  const { statuses, priorities, categories, assigned_to_list, activities } = data;
 
   const searchLower = search.trim().toLowerCase();
 
   const visible = activities.filter(a =>
     (filterAssignedTo === 'All' || a.assigned_to.includes(filterAssignedTo)) &&
-    (filterStatus     === 'All' || a.status   === filterStatus) &&
-    (filterPriority   === 'All' || a.priority === filterPriority) &&
+    (filterStatus     === 'All' || a.status    === filterStatus) &&
+    (filterPriority   === 'All' || a.priority  === filterPriority) &&
+    (filterCategory   === 'All' || a.category  === filterCategory) &&
     (!searchLower || (
       a.subject.toLowerCase().includes(searchLower) ||
       a.property_name.toLowerCase().includes(searchLower) ||
@@ -505,6 +507,17 @@ export default function ActivitiesDashboard() {
             <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={SEL(filterStatus !== 'All')}>
               <option value="All">All</option>
               {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        )}
+
+        {/* Category */}
+        {categories.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Category:</label>
+            <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} style={SEL(filterCategory !== 'All')}>
+              <option value="All">All</option>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
         )}
@@ -578,6 +591,7 @@ export default function ActivitiesDashboard() {
               setFilterAssignedTo(myName);
               setFilterStatus('All');
               setFilterPriority('All');
+              setFilterCategory('All');
               setGroupBy('flat');
               setSearch('');
               setShowCompleted(false);
