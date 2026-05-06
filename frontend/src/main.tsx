@@ -2,11 +2,20 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 
-import AppShell          from './components/AppShell';
-import RequireAuth        from './components/RequireAuth';
-import Landing            from './pages/Landing';
-import Login              from './pages/Login';
-import Setup              from './pages/Setup';
+import AppShell              from './components/AppShell';
+import RequireAuth            from './components/RequireAuth';
+import Landing                from './pages/Landing';
+import Login                  from './pages/Login';
+import Setup                  from './pages/Setup';
+import APDashboard            from './pages/APDashboard';
+import VendorAdmin            from './pages/VendorAdmin';
+import Reconcile              from './pages/Reconcile';
+import UserAdmin              from './pages/UserAdmin';
+import SalesDashboard         from './pages/SalesDashboard';
+import OpsDashboard           from './pages/OpsDashboard';
+import ConstructionDashboard  from './pages/ConstructionDashboard';
+import EstimatingDashboard    from './pages/EstimatingDashboard';
+import ActivitiesDashboard    from './pages/ActivitiesDashboard';
 import FieldSubmit        from './pages/FieldSubmit';
 import FieldWorkTicket    from './pages/FieldWorkTicket';
 import FieldOpportunity   from './pages/FieldOpportunity';
@@ -66,6 +75,19 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/ops/documents"          element={<RequireAuth><Office><DocumentsAdmin /></Office></RequireAuth>} />
         <Route path="/ops/safety-inspections" element={<RequireAuth><Office><SafetyInspectionsAdmin /></Office></RequireAuth>} />
         <Route path="/ops/handoff"            element={<RequireAuth><Office><HandoffGenerator /></Office></RequireAuth>} />
+
+        {/* AP & Finance */}
+        <Route path="/ap"        element={<RequireAuth><Office><APDashboard /></Office></RequireAuth>} />
+        <Route path="/vendors"   element={<RequireAuth><Office><VendorAdmin /></Office></RequireAuth>} />
+        <Route path="/reconcile" element={<RequireAuth><Office><Reconcile /></Office></RequireAuth>} />
+        <Route path="/users"     element={<RequireAuth><Office><UserAdmin /></Office></RequireAuth>} />
+
+        {/* Dashboards */}
+        <Route path="/dashboards/sales"        element={<RequireAuth><Office><SalesDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/ops"          element={<RequireAuth><Office><OpsDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/construction" element={<RequireAuth><Office><ConstructionDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/estimating"   element={<RequireAuth><Office><EstimatingDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/activities"   element={<RequireAuth><Office><ActivitiesDashboard /></Office></RequireAuth>} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />
