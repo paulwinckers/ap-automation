@@ -161,10 +161,12 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
+            <SortTh field="activity_type" align="left"   {...sp}>Activity Type</SortTh>
+            <SortTh field="category"      align="left"   {...sp}>Category</SortTh>
             <SortTh field="subject"       align="left"   {...sp}>Subject</SortTh>
+            <SortTh field="regarding_name" align="left"  {...sp}>Regarding</SortTh>
             <SortTh field="property_name" align="left"   {...sp}>Property</SortTh>
             <th style={{ ...TH_BASE, textAlign: 'left', color: '#6b7280' }}>Assigned To</th>
-            <th style={{ ...TH_BASE, textAlign: 'left', color: '#6b7280' }}>Comments</th>
             {showGroup !== 'status' && <SortTh field="status" align="left" {...sp}>Status</SortTh>}
             <SortTh field="priority"      align="center" {...sp}>Priority</SortTh>
             <SortTh field="due_date"      align="right"  {...sp}>Due Date</SortTh>
@@ -175,17 +177,22 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
           {sorted.map((a, i) => {
             const duColor  = URGENCY_COLOR[a.urgency] ?? '#9ca3af';
             const priStyle = PRIORITY_STYLE[a.priority] ?? { bg: '#f1f5f9', color: '#475569', border: '#e2e8f0' };
-            const aspireUrl = a.opportunity_id
-              ? `https://cloud.youraspire.com/app/opportunities/details/${a.opportunity_id}`
-              : null;
             return (
               <tr key={a.id} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                {/* Subject */}
+                {/* Activity Type */}
                 <Td>
+                  <span style={{ fontSize: 11, color: '#6b7280' }}>{a.activity_type || '—'}</span>
+                </Td>
+                {/* Category */}
+                <Td>
+                  <span style={{ fontSize: 11, color: '#6b7280' }}>{a.category || '—'}</span>
+                </Td>
+                {/* Subject */}
+                <Td style={{ maxWidth: 260 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                     {a.is_milestone && <span title="Milestone" style={{ fontSize: 10 }}>🏁</span>}
-                    {aspireUrl ? (
-                      <a href={aspireUrl} target="_blank" rel="noopener noreferrer"
+                    {a.issue_url ? (
+                      <a href={a.issue_url} target="_blank" rel="noopener noreferrer"
                         style={{ fontWeight: 600, color: '#2563eb', fontSize: 12, textDecoration: 'none' }}
                         onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
                         onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
@@ -197,10 +204,28 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
                     )}
                   </div>
                   {a.comments.length > 0 && (
-                    <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, maxWidth: 300,
+                    <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, maxWidth: 260,
                       overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                      {a.comments[a.comments.length - 1].text}
+                      {a.comments[0].text}
                     </div>
+                  )}
+                </Td>
+                {/* Regarding */}
+                <Td style={{ maxWidth: 180 }}>
+                  {a.regarding_name ? (
+                    a.regarding_url ? (
+                      <a href={a.regarding_url} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 11, color: '#2563eb', textDecoration: 'none' }}
+                        onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+                        onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+                      >
+                        {a.regarding_name}
+                      </a>
+                    ) : (
+                      <span style={{ fontSize: 11, color: '#374151' }}>{a.regarding_name}</span>
+                    )
+                  ) : (
+                    <span style={{ color: '#d1d5db' }}>—</span>
                   )}
                 </Td>
                 {/* Property */}
@@ -218,10 +243,6 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
                   ) : (
                     <span style={{ color: '#d1d5db' }}>—</span>
                   )}
-                </Td>
-                {/* Comments */}
-                <Td style={{ maxWidth: 220 }}>
-                  <CommentsCell comments={a.comments} />
                 </Td>
                 {/* Status (shown when not grouped by status) */}
                 {showGroup !== 'status' && (
@@ -274,7 +295,7 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
           })}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={8} style={{ padding: '20px', textAlign: 'center', color: '#9ca3af', fontSize: 12 }}>
+              <td colSpan={10} style={{ padding: '20px', textAlign: 'center', color: '#9ca3af', fontSize: 12 }}>
                 No activities match the current filters
               </td>
             </tr>
@@ -282,7 +303,7 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
         </tbody>
         <tfoot>
           <tr style={{ background: '#f8fafc', borderTop: '2px solid #e5e7eb' }}>
-            <td colSpan={8} style={{ padding: '6px 10px', fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
+            <td colSpan={10} style={{ padding: '6px 10px', fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
               {activities.length} activit{activities.length !== 1 ? 'ies' : 'y'}
             </td>
           </tr>

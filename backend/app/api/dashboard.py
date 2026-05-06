@@ -1708,7 +1708,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             existing = seen_issue_all.get(parsed_num)
             if existing is None or (a.get("ActivityID") or 0) > (existing.get("ActivityID") or 0):
                 seen_issue_all[parsed_num] = a
-        elif not (atype == "email" and not _re.search(r'Issue\s*#', subject, _re.IGNORECASE)):
+        elif atype == "issue" or (atype == "email" and _re.search(r'Issue\s*#', subject, _re.IGNORECASE)):
             key = (
                 subject.strip().lower(),
                 a.get("DueDate") or "",
@@ -1747,6 +1747,10 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     # Primary: activities with PropertyID directly
     prop_ids = list({a.get("PropertyID") for a in activities if a.get("PropertyID")})
     property_name_map = await _fetch_names("Properties", "PropertyID", "PropertyName", prop_ids)
+
+    # Opportunity names — for the "Regarding" column
+    opp_ids = list({a.get("OpportunityID") for a in activities if a.get("OpportunityID")})
+    opp_name_map = await _fetch_names("Opportunities", "OpportunityID", "OpportunityName", opp_ids)
 
     # Secondary: for Issue activities with no PropertyID, look up via WorkTicketID → WorkTicket.PropertyID
     missing_prop = [a for a in activities if not a.get("PropertyID") and a.get("WorkTicketID")]
@@ -1837,7 +1841,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "issue_number":  parsed.get("issue_number"),
             "issue_url":     parsed.get("issue_url"),
             "subject":       a.get("Subject") or "(no subject)",
-            "activity_type": a.get("ActivityType") or "Unknown",
+            "activity_type": "Issue" if parsed.get("issue_number") else (a.get("ActivityType") or "Unknown"),
             "status":        parsed.get("status") or a.get("Status") or "",
             "priority":      parsed.get("priority") or a.get("Priority") or "",
             "category":      a.get("ActivityCategoryName") or "",
@@ -1849,6 +1853,11 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "complete_date": parse_dt(a.get("CompleteDate")).date().isoformat() if parse_dt(a.get("CompleteDate")) else None,
             "created_date":  created_dt.date().isoformat()  if created_dt  else None,
             "opportunity_id":a.get("OpportunityID"),
+            "regarding_name": opp_name_map.get(a.get("OpportunityID"), "") or "",
+            "regarding_url":  (
+                f"https://cloud.youraspire.com/app/opportunities/details/{a.get('OpportunityID')}"
+                if a.get("OpportunityID") else None
+            ),
             "work_ticket_id":a.get("WorkTicketID"),
             "is_milestone":  bool(a.get("IsMileStone")),
             "days_until_due":due_days,

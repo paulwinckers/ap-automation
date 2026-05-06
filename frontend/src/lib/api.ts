@@ -632,6 +632,8 @@ export interface Activity {
   is_milestone: boolean;
   days_until_due: number | null;
   urgency: 'overdue' | 'urgent' | 'soon' | 'ok' | 'no-date';
+  regarding_name: string | null;
+  regarding_url: string | null;
 }
 
 export interface ActivitiesDashboardData {
