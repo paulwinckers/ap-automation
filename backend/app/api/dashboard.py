@@ -1445,11 +1445,12 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
         modified_dt = _pdt(a.get("ModifiedDate"))
         complete_dt = _pdt(a.get("CompleteDate"))
 
-        # "Completed" is determined by status only — Complete / Closed / Cancelled
-        is_completed = any(w in (status or "").lower() for w in ("complet", "closed", "cancel"))
+        # "Completed" = CompleteDate is set (user clicked the COMPLETE button in Aspire)
+        is_completed = complete_dt is not None
 
         today_date    = now.date()
-        touched_today = modified_dt and modified_dt.date() == today_date
+        touched_today = (modified_dt and modified_dt.date() == today_date) or \
+                        (complete_dt and complete_dt.date() == today_date)
         if created_dt and created_dt.date() == today_date and not is_completed:
             change_type = "new"
         elif is_completed and touched_today:
