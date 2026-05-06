@@ -48,7 +48,7 @@ KEYS_WITH_STATUS_SQL = """
     FROM keys k
     LEFT JOIN key_logs l ON l.id = (
         SELECT id FROM key_logs WHERE key_id = k.id
-        ORDER BY scanned_at DESC LIMIT 1
+        ORDER BY scanned_at DESC, id DESC LIMIT 1
     )
     {where}
     ORDER BY k.key_type, k.name
@@ -178,7 +178,7 @@ async def get_key(key_id: int, db: Database = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Key not found")
     key = rows[0]
     log = await db._q(
-        "SELECT * FROM key_logs WHERE key_id = ? ORDER BY scanned_at DESC LIMIT 10",
+        "SELECT * FROM key_logs WHERE key_id = ? ORDER BY scanned_at DESC, id DESC LIMIT 10",
         [key_id],
     )
     return {
@@ -231,7 +231,7 @@ async def transfer_key(
 
     # Find current holder (last log entry)
     last = await db._q(
-        "SELECT employee_name, action FROM key_logs WHERE key_id = ? ORDER BY scanned_at DESC LIMIT 1",
+        "SELECT employee_name, action FROM key_logs WHERE key_id = ? ORDER BY scanned_at DESC, id DESC LIMIT 1",
         [key_id],
     )
     if not last or last[0]["action"] != "out":

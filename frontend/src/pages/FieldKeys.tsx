@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { listKeysPublic, getKeyEmployees, scanKey, type KeyEntry } from '../lib/api';
+import { listKeysPublic, getKeyEmployees, scanKey, transferKey, type KeyEntry } from '../lib/api';
 
 const TYPE_LABELS: Record<string, string> = {
   vehicle:        '🚗 Vehicle Spare',
@@ -77,14 +77,14 @@ interface KeyCardProps {
 }
 
 function KeyCard({ k, employees, onUpdated }: KeyCardProps) {
-  const [open,     setOpen]     = useState(false);
-  const [employee, setEmployee] = useState(() => localStorage.getItem('key_employee') || '');
-  const [saving,   setSaving]   = useState(false);
-  const [done,     setDone]     = useState<string | null>(null);
+  const [open,        setOpen]        = useState(false);
+  const [employee,    setEmployee]    = useState(() => localStorage.getItem('key_employee') || '');
+  const [returnEmp,   setReturnEmp]   = useState(() => localStorage.getItem('key_employee') || '');
+  const [saving,      setSaving]      = useState(false);
+  const [done,        setDone]        = useState<string | null>(null);
   const selectRef = useRef<HTMLSelectElement>(null);
 
-  const isOut  = k.last_action === 'out';
-  const action = isOut ? 'in' : 'out';
+  const isOut = k.last_action === 'out';
 
   function handleOpen() {
     setOpen(o => !o);
@@ -96,16 +96,18 @@ function KeyCard({ k, employees, onUpdated }: KeyCardProps) {
     localStorage.setItem('key_employee', name);
   }
 
-  async function handleSubmit() {
+  function handleReturnEmp(name: string) {
+    setReturnEmp(name);
+    localStorage.setItem('key_employee', name);
+  }
+
+  async function handleCheckOut() {
     if (!employee) return;
     setSaving(true);
     try {
-      await scanKey({ keyId: k.id, employeeName: employee, action });
-      const msg = action === 'out'
-        ? `✓ Checked out to ${employee}`
-        : `✓ Returned by ${employee}`;
-      setDone(msg);
-      onUpdated(k.id, action, employee);
+      await scanKey({ keyId: k.id, employeeName: employee, action: 'out' });
+      setDone(`✓ Checked out to ${employee}`);
+      onUpdated(k.id, 'out', employee);
       setTimeout(() => { setOpen(false); setDone(null); }, 2000);
     } catch (e: unknown) {
       setDone(`Error: ${e instanceof Error ? e.message : String(e)}`);
@@ -113,6 +115,38 @@ function KeyCard({ k, employees, onUpdated }: KeyCardProps) {
       setSaving(false);
     }
   }
+
+  async function handleReturn() {
+    if (!returnEmp) return;
+    setSaving(true);
+    try {
+      await scanKey({ keyId: k.id, employeeName: returnEmp, action: 'in' });
+      setDone(`✓ Returned by ${returnEmp}`);
+      onUpdated(k.id, 'in', returnEmp);
+      setTimeout(() => { setOpen(false); setDone(null); }, 2000);
+    } catch (e: unknown) {
+      setDone(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleTransfer() {
+    if (!employee) return;
+    setSaving(true);
+    try {
+      await transferKey({ keyId: k.id, employeeName: employee });
+      setDone(`✓ Passed to ${employee}`);
+      onUpdated(k.id, 'out', employee);
+      setTimeout(() => { setOpen(false); setDone(null); }, 2000);
+    } catch (e: unknown) {
+      setDone(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const othersEmployees = employees.filter(n => n !== k.current_holder);
 
   return (
     <div style={open ? S.cardOpen : S.card}>
@@ -133,22 +167,6 @@ function KeyCard({ k, employees, onUpdated }: KeyCardProps) {
 
       {open && (
         <div style={S.form}>
-          {isOut && (
-            <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>
-              Checked out by <strong style={{ color: '#fca5a5' }}>{k.current_holder}</strong> · {fmtTs(k.last_scanned)}
-            </div>
-          )}
-
-          <select
-            ref={selectRef}
-            style={S.select}
-            value={employee}
-            onChange={e => handleEmployee(e.target.value)}
-          >
-            <option value="">— Select your name —</option>
-            {employees.map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-
           {done ? (
             <div style={{
               ...S.success,
@@ -156,14 +174,86 @@ function KeyCard({ k, employees, onUpdated }: KeyCardProps) {
               borderColor: done.startsWith('Error') ? '#dc2626' : '#16a34a',
               color:       done.startsWith('Error') ? '#fca5a5' : '#86efac',
             }}>{done}</div>
+          ) : isOut ? (
+            /* ── Key is out: show Pass the Baton + Return sections ── */
+            <div>
+              {/* Pass the Baton */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ color: '#fbbf24', fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                  🤝 Taking this key?
+                </div>
+                <select
+                  ref={selectRef}
+                  style={{ ...S.select, borderColor: '#78350f', marginBottom: 8 }}
+                  value={othersEmployees.includes(employee) ? employee : ''}
+                  onChange={e => handleEmployee(e.target.value)}
+                >
+                  <option value="">— Who are you? —</option>
+                  {othersEmployees.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+                <button
+                  style={(!employee || !othersEmployees.includes(employee) || saving)
+                    ? S.btnDis
+                    : { ...S.btnOut, background: '#d97706' }}
+                  disabled={!employee || !othersEmployees.includes(employee) || saving}
+                  onClick={handleTransfer}
+                >
+                  {saving ? 'Saving…' : '🤝 Pass the Baton to Me'}
+                </button>
+              </div>
+
+              {/* Divider */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0' }}>
+                <div style={{ flex: 1, height: 1, background: '#334155' }} />
+                <span style={{ color: '#475569', fontSize: 11 }}>or</span>
+                <div style={{ flex: 1, height: 1, background: '#334155' }} />
+              </div>
+
+              {/* Return to box */}
+              <div>
+                <div style={{ color: '#94a3b8', fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                  ↩ Returning to box?
+                </div>
+                <div style={{ color: '#64748b', fontSize: 12, marginBottom: 8 }}>
+                  Checked out by <strong style={{ color: '#fca5a5' }}>{k.current_holder}</strong> · {fmtTs(k.last_scanned)}
+                </div>
+                <select
+                  style={{ ...S.select, marginBottom: 8 }}
+                  value={returnEmp}
+                  onChange={e => handleReturnEmp(e.target.value)}
+                >
+                  <option value="">— Select your name —</option>
+                  {employees.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+                <button
+                  style={!returnEmp || saving ? S.btnDis : S.btnIn}
+                  disabled={!returnEmp || saving}
+                  onClick={handleReturn}
+                >
+                  {saving ? 'Saving…' : '↩ Return Key'}
+                </button>
+              </div>
+            </div>
           ) : (
-            <button
-              style={!employee || saving ? S.btnDis : action === 'out' ? S.btnOut : S.btnIn}
-              disabled={!employee || saving}
-              onClick={handleSubmit}
-            >
-              {saving ? 'Saving…' : action === 'out' ? '🔑 Check Out' : '↩ Return Key'}
-            </button>
+            /* ── Key is available: simple check-out ── */
+            <div>
+              <select
+                ref={selectRef}
+                style={S.select}
+                value={employee}
+                onChange={e => handleEmployee(e.target.value)}
+              >
+                <option value="">— Select your name —</option>
+                {employees.map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <button
+                style={!employee || saving ? S.btnDis : S.btnOut}
+                disabled={!employee || saving}
+                onClick={handleCheckOut}
+              >
+                {saving ? 'Saving…' : '🔑 Check Out'}
+              </button>
+            </div>
           )}
         </div>
       )}

@@ -216,89 +216,142 @@ export default function KeyScan() {
         {/* Scan Form */}
         {!success && (
           <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 20, marginBottom: 24 }}>
-            <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 15 }}>Who are you?</div>
 
-            <select
-              value={selected}
-              onChange={e => { setSelected(e.target.value); setError(''); }}
-              style={{
-                width: '100%', padding: '12px 14px', borderRadius: 8,
-                background: '#0f172a', border: `1px solid ${BORDER}`, color: '#fff',
-                fontSize: 16, marginBottom: 12, boxSizing: 'border-box',
-              }}
-            >
-              <option value="">— Select your name —</option>
-              {employees.map(emp => (
-                <option key={emp} value={emp}>{emp}</option>
-              ))}
-            </select>
-
-            <input
-              type="text"
-              placeholder="Notes (optional)"
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              style={{
-                width: '100%', padding: '10px 14px', borderRadius: 8,
-                background: '#0f172a', border: `1px solid ${BORDER}`, color: '#fff',
-                fontSize: 14, marginBottom: 16, boxSizing: 'border-box',
-              }}
-            />
-
-            {error && (
-              <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{error}</div>
-            )}
-
-            {/* Pass the Baton — shown when key is out AND selected person is not the current holder */}
-            {checkedOut && selected && keyData?.current_holder && selected !== keyData.current_holder ? (
+            {/* When key is out: split into two clear scenarios */}
+            {checkedOut ? (
               <div>
-                {/* Baton info */}
-                <div style={{
-                  background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.35)',
-                  borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: '#fbbf24',
-                  textAlign: 'center',
-                }}>
-                  🔑 Currently with <strong style={{ color: '#fff' }}>{keyData.current_holder}</strong>
+                {/* Scenario A — Pass the Baton (taking it from someone) */}
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: '#fbbf24', marginBottom: 10 }}>
+                    🤝 Taking this key?
+                  </div>
+                  <select
+                    value={selected === keyData?.current_holder ? '' : selected}
+                    onChange={e => { setSelected(e.target.value); setError(''); }}
+                    style={{
+                      width: '100%', padding: '12px 14px', borderRadius: 8,
+                      background: '#0f172a', border: `1px solid #78350f`, color: '#fff',
+                      fontSize: 16, marginBottom: 10, boxSizing: 'border-box',
+                    }}
+                  >
+                    <option value="">— Who are you? —</option>
+                    {employees.filter(e => e !== keyData?.current_holder).map(emp => (
+                      <option key={emp} value={emp}>{emp}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleTransfer}
+                    disabled={submitting || !selected || selected === keyData?.current_holder}
+                    style={{
+                      width: '100%', padding: '15px', borderRadius: 10, border: 'none',
+                      background: (submitting || !selected || selected === keyData?.current_holder) ? '#334155' : '#f59e0b',
+                      color: '#fff', fontSize: 17, fontWeight: 700,
+                      cursor: (submitting || !selected || selected === keyData?.current_holder) ? 'not-allowed' : 'pointer',
+                      transition: 'background 0.15s',
+                    }}
+                  >
+                    {submitting ? 'Recording…' : '🤝 Pass the Baton to Me'}
+                  </button>
                 </div>
-                <button
-                  onClick={handleTransfer}
-                  disabled={submitting}
-                  style={{
-                    width: '100%', padding: '16px', borderRadius: 10, border: 'none',
-                    background: submitting ? '#334155' : '#f59e0b',
-                    color: '#fff', fontSize: 18, fontWeight: 700,
-                    cursor: submitting ? 'not-allowed' : 'pointer',
-                    transition: 'background 0.15s', marginBottom: 10,
-                  }}
-                >
-                  {submitting ? 'Recording…' : '🤝 Pass the Baton to Me'}
-                </button>
-                <button
-                  onClick={() => handleScan('in')}
-                  disabled={submitting}
-                  style={{
-                    width: '100%', padding: '11px', borderRadius: 8, border: `1px solid ${BORDER}`,
-                    background: 'transparent', color: MUTED, fontSize: 13, fontWeight: 600,
-                    cursor: submitting ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  ↩ Just Return Key to Box
-                </button>
+
+                {/* Divider */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                  <div style={{ flex: 1, height: 1, background: BORDER }} />
+                  <span style={{ color: MUTED, fontSize: 11 }}>or</span>
+                  <div style={{ flex: 1, height: 1, background: BORDER }} />
+                </div>
+
+                {/* Scenario B — Returning it (current holder checking in) */}
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: MUTED, marginBottom: 10 }}>
+                    ↩ Returning key to box?
+                  </div>
+                  <select
+                    value={selected}
+                    onChange={e => { setSelected(e.target.value); setError(''); }}
+                    style={{
+                      width: '100%', padding: '12px 14px', borderRadius: 8,
+                      background: '#0f172a', border: `1px solid ${BORDER}`, color: '#fff',
+                      fontSize: 16, marginBottom: 10, boxSizing: 'border-box',
+                    }}
+                  >
+                    <option value="">— Select your name —</option>
+                    {employees.map(emp => (
+                      <option key={emp} value={emp}>{emp}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="Notes (optional)"
+                    value={notes}
+                    onChange={e => setNotes(e.target.value)}
+                    style={{
+                      width: '100%', padding: '10px 14px', borderRadius: 8,
+                      background: '#0f172a', border: `1px solid ${BORDER}`, color: '#fff',
+                      fontSize: 14, marginBottom: 10, boxSizing: 'border-box',
+                    }}
+                  />
+                  <button
+                    onClick={() => handleScan('in')}
+                    disabled={submitting || !selected}
+                    style={{
+                      width: '100%', padding: '13px', borderRadius: 10, border: 'none',
+                      background: submitting || !selected ? '#334155' : BLUE,
+                      color: '#fff', fontSize: 16, fontWeight: 700,
+                      cursor: submitting || !selected ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {submitting ? 'Recording…' : '↩ Check In Key'}
+                  </button>
+                </div>
               </div>
             ) : (
-              <button
-                onClick={() => handleScan(checkedOut ? 'in' : 'out')}
-                disabled={submitting || !selected}
-                style={{
-                  width: '100%', padding: '16px', borderRadius: 10, border: 'none',
-                  background: submitting || !selected ? '#334155' : checkedOut ? BLUE : GREEN,
-                  color: '#fff', fontSize: 18, fontWeight: 700,
-                  cursor: submitting || !selected ? 'not-allowed' : 'pointer',
-                  transition: 'background 0.15s',
-                }}
-              >
-                {submitting ? 'Recording…' : checkedOut ? '↩ Check In Key' : '↗ Check Out Key'}
-              </button>
+              /* Key is available — simple check-out form */
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 15 }}>Who are you?</div>
+                <select
+                  value={selected}
+                  onChange={e => { setSelected(e.target.value); setError(''); }}
+                  style={{
+                    width: '100%', padding: '12px 14px', borderRadius: 8,
+                    background: '#0f172a', border: `1px solid ${BORDER}`, color: '#fff',
+                    fontSize: 16, marginBottom: 12, boxSizing: 'border-box',
+                  }}
+                >
+                  <option value="">— Select your name —</option>
+                  {employees.map(emp => (
+                    <option key={emp} value={emp}>{emp}</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  placeholder="Notes (optional)"
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  style={{
+                    width: '100%', padding: '10px 14px', borderRadius: 8,
+                    background: '#0f172a', border: `1px solid ${BORDER}`, color: '#fff',
+                    fontSize: 14, marginBottom: 16, boxSizing: 'border-box',
+                  }}
+                />
+                <button
+                  onClick={() => handleScan('out')}
+                  disabled={submitting || !selected}
+                  style={{
+                    width: '100%', padding: '16px', borderRadius: 10, border: 'none',
+                    background: submitting || !selected ? '#334155' : GREEN,
+                    color: '#fff', fontSize: 18, fontWeight: 700,
+                    cursor: submitting || !selected ? 'not-allowed' : 'pointer',
+                    transition: 'background 0.15s',
+                  }}
+                >
+                  {submitting ? 'Recording…' : '↗ Check Out Key'}
+                </button>
+              </div>
+            )}
+
+            {error && (
+              <div style={{ color: RED, fontSize: 13, marginTop: 12 }}>{error}</div>
             )}
           </div>
         )}
