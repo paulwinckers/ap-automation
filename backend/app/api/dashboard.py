@@ -1279,17 +1279,29 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
                 out["due_date_str"] = _dt2.strptime(raw_due.strip(), "%m/%d/%y").strftime("%Y-%m-%d")
             except Exception:
                 pass
-        # newest comment (first in list)
+        # Parse comment history — extract most recent comment AND track status
+        # changes (e.g. ChangesStatus | 'Open' to 'Completed')
         cs = _re.search(r'Issue Comment History</h3>(.*)', html, _re.IGNORECASE | _re.DOTALL)
         if cs:
             rows = _re.findall(r'<tr>(.*?)</tr>', cs.group(1), _re.DOTALL)
+            _status_set = False
             for row in rows:
                 cells = _re.findall(r'<td[^>]*>(.*?)</td>', row, _re.DOTALL)
                 if len(cells) >= 2:
                     comment = _re.sub(r'<[^>]+>', '', cells[1]).strip()
-                    if comment and comment != 'Comment':
+                    if not comment or comment == 'Comment':
+                        continue
+                    if not out["comments"]:
                         out["comments"].append(comment)
-                        break
+                    # Apply the FIRST (most recent) status change from history
+                    if not _status_set:
+                        sm = _re.search(
+                            r"ChangesStatus\s*\|\s*'[^']*'\s*to\s*'([^']+)'",
+                            comment, _re.IGNORECASE,
+                        )
+                        if sm:
+                            out["status"] = sm.group(1).strip()
+                            _status_set = True
         return out
 
     # Pre-parse all
@@ -1445,8 +1457,12 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
         modified_dt = _pdt(a.get("ModifiedDate"))
         complete_dt = _pdt(a.get("CompleteDate"))
 
-        # "Completed" = CompleteDate is set (user clicked the COMPLETE button in Aspire)
-        is_completed = complete_dt is not None
+        # "Completed" = CompleteDate set (COMPLETE button) OR status changed to
+        # Complete/Closed/Cancelled via a comment audit trail entry
+        is_completed = (
+            complete_dt is not None or
+            any(w in (status or "").lower() for w in ("complet", "closed", "cancel"))
+        )
 
         today_date    = now.date()
         touched_today = (modified_dt and modified_dt.date() == today_date) or \
