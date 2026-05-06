@@ -2371,7 +2371,8 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         if oid
     })
     opp_name_map: dict[int, str] = {}
-    opp_prop_map: dict[int, int] = {}   # OpportunityID → PropertyID
+    opp_prop_map: dict[int, int] = {}    # OpportunityID → PropertyID (int)
+    opp_propname_map: dict[int, str] = {}  # OpportunityID → PropertyName (text fallback)
     if opp_ids:
         chunk_size = 50
         for i in range(0, len(opp_ids), chunk_size):
@@ -2380,7 +2381,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             try:
                 res = await _aspire._get("Opportunities", {
                     "$filter": id_filter,
-                    "$select": "OpportunityID,OpportunityName,PropertyID",
+                    "$select": "OpportunityID,OpportunityName,PropertyID,PropertyName",
                     "$top": str(len(chunk)),
                 })
                 for rec in _aspire._extract_list(res):
@@ -2389,6 +2390,8 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                         opp_name_map[oid] = rec.get("OpportunityName") or ""
                         if rec.get("PropertyID"):
                             opp_prop_map[oid] = rec["PropertyID"]
+                        if rec.get("PropertyName"):
+                            opp_propname_map[oid] = rec["PropertyName"]
             except Exception as e:
                 logger.warning(f"Opportunity name lookup failed: {e}")
 
@@ -2488,7 +2491,10 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             wt_pid = None
         opp_pid      = opp_prop_map.get(eff_opp_id) if not direct_pid and not wt_pid else None
         resolved_pid = direct_pid or wt_pid or opp_pid
-        prop_name = property_name_map.get(resolved_pid, "") if resolved_pid else ""
+        # Use PropertyID lookup first; fall back to PropertyName text on the Opportunity
+        prop_name = (
+            property_name_map.get(resolved_pid, "") if resolved_pid else ""
+        ) or (opp_propname_map.get(eff_opp_id, "") if eff_opp_id else "")
 
         shaped.append({
             "id":            aid,
