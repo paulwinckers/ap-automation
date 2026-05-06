@@ -1194,7 +1194,7 @@ async def send_estimating_digest():
 
 # ── Issues Digest Email ───────────────────────────────────────────────────────
 
-@router.post("/activities/send-issues-digest")
+@router.get("/activities/send-issues-digest")
 async def send_issues_digest():
     """
     Send a daily Issues digest:
