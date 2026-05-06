@@ -1610,27 +1610,15 @@ Write the summary now (2-3 sentences maximum):"""
         </div>"""
 
     # ── Management summary email ──────────────────────────────────────────────
-    # Build per-person rows for management view
-    mgmt_person_html = ""
-    for person_name, p_issues in sorted(by_person.items()):
-        p_new     = [i for i in p_issues if i["change_type"] == "new"]
-        p_updated = [i for i in p_issues if i["change_type"] == "updated"]
-        p_closed  = [i for i in p_issues if i["change_type"] == "closed"]
-        p_email   = email_by_name.get(person_name.lower(), "")
-        email_str = f' &lt;{p_email}&gt;' if p_email else ""
-        mgmt_person_html += f"""
-        <div style="margin-top:24px">
-          <div style="background:#1e293b;color:#e2e8f0;padding:8px 16px;border-radius:6px;font-weight:700;font-size:14px">
-            👤 {person_name}{email_str}
-            <span style="float:right;font-weight:400;font-size:12px">{len(p_issues)} change(s)</span>
-          </div>
-          {_section("🆕 New", "#15803d", p_new)}
-          {_section("🔄 Updated", "#2563eb", p_updated)}
-          {_section("✅ Closed", "#6b7280", p_closed)}
-        </div>"""
-
-    if not mgmt_person_html:
-        mgmt_person_html = '<p style="color:#6b7280;text-align:center;padding:24px">No issue changes in the last 24 hours.</p>'
+    # Group by change type (not by person) — show assignees inline per row
+    no_changes = not new_today and not updated_today and not closed_today
+    mgmt_body_html = (
+        '<p style="color:#6b7280;text-align:center;padding:24px">No issue changes in the last 24 hours.</p>'
+        if no_changes else
+        _section("🆕 New Issues", "#15803d", new_today, show_assignee=True) +
+        _section("🔄 Updated Issues", "#2563eb", updated_today, show_assignee=True) +
+        _section("✅ Marked Complete", "#6b7280", closed_today, show_assignee=True)
+    )
 
     mgmt_html = f"""
     <div style="font-family:sans-serif;max-width:700px;margin:0 auto">
@@ -1652,13 +1640,13 @@ Write the summary now (2-3 sentences maximum):"""
         <span style="font-size:13px"><strong>{len(open_issues)}</strong> open</span>
         <span style="font-size:13px;color:#dc2626"><strong>{len(overdue_issues)}</strong> overdue</span>
         <span style="font-size:13px;color:#15803d"><strong>{len(new_today)}</strong> new today</span>
-        <span style="font-size:13px;color:#6b7280"><strong>{len(closed_today)}</strong> closed today</span>
+        <span style="font-size:13px;color:#6b7280"><strong>{len(closed_today)}</strong> completed today</span>
         <span style="font-size:13px;color:#2563eb"><strong>{len(updated_today)}</strong> updated today</span>
       </div>
 
-      <!-- Per-person sections -->
+      <!-- Changes grouped by type -->
       <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;padding:16px 24px">
-        {mgmt_person_html}
+        {mgmt_body_html}
         <p style="margin:24px 0 0;color:#9ca3af;font-size:12px;text-align:center">
           <a href="{cfg.ISSUES_DIGEST_ACTIVITIES_URL}" style="color:#2563eb">View full Activities Dashboard ↗</a>
           &nbsp;·&nbsp; Sent automatically each morning.
