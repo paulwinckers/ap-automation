@@ -1208,6 +1208,7 @@ async def send_issues_digest():
     """
     import re as _re
     import asyncio
+    import traceback
     from datetime import datetime, timezone, timedelta
     from app.services.email_intake import GraphClient
     from app.core.config import settings as cfg
@@ -1217,6 +1218,17 @@ async def send_issues_digest():
     if not cfg.MS_TENANT_ID or not cfg.MS_CLIENT_ID or not cfg.MS_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Microsoft Graph credentials not configured")
 
+    try:
+     return await _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, GraphClient, traceback)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        tb = traceback.format_exc()
+        logger.error(f"Issues digest unhandled error: {exc}\n{tb}")
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
+
+
+async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, GraphClient, traceback):
     now       = datetime.now(timezone.utc)
     yesterday = now - timedelta(hours=24)
     today_str = now.strftime("%B %d, %Y")
