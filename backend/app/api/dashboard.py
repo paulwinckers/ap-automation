@@ -1510,15 +1510,25 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
             "comment":      (parsed.get("comments") or [""])[0][:120] if parsed.get("comments") else "",
         })
 
-    # ── Group changes by creator ──────────────────────────────────────────────
-    # Send individual digest to whoever created the issue (not the assignee),
-    # so staff don't need to self-assign just to receive updates.
-    by_creator: dict[str, list] = {}
-    for iss in issues:
-        if iss["change_type"] == "unchanged":
-            continue
-        creator_name = iss["creator"] or "Unknown"
-        by_creator.setdefault(creator_name, []).append(iss)
+    # ── Build per-person issue sets (assigned + created, combined) ───────────
+    # Each person gets one email with:
+    #   • issues assigned to them (top)
+    #   • issues they created but aren't assigned to (bottom)
+    # Issues that appear in both buckets are not duplicated.
+    changed_issues = [i for i in issues if i["change_type"] != "unchanged"]
+
+    by_person_assigned: dict[str, list] = {}
+    by_person_created:  dict[str, list] = {}
+    for iss in changed_issues:
+        assignee = (iss["assigned_to"] or "").strip()
+        creator  = (iss["creator"]     or "").strip()
+        if assignee:
+            by_person_assigned.setdefault(assignee, []).append(iss)
+        if creator and creator != assignee:
+            by_person_created.setdefault(creator, []).append(iss)
+
+    # Union of all people who appear in either bucket
+    all_people = set(by_person_assigned) | set(by_person_created)
 
     # ── AI-generated management summary ──────────────────────────────────────
     open_issues    = [i for i in issues if not i["is_completed"]]
@@ -1718,39 +1728,64 @@ Write the summary now (2-3 sentences maximum):"""
             logger.error(f"Issues digest management email failed: {e}")
             skipped.extend(mgmt_recipients)
 
-    # ── Individual emails per issue creator ───────────────────────────────────
-    # Sent to the person who created each issue — they get updates without
-    # needing to self-assign. Assignees are shown clearly on each row.
-    for person_name, p_issues in by_creator.items():
-        if person_name in ("Unknown", ""):
-            skipped.append(f"(unknown creator — {len(p_issues)} issues)")
+    # ── One combined email per person (assigned issues + created issues) ────────
+    # Disabled until ready to enable — management summary only for now
+    for person_name in []:
+        if not person_name or person_name == "Unknown":
             continue
         p_email = email_by_name.get(person_name.lower(), "")
         if not p_email:
-            logger.info(f"Issues digest: no email for creator {person_name!r}, skipping")
+            logger.info(f"Issues digest: no email for {person_name!r}, skipping")
             skipped.append(person_name)
             continue
 
-        p_new     = [i for i in p_issues if i["change_type"] == "new"]
-        p_updated = [i for i in p_issues if i["change_type"] == "updated"]
-        p_closed  = [i for i in p_issues if i["change_type"] == "closed"]
+        assigned_issues = by_person_assigned.get(person_name, [])
+        created_issues  = by_person_created.get(person_name, [])
 
+        # Split each bucket by change type
+        def _split(lst):
+            return (
+                [i for i in lst if i["change_type"] == "new"],
+                [i for i in lst if i["change_type"] == "updated"],
+                [i for i in lst if i["change_type"] == "closed"],
+            )
+
+        a_new, a_upd, a_cls = _split(assigned_issues)
+        c_new, c_upd, c_cls = _split(created_issues)
+
+        total = len(assigned_issues) + len(created_issues)
         first_name = person_name.split()[0]
+
+        assigned_html = (
+            _section("🆕 New", "#15803d", a_new, show_people=True) +
+            _section("🔄 Updated", "#2563eb", a_upd, show_people=True) +
+            _section("✅ Closed", "#6b7280", a_cls, show_people=True)
+        ) if assigned_issues else '<p style="color:#9ca3af;font-size:12px;margin:8px 0">None</p>'
+
+        created_html = (
+            _section("🆕 New", "#15803d", c_new, show_people=True) +
+            _section("🔄 Updated", "#2563eb", c_upd, show_people=True) +
+            _section("✅ Closed", "#6b7280", c_cls, show_people=True)
+        ) if created_issues else '<p style="color:#9ca3af;font-size:12px;margin:8px 0">None</p>'
+
         individual_html = f"""
         <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
           <div style="background:#0f172a;padding:20px 24px;border-radius:8px 8px 0 0">
-            <h2 style="margin:0;color:#fff;font-size:18px">🔔 Issues You Created — {today_str}</h2>
-            <p style="margin:4px 0 0;color:#94a3b8;font-size:13px">Hi {first_name}, here are updates on issues you opened</p>
+            <h2 style="margin:0;color:#fff;font-size:18px">🔔 Your Issues Digest — {today_str}</h2>
+            <p style="margin:4px 0 0;color:#94a3b8;font-size:13px">Hi {first_name}, here's what changed on your issues today</p>
           </div>
-          <div style="background:#f8fafc;border:1px solid #e5e7eb;border-top:none;padding:10px 24px;display:flex;gap:16px">
-            <span style="font-size:13px;color:#15803d"><strong>{len(p_new)}</strong> new</span>
-            <span style="font-size:13px;color:#2563eb"><strong>{len(p_updated)}</strong> updated</span>
-            <span style="font-size:13px;color:#6b7280"><strong>{len(p_closed)}</strong> closed</span>
+          <div style="background:#f8fafc;border:1px solid #e5e7eb;border-top:none;padding:10px 24px;display:flex;gap:20px">
+            <span style="font-size:13px"><strong>{len(assigned_issues)}</strong> assigned to you</span>
+            <span style="font-size:13px"><strong>{len(created_issues)}</strong> created by you</span>
           </div>
           <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;padding:16px 24px">
-            {_section("🆕 New Issues", "#15803d", p_new, show_people=True)}
-            {_section("🔄 Updated Issues", "#2563eb", p_updated, show_people=True)}
-            {_section("✅ Closed Issues", "#6b7280", p_closed, show_people=True)}
+
+            <div style="font-size:13px;font-weight:700;color:#111827;margin-bottom:4px">📌 Assigned to You</div>
+            {assigned_html}
+
+            <div style="font-size:13px;font-weight:700;color:#111827;margin-top:20px;margin-bottom:4px">✏️ Created by You</div>
+            {created_html}
+
             <p style="margin:24px 0 0;color:#9ca3af;font-size:12px;text-align:center">
               <a href="{cfg.ISSUES_DIGEST_ACTIVITIES_URL}" style="color:#2563eb">View Activities Dashboard ↗</a>
               &nbsp;·&nbsp; Sent automatically each morning.
@@ -1762,13 +1797,13 @@ Write the summary now (2-3 sentences maximum):"""
             await graph.send_email(
                 mailbox=mailbox,
                 to_addresses=[p_email],
-                subject=f"🔔 Issues You Created {today_str} — {len(p_new)} new · {len(p_updated)} updated · {len(p_closed)} closed",
+                subject=f"🔔 Issues Digest {today_str} — {total} issue update(s) for {first_name}",
                 body_html=individual_html,
             )
             sent_to.append(f"{person_name} <{p_email}>")
-            logger.info(f"Issues digest sent to creator {person_name} <{p_email}>")
+            logger.info(f"Issues digest sent to {person_name} <{p_email}>")
         except Exception as e:
-            logger.error(f"Issues digest failed for creator {person_name} <{p_email}>: {e}")
+            logger.error(f"Issues digest failed for {person_name} <{p_email}>: {e}")
             skipped.append(person_name)
 
     return {
