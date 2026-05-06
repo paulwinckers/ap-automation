@@ -1818,15 +1818,21 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             except Exception as e:
                 logger.warning(f"Opportunity name lookup failed: {e}")
 
-    # Secondary: for Issue activities with no PropertyID, look up via WorkTicketID → WorkTicket.PropertyID
-    missing_prop = [a for a in activities if not a.get("PropertyID") and a.get("WorkTicketID")]
-    if missing_prop:
-        wt_ids = list({a["WorkTicketID"] for a in missing_prop})
-        # Build WorkTicketID → PropertyID map via WorkTickets endpoint
-        wt_prop_map: dict[int, int] = {}
+    # Secondary: look up WorkTicketID → PropertyID for activities AND native meta records
+    # Collect WorkTicketIDs from both sources (email records + native Issue records)
+    all_wt_ids = {
+        wid
+        for src in (activities, _meta_values)
+        for a in src
+        for wid in [a.get("WorkTicketID")]
+        if wid and not a.get("PropertyID")
+    }
+    wt_prop_map: dict[int, int] = {}
+    if all_wt_ids:
         chunk_size = 50
-        for i in range(0, len(wt_ids), chunk_size):
-            chunk = wt_ids[i:i + chunk_size]
+        wt_id_list = list(all_wt_ids)
+        for i in range(0, len(wt_id_list), chunk_size):
+            chunk = wt_id_list[i:i + chunk_size]
             id_filter = " or ".join(f"WorkTicketID eq {wid}" for wid in chunk)
             try:
                 res = await _aspire._get("WorkTickets", {
@@ -1841,19 +1847,11 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                         wt_prop_map[wid] = pid
             except Exception as e:
                 logger.warning(f"WorkTickets name lookup failed: {e}")
-        # Fetch any new PropertyIDs we found
+        # Fetch property names for any new PropertyIDs from WorkTicket lookup
         new_prop_ids = list({pid for pid in wt_prop_map.values() if pid not in property_name_map})
         if new_prop_ids:
             extra = await _fetch_names("Properties", "PropertyID", "PropertyName", new_prop_ids)
             property_name_map.update(extra)
-        # Map ActivityID → PropertyID via WorkTicket
-        act_to_prop: dict[int, int] = {}
-        for a in missing_prop:
-            pid = wt_prop_map.get(a["WorkTicketID"])
-            if pid:
-                act_to_prop[a["ActivityID"]] = pid
-    else:
-        act_to_prop = {}
 
     # Tertiary: for activities with no PropertyID and no WorkTicketID, resolve via OpportunityID → PropertyID
     new_opp_prop_ids = list({pid for pid in opp_prop_map.values() if pid not in property_name_map})
@@ -1906,10 +1904,14 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         # Native meta fallback: email notification records lack metadata fields
         meta = _issue_meta.get(issue_num) or {} if issue_num else {}
 
-        # Resolve property: direct → meta fallback → WorkTicket → Opportunity
+        # Resolve property: direct → meta fallback → WorkTicket (email or meta) → Opportunity
         direct_pid   = a.get("PropertyID") or meta.get("PropertyID")
-        wt_pid       = act_to_prop.get(aid) if not direct_pid else None
         eff_opp_id   = a.get("OpportunityID") or meta.get("OpportunityID")
+        if not direct_pid:
+            wt_id  = a.get("WorkTicketID") or meta.get("WorkTicketID")
+            wt_pid = wt_prop_map.get(wt_id) if wt_id else None
+        else:
+            wt_pid = None
         opp_pid      = opp_prop_map.get(eff_opp_id) if not direct_pid and not wt_pid else None
         resolved_pid = direct_pid or wt_pid or opp_pid
         prop_name = property_name_map.get(resolved_pid, "") if resolved_pid else ""
