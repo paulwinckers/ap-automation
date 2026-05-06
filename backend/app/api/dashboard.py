@@ -1439,11 +1439,12 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
             or any(w in (status or "").lower() for w in ("complet", "closed", "cancel"))
         )
 
-        if created_dt and created_dt >= yesterday:
+        today_date = now.date()
+        if created_dt and created_dt.date() == today_date:
             change_type = "new"
-        elif complete_dt and complete_dt >= yesterday:
+        elif complete_dt and complete_dt.date() == today_date:
             change_type = "closed"
-        elif modified_dt and modified_dt >= yesterday:
+        elif modified_dt and modified_dt.date() == today_date:
             change_type = "updated"
         else:
             change_type = "unchanged"
