@@ -1245,7 +1245,7 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
     raw = await _aspire._get_all("Activities", {
         "$select": (
             "ActivityID,Subject,ActivityType,Status,Priority,Notes,"
-            "DueDate,CompleteDate,CreatedDate,ModifiedDate,"
+            "DueDate,CompleteDate,CreatedDate,ModifiedDate,CreatedByUserName,"
             "PropertyID,OpportunityID,WorkTicketID,ActivityCategoryName,IsMileStone"
         ),
         "$filter": "CreatedDate ge 2026-01-01T00:00:00Z",
@@ -1454,6 +1454,12 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
         # because a comment was added — that doesn't make it a "new" issue.
         first_rec   = _first_seen.get(inum) or a
         created_dt  = _pdt(first_rec.get("CreatedDate"))
+        # Creator: prefer the native Issue record (most authoritative), then oldest activity
+        creator = (
+            (meta.get("CreatedByUserName") or "").strip()
+            or (first_rec.get("CreatedByUserName") or "").strip()
+            or (a.get("CreatedByUserName") or "").strip()
+        )
         modified_dt = _pdt(a.get("ModifiedDate"))
         complete_dt = _pdt(a.get("CompleteDate"))
 
@@ -1485,13 +1491,16 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
         else:
             days_left = None
 
+        # Only one assignee expected — take first from list
+        assigned_one = (assigned[0].strip() if assigned else "")
         issues.append({
             "issue_number": inum,
             "issue_url":    parsed.get("issue_url"),
             "subject":      a.get("Subject") or "(no subject)",
             "category":     category,
             "property":     prop_name,
-            "assigned_to":  assigned,
+            "assigned_to":  assigned_one,
+            "creator":      creator,
             "priority":     priority,
             "status":       status,
             "due":          due_str,
@@ -1501,17 +1510,15 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
             "comment":      (parsed.get("comments") or [""])[0][:120] if parsed.get("comments") else "",
         })
 
-    # ── Group changes by assignee ─────────────────────────────────────────────
-    # Only include issues that changed in the last 24h per recipient
-    by_person: dict[str, list] = {}
+    # ── Group changes by creator ──────────────────────────────────────────────
+    # Send individual digest to whoever created the issue (not the assignee),
+    # so staff don't need to self-assign just to receive updates.
+    by_creator: dict[str, list] = {}
     for iss in issues:
         if iss["change_type"] == "unchanged":
             continue
-        for name in (iss["assigned_to"] or ["Unassigned"]):
-            name = name.strip()
-            if not name:
-                continue
-            by_person.setdefault(name, []).append(iss)
+        creator_name = iss["creator"] or "Unknown"
+        by_creator.setdefault(creator_name, []).append(iss)
 
     # ── AI-generated management summary ──────────────────────────────────────
     open_issues    = [i for i in issues if not i["is_completed"]]
@@ -1600,25 +1607,34 @@ Write the summary now (2-3 sentences maximum):"""
         if dl <= 7:  return f'<span style="background:#fef3c7;color:#d97706;padding:2px 7px;border-radius:10px;font-size:11px">⚠️ Due in {dl}d</span>'
         return f'<span style="color:#6b7280;font-size:11px">Due {iss["due"]}</span>'
 
-    def _issue_row(iss, show_assignee=False):
+    def _issue_row(iss, show_people=False):
         icon   = STATUS_ICON.get(iss["change_type"], "")
         pcolor = PRIORITY_COLOURS.get(iss["priority"], "#6b7280")
         url    = iss["issue_url"] or "#"
-        asgn   = ", ".join(iss["assigned_to"]) if show_assignee and iss["assigned_to"] else ""
         cat    = f'<span style="color:#6b7280;font-size:11px">{iss["category"]}</span>' if iss["category"] else ""
         prop_s = f'<span style="font-size:11px;color:#374151">{iss["property"]}</span> · ' if iss["property"] else ""
         comment_s = f'<div style="color:#6b7280;font-size:11px;margin-top:2px;font-style:italic">{iss["comment"]}…</div>' if iss["comment"] else ""
-        asgn_s = f'<span style="color:#6b7280;font-size:11px"> → {asgn}</span>' if asgn else ""
+        # People line: "Created by X · Assigned to Y"
+        people_parts = []
+        if iss.get("creator"):
+            people_parts.append(f'Created by <strong>{iss["creator"]}</strong>')
+        if iss.get("assigned_to"):
+            people_parts.append(f'Assigned to <strong>{iss["assigned_to"]}</strong>')
+        people_s = (
+            f'<div style="color:#6b7280;font-size:11px;margin-top:2px">{" · ".join(people_parts)}</div>'
+            if show_people and people_parts else ""
+        )
         return f"""
         <tr>
           <td style="padding:10px 16px;border-bottom:1px solid #f3f4f6;vertical-align:top">
             <div>{icon} <a href="{url}" style="color:#1d4ed8;font-weight:600;text-decoration:none">
               Issue #{iss['issue_number']}
-            </a>{asgn_s}
+            </a>
             <span style="margin-left:8px;background:{pcolor};color:#fff;font-size:10px;padding:1px 6px;border-radius:8px">{iss['priority']}</span>
             </div>
             <div style="margin-top:3px">{prop_s}{cat}</div>
             <div style="color:#374151;font-size:13px;margin-top:2px">{iss['subject'][:100]}</div>
+            {people_s}
             {comment_s}
           </td>
           <td style="padding:10px 16px;border-bottom:1px solid #f3f4f6;white-space:nowrap;vertical-align:top;text-align:right">
@@ -1626,9 +1642,9 @@ Write the summary now (2-3 sentences maximum):"""
           </td>
         </tr>"""
 
-    def _section(title, colour, items, show_assignee=False):
+    def _section(title, colour, items, show_people=False):
         if not items: return ""
-        rows = "".join(_issue_row(i, show_assignee) for i in items)
+        rows = "".join(_issue_row(i, show_people) for i in items)
         return f"""
         <div style="margin-top:20px">
           <div style="background:{colour};color:#fff;padding:6px 16px;border-radius:6px 6px 0 0;font-weight:700;font-size:13px">{title} ({len(items)})</div>
@@ -1643,9 +1659,9 @@ Write the summary now (2-3 sentences maximum):"""
     mgmt_body_html = (
         '<p style="color:#6b7280;text-align:center;padding:24px">No issue changes in the last 24 hours.</p>'
         if no_changes else
-        _section("🆕 New Issues", "#15803d", new_today, show_assignee=True) +
-        _section("🔄 Updated Issues", "#2563eb", updated_today, show_assignee=True) +
-        _section("✅ Marked Complete", "#6b7280", closed_today, show_assignee=True)
+        _section("🆕 New Issues", "#15803d", new_today, show_people=True) +
+        _section("🔄 Updated Issues", "#2563eb", updated_today, show_people=True) +
+        _section("✅ Marked Complete", "#6b7280", closed_today, show_people=True)
     )
 
     mgmt_html = f"""
@@ -1702,13 +1718,16 @@ Write the summary now (2-3 sentences maximum):"""
             logger.error(f"Issues digest management email failed: {e}")
             skipped.extend(mgmt_recipients)
 
-    # ── Individual emails per assignee ────────────────────────────────────────
-    # TODO: enable individual emails once digest is fully tested
-    # for person_name, p_issues in by_person.items():
-    for person_name, p_issues in []:  # disabled — management summary only for now
+    # ── Individual emails per issue creator ───────────────────────────────────
+    # Sent to the person who created each issue — they get updates without
+    # needing to self-assign. Assignees are shown clearly on each row.
+    for person_name, p_issues in by_creator.items():
+        if person_name in ("Unknown", ""):
+            skipped.append(f"(unknown creator — {len(p_issues)} issues)")
+            continue
         p_email = email_by_name.get(person_name.lower(), "")
         if not p_email:
-            logger.info(f"Issues digest: no email for {person_name}, skipping")
+            logger.info(f"Issues digest: no email for creator {person_name!r}, skipping")
             skipped.append(person_name)
             continue
 
@@ -1720,8 +1739,8 @@ Write the summary now (2-3 sentences maximum):"""
         individual_html = f"""
         <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
           <div style="background:#0f172a;padding:20px 24px;border-radius:8px 8px 0 0">
-            <h2 style="margin:0;color:#fff;font-size:18px">🔔 Your Issues — {today_str}</h2>
-            <p style="margin:4px 0 0;color:#94a3b8;font-size:13px">Hi {first_name}, here are your issue updates from the last 24 hours</p>
+            <h2 style="margin:0;color:#fff;font-size:18px">🔔 Issues You Created — {today_str}</h2>
+            <p style="margin:4px 0 0;color:#94a3b8;font-size:13px">Hi {first_name}, here are updates on issues you opened</p>
           </div>
           <div style="background:#f8fafc;border:1px solid #e5e7eb;border-top:none;padding:10px 24px;display:flex;gap:16px">
             <span style="font-size:13px;color:#15803d"><strong>{len(p_new)}</strong> new</span>
@@ -1729,9 +1748,9 @@ Write the summary now (2-3 sentences maximum):"""
             <span style="font-size:13px;color:#6b7280"><strong>{len(p_closed)}</strong> closed</span>
           </div>
           <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;padding:16px 24px">
-            {_section("🆕 New Issues", "#15803d", p_new)}
-            {_section("🔄 Updated Issues", "#2563eb", p_updated)}
-            {_section("✅ Closed Issues", "#6b7280", p_closed)}
+            {_section("🆕 New Issues", "#15803d", p_new, show_people=True)}
+            {_section("🔄 Updated Issues", "#2563eb", p_updated, show_people=True)}
+            {_section("✅ Closed Issues", "#6b7280", p_closed, show_people=True)}
             <p style="margin:24px 0 0;color:#9ca3af;font-size:12px;text-align:center">
               <a href="{cfg.ISSUES_DIGEST_ACTIVITIES_URL}" style="color:#2563eb">View Activities Dashboard ↗</a>
               &nbsp;·&nbsp; Sent automatically each morning.
@@ -1743,13 +1762,13 @@ Write the summary now (2-3 sentences maximum):"""
             await graph.send_email(
                 mailbox=mailbox,
                 to_addresses=[p_email],
-                subject=f"🔔 Your Issues {today_str} — {len(p_new)} new · {len(p_updated)} updated · {len(p_closed)} closed",
+                subject=f"🔔 Issues You Created {today_str} — {len(p_new)} new · {len(p_updated)} updated · {len(p_closed)} closed",
                 body_html=individual_html,
             )
             sent_to.append(f"{person_name} <{p_email}>")
-            logger.info(f"Issues digest sent to {person_name} <{p_email}>")
+            logger.info(f"Issues digest sent to creator {person_name} <{p_email}>")
         except Exception as e:
-            logger.error(f"Issues digest failed for {person_name} <{p_email}>: {e}")
+            logger.error(f"Issues digest failed for creator {person_name} <{p_email}>: {e}")
             skipped.append(person_name)
 
     return {
@@ -2506,6 +2525,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "priority":      parsed.get("priority") or a.get("Priority") or "",
             "category":      a.get("ActivityCategoryName") or meta.get("ActivityCategoryName") or "",
             "assigned_to":   parsed["assigned_to"] or _best_assigned.get(issue_num, []),
+            "creator":       (a.get("CreatedByUserName") or meta.get("CreatedByUserName") or "").strip(),
             "comments":      parsed["comments"],
             "property_id":   resolved_pid,
             "property_name": prop_name,
@@ -2540,6 +2560,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     priorities     = sorted({s["priority"]        for s in shaped if s["priority"]})
     categories      = sorted({s["category"]   for s in shaped if s["category"]})
     assigned_to_list= sorted({u for s in shaped for u in s["assigned_to"] if u})
+    creator_list    = sorted({s["creator"] for s in shaped if s["creator"]})
 
     # Strip internal keys before returning
     def clean(a: dict) -> dict:
@@ -2552,6 +2573,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         "priorities":       priorities,
         "categories":       categories,
         "assigned_to_list": assigned_to_list,
+        "creator_list":     creator_list,
         "activities":       [clean(a) for a in shaped],
     }
 

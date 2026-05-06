@@ -222,6 +222,7 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
             <SortTh field="category"      align="left"   {...sp}>Category</SortTh>
             <SortTh field="subject"       align="left"   {...sp}>Subject</SortTh>
             <SortTh field="property_name" align="left"   {...sp}>Property</SortTh>
+            <SortTh field="creator"       align="left"   {...sp}>Created By</SortTh>
             <th style={{ ...TH_BASE, textAlign: 'left', color: '#6b7280' }}>Assigned To</th>
             <th style={{ ...TH_BASE, textAlign: 'left', color: '#6b7280' }}>Comments</th>
             {showGroup !== 'status' && <SortTh field="status" align="left" {...sp}>Status</SortTh>}
@@ -256,17 +257,19 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
                       <span style={{ fontWeight: 600, fontSize: 12, color: '#111827' }}>{a.subject}</span>
                     )}
                   </div>
-                  {a.comments.length > 0 && (
-                    <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, maxWidth: 260,
-                      overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                      {a.comments[0].text}
-                    </div>
-                  )}
                 </Td>
                 {/* Property */}
                 <Td>
                   {a.property_name ? (
                     <span style={{ fontSize: 11, color: '#374151', fontWeight: 500 }}>{a.property_name}</span>
+                  ) : (
+                    <span style={{ color: '#d1d5db' }}>—</span>
+                  )}
+                </Td>
+                {/* Created By */}
+                <Td>
+                  {a.creator ? (
+                    <span style={{ fontSize: 11, color: '#374151' }}>{a.creator}</span>
                   ) : (
                     <span style={{ color: '#d1d5db' }}>—</span>
                   )}
@@ -334,7 +337,7 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
           })}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={9} style={{ padding: '20px', textAlign: 'center', color: '#9ca3af', fontSize: 12 }}>
+              <td colSpan={10} style={{ padding: '20px', textAlign: 'center', color: '#9ca3af', fontSize: 12 }}>
                 No activities match the current filters
               </td>
             </tr>
@@ -342,7 +345,7 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
         </tbody>
         <tfoot>
           <tr style={{ background: '#f8fafc', borderTop: '2px solid #e5e7eb' }}>
-            <td colSpan={9} style={{ padding: '6px 10px', fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
+            <td colSpan={10} style={{ padding: '6px 10px', fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
               {activities.length} activit{activities.length !== 1 ? 'ies' : 'y'}
             </td>
           </tr>
@@ -437,6 +440,7 @@ export default function ActivitiesDashboard() {
   // Filters — initialise from saved prefs
   const [search,           setSearch]           = useState<string>(saved?.search ?? '');
   const [filterAssignedTo, setFilterAssignedTo] = useState<string>(saved?.filterAssignedTo ?? 'All');
+  const [filterCreator,    setFilterCreator]    = useState<string>(saved?.filterCreator ?? 'All');
   const [filterPriority,   setFilterPriority]   = useState<string>(saved?.filterPriority ?? 'All');
   const [filterStatus,     setFilterStatus]     = useState<string>(saved?.filterStatus ?? 'All');
   const [filterCategory,   setFilterCategory]   = useState<string>(saved?.filterCategory ?? 'All');
@@ -445,8 +449,8 @@ export default function ActivitiesDashboard() {
 
   // Persist prefs on every change
   useEffect(() => {
-    savePrefs({ showCompleted, search, filterAssignedTo, filterPriority, filterStatus, filterCategory, groupBy });
-  }, [showCompleted, search, filterAssignedTo, filterPriority, filterStatus, filterCategory, groupBy]);
+    savePrefs({ showCompleted, search, filterAssignedTo, filterCreator, filterPriority, filterStatus, filterCategory, groupBy });
+  }, [showCompleted, search, filterAssignedTo, filterCreator, filterPriority, filterStatus, filterCategory, groupBy]);
 
   useEffect(() => {
     setLoading(true); setError(null);
@@ -480,12 +484,13 @@ export default function ActivitiesDashboard() {
     </div>
   );
 
-  const { statuses, priorities, categories, assigned_to_list, activities } = data;
+  const { statuses, priorities, categories, assigned_to_list, creator_list, activities } = data;
 
   const searchLower = search.trim().toLowerCase();
 
   const visible = activities.filter(a =>
     (filterAssignedTo === 'All' || a.assigned_to.includes(filterAssignedTo)) &&
+    (filterCreator    === 'All' || a.creator === filterCreator) &&
     (filterStatus     === 'All' || a.status    === filterStatus) &&
     (filterPriority   === 'All' || a.priority  === filterPriority) &&
     (filterCategory   === 'All' || a.category  === filterCategory) &&
@@ -493,6 +498,7 @@ export default function ActivitiesDashboard() {
       a.subject.toLowerCase().includes(searchLower) ||
       a.property_name.toLowerCase().includes(searchLower) ||
       a.assigned_to.join(' ').toLowerCase().includes(searchLower) ||
+      (a.creator || '').toLowerCase().includes(searchLower) ||
       a.comments.map(c => c.text).join(' ').toLowerCase().includes(searchLower)
     ))
   );
@@ -534,6 +540,17 @@ export default function ActivitiesDashboard() {
             {assigned_to_list.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
         </div>
+
+        {/* Created By */}
+        {creator_list.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Created By:</label>
+            <select value={filterCreator} onChange={e => setFilterCreator(e.target.value)} style={SEL(filterCreator !== 'All')}>
+              <option value="All">All</option>
+              {creator_list.map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+        )}
 
         {/* Status */}
         {statuses.length > 0 && (
@@ -624,6 +641,7 @@ export default function ActivitiesDashboard() {
             onClick={() => {
               const myName = guessMyName(assigned_to_list);
               setFilterAssignedTo(myName);
+              setFilterCreator('All');
               setFilterStatus('All');
               setFilterPriority('All');
               setFilterCategory('All');
