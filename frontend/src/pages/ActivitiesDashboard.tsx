@@ -433,7 +433,7 @@ export default function ActivitiesDashboard() {
   const [filterAssignedTo, setFilterAssignedTo] = useState<string>(saved?.filterAssignedTo ?? 'All');
   const [filterCreator,    setFilterCreator]    = useState<string>(saved?.filterCreator ?? 'All');
   const [filterPriority,   setFilterPriority]   = useState<string>(saved?.filterPriority ?? 'All');
-  const [filterStatus,     setFilterStatus]     = useState<string>(saved?.filterStatus ?? 'All');
+  const [filterStatus,     setFilterStatus]     = useState<string>('All'); // always default All — stale values cause blank pages
   const [filterCategory,   setFilterCategory]   = useState<string>(saved?.filterCategory ?? 'All');
   const [groupBy,          setGroupBy]          = useState<'status' | 'employee' | 'flat'>(saved?.groupBy ?? 'flat');
   const [prefsReady,       setPrefsReady]       = useState<boolean>(!!saved);
