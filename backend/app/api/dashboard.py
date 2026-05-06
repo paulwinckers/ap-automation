@@ -1367,11 +1367,19 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
 
     async def _fetch_opp_names():
         if not opp_ids: return []
-        return await _aspire._get_all("Opportunities", {
-            "$filter": " or ".join(f"OpportunityID eq {x}" for x in opp_ids),
-            "$select": "OpportunityID,OpportunityName,PropertyID",
-            "$top": str(len(opp_ids)),
-        })
+        results = []
+        for i in range(0, len(opp_ids), 50):
+            chunk = opp_ids[i:i+50]
+            try:
+                res = await _aspire._get("Opportunities", {
+                    "$filter": " or ".join(f"OpportunityID eq {x}" for x in chunk),
+                    "$select": "OpportunityID,OpportunityName,PropertyID",
+                    "$top": str(len(chunk)),
+                })
+                results.extend(_aspire._extract_list(res))
+            except Exception as e:
+                logger.warning(f"Opp names chunk failed: {e}")
+        return results
 
     prop_map, opp_raw_map = await asyncio.gather(
         _names("Properties", "PropertyID", "PropertyName", prop_ids),
