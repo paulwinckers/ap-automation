@@ -259,8 +259,8 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
                 </Td>
                 {/* Created By */}
                 <Td>
-                  {a.creator ? (
-                    <span style={{ fontSize: 11, color: '#374151' }}>{a.creator}</span>
+                  {(a as any).creator ? (
+                    <span style={{ fontSize: 11, color: '#374151' }}>{(a as any).creator}</span>
                   ) : (
                     <span style={{ color: '#d1d5db' }}>—</span>
                   )}
@@ -475,13 +475,14 @@ export default function ActivitiesDashboard() {
     </div>
   );
 
-  const { statuses, priorities, categories, assigned_to_list, creator_list, activities } = data;
+  const { statuses, priorities, categories, assigned_to_list, activities } = data;
+  const creator_list: string[] = (data as any).creator_list ?? [];
 
   const searchLower = search.trim().toLowerCase();
 
   const visible = activities.filter(a =>
     (filterAssignedTo === 'All' || a.assigned_to.includes(filterAssignedTo)) &&
-    (filterCreator    === 'All' || a.creator === filterCreator) &&
+    (filterCreator    === 'All' || (a.creator ?? '') === filterCreator) &&
     (filterStatus     === 'All' || a.status    === filterStatus) &&
     (filterPriority   === 'All' || a.priority  === filterPriority) &&
     (filterCategory   === 'All' || a.category  === filterCategory) &&

@@ -620,7 +620,7 @@ export interface Activity {
   issue_number: number | null;
   issue_url: string | null;
   assigned_to: string[];
-  creator: string;
+  creator?: string;
   comments: { meta: string; text: string }[];
   property_id: number | null;
   property_name: string;
@@ -644,7 +644,7 @@ export interface ActivitiesDashboardData {
   priorities: string[];
   categories: string[];
   assigned_to_list: string[];
-  creator_list: string[];
+  creator_list?: string[];
   activities: Activity[];
 }
 
