@@ -2566,7 +2566,13 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "priority":      parsed.get("priority") or a.get("Priority") or "",
             "category":      a.get("ActivityCategoryName") or meta.get("ActivityCategoryName") or parsed.get("category") or "",
             "assigned_to":   parsed["assigned_to"] or _best_assigned.get(issue_num, []),
-            "creator":       (meta.get("CreatedByUserName") or a.get("CreatedByUserName") or "").strip(),
+            # For creator, only trust issue-number-matched native records —
+            # subject-matched records can pick the wrong issue for generic
+            # titles like "Possible Opportunity" and return the wrong creator.
+            "creator":       (
+                (_native_by_num.get(issue_num, {}).get("CreatedByUserName") or "").strip()
+                or (a.get("CreatedByUserName") or "").strip()
+            ),
             "comments":      parsed["comments"],
             "property_id":   resolved_pid,
             "property_name": prop_name,
