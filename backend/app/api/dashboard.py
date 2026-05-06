@@ -1690,35 +1690,23 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
         return True
 
     # ── Deduplicate FIRST (before status filter) ─────────────────────────────
-    # Aspire emits one Activity record per comment. For Issues, keep only the
-    # record with the highest ActivityID — it has the complete comment history
-    # including any "Completed" status changes. Deduplicating before filtering
-    # ensures we judge status from the LATEST record, not an older open one.
+    # Aspire emits multiple Activity records per issue (one per comment, plus
+    # one bare "Issue" record with no HTML). Only keep the record with the
+    # highest ActivityID that has a parsed issue_number — it has the complete
+    # comment history. Records without a parseable issue number are always
+    # duplicates of a real issue record and are dropped.
     seen_issue_all: dict[int, dict] = {}
-    seen_non_issue_all: dict[tuple, dict] = {}
     for a in raw:
-        atype = (a.get("ActivityType") or "").strip().lower()
         subject = (a.get("Subject") or "")
         if _re.search(r'Time\s*Adjustment', subject, _re.IGNORECASE):
-            continue
-        if atype in ("activity", "appointment"):
             continue
         parsed_num = _parsed_cache.get(a.get("ActivityID"), {}).get("issue_number")
         if parsed_num is not None:
             existing = seen_issue_all.get(parsed_num)
             if existing is None or (a.get("ActivityID") or 0) > (existing.get("ActivityID") or 0):
                 seen_issue_all[parsed_num] = a
-        elif atype == "issue" or (atype == "email" and _re.search(r'Issue\s*#', subject, _re.IGNORECASE)):
-            key = (
-                subject.strip().lower(),
-                a.get("DueDate") or "",
-                a.get("PropertyID") or 0,
-            )
-            existing = seen_non_issue_all.get(key)
-            if existing is None or (a.get("ActivityID") or 0) > (existing.get("ActivityID") or 0):
-                seen_non_issue_all[key] = a
 
-    deduped = list(seen_issue_all.values()) + list(seen_non_issue_all.values())
+    deduped = list(seen_issue_all.values())
 
     # ── Now apply status filter on the deduplicated set ───────────────────────
     activities = [a for a in deduped if is_active(a)]
@@ -1748,9 +1736,29 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     prop_ids = list({a.get("PropertyID") for a in activities if a.get("PropertyID")})
     property_name_map = await _fetch_names("Properties", "PropertyID", "PropertyName", prop_ids)
 
-    # Opportunity names — for the "Regarding" column
+    # Opportunity names + PropertyIDs — for "Regarding" column and property fallback
     opp_ids = list({a.get("OpportunityID") for a in activities if a.get("OpportunityID")})
-    opp_name_map = await _fetch_names("Opportunities", "OpportunityID", "OpportunityName", opp_ids)
+    opp_name_map: dict[int, str] = {}
+    opp_prop_map: dict[int, int] = {}   # OpportunityID → PropertyID
+    if opp_ids:
+        chunk_size = 50
+        for i in range(0, len(opp_ids), chunk_size):
+            chunk = opp_ids[i:i + chunk_size]
+            id_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
+            try:
+                res = await _aspire._get("Opportunities", {
+                    "$filter": id_filter,
+                    "$select": "OpportunityID,OpportunityName,PropertyID",
+                    "$top": str(len(chunk)),
+                })
+                for rec in _aspire._extract_list(res):
+                    oid = rec.get("OpportunityID")
+                    if oid:
+                        opp_name_map[oid] = rec.get("OpportunityName") or ""
+                        if rec.get("PropertyID"):
+                            opp_prop_map[oid] = rec["PropertyID"]
+            except Exception as e:
+                logger.warning(f"Opportunity name lookup failed: {e}")
 
     # Secondary: for Issue activities with no PropertyID, look up via WorkTicketID → WorkTicket.PropertyID
     missing_prop = [a for a in activities if not a.get("PropertyID") and a.get("WorkTicketID")]
@@ -1788,6 +1796,12 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 act_to_prop[a["ActivityID"]] = pid
     else:
         act_to_prop = {}
+
+    # Tertiary: for activities with no PropertyID and no WorkTicketID, resolve via OpportunityID → PropertyID
+    new_opp_prop_ids = list({pid for pid in opp_prop_map.values() if pid not in property_name_map})
+    if new_opp_prop_ids:
+        extra = await _fetch_names("Properties", "PropertyID", "PropertyName", new_opp_prop_ids)
+        property_name_map.update(extra)
 
     now = datetime.now(timezone.utc)
     week_end = now + timedelta(days=7)
@@ -1830,10 +1844,11 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 pass
 
         aid = a.get("ActivityID")
-        # Resolve property: direct PropertyID, or via WorkTicket fallback
-        direct_pid  = a.get("PropertyID")
-        fallback_pid = act_to_prop.get(aid) if not direct_pid else None
-        resolved_pid = direct_pid or fallback_pid
+        # Resolve property: direct PropertyID → WorkTicket → Opportunity
+        direct_pid      = a.get("PropertyID")
+        wt_pid          = act_to_prop.get(aid) if not direct_pid else None
+        opp_pid         = opp_prop_map.get(a.get("OpportunityID")) if not direct_pid and not wt_pid else None
+        resolved_pid    = direct_pid or wt_pid or opp_pid
         prop_name = property_name_map.get(resolved_pid, "") if resolved_pid else ""
 
         shaped.append({
