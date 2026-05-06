@@ -1306,16 +1306,23 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
         if inum and p.get("assigned_to") and inum not in _best_asgn:
             _best_asgn[inum] = p["assigned_to"]
 
-    # ── Deduplicate (keep highest-ID email record with parsed issue_number) ───
+    # ── Deduplicate: keep highest-ID record (most recent) per issue_number ────
+    # Also track the LOWEST-ID record — its CreatedDate is when the issue was
+    # actually first opened (not when the latest comment was added).
     seen: dict[int, dict] = {}
+    _first_seen: dict[int, dict] = {}  # issue_number → oldest activity record
     for a in raw:
         if _re.search(r'Time\s*Adjustment', a.get("Subject") or "", _re.IGNORECASE):
             continue
         pnum = parsed_cache.get(a.get("ActivityID"), {}).get("issue_number")
         if pnum is not None:
+            aid = a.get("ActivityID") or 0
             existing = seen.get(pnum)
-            if existing is None or (a.get("ActivityID") or 0) > (existing.get("ActivityID") or 0):
+            if existing is None or aid > (existing.get("ActivityID") or 0):
                 seen[pnum] = a
+            first = _first_seen.get(pnum)
+            if first is None or aid < (first.get("ActivityID") or 0):
+                _first_seen[pnum] = a
 
     # ── Metadata fallback from native Issue records ───────────────────────────
     _nat_by_num: dict[int, dict] = {}
@@ -1430,7 +1437,11 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
         due_str   = (a.get("DueDate") or "")[:10] or parsed.get("due_date_str") or ""
         eff_opp   = a.get("OpportunityID") or meta.get("OpportunityID")
 
-        created_dt  = _pdt(a.get("CreatedDate"))
+        # Use the OLDEST activity record's CreatedDate as the true issue open date.
+        # The kept record (highest ActivityID) may have been created today just
+        # because a comment was added — that doesn't make it a "new" issue.
+        first_rec   = _first_seen.get(inum) or a
+        created_dt  = _pdt(first_rec.get("CreatedDate"))
         modified_dt = _pdt(a.get("ModifiedDate"))
         complete_dt = _pdt(a.get("CompleteDate"))
 
