@@ -61,6 +61,64 @@ function CommentsCell({ comments }: { comments: { meta: string; text: string }[]
   );
 }
 
+// ── Send Digest button ────────────────────────────────────────────────────────
+
+const BASE = import.meta.env.VITE_API_URL || 'https://ap-automation-production.up.railway.app';
+
+function SendDigestButton() {
+  const [state, setState] = React.useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [result, setResult] = React.useState<string>('');
+
+  async function handleSend() {
+    setState('loading');
+    setResult('');
+    try {
+      const res = await fetch(`${BASE}/dashboard/activities/send-issues-digest`);
+      const data = await res.json();
+      if (!res.ok) {
+        setState('error');
+        setResult(data.detail || JSON.stringify(data));
+      } else {
+        setState('done');
+        setResult(
+          `✅ Sent! ${data.new_today ?? 0} new · ${data.updated_today ?? 0} updated · ${data.closed_today ?? 0} closed. ` +
+          `Recipients: ${(data.sent_to || []).join(', ') || 'none'}`
+        );
+      }
+    } catch (e: any) {
+      setState('error');
+      setResult(e.message || 'Network error');
+    }
+  }
+
+  const colours = { idle: '#2563eb', loading: '#9ca3af', done: '#16a34a', error: '#dc2626' };
+  const labels  = { idle: '📧 Send Digest', loading: 'Sending…', done: '📧 Sent', error: '⚠️ Error' };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+      <button
+        onClick={handleSend}
+        disabled={state === 'loading'}
+        style={{
+          background: colours[state], color: '#fff', border: 'none', borderRadius: 8,
+          padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: state === 'loading' ? 'default' : 'pointer',
+          opacity: state === 'loading' ? 0.7 : 1, transition: 'all 0.2s',
+        }}
+      >
+        {labels[state]}
+      </button>
+      {result && (
+        <div style={{
+          fontSize: 11, color: state === 'error' ? '#dc2626' : '#374151',
+          maxWidth: 420, textAlign: 'right', lineHeight: 1.4,
+        }}>
+          {result}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtDate(s: string | null): string {
@@ -478,10 +536,11 @@ export default function ActivitiesDashboard() {
     <div style={{ background: '#f8fafc', minHeight: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
 
       {/* ── Page header ── */}
-      <div style={{ padding: '20px 28px 0' }}>
+      <div style={{ padding: '20px 28px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#111827', letterSpacing: '-0.3px' }}>
           Activity Summary
         </h1>
+        <SendDigestButton />
       </div>
 
       {/* ── Sticky filter bar ── */}
