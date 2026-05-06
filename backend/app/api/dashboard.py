@@ -1708,6 +1708,42 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
 
     deduped = list(seen_issue_all.values())
 
+    # ── Build metadata fallback from native Issue-type records ────────────────
+    # Email notification records (kept by dedup because they have HTML) do NOT
+    # carry ActivityCategoryName, OpportunityID, or PropertyID from Aspire.
+    # Native "Issue" type records DO have those fields but lack the HTML notes.
+    # We match them by issue_number (if parseable) or by subject suffix.
+    _native_by_num: dict[int, dict] = {}
+    _native_by_subject: dict[str, dict] = {}
+    for a in raw:
+        if (a.get("ActivityType") or "").strip().lower() != "issue":
+            continue
+        nat_num = _parsed_cache.get(a.get("ActivityID"), {}).get("issue_number")
+        if nat_num is not None:
+            _native_by_num[nat_num] = a
+        else:
+            subj = (a.get("Subject") or "").strip().lower()
+            if subj and len(subj) > 3:
+                _native_by_subject[subj] = a
+
+    # Start with direct issue_number matches, then try subject matching
+    _issue_meta: dict[int, dict] = dict(_native_by_num)
+    for issue_num, email_rec in seen_issue_all.items():
+        if issue_num in _issue_meta:
+            continue
+        stripped = _re.sub(
+            r'^Issue\s*#\d+\s*[-–]\s*', '',
+            email_rec.get("Subject") or "",
+            flags=_re.IGNORECASE,
+        ).strip().lower()
+        if stripped in _native_by_subject:
+            _issue_meta[issue_num] = _native_by_subject[stripped]
+            continue
+        for nat_subj, nat_rec in _native_by_subject.items():
+            if len(nat_subj) > 5 and stripped.endswith(nat_subj):
+                _issue_meta[issue_num] = nat_rec
+                break
+
     # ── Now apply status filter on the deduplicated set ───────────────────────
     activities = [a for a in deduped if is_active(a)]
 
@@ -1732,12 +1768,25 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 logger.warning(f"{entity} name lookup failed: {e}")
         return result
 
-    # Primary: activities with PropertyID directly
-    prop_ids = list({a.get("PropertyID") for a in activities if a.get("PropertyID")})
+    # Primary: activities with PropertyID directly (also include meta fallbacks)
+    _meta_values = list(_issue_meta.values())
+    prop_ids = list({
+        pid
+        for src in (activities, _meta_values)
+        for a in src
+        for pid in [a.get("PropertyID")]
+        if pid
+    })
     property_name_map = await _fetch_names("Properties", "PropertyID", "PropertyName", prop_ids)
 
     # Opportunity names + PropertyIDs — for "Regarding" column and property fallback
-    opp_ids = list({a.get("OpportunityID") for a in activities if a.get("OpportunityID")})
+    opp_ids = list({
+        oid
+        for src in (activities, _meta_values)
+        for a in src
+        for oid in [a.get("OpportunityID")]
+        if oid
+    })
     opp_name_map: dict[int, str] = {}
     opp_prop_map: dict[int, int] = {}   # OpportunityID → PropertyID
     if opp_ids:
@@ -1844,34 +1893,39 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 pass
 
         aid = a.get("ActivityID")
-        # Resolve property: direct PropertyID → WorkTicket → Opportunity
-        direct_pid      = a.get("PropertyID")
-        wt_pid          = act_to_prop.get(aid) if not direct_pid else None
-        opp_pid         = opp_prop_map.get(a.get("OpportunityID")) if not direct_pid and not wt_pid else None
-        resolved_pid    = direct_pid or wt_pid or opp_pid
+        issue_num = parsed.get("issue_number")
+        # Native meta fallback: email notification records lack metadata fields
+        meta = _issue_meta.get(issue_num) or {} if issue_num else {}
+
+        # Resolve property: direct → meta fallback → WorkTicket → Opportunity
+        direct_pid   = a.get("PropertyID") or meta.get("PropertyID")
+        wt_pid       = act_to_prop.get(aid) if not direct_pid else None
+        eff_opp_id   = a.get("OpportunityID") or meta.get("OpportunityID")
+        opp_pid      = opp_prop_map.get(eff_opp_id) if not direct_pid and not wt_pid else None
+        resolved_pid = direct_pid or wt_pid or opp_pid
         prop_name = property_name_map.get(resolved_pid, "") if resolved_pid else ""
 
         shaped.append({
             "id":            aid,
-            "issue_number":  parsed.get("issue_number"),
+            "issue_number":  issue_num,
             "issue_url":     parsed.get("issue_url"),
             "subject":       a.get("Subject") or "(no subject)",
-            "activity_type": "Issue" if parsed.get("issue_number") else (a.get("ActivityType") or "Unknown"),
+            "activity_type": "Issue" if issue_num else (a.get("ActivityType") or "Unknown"),
             "status":        parsed.get("status") or a.get("Status") or "",
             "priority":      parsed.get("priority") or a.get("Priority") or "",
-            "category":      a.get("ActivityCategoryName") or "",
-            "assigned_to":   parsed["assigned_to"] or _best_assigned.get(parsed.get("issue_number"), []),
+            "category":      a.get("ActivityCategoryName") or meta.get("ActivityCategoryName") or "",
+            "assigned_to":   parsed["assigned_to"] or _best_assigned.get(issue_num, []),
             "comments":      parsed["comments"],
             "property_id":   resolved_pid,
             "property_name": prop_name,
             "due_date":      effective_due,
             "complete_date": parse_dt(a.get("CompleteDate")).date().isoformat() if parse_dt(a.get("CompleteDate")) else None,
             "created_date":  created_dt.date().isoformat()  if created_dt  else None,
-            "opportunity_id":a.get("OpportunityID"),
-            "regarding_name": opp_name_map.get(a.get("OpportunityID"), "") or "",
+            "opportunity_id": eff_opp_id,
+            "regarding_name": opp_name_map.get(eff_opp_id, "") or "",
             "regarding_url":  (
-                f"https://cloud.youraspire.com/app/opportunities/details/{a.get('OpportunityID')}"
-                if a.get("OpportunityID") else None
+                f"https://cloud.youraspire.com/app/opportunities/details/{eff_opp_id}"
+                if eff_opp_id else None
             ),
             "work_ticket_id":a.get("WorkTicketID"),
             "is_milestone":  bool(a.get("IsMileStone")),
