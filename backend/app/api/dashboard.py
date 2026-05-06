@@ -1676,7 +1676,9 @@ Write the summary now (2-3 sentences maximum):"""
             skipped.extend(mgmt_recipients)
 
     # ── Individual emails per assignee ────────────────────────────────────────
-    for person_name, p_issues in by_person.items():
+    # TODO: enable individual emails once digest is fully tested
+    # for person_name, p_issues in by_person.items():
+    for person_name, p_issues in []:  # disabled — management summary only for now
         p_email = email_by_name.get(person_name.lower(), "")
         if not p_email:
             logger.info(f"Issues digest: no email for {person_name}, skipping")
