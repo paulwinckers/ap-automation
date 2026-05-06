@@ -1726,6 +1726,15 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             if subj and len(subj) > 3:
                 _native_by_subject[subj] = a
 
+    # Debug: log a sample native Issue record to verify field availability
+    _sample_natives = list(_native_by_subject.values())[:3] + list(_native_by_num.values())[:3]
+    for _sn in _sample_natives[:2]:
+        logger.info(
+            f"[ACT-META] native Issue sample — cat={_sn.get('ActivityCategoryName')!r} "
+            f"oppID={_sn.get('OpportunityID')!r} propID={_sn.get('PropertyID')!r} "
+            f"wtID={_sn.get('WorkTicketID')!r} subj={(_sn.get('Subject') or '')[:60]!r}"
+        )
+
     # Start with direct issue_number matches, then try subject matching
     _issue_meta: dict[int, dict] = dict(_native_by_num)
     for issue_num, email_rec in seen_issue_all.items():
