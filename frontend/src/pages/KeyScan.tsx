@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getKey, getKeyEmployees, scanKey, KeyEntry, KeyLogEntry } from '../lib/api';
+import { getKey, getKeyEmployees, scanKey, transferKey, KeyEntry, KeyLogEntry } from '../lib/api';
 
 const BG      = '#0f172a';
 const CARD    = '#1e293b';
@@ -27,6 +27,12 @@ function typeLabel(t: string): string {
   return '📦 Other';
 }
 
+function actionIcon(action: string): string {
+  if (action === 'out') return '↗';
+  if (action === 'in')  return '↩';
+  return '🤝';
+}
+
 export default function KeyScan() {
   const { id } = useParams<{ id: string }>();
   const keyId = Number(id);
@@ -40,7 +46,7 @@ export default function KeyScan() {
   const [loading, setLoading]         = useState(true);
   const [submitting, setSubmitting]   = useState(false);
   const [error, setError]             = useState('');
-  const [success, setSuccess]         = useState<{ action: 'in' | 'out'; name: string; keyName: string } | null>(null);
+  const [success, setSuccess]         = useState<{ action: 'in' | 'out' | 'transfer'; name: string; keyName: string; from?: string } | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('key_employee') || '';
@@ -83,6 +89,26 @@ export default function KeyScan() {
       setNotes('');
     } catch (e: unknown) {
       setError((e as Error).message || 'Scan failed');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleTransfer() {
+    if (!selected) { setError('Please select your name first'); return; }
+    setError('');
+    setSubmitting(true);
+    try {
+      const res = await transferKey({ keyId, employeeName: selected, notes });
+      localStorage.setItem('key_employee', selected);
+      setSuccess({ action: 'transfer', name: selected, keyName: keyData?.name || '', from: res.from });
+      const updated = await getKey(keyId);
+      setKeyData(updated.key);
+      setCheckedOut(updated.checked_out);
+      setLog(updated.log);
+      setNotes('');
+    } catch (e: unknown) {
+      setError((e as Error).message || 'Transfer failed');
     } finally {
       setSubmitting(false);
     }
@@ -166,12 +192,17 @@ export default function KeyScan() {
             textAlign: 'center',
             marginBottom: 24,
           }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>
+              {success.action === 'transfer' ? '🤝' : '✅'}
+            </div>
             <div style={{ color: GREEN, fontWeight: 700, fontSize: 18 }}>
-              {success.action === 'out' ? 'Checked Out' : 'Checked In'}
+              {success.action === 'out' ? 'Checked Out' : success.action === 'in' ? 'Checked In' : 'Baton Passed!'}
             </div>
             <div style={{ color: MUTED, fontSize: 14, marginTop: 6 }}>
-              {success.keyName} — {success.name}
+              {success.action === 'transfer'
+                ? <>{success.keyName}<br /><span style={{ color: '#fff' }}>{success.from}</span> → <span style={{ color: '#fff' }}>{success.name}</span></>
+                : <>{success.keyName} — {success.name}</>
+              }
             </div>
             <button
               onClick={() => setSuccess(null)}
@@ -218,31 +249,57 @@ export default function KeyScan() {
               <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{error}</div>
             )}
 
-            {/* Action Button */}
-            <button
-              onClick={() => handleScan(checkedOut ? 'in' : 'out')}
-              disabled={submitting || !selected}
-              style={{
-                width: '100%',
-                padding: '16px',
-                borderRadius: 10,
-                border: 'none',
-                background: submitting || !selected
-                  ? '#334155'
-                  : checkedOut ? BLUE : GREEN,
-                color: '#fff',
-                fontSize: 18,
-                fontWeight: 700,
-                cursor: submitting || !selected ? 'not-allowed' : 'pointer',
-                transition: 'background 0.15s',
-              }}
-            >
-              {submitting
-                ? 'Recording…'
-                : checkedOut
-                  ? '↩ Check In Key'
-                  : '↗ Check Out Key'}
-            </button>
+            {/* Pass the Baton — shown when key is out AND selected person is not the current holder */}
+            {checkedOut && selected && keyData?.current_holder && selected !== keyData.current_holder ? (
+              <div>
+                {/* Baton info */}
+                <div style={{
+                  background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.35)',
+                  borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: '#fbbf24',
+                  textAlign: 'center',
+                }}>
+                  🔑 Currently with <strong style={{ color: '#fff' }}>{keyData.current_holder}</strong>
+                </div>
+                <button
+                  onClick={handleTransfer}
+                  disabled={submitting}
+                  style={{
+                    width: '100%', padding: '16px', borderRadius: 10, border: 'none',
+                    background: submitting ? '#334155' : '#f59e0b',
+                    color: '#fff', fontSize: 18, fontWeight: 700,
+                    cursor: submitting ? 'not-allowed' : 'pointer',
+                    transition: 'background 0.15s', marginBottom: 10,
+                  }}
+                >
+                  {submitting ? 'Recording…' : '🤝 Pass the Baton to Me'}
+                </button>
+                <button
+                  onClick={() => handleScan('in')}
+                  disabled={submitting}
+                  style={{
+                    width: '100%', padding: '11px', borderRadius: 8, border: `1px solid ${BORDER}`,
+                    background: 'transparent', color: MUTED, fontSize: 13, fontWeight: 600,
+                    cursor: submitting ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  ↩ Just Return Key to Box
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => handleScan(checkedOut ? 'in' : 'out')}
+                disabled={submitting || !selected}
+                style={{
+                  width: '100%', padding: '16px', borderRadius: 10, border: 'none',
+                  background: submitting || !selected ? '#334155' : checkedOut ? BLUE : GREEN,
+                  color: '#fff', fontSize: 18, fontWeight: 700,
+                  cursor: submitting || !selected ? 'not-allowed' : 'pointer',
+                  transition: 'background 0.15s',
+                }}
+              >
+                {submitting ? 'Recording…' : checkedOut ? '↩ Check In Key' : '↗ Check Out Key'}
+              </button>
+            )}
           </div>
         )}
 
@@ -252,7 +309,7 @@ export default function KeyScan() {
             <div style={{ fontWeight: 600, marginBottom: 14, fontSize: 14, color: MUTED }}>Recent Activity</div>
             {log.map(entry => (
               <div key={entry.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: `1px solid ${BORDER}` }}>
-                <span style={{ fontSize: 16 }}>{entry.action === 'out' ? '↗' : '↩'}</span>
+                <span style={{ fontSize: 16 }}>{actionIcon(entry.action)}</span>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{entry.employee_name}</div>
                   <div style={{ fontSize: 11, color: MUTED }}>{fmtTs(entry.scanned_at)}</div>

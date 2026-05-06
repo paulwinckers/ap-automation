@@ -1119,6 +1119,13 @@ export async function scanKey(p: { keyId: number; employeeName: string; action: 
   return request('POST', `/keys/${p.keyId}/scan`, form, true);
 }
 
+export async function transferKey(p: { keyId: number; employeeName: string; notes?: string }): Promise<{ ok: boolean; from: string; to: string }> {
+  const form = new FormData();
+  form.append('employee_name', p.employeeName);
+  form.append('notes', p.notes ?? '');
+  return request('POST', `/keys/${p.keyId}/transfer`, form, true);
+}
+
 export async function listKeys(): Promise<KeyEntry[]> {
   const r = await request<{ keys: KeyEntry[] }>('GET', '/keys/');
   return r.keys;

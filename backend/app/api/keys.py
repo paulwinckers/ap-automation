@@ -216,6 +216,51 @@ async def scan_key(
     return {"ok": True, "key_id": key_id, "action": action, "employee_name": employee_name}
 
 
+@router.post("/{key_id}/transfer")
+async def transfer_key(
+    key_id:        int,
+    employee_name: str  = Form(...),   # person receiving the key
+    notes:         str  = Form(default=""),
+    db: Database = Depends(get_db),
+):
+    """Public — Pass the Baton: auto check-in from current holder, check-out to new person."""
+    # Verify key exists and is active
+    key_rows = await db._q("SELECT id, name FROM keys WHERE id = ? AND active = 1", [key_id])
+    if not key_rows:
+        raise HTTPException(status_code=404, detail="Key not found")
+
+    # Find current holder (last log entry)
+    last = await db._q(
+        "SELECT employee_name, action FROM key_logs WHERE key_id = ? ORDER BY scanned_at DESC LIMIT 1",
+        [key_id],
+    )
+    if not last or last[0]["action"] != "out":
+        raise HTTPException(status_code=400, detail="Key is not currently checked out")
+
+    current_holder = last[0]["employee_name"]
+    new_holder     = employee_name.strip()
+
+    if not new_holder:
+        raise HTTPException(status_code=400, detail="employee_name is required")
+    if new_holder == current_holder:
+        raise HTTPException(status_code=400, detail="You already have this key")
+
+    xfer_note = f"Passed to {new_holder}" + (f" — {notes}" if notes.strip() else "")
+
+    # Check-in from current holder
+    await db._x(
+        "INSERT INTO key_logs (key_id, employee_name, action, notes) VALUES (?, ?, 'in', ?)",
+        [key_id, current_holder, xfer_note],
+    )
+    # Check-out to new person
+    await db._x(
+        "INSERT INTO key_logs (key_id, employee_name, action, notes) VALUES (?, ?, 'out', ?)",
+        [key_id, new_holder, f"Received from {current_holder}" + (f" — {notes}" if notes.strip() else "")],
+    )
+    logger.info(f"Key #{key_id} ({key_rows[0]['name']!r}) transferred {current_holder!r} → {new_holder!r}")
+    return {"ok": True, "key_id": key_id, "from": current_holder, "to": new_holder}
+
+
 @router.patch("/{key_id}")
 async def update_key(
     key_id:        int,
