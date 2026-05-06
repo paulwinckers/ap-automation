@@ -2360,6 +2360,20 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             if subj and len(subj) > 3:
                 _native_by_subject[subj] = a
 
+    # ── Track the FIRST (oldest) record per issue number for creator lookup ───
+    # The dedup above keeps the HIGHEST ActivityID (most recent — usually an email
+    # notification whose CreatedByUserName is the last commenter, not the creator).
+    # The LOWEST ActivityID for each issue_number is the original creation record
+    # and carries the correct CreatedByUserName.
+    _first_by_num: dict[int, dict] = {}
+    for a in raw:
+        pnum = _parsed_cache.get(a.get("ActivityID"), {}).get("issue_number")
+        if pnum is None:
+            continue
+        existing = _first_by_num.get(pnum)
+        if existing is None or (a.get("ActivityID") or 0) < (existing.get("ActivityID") or 0):
+            _first_by_num[pnum] = a
+
     # Debug: log a sample native Issue record to verify field availability
     _sample_natives = list(_native_by_subject.values())[:3] + list(_native_by_num.values())[:3]
     for _sn in _sample_natives[:2]:
@@ -2566,11 +2580,12 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             "priority":      parsed.get("priority") or a.get("Priority") or "",
             "category":      a.get("ActivityCategoryName") or meta.get("ActivityCategoryName") or parsed.get("category") or "",
             "assigned_to":   parsed["assigned_to"] or _best_assigned.get(issue_num, []),
-            # For creator, only trust issue-number-matched native records —
-            # subject-matched records can pick the wrong issue for generic
-            # titles like "Possible Opportunity" and return the wrong creator.
+            # For creator, use the OLDEST record for this issue number — that is
+            # the original creation record with the correct CreatedByUserName.
+            # Newer records (kept by dedup) are email notifications whose
+            # CreatedByUserName is the commenter, not the original creator.
             "creator":       (
-                (_native_by_num.get(issue_num, {}).get("CreatedByUserName") or "").strip()
+                (_first_by_num.get(issue_num, {}).get("CreatedByUserName") or "").strip()
                 or (a.get("CreatedByUserName") or "").strip()
             ),
             "comments":      parsed["comments"],
