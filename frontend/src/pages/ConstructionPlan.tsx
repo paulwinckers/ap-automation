@@ -470,7 +470,7 @@ export default function ConstructionPlan() {
                         </span>
                         {j.source === 'scheduled' || j.source === 'both'
                           ? <span style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8 }}>
-                              📅 {j.ticket_count} ticket{j.ticket_count !== 1 ? 's' : ''}
+                              📅 {j.completed_tickets}/{j.ticket_count} done
                             </span>
                           : <span style={{ background: '#f5f3ff', color: '#7c3aed', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8 }}>
                               📌 Added

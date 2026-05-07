@@ -338,6 +338,7 @@ export interface PlanJob {
   end_date: string | null;
   scheduled_dates: string[];
   ticket_count: number;
+  completed_tickets: number;
   source: 'scheduled' | 'manual' | 'both';
   notes: string;
   committed_by: string;

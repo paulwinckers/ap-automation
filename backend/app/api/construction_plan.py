@@ -105,6 +105,7 @@ async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
                 "$filter": date_fmt,
                 "$orderby": "WorkTicketID desc",
                 "$top": "500",
+                "$select": "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,OpportunityID,OpportunityServiceID,ScheduledStartDate,CompleteDate,HoursEst,HoursAct,BudgetVariance,CrewLeaderName,PercentComplete",
             })
             tickets = _aspire._extract_list(res)
             logger.info(f"Plan: fetched {len(tickets)} work tickets for {month} using filter: {date_fmt}")
@@ -115,13 +116,6 @@ async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
 
     if not tickets:
         return {}
-
-    # Filter out completed / cancelled tickets
-    skip_statuses = {"complete", "completed", "cancelled", "canceled"}
-    tickets = [
-        t for t in tickets
-        if (t.get("WorkTicketStatusName") or "").lower() not in skip_statuses
-    ]
 
     # Filter to Construction division via Opportunity lookup
     opp_ids = list({t.get("OpportunityID") for t in tickets if t.get("OpportunityID")})
@@ -251,34 +245,44 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         opp     = actuals.get(oid, {})
         hrs_est = float(opp.get("EstimatedLaborHours") or 0)
         hrs_act = float(opp.get("ActualLaborHours") or 0)
-        rev_act = float(opp.get("ActualEarnedRevenue") or 0)
         rev_est = float(opp.get("WonDollars") or opp.get("EstimatedDollars") or 0)
         pct     = float(opp.get("PercentComplete") or 0)
-        # Scheduled dates from the work tickets for this opp
+
+        # Tickets scheduled for this month
         tickets = scheduled_map.get(oid, [])
         sched_dates = sorted(
             [t.get("ScheduledStartDate", "") for t in tickets if t.get("ScheduledStartDate")]
         )
+        # Tickets completed this month — their ActualEarnedRevenue is the month's earned revenue.
+        # We use the opportunity-level ActualEarnedRevenue as the best available proxy
+        # (Aspire rolls ticket revenue up to the opportunity).
+        completed_tickets = [
+            t for t in tickets
+            if (t.get("WorkTicketStatusName") or "").lower() in ("complete", "completed")
+        ]
+        rev_act = float(opp.get("ActualEarnedRevenue") or 0)
+
         return {
-            "opportunity_id":   oid,
-            "opportunity_name": opp.get("OpportunityName") or f"Job #{oid}",
-            "property_name":    opp.get("PropertyName") or "",
-            "opp_number":       opp.get("OpportunityNumber"),
-            "status":           opp.get("OpportunityStatusName") or "",
-            "hrs_est":          hrs_est,
-            "hrs_act":          hrs_act,
-            "pct_complete":     pct,
-            "revenue_est":      rev_est,
-            "revenue_act":      rev_act,
-            "start_date":       opp.get("StartDate"),
-            "end_date":         opp.get("EndDate"),
-            "scheduled_dates":  sched_dates,      # ticket-level scheduled dates
-            "ticket_count":     len(tickets),
-            "source":           source,           # "scheduled" | "manual" | "both"
-            "notes":            notes,
-            "committed_by":     committed_by,
-            "committed_at":     committed_at,
-            "risk":             _risk_flag(opp),
+            "opportunity_id":    oid,
+            "opportunity_name":  opp.get("OpportunityName") or f"Job #{oid}",
+            "property_name":     opp.get("PropertyName") or "",
+            "opp_number":        opp.get("OpportunityNumber"),
+            "status":            opp.get("OpportunityStatusName") or "",
+            "hrs_est":           hrs_est,
+            "hrs_act":           hrs_act,
+            "pct_complete":      pct,
+            "revenue_est":       rev_est,
+            "revenue_act":       rev_act,
+            "start_date":        opp.get("StartDate"),
+            "end_date":          opp.get("EndDate"),
+            "scheduled_dates":   sched_dates,
+            "ticket_count":      len(tickets),
+            "completed_tickets": len(completed_tickets),
+            "source":            source,
+            "notes":             notes,
+            "committed_by":      committed_by,
+            "committed_at":      committed_at,
+            "risk":              _risk_flag(opp),
         }
 
     jobs: dict[int, dict] = {}
