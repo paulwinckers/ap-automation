@@ -1864,6 +1864,51 @@ Write the summary now (2-3 sentences maximum):"""
     }
 
 
+# ── Issues Digest nightly scheduler ──────────────────────────────────────────
+
+_digest_scheduler_task: asyncio.Task | None = None
+
+
+async def _digest_scheduler_loop():
+    """Fire the Issues Digest every day at 19:00 in the configured timezone."""
+    import zoneinfo as _zi
+    from datetime import datetime as _dt, timedelta as _td
+
+    tz = _zi.ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    while True:
+        now    = _dt.now(tz)
+        target = now.replace(hour=19, minute=0, second=0, microsecond=0)
+        if now >= target:
+            target += _td(days=1)
+        wait = (target - now).total_seconds()
+        logger.info(f"Issues digest scheduler: next run in {wait/3600:.1f}h at {target.strftime('%Y-%m-%d %H:%M %Z')}")
+        await asyncio.sleep(wait)
+        try:
+            import re as _re
+            import traceback
+            from datetime import datetime, timezone, timedelta
+            from app.services.email_intake import GraphClient
+            result = await _issues_digest_body(
+                settings, asyncio, _re, timedelta, datetime, timezone, GraphClient, traceback
+            )
+            logger.info(f"Issues digest nightly send complete: {result.get('sent_to')}")
+        except Exception as e:
+            logger.error(f"Issues digest nightly send failed: {e}")
+
+
+def start_digest_scheduler():
+    global _digest_scheduler_task
+    _digest_scheduler_task = asyncio.ensure_future(_digest_scheduler_loop())
+    logger.info("Issues digest nightly scheduler started (fires 7 PM Pacific)")
+
+
+def stop_digest_scheduler():
+    global _digest_scheduler_task
+    if _digest_scheduler_task:
+        _digest_scheduler_task.cancel()
+        _digest_scheduler_task = None
+
+
 # ── Sales Dashboard — live Aspire feeds ──────────────────────────────────────
 
 @router.get("/sales/pipeline")

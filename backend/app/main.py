@@ -29,6 +29,7 @@ from app.api.auth import router as auth_router
 from app.api.keys import router as keys_router
 from app.api.safety_talks import router as safety_talks_router
 from app.api.construction_report import router as construction_report_router, start_scheduler as start_construction_scheduler, stop_scheduler as stop_construction_scheduler
+from app.api.dashboard import start_digest_scheduler, stop_digest_scheduler
 from app.api.documents import router as documents_router
 from app.api.push import router as push_router
 from app.api.site_inspections import router as site_inspections_router
@@ -97,12 +98,15 @@ async def lifespan(app: FastAPI):
     await _db.close()
     # Start email polling on startup
     await email_intake.start()
-    # Start construction nightly report scheduler (fires 7 PM Mountain)
+    # Start construction nightly report scheduler (fires 7 PM Pacific)
     start_construction_scheduler()
+    # Start issues digest nightly scheduler (fires 7 PM Pacific)
+    start_digest_scheduler()
     yield
     # Stop on shutdown
     await email_intake.stop()
     stop_construction_scheduler()
+    stop_digest_scheduler()
 
 
 app = FastAPI(
