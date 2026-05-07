@@ -65,7 +65,7 @@ class Settings(BaseSettings):
 
     # Construction nightly report
     CONSTRUCTION_REPORT_RECIPIENTS: str = "rodger@darios.ca,keeland@darios.ca,dustin@darios.ca,paul@darios.ca,waythomas92@gmail.com,jackson@darios.ca,flannery.dwm@gmail.com"
-    CONSTRUCTION_REPORT_TIMEZONE:   str = "America/Edmonton"  # IANA tz for 7 PM send time
+    CONSTRUCTION_REPORT_TIMEZONE:   str = "America/Vancouver"  # IANA tz for 7 PM send time
     CONSTRUCTION_DASHBOARD_URL:     str = "https://darios-accounting.pages.dev/dashboards/construction"
 
     # Issues digest
