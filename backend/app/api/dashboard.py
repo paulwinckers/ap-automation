@@ -1764,7 +1764,7 @@ Write the summary now (2-3 sentences maximum):"""
     # ── One combined email per person (assigned issues + created issues) ────────
     # When preview_for is set: only send for that one person, to mgmt recipients.
     # Otherwise: iterate all_people (disabled until ready — currently empty list).
-    _people_to_send = [preview_for] if preview_for else list(all_people) if False else []
+    _people_to_send = [preview_for] if preview_for else list(all_people)
     for person_name in _people_to_send:
         if not person_name or person_name == "Unknown":
             continue
