@@ -1665,13 +1665,22 @@ Write the summary now (2-3 sentences maximum):"""
 
     # ── Management summary email ──────────────────────────────────────────────
     # Group by change type (not by person) — show assignees inline per row
+    # Sort overdue by worst first; cap at 20 so the email stays readable
+    top_overdue   = sorted(overdue_issues,  key=lambda x: x["days_left"] or 0)[:20]
+    top_high_pri  = [i for i in high_priority if i not in overdue_issues][:10]
+
     no_changes = not new_today and not updated_today and not closed_today
-    mgmt_body_html = (
-        '<p style="color:#6b7280;text-align:center;padding:24px">No issue changes in the last 24 hours.</p>'
+    changes_html = (
+        '<p style="color:#6b7280;text-align:center;padding:12px 24px">No issue changes in the last 24 hours.</p>'
         if no_changes else
-        _section("🆕 New Issues", "#15803d", new_today, show_people=True) +
-        _section("🔄 Updated Issues", "#2563eb", updated_today, show_people=True) +
-        _section("✅ Marked Complete", "#6b7280", closed_today, show_people=True)
+        _section("🆕 New Issues",       "#15803d", new_today,     show_people=True) +
+        _section("🔄 Updated Issues",   "#2563eb", updated_today, show_people=True) +
+        _section("✅ Marked Complete",  "#6b7280", closed_today,  show_people=True)
+    )
+    mgmt_body_html = (
+        changes_html +
+        _section("⛔ Overdue Issues",       "#dc2626", top_overdue,  show_people=True) +
+        _section("🔴 High Priority (Open)", "#ea580c", top_high_pri, show_people=True)
     )
 
     mgmt_html = f"""
