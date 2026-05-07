@@ -1229,7 +1229,9 @@ async def send_issues_digest():
 
 
 async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, GraphClient, traceback):
-    now       = datetime.now(timezone.utc)
+    import zoneinfo as _zi
+    _local_tz = _zi.ZoneInfo(cfg.CONSTRUCTION_REPORT_TIMEZONE or "America/Edmonton")
+    now       = datetime.now(_local_tz)
     yesterday = now - timedelta(hours=24)
     today_str = now.strftime("%B %d, %Y")
 
