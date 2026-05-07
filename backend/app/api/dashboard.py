@@ -1338,7 +1338,7 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
 
     # ── Metadata fallback from native Issue records ───────────────────────────
     _nat_by_num: dict[int, dict] = {}
-    _nat_by_subj: dict[str, dict] = {}
+    _nats_by_subj: dict[str, list] = {}  # subject → list (for date-based disambiguation)
     for a in raw:
         if (a.get("ActivityType") or "").strip().lower() != "issue":
             continue
@@ -1348,7 +1348,16 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
         else:
             s = (a.get("Subject") or "").strip().lower()
             if len(s) > 3:
-                _nat_by_subj[s] = a
+                _nats_by_subj.setdefault(s, []).append(a)
+
+    def _pick_nat(candidates: list, email_rec: dict) -> dict:
+        """For ambiguous subjects, pick the native record closest in date to the email."""
+        if len(candidates) == 1:
+            return candidates[0]
+        email_dt = email_rec.get("CreatedDate") or ""
+        before = [n for n in candidates if (n.get("CreatedDate") or "") <= email_dt]
+        pool = before if before else candidates
+        return max(pool, key=lambda n: n.get("CreatedDate") or "")
 
     _meta: dict[int, dict] = dict(_nat_by_num)
     for inum, erec in seen.items():
@@ -1356,12 +1365,12 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
             continue
         stripped = _re.sub(r'^Issue\s*#\d+\s*[-–]\s*', '',
                            erec.get("Subject") or "", flags=_re.IGNORECASE).strip().lower()
-        if stripped in _nat_by_subj:
-            _meta[inum] = _nat_by_subj[stripped]
+        if stripped in _nats_by_subj:
+            _meta[inum] = _pick_nat(_nats_by_subj[stripped], erec)
         else:
-            for ns, nr in _nat_by_subj.items():
+            for ns, nl in _nats_by_subj.items():
                 if len(ns) > 5 and stripped.endswith(ns):
-                    _meta[inum] = nr
+                    _meta[inum] = _pick_nat(nl, erec)
                     break
 
     # ── Resolve property names ────────────────────────────────────────────────
