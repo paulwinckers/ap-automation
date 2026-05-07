@@ -19,8 +19,6 @@ const FIELD_LINKS = [
   { to: '/field/inspection',       icon: '🔍', label: 'Site Inspection',      sub: 'Safety & compliance check' },
 ];
 
-const ACCOUNTING_URL = 'https://darios-accounting.pages.dev';
-
 const OFFICE_GROUPS = [
   {
     label: 'Field Ops',
@@ -35,8 +33,11 @@ const OFFICE_GROUPS = [
   {
     label: 'Accounting & Dashboards',
     items: [
-      { to: ACCOUNTING_URL,                       icon: '💳', label: 'AP & Finance',  sub: 'Invoices, vendors & reconcile',   external: true },
-      { to: `${ACCOUNTING_URL}/dashboards`,       icon: '📊', label: 'Dashboards',    sub: 'Sales, ops & construction views', external: true },
+      { to: '/ap',          icon: '💳', label: 'Invoices',       sub: 'AP inbox & invoice processing' },
+      { to: '/vendors',     icon: '🏢', label: 'Vendors',        sub: 'Vendor rules & settings' },
+      { to: '/reconcile',   icon: '🔄', label: 'Reconciliation', sub: 'Statement vs QBO reconcile' },
+      { to: '/dashboards',  icon: '📊', label: 'Dashboards',     sub: 'Sales, ops & construction views' },
+      { to: '/users',       icon: '👤', label: 'Users',          sub: 'Manage portal logins' },
     ],
   },
 ];
