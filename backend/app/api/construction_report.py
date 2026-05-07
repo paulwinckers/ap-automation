@@ -192,7 +192,7 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
     return enriched
 
 
-def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Construction") -> str:
+def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Construction", extra_html: str = "") -> str:
     if not tickets:
         body = '<p style="padding:32px;text-align:center;color:#64748b;">No active work tickets found.</p>'
         jobs_html = body
@@ -366,6 +366,9 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
     <!-- Body -->
     {jobs_html}
 
+    <!-- Monthly plan summary (if jobs committed) -->
+    {extra_html}
+
     <!-- Footer -->
     <div style="text-align:center;padding:20px;">
       <a href="{settings.CONSTRUCTION_DASHBOARD_URL}"
@@ -382,6 +385,110 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
 
 # ── Shared send helper ────────────────────────────────────────────────────────
 
+async def _build_plan_summary_html(month: str) -> str:
+    """Fetch the monthly plan and render a compact progress HTML block."""
+    try:
+        from app.core.database import Database
+        db = Database()
+        await db.connect()
+
+        goal_rows = await db._q(
+            "SELECT * FROM construction_monthly_goals WHERE month = ?", [month]
+        )
+        target_rows = await db._q(
+            "SELECT * FROM construction_job_targets WHERE month = ? ORDER BY created_at", [month]
+        )
+        await db.close()
+
+        goal = dict(goal_rows[0]) if goal_rows else {}
+        targets = [dict(r) for r in target_rows]
+        if not targets and not goal:
+            return ""
+
+        # Fetch Aspire actuals for committed jobs
+        opp_ids = [t["opportunity_id"] for t in targets]
+        actuals: dict = {}
+        if opp_ids:
+            for i in range(0, len(opp_ids), 15):
+                chunk = opp_ids[i:i+15]
+                or_f = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
+                try:
+                    res = await _aspire._get("Opportunities", {
+                        "$filter": f"({or_f})",
+                        "$select": "OpportunityID,OpportunityName,PropertyName,WonDollars,ActualEarnedRevenue,EstimatedLaborHours,ActualLaborHours,PercentComplete",
+                        "$top": "200",
+                    })
+                    for o in _aspire._extract_list(res):
+                        oid = o.get("OpportunityID")
+                        if oid:
+                            actuals[oid] = o
+                except Exception:
+                    pass
+
+        def _pbar(pct, width=120):
+            p = min(max(pct, 0), 100)
+            c = "#ef4444" if pct > 100 else ("#f59e0b" if p >= 80 else "#22c55e")
+            return (
+                f'<div style="background:#e2e8f0;border-radius:4px;height:8px;width:{width}px;overflow:hidden;display:inline-block;vertical-align:middle">'
+                f'<div style="background:{c};width:{p:.0f}%;height:100%;border-radius:4px"></div></div>'
+            )
+
+        def _fmt_c(v): return f"${v:,.0f}" if v else "—"
+        def _fmt_h(v): return f"{v:.1f}h" if v else "—"
+
+        rev_goal = goal.get("revenue_goal")
+        hrs_goal = goal.get("hours_goal")
+
+        total_rev_act = sum(float(actuals.get(t["opportunity_id"], {}).get("ActualEarnedRevenue") or 0) for t in targets)
+        total_hrs_act = sum(float(actuals.get(t["opportunity_id"], {}).get("ActualLaborHours") or 0) for t in targets)
+        total_hrs_est = sum(float(actuals.get(t["opportunity_id"], {}).get("EstimatedLaborHours") or 0) for t in targets)
+
+        rev_pct = (total_rev_act / rev_goal * 100) if rev_goal else 0
+        hrs_pct = (total_hrs_act / hrs_goal * 100) if hrs_goal else 0
+
+        rows_html = ""
+        for t in targets:
+            opp = actuals.get(t["opportunity_id"], {})
+            pct    = float(opp.get("PercentComplete") or 0)
+            h_est  = float(opp.get("EstimatedLaborHours") or 0)
+            h_act  = float(opp.get("ActualLaborHours") or 0)
+            burn   = (h_act / h_est * 100) if h_est else 0
+            risk   = "⛔" if burn > 90 and pct < 70 else ("⚠️" if burn > pct + 25 else ("✅" if pct >= 100 else "✓"))
+            prop   = opp.get("PropertyName") or t.get("property_name") or ""
+            rows_html += f"""
+            <tr>
+              <td style="padding:7px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#1e293b">{risk} {prop}</td>
+              <td style="padding:7px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;text-align:center">{pct:.0f}% {_pbar(pct, 60)}</td>
+              <td style="padding:7px 12px;border-bottom:1px solid #f1f5f9;font-size:12px;color:#64748b;text-align:right">{_fmt_h(h_act)} / {_fmt_h(h_est)}</td>
+            </tr>"""
+
+        plan_url = settings.CONSTRUCTION_DASHBOARD_URL.replace("/construction", "/construction/plan") if settings.CONSTRUCTION_DASHBOARD_URL else "#"
+
+        return f"""
+        <div style="margin-top:24px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden">
+          <div style="background:#0f172a;padding:12px 20px;display:flex;justify-content:space-between;align-items:center">
+            <span style="color:#fff;font-weight:700;font-size:14px">📅 Monthly Plan — {month}</span>
+            <a href="{plan_url}" style="color:#93c5fd;font-size:12px;text-decoration:none">View full plan ↗</a>
+          </div>
+          <div style="background:#f8fafc;padding:12px 20px;display:flex;gap:32px;flex-wrap:wrap">
+            <div style="font-size:13px">
+              <span style="color:#64748b">Revenue: </span>
+              <strong>{_fmt_c(total_rev_act)}</strong>
+              {f'<span style="color:#94a3b8"> / {_fmt_c(rev_goal)}</span> {_pbar(rev_pct)}' if rev_goal else ''}
+            </div>
+            <div style="font-size:13px">
+              <span style="color:#64748b">Hours: </span>
+              <strong>{_fmt_h(total_hrs_act)}</strong> / {_fmt_h(total_hrs_est)} est
+              {f'<span style="color:#94a3b8"> (goal {_fmt_h(hrs_goal)})</span>' if hrs_goal else ''}
+            </div>
+          </div>
+          {'<table style="width:100%;border-collapse:collapse"><tbody>' + rows_html + '</tbody></table>' if rows_html else ''}
+        </div>"""
+    except Exception as e:
+        logger.warning(f"Plan summary failed: {e}")
+        return ""
+
+
 async def send_report_now(branch_name: str | None = None, override_recipients: list[str] | None = None) -> dict:
     """Build and email the construction report. Called by the scheduler and the POST endpoint."""
     branch_name  = branch_name or settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction"
@@ -390,7 +497,8 @@ async def send_report_now(branch_name: str | None = None, override_recipients: l
     recipients   = override_recipients or [r.strip() for r in settings.CONSTRUCTION_REPORT_RECIPIENTS.split(",") if r.strip()]
 
     tickets = await _build_report_data(branch_name)
-    html    = _render_html(tickets, generated_at, branch_name)
+    plan_html = await _build_plan_summary_html(datetime.now(timezone.utc).strftime("%Y-%m"))
+    html    = _render_html(tickets, generated_at, branch_name, extra_html=plan_html)
     subject = f"🏗️ Construction Work Ticket Report — {datetime.now(timezone.utc).strftime('%a %b %-d, %Y')}"
 
     graph = GraphClient()

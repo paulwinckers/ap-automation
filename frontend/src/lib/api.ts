@@ -314,6 +314,81 @@ export async function getJobTickets(opportunityId: number): Promise<{ opportunit
   return request('GET', `/dashboard/construction/${opportunityId}/tickets`);
 }
 
+// ── Construction Monthly Plan ─────────────────────────────────────────────────
+
+export interface PlanGoal {
+  month: string;
+  revenue_goal: number | null;
+  hours_goal: number | null;
+  notes: string | null;
+}
+
+export interface PlanJob {
+  opportunity_id: number;
+  opportunity_name: string;
+  property_name: string;
+  opp_number: number | null;
+  status: string;
+  hrs_est: number;
+  hrs_act: number;
+  pct_complete: number;
+  revenue_est: number;
+  revenue_act: number;
+  start_date: string | null;
+  end_date: string | null;
+  notes: string;
+  committed_by: string;
+  committed_at: string;
+  risk: 'on_track' | 'at_risk' | 'over_budget' | 'complete';
+}
+
+export interface PlanSuggestion {
+  opportunity_id: number;
+  opportunity_name: string;
+  property_name: string;
+  status: string;
+  pct_complete: number;
+  hrs_est: number;
+  hrs_act: number;
+  won_dollars: number;
+}
+
+export interface PlanSummary {
+  job_count: number;
+  days_left: number;
+  hrs_est: number;
+  hrs_act: number;
+  revenue_est: number;
+  revenue_act: number;
+}
+
+export interface MonthlyPlan {
+  month: string;
+  goal: PlanGoal;
+  jobs: PlanJob[];
+  summary: PlanSummary;
+}
+
+export async function getMonthlyPlan(month: string): Promise<MonthlyPlan> {
+  return request('GET', `/construction/plan/${month}`);
+}
+
+export async function setMonthlyGoal(month: string, goal: Partial<PlanGoal>): Promise<{ ok: boolean }> {
+  return request('PUT', `/construction/plan/${month}/goal`, goal);
+}
+
+export async function addJobToMonth(month: string, job: { opportunity_id: number; opportunity_name?: string; property_name?: string; notes?: string }): Promise<{ ok: boolean }> {
+  return request('POST', `/construction/plan/${month}/jobs`, job);
+}
+
+export async function removeJobFromMonth(month: string, opportunityId: number): Promise<{ ok: boolean }> {
+  return request('DELETE', `/construction/plan/${month}/jobs/${opportunityId}`);
+}
+
+export async function getPlanSuggestions(month: string): Promise<{ month: string; suggestions: PlanSuggestion[] }> {
+  return request('GET', `/construction/plan/${month}/suggestions`);
+}
+
 // ── Aspire Field Operations ───────────────────────────────────────────────────
 
 export interface FieldOpportunity {

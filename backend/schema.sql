@@ -400,3 +400,27 @@ CREATE TABLE IF NOT EXISTS property_hazards (
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_prop_hazards_property ON property_hazards(property_id, active);
+
+-- ── Construction Monthly Planning ─────────────────────────────────────────────
+-- monthly_goals: one row per YYYY-MM with revenue + hours targets
+-- job_targets:   opportunities committed to a specific month
+CREATE TABLE IF NOT EXISTS construction_monthly_goals (
+    month           TEXT PRIMARY KEY,   -- YYYY-MM
+    revenue_goal    REAL,               -- CAD
+    hours_goal      REAL,
+    notes           TEXT,
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS construction_job_targets (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    month           TEXT NOT NULL,              -- YYYY-MM
+    opportunity_id  INTEGER NOT NULL,
+    opportunity_name TEXT,
+    property_name   TEXT,
+    notes           TEXT,
+    committed_by    TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(month, opportunity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_job_targets_month ON construction_job_targets(month);
