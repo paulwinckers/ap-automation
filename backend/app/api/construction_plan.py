@@ -78,8 +78,66 @@ async def _fetch_opp_actuals(opp_ids: list[int]) -> dict[int, dict]:
     return out
 
 
-async def _fetch_construction_opps() -> list[dict]:
-    """Fetch active Construction division opportunities from Aspire."""
+async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
+    """
+    Return {opportunity_id: [ticket, ...]} for all Construction work tickets
+    whose ScheduledStartDate falls within the given YYYY-MM month.
+    """
+    y, m = int(month[:4]), int(month[5:7])
+    if m == 12:
+        next_m = f"{y + 1}-01"
+    else:
+        next_m = f"{y}-{str(m + 1).zfill(2)}"
+    start = f"{month}-01"
+    end   = f"{next_m}-01"
+
+    try:
+        res = await _aspire._get("WorkTickets", {
+            "$filter": (
+                f"ScheduledStartDate ge {start}T00:00:00Z and "
+                f"ScheduledStartDate lt {end}T00:00:00Z"
+            ),
+            "$orderby": "WorkTicketID desc",
+            "$top": "500",
+        })
+        tickets = _aspire._extract_list(res)
+    except Exception as e:
+        logger.warning(f"Scheduled work tickets fetch failed: {e}")
+        return {}
+
+    # Filter to Construction division via Opportunity lookup
+    opp_ids = list({t.get("OpportunityID") for t in tickets if t.get("OpportunityID")})
+    if not opp_ids:
+        return {}
+
+    opp_div: dict[int, str] = {}
+    branch = (settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction").lower()
+    for i in range(0, len(opp_ids), 15):
+        chunk = opp_ids[i:i+15]
+        or_f  = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
+        try:
+            res2 = await _aspire._get("Opportunities", {
+                "$filter": f"({or_f})",
+                "$select": "OpportunityID,DivisionName",
+                "$top": "200",
+            })
+            for o in _aspire._extract_list(res2):
+                oid = o.get("OpportunityID")
+                if oid:
+                    opp_div[oid] = (o.get("DivisionName") or "").lower()
+        except Exception:
+            pass
+
+    out: dict[int, list[dict]] = {}
+    for t in tickets:
+        oid = t.get("OpportunityID")
+        if oid and branch in opp_div.get(oid, ""):
+            out.setdefault(oid, []).append(t)
+    return out
+
+
+async def _fetch_construction_opps(exclude_ids: set[int] | None = None) -> list[dict]:
+    """Fetch active Construction division opportunities from Aspire, excluding given IDs."""
     try:
         res = await _aspire._get("Opportunities", {
             "$filter": "OpportunityStatusName ne 'Lost' and OpportunityStatusName ne 'Complete'",
@@ -96,6 +154,7 @@ async def _fetch_construction_opps() -> list[dict]:
         return [
             o for o in all_opps
             if branch in (o.get("DivisionName") or "").lower()
+            and (not exclude_ids or o.get("OpportunityID") not in exclude_ids)
         ]
     except Exception as e:
         logger.warning(f"Aspire opps fetch failed: {e}")
@@ -135,57 +194,55 @@ def _days_left_in_month(month: str) -> int:
 @router.get("/{month}")
 async def get_plan(month: str, db: Database = Depends(get_db)):
     """
-    Return the full monthly plan: goal + committed jobs with live Aspire actuals.
+    Return the full monthly plan: goal + jobs with live Aspire actuals.
+
+    Jobs come from two sources (merged, deduped):
+      1. SCHEDULED — work tickets with ScheduledStartDate in the month (auto, from Aspire)
+      2. MANUAL    — opportunities committed via the Add Job button (stored in D1)
+
     month format: YYYY-MM
     """
-    # Validate format
     if len(month) != 7 or month[4] != "-":
         raise HTTPException(status_code=400, detail="month must be YYYY-MM")
 
-    # Goal
-    goal_rows = await db._q(
-        "SELECT * FROM construction_monthly_goals WHERE month = ?", [month]
+    import asyncio as _aio
+
+    # Fetch goal, manually committed jobs, and scheduled work tickets in parallel
+    goal_rows_coro  = db._q("SELECT * FROM construction_monthly_goals WHERE month = ?", [month])
+    target_rows_coro = db._q("SELECT * FROM construction_job_targets WHERE month = ? ORDER BY created_at", [month])
+    scheduled_coro  = _fetch_scheduled_opp_ids(month)
+
+    goal_rows, target_rows, scheduled_map = await _aio.gather(
+        goal_rows_coro, target_rows_coro, scheduled_coro
     )
+
     goal = dict(goal_rows[0]) if goal_rows else {
         "month": month, "revenue_goal": None, "hours_goal": None, "notes": None
     }
+    manual_targets = [dict(r) for r in target_rows]
+    manual_ids     = {t["opportunity_id"] for t in manual_targets}
+    scheduled_ids  = set(scheduled_map.keys())
 
-    # Committed jobs
-    target_rows = await db._q(
-        "SELECT * FROM construction_job_targets WHERE month = ? ORDER BY created_at",
-        [month],
-    )
-    targets = [dict(r) for r in target_rows]
-    opp_ids = [t["opportunity_id"] for t in targets]
+    # All unique opportunity IDs we need actuals for
+    all_opp_ids = list(scheduled_ids | manual_ids)
+    actuals = await _fetch_opp_actuals(all_opp_ids)
 
-    # Fetch live actuals from Aspire
-    actuals = await _fetch_opp_actuals(opp_ids)
-
-    # Merge committed + actuals
-    jobs = []
-    total_hrs_est = 0.0
-    total_hrs_act = 0.0
-    total_revenue_act = 0.0
-    total_revenue_est = 0.0
-
-    for t in targets:
-        oid = t["opportunity_id"]
-        opp = actuals.get(oid, {})
+    def _make_job(oid: int, source: str, notes: str = "", committed_by: str = "", committed_at: str = "") -> dict:
+        opp     = actuals.get(oid, {})
         hrs_est = float(opp.get("EstimatedLaborHours") or 0)
         hrs_act = float(opp.get("ActualLaborHours") or 0)
         rev_act = float(opp.get("ActualEarnedRevenue") or 0)
         rev_est = float(opp.get("WonDollars") or opp.get("EstimatedDollars") or 0)
         pct     = float(opp.get("PercentComplete") or 0)
-
-        total_hrs_est     += hrs_est
-        total_hrs_act     += hrs_act
-        total_revenue_act += rev_act
-        total_revenue_est += rev_est
-
-        jobs.append({
+        # Scheduled dates from the work tickets for this opp
+        tickets = scheduled_map.get(oid, [])
+        sched_dates = sorted(
+            [t.get("ScheduledStartDate", "") for t in tickets if t.get("ScheduledStartDate")]
+        )
+        return {
             "opportunity_id":   oid,
-            "opportunity_name": opp.get("OpportunityName") or t.get("opportunity_name") or f"Job #{oid}",
-            "property_name":    opp.get("PropertyName") or t.get("property_name") or "",
+            "opportunity_name": opp.get("OpportunityName") or f"Job #{oid}",
+            "property_name":    opp.get("PropertyName") or "",
             "opp_number":       opp.get("OpportunityNumber"),
             "status":           opp.get("OpportunityStatusName") or "",
             "hrs_est":          hrs_est,
@@ -195,26 +252,51 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             "revenue_act":      rev_act,
             "start_date":       opp.get("StartDate"),
             "end_date":         opp.get("EndDate"),
-            "notes":            t.get("notes") or "",
-            "committed_by":     t.get("committed_by") or "",
-            "committed_at":     t.get("created_at") or "",
+            "scheduled_dates":  sched_dates,      # ticket-level scheduled dates
+            "ticket_count":     len(tickets),
+            "source":           source,           # "scheduled" | "manual" | "both"
+            "notes":            notes,
+            "committed_by":     committed_by,
+            "committed_at":     committed_at,
             "risk":             _risk_flag(opp),
-        })
+        }
 
-    # Sort: at-risk / over-budget first, then by property name
+    jobs: dict[int, dict] = {}
+
+    # 1. Add scheduled jobs
+    for oid in scheduled_ids:
+        jobs[oid] = _make_job(oid, source="scheduled")
+
+    # 2. Merge manual jobs — upgrade source to "both" if already scheduled
+    for t in manual_targets:
+        oid = t["opportunity_id"]
+        if oid in jobs:
+            jobs[oid]["source"] = "both"
+            jobs[oid]["notes"]  = t.get("notes") or ""
+        else:
+            jobs[oid] = _make_job(
+                oid, source="manual",
+                notes=t.get("notes") or "",
+                committed_by=t.get("committed_by") or "",
+                committed_at=t.get("created_at") or "",
+            )
+
+    job_list = list(jobs.values())
     risk_order = {"over_budget": 0, "at_risk": 1, "on_track": 2, "complete": 3}
-    jobs.sort(key=lambda j: (risk_order.get(j["risk"], 9), j["property_name"]))
+    job_list.sort(key=lambda j: (risk_order.get(j["risk"], 9), j["property_name"]))
 
     summary = {
-        "job_count":         len(jobs),
+        "job_count":         len(job_list),
+        "scheduled_count":   len(scheduled_ids),
+        "manual_count":      len(manual_ids - scheduled_ids),
         "days_left":         _days_left_in_month(month),
-        "hrs_est":           total_hrs_est,
-        "hrs_act":           total_hrs_act,
-        "revenue_est":       total_revenue_est,
-        "revenue_act":       total_revenue_act,
+        "hrs_est":           sum(j["hrs_est"] for j in job_list),
+        "hrs_act":           sum(j["hrs_act"] for j in job_list),
+        "revenue_est":       sum(j["revenue_est"] for j in job_list),
+        "revenue_act":       sum(j["revenue_act"] for j in job_list),
     }
 
-    return {"month": month, "goal": goal, "jobs": jobs, "summary": summary}
+    return {"month": month, "goal": goal, "jobs": job_list, "summary": summary}
 
 
 @router.put("/{month}/goal")
@@ -266,19 +348,24 @@ async def remove_job(month: str, opp_id: int, db: Database = Depends(get_db)):
 @router.get("/{month}/suggestions")
 async def get_suggestions(month: str, db: Database = Depends(get_db)):
     """
-    Return active Construction opportunities not yet committed to this month.
-    Used to populate the 'Add Job' dropdown.
+    Return active Construction opportunities not already in this month's plan
+    (neither scheduled nor manually added). Used to populate the 'Add Job' dropdown.
     """
     if len(month) != 7 or month[4] != "-":
         raise HTTPException(status_code=400, detail="month must be YYYY-MM")
 
-    # Already committed this month
-    committed_rows = await db._q(
+    import asyncio as _aio
+
+    committed_rows_coro = db._q(
         "SELECT opportunity_id FROM construction_job_targets WHERE month = ?", [month]
     )
-    committed_ids = {r["opportunity_id"] for r in committed_rows}
+    committed_rows, scheduled_map = await _aio.gather(
+        committed_rows_coro, _fetch_scheduled_opp_ids(month)
+    )
 
-    opps = await _fetch_construction_opps()
+    already_in_plan = {r["opportunity_id"] for r in committed_rows} | set(scheduled_map.keys())
+
+    opps = await _fetch_construction_opps(exclude_ids=already_in_plan)
     suggestions = [
         {
             "opportunity_id":   o.get("OpportunityID"),
@@ -291,6 +378,5 @@ async def get_suggestions(month: str, db: Database = Depends(get_db)):
             "won_dollars":      float(o.get("WonDollars") or 0),
         }
         for o in opps
-        if o.get("OpportunityID") not in committed_ids
     ]
     return {"month": month, "suggestions": suggestions}

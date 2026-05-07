@@ -323,7 +323,7 @@ export default function ConstructionPlan() {
     load();
   };
 
-  const { goal, jobs, summary } = plan || { goal: { month, revenue_goal: null, hours_goal: null, notes: null }, jobs: [], summary: { job_count: 0, days_left: 0, hrs_est: 0, hrs_act: 0, revenue_est: 0, revenue_act: 0 } };
+  const { goal, jobs, summary } = plan || { goal: { month, revenue_goal: null, hours_goal: null, notes: null }, jobs: [], summary: { job_count: 0, scheduled_count: 0, manual_count: 0, days_left: 0, hrs_est: 0, hrs_act: 0, revenue_est: 0, revenue_act: 0 } };
 
   const overBudget = jobs.filter(j => j.risk === 'over_budget');
   const atRisk     = jobs.filter(j => j.risk === 'at_risk');
@@ -407,6 +407,14 @@ export default function ConstructionPlan() {
         {loading && <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>Loading plan…</div>}
         {error && <div style={{ background: '#fee2e2', color: '#dc2626', padding: 16, borderRadius: 8, marginBottom: 16 }}>{error}</div>}
 
+        {/* Source legend */}
+        {!loading && jobs.length > 0 && (
+          <div style={{ display: 'flex', gap: 12, marginBottom: 12, fontSize: 12, color: '#6b7280', flexWrap: 'wrap' }}>
+            <span>📅 <strong>{summary.scheduled_count}</strong> scheduled from Aspire work tickets</span>
+            {summary.manual_count > 0 && <span>· 📌 <strong>{summary.manual_count}</strong> manually added</span>}
+          </div>
+        )}
+
         {/* Alerts */}
         {!loading && (overBudget.length > 0 || atRisk.length > 0) && (
           <div style={{
@@ -456,8 +464,18 @@ export default function ConstructionPlan() {
                   }}>
                     {/* Property / Job */}
                     <td style={{ padding: '12px 16px', verticalAlign: 'top' }}>
-                      <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>
-                        {j.property_name || j.opportunity_name}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>
+                          {j.property_name || j.opportunity_name}
+                        </span>
+                        {j.source === 'scheduled' || j.source === 'both'
+                          ? <span style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8 }}>
+                              📅 {j.ticket_count} ticket{j.ticket_count !== 1 ? 's' : ''}
+                            </span>
+                          : <span style={{ background: '#f5f3ff', color: '#7c3aed', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8 }}>
+                              📌 Added
+                            </span>
+                        }
                       </div>
                       <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
                         {j.opportunity_name}
@@ -502,18 +520,20 @@ export default function ConstructionPlan() {
                       <RiskBadge risk={j.risk} />
                     </td>
 
-                    {/* Remove */}
+                    {/* Remove — only for manually added jobs */}
                     <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
-                      <button
-                        onClick={() => handleRemove(j.opportunity_id)}
-                        title="Remove from this month's plan"
-                        style={{
-                          background: 'none', border: 'none', cursor: 'pointer',
-                          color: '#d1d5db', fontSize: 16, padding: '2px 6px', borderRadius: 6,
-                        }}
-                        onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
-                        onMouseLeave={e => (e.currentTarget.style.color = '#d1d5db')}
-                      >✕</button>
+                      {(j.source === 'manual' || j.source === 'both') && (
+                        <button
+                          onClick={() => handleRemove(j.opportunity_id)}
+                          title={j.source === 'both' ? 'Remove manual pin (still shows as scheduled)' : 'Remove from this month\'s plan'}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            color: '#d1d5db', fontSize: 16, padding: '2px 6px', borderRadius: 6,
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                          onMouseLeave={e => (e.currentTarget.style.color = '#d1d5db')}
+                        >✕</button>
+                      )}
                     </td>
                   </tr>
                 ))}

@@ -336,6 +336,9 @@ export interface PlanJob {
   revenue_act: number;
   start_date: string | null;
   end_date: string | null;
+  scheduled_dates: string[];
+  ticket_count: number;
+  source: 'scheduled' | 'manual' | 'both';
   notes: string;
   committed_by: string;
   committed_at: string;
@@ -355,6 +358,8 @@ export interface PlanSuggestion {
 
 export interface PlanSummary {
   job_count: number;
+  scheduled_count: number;
+  manual_count: number;
   days_left: number;
   hrs_est: number;
   hrs_act: number;
