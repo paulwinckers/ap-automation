@@ -1195,7 +1195,7 @@ async def send_estimating_digest():
 # ── Issues Digest Email ───────────────────────────────────────────────────────
 
 @router.get("/activities/send-issues-digest")
-async def send_issues_digest():
+async def send_issues_digest(preview_for: str = ""):
     """
     Send a daily Issues digest:
     • Management summary email (all assignees, AI-generated highlights)
@@ -1205,6 +1205,10 @@ async def send_issues_digest():
     NEW     — CreatedDate within 24 h
     CLOSED  — CompleteDate within 24 h
     UPDATED — ModifiedDate within 24 h, not new, not closed
+
+    Optional: ?preview_for=Paul+Winckers
+      Skips management email. Sends only that person's individual digest
+      to the management recipients list (not to the actual employee).
     """
     import re as _re
     import asyncio
@@ -1219,7 +1223,7 @@ async def send_issues_digest():
         raise HTTPException(status_code=503, detail="Microsoft Graph credentials not configured")
 
     try:
-     return await _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, GraphClient, traceback)
+     return await _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, GraphClient, traceback, preview_for=preview_for.strip())
     except HTTPException:
         raise
     except Exception as exc:
@@ -1228,7 +1232,7 @@ async def send_issues_digest():
         raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
 
 
-async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, GraphClient, traceback):
+async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, GraphClient, traceback, preview_for: str = ""):
     import zoneinfo as _zi
     _local_tz = _zi.ZoneInfo(cfg.CONSTRUCTION_REPORT_TIMEZONE or "America/Edmonton")
     now       = datetime.now(_local_tz)
@@ -1737,27 +1741,35 @@ Write the summary now (2-3 sentences maximum):"""
     skipped: list[str] = []
 
     mgmt_recipients = [r.strip() for r in cfg.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if r.strip()]
-    if mgmt_recipients:
-        try:
-            await graph.send_email(
-                mailbox=mailbox,
-                to_addresses=mgmt_recipients,
-                subject=f"🔔 Issues Digest {today_str} — {len(new_today)} new · {len(updated_today)} updated · {len(closed_today)} closed",
-                body_html=mgmt_html,
-            )
-            sent_to.extend(mgmt_recipients)
-            logger.info(f"Issues digest management email sent to {mgmt_recipients}")
-        except Exception as e:
-            logger.error(f"Issues digest management email failed: {e}")
-            skipped.extend(mgmt_recipients)
+
+    # preview_for: skip management email, send only that person's individual
+    # digest to the management recipients list (not the real employee email)
+    if preview_for:
+        logger.info(f"Issues digest PREVIEW mode for: {preview_for!r}")
+    else:
+        if mgmt_recipients:
+            try:
+                await graph.send_email(
+                    mailbox=mailbox,
+                    to_addresses=mgmt_recipients,
+                    subject=f"🔔 Issues Digest {today_str} — {len(new_today)} new · {len(updated_today)} updated · {len(closed_today)} closed",
+                    body_html=mgmt_html,
+                )
+                sent_to.extend(mgmt_recipients)
+                logger.info(f"Issues digest management email sent to {mgmt_recipients}")
+            except Exception as e:
+                logger.error(f"Issues digest management email failed: {e}")
+                skipped.extend(mgmt_recipients)
 
     # ── One combined email per person (assigned issues + created issues) ────────
-    # Disabled until ready to enable — management summary only for now
-    for person_name in []:
+    # When preview_for is set: only send for that one person, to mgmt recipients.
+    # Otherwise: iterate all_people (disabled until ready — currently empty list).
+    _people_to_send = [preview_for] if preview_for else list(all_people) if False else []
+    for person_name in _people_to_send:
         if not person_name or person_name == "Unknown":
             continue
         p_email = email_by_name.get(person_name.lower(), "")
-        if not p_email:
+        if not p_email and not preview_for:
             logger.info(f"Issues digest: no email for {person_name!r}, skipping")
             skipped.append(person_name)
             continue
@@ -1816,21 +1828,30 @@ Write the summary now (2-3 sentences maximum):"""
           </div>
         </div>"""
 
+        # In preview mode, send to management recipients instead of the real employee
+        if preview_for:
+            dest_addresses = mgmt_recipients
+            preview_label  = f" [PREVIEW for {person_name}]"
+        else:
+            dest_addresses = [p_email]
+            preview_label  = ""
+
         try:
             await graph.send_email(
                 mailbox=mailbox,
-                to_addresses=[p_email],
-                subject=f"🔔 Issues Digest {today_str} — {total} issue update(s) for {first_name}",
+                to_addresses=dest_addresses,
+                subject=f"🔔 Issues Digest {today_str} — {total} issue update(s) for {first_name}{preview_label}",
                 body_html=individual_html,
             )
-            sent_to.append(f"{person_name} <{p_email}>")
-            logger.info(f"Issues digest sent to {person_name} <{p_email}>")
+            sent_to.append(f"{person_name} → {dest_addresses}")
+            logger.info(f"Issues digest sent for {person_name} to {dest_addresses}")
         except Exception as e:
-            logger.error(f"Issues digest failed for {person_name} <{p_email}>: {e}")
+            logger.error(f"Issues digest failed for {person_name} to {dest_addresses}: {e}")
             skipped.append(person_name)
 
     return {
         "ok":            True,
+        "preview_for":   preview_for or None,
         "date":          today_str,
         "open_issues":   len(open_issues),
         "new_today":     len(new_today),
