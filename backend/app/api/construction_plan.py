@@ -82,6 +82,7 @@ async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
     """
     Return {opportunity_id: [ticket, ...]} for all Construction work tickets
     whose ScheduledStartDate falls within the given YYYY-MM month.
+    Matches Aspire's 'This Month' filter: status Open or Scheduled, date in month.
     """
     y, m = int(month[:4]), int(month[5:7])
     if m == 12:
@@ -91,19 +92,36 @@ async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
     start = f"{month}-01"
     end   = f"{next_m}-01"
 
-    try:
-        res = await _aspire._get("WorkTickets", {
-            "$filter": (
-                f"ScheduledStartDate ge {start}T00:00:00Z and "
-                f"ScheduledStartDate lt {end}T00:00:00Z"
-            ),
-            "$orderby": "WorkTicketID desc",
-            "$top": "500",
-        })
-        tickets = _aspire._extract_list(res)
-    except Exception as e:
-        logger.warning(f"Scheduled work tickets fetch failed: {e}")
+    # Fetch all tickets with ScheduledStartDate in the month (no status filter —
+    # Aspire's 'This Month' view shows Open + Scheduled + any other non-terminal status).
+    # We try without the time suffix first as some Aspire environments prefer bare dates.
+    tickets: list[dict] = []
+    for date_fmt in (
+        f"ScheduledStartDate ge {start} and ScheduledStartDate lt {end}",
+        f"ScheduledStartDate ge {start}T00:00:00Z and ScheduledStartDate lt {end}T00:00:00Z",
+    ):
+        try:
+            res = await _aspire._get("WorkTickets", {
+                "$filter": date_fmt,
+                "$orderby": "WorkTicketID desc",
+                "$top": "500",
+            })
+            tickets = _aspire._extract_list(res)
+            logger.info(f"Plan: fetched {len(tickets)} work tickets for {month} using filter: {date_fmt}")
+            if tickets:
+                break
+        except Exception as e:
+            logger.warning(f"WorkTickets filter failed ({date_fmt}): {e}")
+
+    if not tickets:
         return {}
+
+    # Filter out completed / cancelled tickets
+    skip_statuses = {"complete", "completed", "cancelled", "canceled"}
+    tickets = [
+        t for t in tickets
+        if (t.get("WorkTicketStatusName") or "").lower() not in skip_statuses
+    ]
 
     # Filter to Construction division via Opportunity lookup
     opp_ids = list({t.get("OpportunityID") for t in tickets if t.get("OpportunityID")})
@@ -133,6 +151,8 @@ async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
         oid = t.get("OpportunityID")
         if oid and branch in opp_div.get(oid, ""):
             out.setdefault(oid, []).append(t)
+
+    logger.info(f"Plan: {len(out)} Construction opportunities with scheduled tickets in {month}")
     return out
 
 
