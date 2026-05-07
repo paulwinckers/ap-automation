@@ -1363,14 +1363,17 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
     for inum, erec in seen.items():
         if inum in _meta:
             continue
+        # Use the FIRST email notification as the date reference — its CreatedDate
+        # is approximately when the issue was originally opened, not the latest comment.
+        ref_rec = _first_seen.get(inum, erec)
         stripped = _re.sub(r'^Issue\s*#\d+\s*[-–]\s*', '',
                            erec.get("Subject") or "", flags=_re.IGNORECASE).strip().lower()
         if stripped in _nats_by_subj:
-            _meta[inum] = _pick_nat(_nats_by_subj[stripped], erec)
+            _meta[inum] = _pick_nat(_nats_by_subj[stripped], ref_rec)
         else:
             for ns, nl in _nats_by_subj.items():
                 if len(ns) > 5 and stripped.endswith(ns):
-                    _meta[inum] = _pick_nat(nl, erec)
+                    _meta[inum] = _pick_nat(nl, ref_rec)
                     break
 
     # ── Resolve property names ────────────────────────────────────────────────
@@ -2348,6 +2351,7 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     # comment history. Records without a parseable issue number are always
     # duplicates of a real issue record and are dropped.
     seen_issue_all: dict[int, dict] = {}
+    _first_seen_all: dict[int, dict] = {}  # lowest ActivityID per issue — creation-time proxy
     for a in raw:
         subject = (a.get("Subject") or "")
         if _re.search(r'Time\s*Adjustment', subject, _re.IGNORECASE):
@@ -2357,6 +2361,9 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             existing = seen_issue_all.get(parsed_num)
             if existing is None or (a.get("ActivityID") or 0) > (existing.get("ActivityID") or 0):
                 seen_issue_all[parsed_num] = a
+            first = _first_seen_all.get(parsed_num)
+            if first is None or (a.get("ActivityID") or 0) < (first.get("ActivityID") or 0):
+                _first_seen_all[parsed_num] = a
 
     deduped = list(seen_issue_all.values())
 
@@ -2411,17 +2418,21 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
     for issue_num, email_rec in seen_issue_all.items():
         if issue_num in _issue_meta:
             continue
+        # Use the FIRST (oldest) email notification as date reference — its CreatedDate
+        # is approximately when the issue was originally opened, giving a much better
+        # match than the latest notification (which reflects the last comment date).
+        ref_rec = _first_seen_all.get(issue_num, email_rec)
         stripped = _re.sub(
             r'^Issue\s*#\d+\s*[-–]\s*', '',
             email_rec.get("Subject") or "",
             flags=_re.IGNORECASE,
         ).strip().lower()
         if stripped in _natives_by_subject:
-            _issue_meta[issue_num] = _pick_closest_native(_natives_by_subject[stripped], email_rec)
+            _issue_meta[issue_num] = _pick_closest_native(_natives_by_subject[stripped], ref_rec)
             continue
         for nat_subj, nat_list in _natives_by_subject.items():
             if len(nat_subj) > 5 and stripped.endswith(nat_subj):
-                _issue_meta[issue_num] = _pick_closest_native(nat_list, email_rec)
+                _issue_meta[issue_num] = _pick_closest_native(nat_list, ref_rec)
                 break
 
     # ── Now apply status filter on the deduplicated set ───────────────────────
