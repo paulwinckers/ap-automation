@@ -175,19 +175,19 @@ async def _fetch_construction_opps(exclude_ids: set[int] | None = None) -> list[
         return []
 
 
-def _risk_flag(opp: dict) -> str:
-    """Return a risk label for a committed job based on % complete and hours burn."""
-    pct  = float(opp.get("PercentComplete") or 0)
+def _risk_flag(opp: dict, pct_month: float | None = None) -> str:
+    """Return a risk label based on hours burn vs monthly ticket completion."""
+    pct  = pct_month if pct_month is not None else float(opp.get("PercentComplete") or 0)
     est  = float(opp.get("EstimatedLaborHours") or 0)
     act  = float(opp.get("ActualLaborHours") or 0)
     burn = (act / est * 100) if est else 0
 
+    if pct >= 100:
+        return "complete"
     if burn > 90 and pct < 70:
         return "over_budget"
     if burn > pct + 25:
         return "at_risk"
-    if pct >= 100:
-        return "complete"
     return "on_track"
 
 
@@ -253,13 +253,15 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         sched_dates = sorted(
             [t.get("ScheduledStartDate", "") for t in tickets if t.get("ScheduledStartDate")]
         )
-        # Tickets completed this month — their ActualEarnedRevenue is the month's earned revenue.
-        # We use the opportunity-level ActualEarnedRevenue as the best available proxy
-        # (Aspire rolls ticket revenue up to the opportunity).
+        # % complete = completed tickets this month / total tickets this month
         completed_tickets = [
             t for t in tickets
             if (t.get("WorkTicketStatusName") or "").lower() in ("complete", "completed")
         ]
+        n_total     = len(tickets)
+        n_complete  = len(completed_tickets)
+        pct_month   = (n_complete / n_total * 100) if n_total else 0
+
         rev_act = float(opp.get("ActualEarnedRevenue") or 0)
 
         return {
@@ -270,7 +272,8 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             "status":            opp.get("OpportunityStatusName") or "",
             "hrs_est":           hrs_est,
             "hrs_act":           hrs_act,
-            "pct_complete":      pct,
+            "pct_complete":      pct_month,   # tickets done this month / total this month
+            "pct_complete_job":  pct,          # Aspire's overall job % complete
             "revenue_est":       rev_est,
             "revenue_act":       rev_act,
             "start_date":        opp.get("StartDate"),
@@ -282,7 +285,7 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             "notes":             notes,
             "committed_by":      committed_by,
             "committed_at":      committed_at,
-            "risk":              _risk_flag(opp),
+            "risk":              _risk_flag(opp, pct_month if n_total else None),
         }
 
     jobs: dict[int, dict] = {}

@@ -446,7 +446,7 @@ export default function ConstructionPlan() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
-                  {['Property / Job', 'Status', '% Done', 'Hours', 'Revenue', 'Risk', ''].map((h, i) => (
+                  {['Property / Job', 'Status', '% This Month', 'Hours', 'Revenue', 'Risk', ''].map((h, i) => (
                     <th key={i} style={{
                       padding: '10px 16px', textAlign: i >= 2 ? 'center' : 'left',
                       fontSize: 11, fontWeight: 700, color: '#6b7280',
@@ -491,17 +491,24 @@ export default function ConstructionPlan() {
                       }}>{j.status || '—'}</span>
                     </td>
 
-                    {/* % complete */}
+                    {/* % complete this month */}
                     <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
                       <div style={{ fontWeight: 700, fontSize: 15, color: j.pct_complete >= 100 ? '#15803d' : '#1f2937' }}>
-                        {fmtPct(j.pct_complete)}
+                        {j.ticket_count > 0 ? fmtPct(j.pct_complete) : '—'}
                       </div>
-                      <div style={{ background: '#e5e7eb', borderRadius: 999, height: 5, width: 60, margin: '4px auto 0', overflow: 'hidden' }}>
-                        <div style={{
-                          width: `${Math.min(j.pct_complete, 100)}%`, height: '100%', borderRadius: 999,
-                          background: j.pct_complete >= 100 ? '#16a34a' : j.pct_complete >= 50 ? '#f59e0b' : '#6b7280',
-                        }} />
-                      </div>
+                      {j.ticket_count > 0 && (
+                        <>
+                          <div style={{ background: '#e5e7eb', borderRadius: 999, height: 5, width: 60, margin: '4px auto 0', overflow: 'hidden' }}>
+                            <div style={{
+                              width: `${Math.min(j.pct_complete, 100)}%`, height: '100%', borderRadius: 999,
+                              background: j.pct_complete >= 100 ? '#16a34a' : j.pct_complete >= 50 ? '#f59e0b' : '#6b7280',
+                            }} />
+                          </div>
+                          <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
+                            {j.completed_tickets}/{j.ticket_count} tickets
+                          </div>
+                        </>
+                      )}
                     </td>
 
                     {/* Hours */}

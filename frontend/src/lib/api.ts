@@ -331,7 +331,8 @@ export interface PlanJob {
   status: string;
   hrs_est: number;
   hrs_act: number;
-  pct_complete: number;
+  pct_complete: number;       // tickets done this month / total this month
+  pct_complete_job: number;  // Aspire overall job % complete
   revenue_est: number;
   revenue_act: number;
   start_date: string | null;
