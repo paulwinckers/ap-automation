@@ -363,6 +363,7 @@ async def _fetch_receipts(opp_id: int, ticket_ids: Optional[List[int]] = None) -
             try:
                 res  = await _aspire._get(endpoint, {
                     "$filter": f"WorkTicketID in ({id_list})",
+                    "$expand": "ReceiptItems",
                     "$top": "500",
                 })
                 rows = _aspire._extract_list(res)
@@ -379,6 +380,7 @@ async def _fetch_receipts(opp_id: int, ticket_ids: Optional[List[int]] = None) -
                 try:
                     res  = await _aspire._get(endpoint, {
                         "$filter": f"WorkTicketID eq {tid}",
+                        "$expand": "ReceiptItems",
                         "$top": "100",
                     })
                     rows = _aspire._extract_list(res)
@@ -400,6 +402,7 @@ async def _fetch_receipts(opp_id: int, ticket_ids: Optional[List[int]] = None) -
         try:
             res  = await _aspire._get(endpoint, {
                 "$filter": f"OpportunityID eq {opp_id}",
+                "$expand": "ReceiptItems",
                 "$top": "200",
             })
             rows = _aspire._extract_list(res)
@@ -1047,6 +1050,58 @@ def _build_docx(
         _rtot(tot_row.cells[5], _fmt_money(grand_total) if has_total else "—")
 
         doc.add_paragraph()
+
+        # ── Receipt line items detail table ───────────────────────────────────
+        # Flatten all ReceiptItems across all receipts
+        line_items: List[Dict[str, Any]] = []
+        for receipt in receipts_sorted:
+            items_raw = receipt.get("ReceiptItems") or []
+            if not items_raw:
+                continue
+            vid = receipt.get("VendorID")
+            vendor_name = (
+                ((receipt_vendors or {}).get(vid) if vid else None)
+                or receipt.get("VendorName") or "—"
+            )
+            rcpt_num = _str(receipt.get("ReceiptNumber") or receipt.get("ReceiptID"), "—")
+            for it in items_raw:
+                line_items.append({
+                    "receipt_num": rcpt_num,
+                    "vendor":      vendor_name,
+                    "item_name":   _str(it.get("ItemName") or it.get("CatalogItemName"), "—"),
+                    "qty":         it.get("ItemQuantity") or it.get("ReceivedQuantity"),
+                    "unit_cost":   it.get("ItemUnitCost"),
+                    "ext_cost":    it.get("ItemExtendedCost"),
+                })
+
+        if line_items:
+            _heading("Materials Line Items", level=2)
+            # Columns: Receipt # | Vendor | Item Name | Qty | Unit Cost | Ext Cost
+            li_tbl = doc.add_table(rows=1 + len(line_items), cols=6)
+            li_tbl.style = "Table Grid"
+            _section_table_header(li_tbl, [
+                "Receipt #", "Vendor", "Item Name", "Qty", "Unit Cost", "Ext Cost"
+            ])
+            col_w_li = [0.65, 1.6, 2.2, 0.55, 0.85, 0.9]
+            for row in li_tbl.rows:
+                for ci, w in enumerate(col_w_li):
+                    row.cells[ci].width = Inches(w)
+
+            for j, li in enumerate(line_items, start=1):
+                bg = GREY if j % 2 == 0 else WHITE
+                irow = li_tbl.rows[j]
+                for cell in irow.cells:
+                    _set_cell_bg(cell, bg)
+                irow.cells[0].paragraphs[0].add_run(li["receipt_num"]).font.size = Pt(9)
+                irow.cells[1].paragraphs[0].add_run(li["vendor"]).font.size       = Pt(9)
+                irow.cells[2].paragraphs[0].add_run(li["item_name"]).font.size    = Pt(9)
+                qty_str = str(li["qty"]) if li["qty"] is not None else "—"
+                irow.cells[3].paragraphs[0].add_run(qty_str).font.size            = Pt(9)
+                irow.cells[4].paragraphs[0].add_run(_fmt_money(li["unit_cost"])).font.size = Pt(9)
+                irow.cells[5].paragraphs[0].add_run(_fmt_money(li["ext_cost"])).font.size  = Pt(9)
+
+            doc.add_paragraph()
+
     else:
         doc.add_paragraph("No purchase receipts found in Aspire for this opportunity.").runs[0].font.size = Pt(10)
 
