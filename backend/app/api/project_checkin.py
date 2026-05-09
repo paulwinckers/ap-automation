@@ -832,6 +832,55 @@ async def submit_project_response(
     return {"ok": True, "message": "Thanks — your update has been sent to the team."}
 
 
+# ── My-project lookup (no token, by lead name) ────────────────────────────────
+
+@public_router.get("/my-project")
+async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
+    """
+    Given a lead's name, return the most recent active project assigned to them.
+    Used by the landing-page "My Project" link so leads can navigate to their
+    permanent project page without needing the email link.
+
+    Strategy:
+      1. Look for the most recent checkin record in D1 matching lead_name (case-insensitive).
+      2. If found, return that opportunity_id so the frontend can redirect.
+      3. Also return the full list of known leads for the name-picker dropdown.
+    """
+    name = (name or "").strip()
+
+    # Always return lead list so the dropdown can populate
+    lead_rows = await db._q(
+        "SELECT aspire_name, display_name FROM construction_leads ORDER BY aspire_name", []
+    )
+    leads = [
+        {"name": r["aspire_name"], "display": r["display_name"] or r["aspire_name"]}
+        for r in lead_rows
+    ]
+
+    if not name:
+        return {"leads": leads, "project": None}
+
+    # Most recent checkin for this lead
+    rows = await db._q(
+        """SELECT opportunity_id, opportunity_name, property_name
+           FROM project_checkins
+           WHERE lower(lead_name) = lower(?)
+           ORDER BY sent_at DESC LIMIT 1""",
+        [name],
+    )
+
+    project = None
+    if rows:
+        r = dict(rows[0])
+        project = {
+            "opp_id":   r["opportunity_id"],
+            "opp_name": r["opportunity_name"] or f"Job #{r['opportunity_id']}",
+            "property":  r["property_name"] or "",
+        }
+
+    return {"leads": leads, "project": project}
+
+
 # ── Scheduler: fires at 06:00 Pacific daily ───────────────────────────────────
 
 _scheduler_task: asyncio.Task | None = None

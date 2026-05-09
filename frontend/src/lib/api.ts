@@ -1387,6 +1387,16 @@ export async function getCheckinStatus(month?: string): Promise<CheckinStatus[]>
   return request('GET', `/construction/checkin/status${qs}`);
 }
 
+export interface MyProjectResult {
+  leads:   { name: string; display: string }[];
+  project: { opp_id: number; opp_name: string; property: string } | null;
+}
+
+export async function myProjectLookup(name?: string): Promise<MyProjectResult> {
+  const qs = name ? `?name=${encodeURIComponent(name)}` : '';
+  return request('GET', `/checkin/my-project${qs}`);
+}
+
 // ── Handoff Pack Generator ────────────────────────────────────────────────────
 
 /**
