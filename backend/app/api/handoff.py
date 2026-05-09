@@ -309,6 +309,12 @@ async def _fetch_receipts(opp_id: int, ticket_ids: Optional[List[int]] = None) -
         if rows and not logged:
             logger.info(f"Receipts found via {label}: {len(rows)} rows")
             logger.info(f"Receipt ALL keys: {sorted(rows[0].keys())}")
+            # Log ALL vendor/contact-related field values to find the right one
+            vendor_clues = {k: v for k, v in rows[0].items() if any(
+                kw in k.lower() for kw in ("vendor", "supplier", "contact", "company", "name", "payee")
+            )}
+            logger.info(f"Receipt vendor-related fields: {vendor_clues}")
+            logger.info(f"Receipt first row full: {dict(rows[0])}")
             logged = True
 
     # ── Strategy 1: per work ticket ───────────────────────────────────────────
@@ -923,7 +929,9 @@ def _build_docx(
         receipts_sorted = sorted(
             receipts,
             key=lambda r: (
-                (r.get("VendorName") or r.get("Vendor1Name") or r.get("Vendor") or ""),
+                (r.get("VendorName") or r.get("Vendor1Name") or r.get("Vendor")
+                 or r.get("SupplierName") or r.get("ContactName") or r.get("ContactFullName")
+                 or r.get("CompanyName") or r.get("PayeeName") or ""),
                 str(r.get("ReceiptNumber") or r.get("ReceiptID") or ""),
             )
         )
@@ -945,7 +953,15 @@ def _build_docx(
         for i, receipt in enumerate(receipts_sorted, start=1):
             # Field names confirmed from Aspire UI screenshot
             vendor    = _str(
-                receipt.get("VendorName") or receipt.get("Vendor1Name") or receipt.get("Vendor"),
+                receipt.get("VendorName")
+                or receipt.get("Vendor1Name")
+                or receipt.get("Vendor")
+                or receipt.get("SupplierName")
+                or receipt.get("ContactName")
+                or receipt.get("ContactFullName")
+                or receipt.get("CompanyName")
+                or receipt.get("PayeeName")
+                or receipt.get("VendorContactName"),
                 "—"
             )
             rcpt_num  = _str(receipt.get("ReceiptNumber") or receipt.get("ReceiptID"), "—")
