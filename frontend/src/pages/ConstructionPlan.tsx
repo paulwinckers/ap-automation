@@ -7,7 +7,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   getMonthlyPlan, setMonthlyGoal, addJobToMonth, removeJobFromMonth, getPlanSuggestions,
-  MonthlyPlan, PlanJob, PlanSuggestion,
+  listConstructionLeads, upsertConstructionLead, deleteConstructionLead,
+  sendCheckins, getCheckinStatus,
+  MonthlyPlan, PlanJob, PlanSuggestion, ConstructionLead, CheckinStatus,
 } from '../lib/api';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -287,6 +289,228 @@ function AddJobPanel({ month, onAdded, onClose }: {
   );
 }
 
+// ── Leads Manager modal ───────────────────────────────────────────────────────
+
+function LeadsModal({ onClose }: { onClose: () => void }) {
+  const [leads,   setLeads]   = useState<ConstructionLead[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [name,    setName]    = useState('');
+  const [email,   setEmail]   = useState('');
+  const [display, setDisplay] = useState('');
+  const [saving,  setSaving]  = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try { setLeads(await listConstructionLeads()); } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !email.trim()) return;
+    setSaving(true);
+    try {
+      await upsertConstructionLead(name.trim(), email.trim(), display.trim() || undefined);
+      setName(''); setEmail(''); setDisplay('');
+      load();
+    } finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('Remove this lead?')) return;
+    await deleteConstructionLead(id);
+    load();
+  };
+
+  return (
+    <div style={OVERLAY}>
+      <div style={{ ...MODAL_BOX, maxWidth: 560 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>👷 Lead Directory</h2>
+          <button onClick={onClose} style={CLOSE_BTN}>✕</button>
+        </div>
+
+        <p style={{ margin: '0 0 16px', fontSize: 13, color: '#6b7280' }}>
+          Map Aspire <strong>CrewLeaderName</strong> (exactly as it appears on the work ticket) to an email address. The system uses this to send daily check-ins.
+        </p>
+
+        {/* Existing leads */}
+        {loading ? <div style={{ textAlign: 'center', color: '#94a3b8', padding: 20 }}>Loading…</div> : (
+          <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden', marginBottom: 20 }}>
+            {leads.length === 0 ? (
+              <div style={{ padding: 16, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
+                No leads configured yet
+              </div>
+            ) : leads.map((l, i) => (
+              <div key={l.id} style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+                background: i % 2 === 0 ? '#fff' : '#f9fafb',
+                borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>{l.display_name || l.aspire_name}</div>
+                  <div style={{ fontSize: 11, color: '#6b7280' }}>
+                    Aspire: <code style={{ background: '#f1f5f9', padding: '1px 5px', borderRadius: 4 }}>{l.aspire_name}</code>
+                    &nbsp;· {l.email}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleDelete(l.id)}
+                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 16, padding: '2px 6px' }}
+                >✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Add new lead */}
+        <form onSubmit={handleAdd}>
+          <div style={{ fontWeight: 600, fontSize: 13, color: '#374151', marginBottom: 10 }}>Add / Update Lead</div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <input
+              value={name} onChange={e => setName(e.target.value)}
+              placeholder="Aspire CrewLeaderName (exact match)"
+              required
+              style={FIELD_INPUT}
+            />
+            <input
+              value={email} onChange={e => setEmail(e.target.value)}
+              placeholder="Email address"
+              type="email" required
+              style={FIELD_INPUT}
+            />
+            <input
+              value={display} onChange={e => setDisplay(e.target.value)}
+              placeholder="Display name for email greeting (optional)"
+              style={FIELD_INPUT}
+            />
+            <button type="submit" disabled={saving} style={{ ...primaryBtn, width: '100%' }}>
+              {saving ? 'Saving…' : 'Save Lead'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Check-in Status panel ─────────────────────────────────────────────────────
+
+function CheckinStatusPanel({ month, onClose }: { month: string; onClose: () => void }) {
+  const [status,  setStatus]  = useState<CheckinStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [result,  setResult]  = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try { setStatus(await getCheckinStatus(month)); } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [month]);
+
+  const handleSend = async () => {
+    if (!confirm('Send daily check-in emails to all leads with active projects this month?')) return;
+    setSending(true);
+    try {
+      const r = await sendCheckins(month);
+      setResult(`✅ Sent ${r.sent} · Skipped ${r.skipped}`);
+      load();
+    } catch (e: any) {
+      setResult(`❌ ${e.message}`);
+    } finally { setSending(false); }
+  };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const todayRows = status.filter(r => r.sent_at.slice(0, 10) === today);
+
+  return (
+    <div style={OVERLAY}>
+      <div style={{ ...MODAL_BOX, maxWidth: 620 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>📤 Daily Check-ins</h2>
+          <button onClick={onClose} style={CLOSE_BTN}>✕</button>
+        </div>
+        <p style={{ margin: '0 0 16px', fontSize: 13, color: '#6b7280' }}>
+          Check-ins send automatically at 6 AM Pacific. Use the button below to trigger them now.
+        </p>
+
+        <div style={{ display: 'flex', gap: 10, marginBottom: 20, alignItems: 'center' }}>
+          <button onClick={handleSend} disabled={sending} style={primaryBtn}>
+            {sending ? 'Sending…' : '📤 Send Check-ins Now'}
+          </button>
+          {result && <span style={{ fontSize: 13, color: '#374151' }}>{result}</span>}
+        </div>
+
+        {loading ? <div style={{ textAlign: 'center', color: '#94a3b8', padding: 20 }}>Loading…</div> : (
+          <>
+            {todayRows.length > 0 && (
+              <>
+                <div style={{ fontWeight: 700, fontSize: 12, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Today</div>
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden', marginBottom: 16 }}>
+                  {todayRows.map((r, i) => (
+                    <div key={r.id} style={{
+                      padding: '12px 14px', background: i % 2 === 0 ? '#fff' : '#f9fafb',
+                      borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>
+                            {r.property_name || r.opportunity_name}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{r.lead_name} · {r.lead_email}</div>
+                        </div>
+                        {r.responded_at
+                          ? <span style={{ background: '#dcfce7', color: '#15803d', padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>✓ Responded</span>
+                          : <span style={{ background: '#fef3c7', color: '#92400e', padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>Awaiting</span>
+                        }
+                      </div>
+                      {r.approach_notes && (
+                        <div style={{ marginTop: 8, background: '#f8fafc', borderRadius: 6, padding: '8px 10px', fontSize: 12, color: '#374151', lineHeight: 1.5 }}>
+                          {r.approach_notes}
+                          {r.remaining_hours != null && (
+                            <span style={{ marginLeft: 8, color: '#15803d', fontWeight: 700 }}>{r.remaining_hours}h remaining est.</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {status.filter(r => r.sent_at.slice(0, 10) !== today).length > 0 && (
+              <>
+                <div style={{ fontWeight: 700, fontSize: 12, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Earlier This Month</div>
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+                  {status.filter(r => r.sent_at.slice(0, 10) !== today).slice(0, 20).map((r, i) => (
+                    <div key={r.id} style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '10px 14px', background: i % 2 === 0 ? '#fff' : '#f9fafb',
+                      borderTop: i > 0 ? '1px solid #f1f5f9' : undefined, fontSize: 12,
+                    }}>
+                      <span style={{ color: '#374151', fontWeight: 500 }}>{r.property_name || r.opportunity_name}</span>
+                      <span style={{ color: '#94a3b8' }}>{r.sent_at.slice(0, 10)}</span>
+                      <span style={{ color: '#64748b' }}>{r.lead_name}</span>
+                      {r.responded_at
+                        ? <span style={{ color: '#15803d', fontWeight: 600 }}>✓</span>
+                        : <span style={{ color: '#f59e0b', fontWeight: 600 }}>—</span>
+                      }
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {status.length === 0 && (
+              <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: 24 }}>
+                No check-ins sent this month yet
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ConstructionPlan() {
@@ -294,8 +518,10 @@ export default function ConstructionPlan() {
   const [plan, setPlan]         = useState<MonthlyPlan | null>(null);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState('');
-  const [showGoal, setShowGoal] = useState(false);
-  const [showAdd, setShowAdd]   = useState(false);
+  const [showGoal,    setShowGoal]    = useState(false);
+  const [showAdd,     setShowAdd]     = useState(false);
+  const [showLeads,   setShowLeads]   = useState(false);
+  const [showCheckin, setShowCheckin] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -366,9 +592,11 @@ export default function ConstructionPlan() {
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => setShowGoal(true)} style={secondaryBtn}>⚙️ Set Goals</button>
-            <button onClick={() => setShowAdd(true)} style={primaryBtn}>+ Add Job</button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button onClick={() => setShowLeads(true)}   style={secondaryBtn}>👷 Leads</button>
+            <button onClick={() => setShowCheckin(true)} style={secondaryBtn}>📤 Check-ins</button>
+            <button onClick={() => setShowGoal(true)}    style={secondaryBtn}>⚙️ Goals</button>
+            <button onClick={() => setShowAdd(true)}     style={primaryBtn}>+ Add Job</button>
           </div>
         </div>
 
@@ -573,12 +801,32 @@ export default function ConstructionPlan() {
       {showAdd && (
         <AddJobPanel month={month} onAdded={() => { setShowAdd(false); load(); }} onClose={() => setShowAdd(false)} />
       )}
+      {showLeads && <LeadsModal onClose={() => setShowLeads(false)} />}
+      {showCheckin && <CheckinStatusPanel month={month} onClose={() => setShowCheckin(false)} />}
     </div>
   );
 }
 
 // ── Button styles ─────────────────────────────────────────────────────────────
 
+const OVERLAY: React.CSSProperties = {
+  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+  display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+  padding: '40px 16px', zIndex: 1000, overflowY: 'auto',
+};
+const MODAL_BOX: React.CSSProperties = {
+  background: '#fff', borderRadius: 14, padding: '28px 24px',
+  width: '100%', boxShadow: '0 8px 40px rgba(0,0,0,.18)',
+};
+const CLOSE_BTN: React.CSSProperties = {
+  background: 'none', border: 'none', fontSize: 20,
+  color: '#6b7280', cursor: 'pointer', padding: '2px 6px',
+};
+const FIELD_INPUT: React.CSSProperties = {
+  width: '100%', padding: '10px 12px', border: '1.5px solid #e5e7eb',
+  borderRadius: 8, fontSize: 14, color: '#111827', boxSizing: 'border-box',
+  fontFamily: 'inherit',
+};
 const primaryBtn: React.CSSProperties = {
   padding: '8px 18px', borderRadius: 8, border: 'none',
   background: '#1d4ed8', color: '#fff',

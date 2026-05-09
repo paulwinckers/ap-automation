@@ -1339,6 +1339,54 @@ export async function dismissPropertyHazard(propertyId: number, hazardId: number
   await request('PATCH', `/safety/properties/${propertyId}/hazards/${hazardId}`, form, true);
 }
 
+// ── Project Check-in System ───────────────────────────────────────────────────
+
+export interface ConstructionLead {
+  id:           number;
+  aspire_name:  string;
+  email:        string;
+  display_name: string | null;
+  created_at:   string;
+}
+
+export interface CheckinStatus {
+  id:               number;
+  opportunity_name: string;
+  property_name:    string;
+  lead_name:        string;
+  lead_email:       string;
+  sent_at:          string;
+  responded_at:     string | null;
+  remaining_hours:  number | null;
+  approach_notes:   string | null;
+  blockers:         string | null;
+  submitted_at:     string | null;
+}
+
+export async function listConstructionLeads(): Promise<ConstructionLead[]> {
+  return request('GET', '/construction/checkin/leads');
+}
+
+export async function upsertConstructionLead(
+  aspire_name: string, email: string, display_name?: string
+): Promise<{ ok: boolean }> {
+  return request('POST', '/construction/checkin/leads', { aspire_name, email, display_name });
+}
+
+export async function deleteConstructionLead(id: number): Promise<{ ok: boolean }> {
+  return request('DELETE', `/construction/checkin/leads/${id}`);
+}
+
+export async function sendCheckins(month?: string): Promise<{ sent: number; skipped: number; month: string }> {
+  const qs = month ? `?month=${month}` : '';
+  return request('POST', `/construction/checkin/send${qs}`);
+}
+
+export async function getCheckinStatus(month?: string): Promise<CheckinStatus[]> {
+  const qs = month ? `?month=${month}` : '';
+  return request('GET', `/construction/checkin/status${qs}`);
+}
+
 // ── Handoff Pack Generator ────────────────────────────────────────────────────
 
 /**

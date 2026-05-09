@@ -37,6 +37,7 @@ import SafetyTalksAdmin       from './pages/SafetyTalksAdmin';
 import FieldInspection        from './pages/FieldInspection';
 import SafetyInspectionsAdmin from './pages/SafetyInspectionsAdmin';
 import HandoffGenerator       from './pages/HandoffGenerator';
+import FieldCheckin           from './pages/FieldCheckin';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -67,6 +68,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/field/safety"           element={<FieldSafetyTalk />} />
         <Route path="/field/documents"          element={<FieldDocuments />} />
         <Route path="/field/inspection"         element={<FieldInspection />} />
+        <Route path="/field/checkin/:token"     element={<FieldCheckin />} />
 
         {/* Field Ops — login required */}
         <Route path="/ops/crew-schedule" element={<RequireAuth><Office><CrewSchedule /></Office></RequireAuth>} />

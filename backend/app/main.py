@@ -36,6 +36,12 @@ from app.api.push import router as push_router
 from app.api.site_inspections import router as site_inspections_router
 from app.api.handoff import router as handoff_router
 from app.api.property_hazards import router as property_hazards_router
+from app.api.project_checkin import (
+    router as checkin_router,
+    public_router as checkin_public_router,
+    start_checkin_scheduler,
+    stop_checkin_scheduler,
+)
 from app.core.config import settings
 from app.core.database import Database
 from app.services.qbo import qbo_auth_router
@@ -103,11 +109,14 @@ async def lifespan(app: FastAPI):
     start_construction_scheduler()
     # Start issues digest nightly scheduler (fires 7 PM Pacific)
     start_digest_scheduler()
+    # Start project check-in scheduler (fires 6 AM Pacific)
+    start_checkin_scheduler()
     yield
     # Stop on shutdown
     await email_intake.stop()
     stop_construction_scheduler()
     stop_digest_scheduler()
+    stop_checkin_scheduler()
 
 
 app = FastAPI(
@@ -163,3 +172,5 @@ app.include_router(push_router)
 app.include_router(site_inspections_router)
 app.include_router(handoff_router)
 app.include_router(property_hazards_router)
+app.include_router(checkin_router)
+app.include_router(checkin_public_router)
