@@ -186,38 +186,53 @@ async def _fetch_catalog_vendors(catalog_ids: List[int]) -> Dict[int, str]:
 async def _fetch_vendor_names(vendor_ids: List[int]) -> Dict[int, str]:
     """
     Given a list of VendorIDs (from Receipts.VendorID), return VendorID → name.
-    Aspire Contacts endpoint is the source of truth for vendor/contact names.
+    Tries Contacts endpoint with multiple ID field names since Aspire VendorID
+    may not equal ContactID.
     """
     if not vendor_ids:
         return {}
     unique_ids = list(set(vendor_ids))
+    logger.info(f"Fetching vendor names for VendorIDs: {unique_ids}")
     out: Dict[int, str] = {}
     chunk_size = 20
+
     for i in range(0, len(unique_ids), chunk_size):
         chunk = unique_ids[i:i + chunk_size]
-        or_filter = " or ".join(f"ContactID eq {vid}" for vid in chunk)
-        for endpoint, id_field, name_field in [
-            ("Contacts", "ContactID", "FullName"),
-            ("Contacts", "ContactID", "CompanyName"),
-        ]:
+
+        # Try several ID field names — Aspire VendorID might map to ContactID,
+        # VendorID, or another field on the Contacts / Vendors endpoint
+        attempts = [
+            ("Contacts", "ContactID"),
+            ("Contacts", "VendorID"),
+        ]
+        for endpoint, id_field in attempts:
+            or_filter = " or ".join(f"{id_field} eq {vid}" for vid in chunk)
             try:
                 res = await _aspire._get(endpoint, {
                     "$filter": f"({or_filter})",
-                    "$select": f"{id_field},FullName,CompanyName",
                     "$top": str(len(chunk) + 10),
                 })
                 rows = _aspire._extract_list(res)
+                logger.info(
+                    f"Vendor lookup via {endpoint}.{id_field}: got {len(rows)} rows "
+                    f"for IDs {chunk}"
+                )
                 if rows:
-                    logger.info(f"Vendor names from {endpoint}: {len(rows)} rows, keys: {sorted(rows[0].keys())}")
-                    for r in rows:
-                        cid = r.get(id_field)
-                        if cid and cid not in out:
-                            name = r.get("FullName") or r.get("CompanyName") or ""
-                            if name:
-                                out[cid] = name
-                    break
+                    logger.info(f"  keys: {sorted(rows[0].keys())}")
+                    logger.info(f"  first row: {dict(rows[0])}")
+                for r in rows:
+                    cid = r.get(id_field)
+                    if cid and cid not in out:
+                        name = (r.get("FullName") or r.get("CompanyName")
+                                or r.get("ContactName") or r.get("Name") or "")
+                        if name:
+                            out[cid] = name
+                if out:
+                    break  # found names — stop trying other field names
             except Exception as e:
-                logger.warning(f"Vendor name fetch via {endpoint} failed: {e}")
+                logger.warning(f"Vendor name fetch via {endpoint}.{id_field} failed: {e}")
+
+    logger.info(f"Vendor name results: {out}")
     return out
 
 
@@ -966,54 +981,29 @@ def _build_docx(
     _heading("4. Materials & Procurement")
 
     if receipts:
-        # Sort by vendor name then receipt number for clean grouping
+        # Sort by receipt number
         receipts_sorted = sorted(
             receipts,
-            key=lambda r: (
-                (r.get("VendorName") or r.get("Vendor1Name") or r.get("Vendor")
-                 or r.get("SupplierName") or r.get("ContactName") or r.get("ContactFullName")
-                 or r.get("CompanyName") or r.get("PayeeName") or ""),
-                str(r.get("ReceiptNumber") or r.get("ReceiptID") or ""),
-            )
+            key=lambda r: str(r.get("ReceiptNumber") or r.get("ReceiptID") or ""),
         )
 
-        # Summary table: one row per receipt
-        rcpt_tbl = doc.add_table(rows=1 + len(receipts_sorted) + 1, cols=6)
-        rcpt_tbl.style = "Table Grid"
-        _section_table_header(rcpt_tbl, [
-            "Receipt #", "Vendor", "Status", "Work Ticket", "Received Date", "Total"
-        ])
-        col_w_r = [0.7, 2.2, 1.0, 0.85, 1.0, 1.25]
-        for row in rcpt_tbl.rows:
-            for ci, w in enumerate(col_w_r):
-                row.cells[ci].width = Inches(w)
-
-        grand_total = 0.0
-        has_total   = False
-
-        for i, receipt in enumerate(receipts_sorted, start=1):
-            # Field names confirmed from Aspire UI screenshot
-            # VendorID is the authoritative field — look up name from Contacts
-            vid    = receipt.get("VendorID")
-            vendor = (
+        # ── Build structured data: receipt + items ────────────────────────────
+        def _receipt_vendor(r):
+            vid = r.get("VendorID")
+            return (
                 ((receipt_vendors or {}).get(vid) if vid else None)
-                or receipt.get("VendorName")
-                or receipt.get("Vendor1Name")
-                or receipt.get("Vendor")
-                or receipt.get("SupplierName")
-                or receipt.get("ContactName")
-                or receipt.get("ContactFullName")
-                or receipt.get("CompanyName")
-                or receipt.get("PayeeName")
-                or "—"
+                or r.get("VendorName") or r.get("Vendor1Name") or r.get("Vendor")
+                or r.get("SupplierName") or r.get("ContactName") or r.get("ContactFullName")
+                or r.get("CompanyName") or r.get("PayeeName") or "—"
             )
-            rcpt_num  = _str(receipt.get("ReceiptNumber") or receipt.get("ReceiptID"), "—")
-            status    = _str(receipt.get("ReceiptStatusName") or receipt.get("StatusName"), "—")
-            tk_num    = _str(receipt.get("WorkTicketNumber"), "—")
-            rcpt_date = _fmt_date(
-                receipt.get("ReceivedDate") or receipt.get("ReceiptDate") or receipt.get("InvoiceDate")
-            )
-            total_raw = receipt.get("ReceiptTotalCost") or receipt.get("TotalAmount") or receipt.get("Total")
+
+        # Pre-build receipt structs so we know total row count
+        rcpt_structs = []
+        grand_total  = 0.0
+        has_total    = False
+        for r in receipts_sorted:
+            items_raw = r.get("ReceiptItems") or []
+            total_raw = r.get("ReceiptTotalCost") or r.get("TotalAmount") or r.get("Total")
             try:
                 total_val = float(total_raw) if total_raw is not None else None
                 if total_val is not None:
@@ -1021,85 +1011,100 @@ def _build_docx(
                     has_total = True
             except Exception:
                 total_val = None
-            total_str = _fmt_money(total_val) if total_val is not None else "—"
+            rcpt_structs.append({
+                "rcpt_num":  _str(r.get("ReceiptNumber") or r.get("ReceiptID"), "—"),
+                "vendor":    _receipt_vendor(r),
+                "status":    _str(r.get("ReceiptStatusName") or r.get("StatusName"), "—"),
+                "date":      _fmt_date(r.get("ReceivedDate") or r.get("ReceiptDate") or r.get("InvoiceDate")),
+                "total":     total_val,
+                "items":     items_raw,
+            })
 
-            bg = GREY if i % 2 == 0 else WHITE
-            irow = rcpt_tbl.rows[i]
-            for cell in irow.cells:
-                _set_cell_bg(cell, bg)
-            irow.cells[0].paragraphs[0].add_run(rcpt_num).font.size  = Pt(9)
-            irow.cells[1].paragraphs[0].add_run(vendor).font.size    = Pt(9)
-            irow.cells[2].paragraphs[0].add_run(status).font.size    = Pt(9)
-            irow.cells[3].paragraphs[0].add_run(tk_num).font.size    = Pt(9)
-            irow.cells[4].paragraphs[0].add_run(rcpt_date).font.size = Pt(9)
-            irow.cells[5].paragraphs[0].add_run(total_str).font.size = Pt(9)
+        # Count rows: header + (1 receipt-header-row + N item-rows per receipt, min 1) + total
+        total_data_rows = sum(max(1, len(s["items"])) + 1 for s in rcpt_structs)
+        # Columns: Receipt # | Vendor | Item / Description | Qty | Amount | Status
+        col_w_r = [0.6, 1.7, 2.4, 0.55, 0.9, 0.85]
+        rcpt_tbl = doc.add_table(rows=1 + total_data_rows + 1, cols=6)
+        rcpt_tbl.style = "Table Grid"
+        _section_table_header(rcpt_tbl, [
+            "Receipt #", "Vendor", "Item / Description", "Qty", "Amount", "Status"
+        ])
+        for row in rcpt_tbl.rows:
+            for ci, w in enumerate(col_w_r):
+                row.cells[ci].width = Inches(w)
 
-        # Totals row
-        tot_row = rcpt_tbl.rows[len(receipts_sorted) + 1]
-        for cell in tot_row.cells:
-            _set_cell_bg(cell, LIGHT)
         def _rtot(cell, text, bold=True):
-            r = cell.paragraphs[0].add_run(text)
-            r.bold = bold
-            r.font.size = Pt(9)
-            r.font.color.rgb = _rgb(NAVY)
-        _rtot(tot_row.cells[0], "TOTAL")
-        for ci in range(1, 5):
-            _rtot(tot_row.cells[ci], "")
-        _rtot(tot_row.cells[5], _fmt_money(grand_total) if has_total else "—")
+            r2 = cell.paragraphs[0].add_run(text)
+            r2.bold = bold
+            r2.font.size = Pt(9)
+            r2.font.color.rgb = _rgb(NAVY)
+
+        row_idx = 1  # 0 is header
+
+        for s in rcpt_structs:
+            items = s["items"]
+            n_items = len(items)
+            total_str = _fmt_money(s["total"]) if s["total"] is not None else "—"
+            item_label = f"{n_items} item{'s' if n_items != 1 else ''}" if n_items else "no items"
+
+            # ── Receipt summary row (light blue) ─────────────────────────────
+            hrow = rcpt_tbl.rows[row_idx]
+            row_idx += 1
+            for cell in hrow.cells:
+                _set_cell_bg(cell, LIGHT)
+            def _hrun(cell, text, bold=False):
+                rn = cell.paragraphs[0].add_run(text)
+                rn.bold = bold
+                rn.font.size = Pt(9)
+                rn.font.color.rgb = _rgb(NAVY)
+            _hrun(hrow.cells[0], s["rcpt_num"], bold=True)
+            _hrun(hrow.cells[1], s["vendor"])
+            _hrun(hrow.cells[2], f"{item_label}  ·  Received: {s['date']}")
+            _hrun(hrow.cells[3], "")
+            _hrun(hrow.cells[4], total_str, bold=True)
+            _hrun(hrow.cells[5], s["status"])
+
+            if items:
+                for j, it in enumerate(items):
+                    irow = rcpt_tbl.rows[row_idx]
+                    row_idx += 1
+                    bg = GREY if j % 2 == 0 else WHITE
+                    for cell in irow.cells:
+                        _set_cell_bg(cell, bg)
+                    irow.cells[0].paragraphs[0].add_run("").font.size = Pt(9)
+                    irow.cells[1].paragraphs[0].add_run("").font.size = Pt(9)
+                    item_name = _str(it.get("ItemName") or it.get("CatalogItemName"), "—")
+                    irow.cells[2].paragraphs[0].add_run(f"  ↳ {item_name}").font.size = Pt(9)
+                    qty_raw = it.get("ItemQuantity") or it.get("ReceivedQuantity")
+                    qty_str = str(int(qty_raw) if isinstance(qty_raw, float) and qty_raw == int(qty_raw) else qty_raw) if qty_raw is not None else "—"
+                    irow.cells[3].paragraphs[0].add_run(qty_str).font.size = Pt(9)
+                    irow.cells[4].paragraphs[0].add_run(_fmt_money(it.get("ItemExtendedCost"))).font.size = Pt(9)
+                    irow.cells[5].paragraphs[0].add_run("").font.size = Pt(9)
+            else:
+                # No items — placeholder row so receipt isn't orphaned
+                prow = rcpt_tbl.rows[row_idx]
+                row_idx += 1
+                for cell in prow.cells:
+                    _set_cell_bg(cell, WHITE)
+                prow.cells[2].paragraphs[0].add_run("  ↳ (no line items)").font.size = Pt(9)
+
+        # ── Grand totals row ──────────────────────────────────────────────────
+        tot_row = rcpt_tbl.rows[row_idx]
+        for cell in tot_row.cells:
+            _set_cell_bg(cell, NAVY)
+        def _ttot(cell, text):
+            rn = cell.paragraphs[0].add_run(text)
+            rn.bold = True
+            rn.font.size = Pt(9)
+            rn.font.color.rgb = _rgb(WHITE)
+        _ttot(tot_row.cells[0], "TOTAL")
+        _ttot(tot_row.cells[1], "")
+        _ttot(tot_row.cells[2], "")
+        _ttot(tot_row.cells[3], "")
+        _ttot(tot_row.cells[4], _fmt_money(grand_total) if has_total else "—")
+        _ttot(tot_row.cells[5], "")
 
         doc.add_paragraph()
-
-        # ── Receipt line items detail table ───────────────────────────────────
-        # Flatten all ReceiptItems across all receipts
-        line_items: List[Dict[str, Any]] = []
-        for receipt in receipts_sorted:
-            items_raw = receipt.get("ReceiptItems") or []
-            if not items_raw:
-                continue
-            vid = receipt.get("VendorID")
-            vendor_name = (
-                ((receipt_vendors or {}).get(vid) if vid else None)
-                or receipt.get("VendorName") or "—"
-            )
-            rcpt_num = _str(receipt.get("ReceiptNumber") or receipt.get("ReceiptID"), "—")
-            for it in items_raw:
-                line_items.append({
-                    "receipt_num": rcpt_num,
-                    "vendor":      vendor_name,
-                    "item_name":   _str(it.get("ItemName") or it.get("CatalogItemName"), "—"),
-                    "qty":         it.get("ItemQuantity") or it.get("ReceivedQuantity"),
-                    "unit_cost":   it.get("ItemUnitCost"),
-                    "ext_cost":    it.get("ItemExtendedCost"),
-                })
-
-        if line_items:
-            _heading("Materials Line Items", level=2)
-            # Columns: Receipt # | Vendor | Item Name | Qty | Unit Cost | Ext Cost
-            li_tbl = doc.add_table(rows=1 + len(line_items), cols=6)
-            li_tbl.style = "Table Grid"
-            _section_table_header(li_tbl, [
-                "Receipt #", "Vendor", "Item Name", "Qty", "Unit Cost", "Ext Cost"
-            ])
-            col_w_li = [0.65, 1.6, 2.2, 0.55, 0.85, 0.9]
-            for row in li_tbl.rows:
-                for ci, w in enumerate(col_w_li):
-                    row.cells[ci].width = Inches(w)
-
-            for j, li in enumerate(line_items, start=1):
-                bg = GREY if j % 2 == 0 else WHITE
-                irow = li_tbl.rows[j]
-                for cell in irow.cells:
-                    _set_cell_bg(cell, bg)
-                irow.cells[0].paragraphs[0].add_run(li["receipt_num"]).font.size = Pt(9)
-                irow.cells[1].paragraphs[0].add_run(li["vendor"]).font.size       = Pt(9)
-                irow.cells[2].paragraphs[0].add_run(li["item_name"]).font.size    = Pt(9)
-                qty_str = str(li["qty"]) if li["qty"] is not None else "—"
-                irow.cells[3].paragraphs[0].add_run(qty_str).font.size            = Pt(9)
-                irow.cells[4].paragraphs[0].add_run(_fmt_money(li["unit_cost"])).font.size = Pt(9)
-                irow.cells[5].paragraphs[0].add_run(_fmt_money(li["ext_cost"])).font.size  = Pt(9)
-
-            doc.add_paragraph()
 
     else:
         doc.add_paragraph("No purchase receipts found in Aspire for this opportunity.").runs[0].font.size = Pt(10)
