@@ -293,7 +293,7 @@ def _render_checkin_email(
       </a>
     </div>
     <p style="text-align:center;font-size:12px;color:#94a3b8;margin-top:10px;margin-bottom:0;">
-      Opens on your phone · Link expires in 48 hours
+      Opens on your phone · Bookmark this page to check in any time
     </p>
 
   </div>
@@ -494,9 +494,10 @@ async def _send_project_checkins(month: str) -> dict:
              display_name, lead_email, month, ai_tip, snapshot, expires_at],
         )
 
-        checkin_url = f"{portal_base}/field/checkin/{token}"
+        # Permanent project page — leads can bookmark this
+        project_url = f"{portal_base}/field/project/{opp_id}"
         html    = _render_checkin_email(
-            opp_name, property_name, display_name, tickets, ai_tip, checkin_url, today_str
+            opp_name, property_name, display_name, tickets, ai_tip, project_url, today_str
         )
         subject = f"📋 Daily Check-in: {property_name or opp_name} — {today_str}"
 
@@ -659,6 +660,174 @@ async def submit_checkin_response(
         )
     except Exception as e:
         logger.warning(f"Management notification failed after checkin submit: {e}")
+
+    return {"ok": True, "message": "Thanks — your update has been sent to the team."}
+
+
+# ── Permanent project page endpoints (no token, bookmarkable) ─────────────────
+
+@public_router.get("/project/{opp_id}")
+async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
+    """
+    Return live project data for the permanent project page.
+    Fetches current month's work tickets from Aspire + check-in history from D1.
+    No token required — bookmarkable by lead.
+    """
+    from app.api.construction_plan import _fetch_opp_actuals
+
+    tz    = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    month = datetime.now(tz).strftime("%Y-%m")
+
+    # Live Aspire data
+    actuals = await _fetch_opp_actuals([opp_id])
+    opp     = actuals.get(opp_id, {})
+    tickets = await _fetch_project_tickets(opp_id, month)
+
+    # Most recent AI tip from D1 (avoid regenerating every page load)
+    tip_rows = await db._q(
+        "SELECT ai_tip, sent_at FROM project_checkins WHERE opportunity_id = ? ORDER BY sent_at DESC LIMIT 1",
+        [opp_id],
+    )
+    ai_tip = tip_rows[0]["ai_tip"] if tip_rows else None
+
+    # If no tip exists yet, generate one now
+    if not ai_tip and tickets:
+        ai_tip = await _generate_ai_tip(
+            opp.get("OpportunityName") or f"Job #{opp_id}",
+            opp.get("PropertyName") or "",
+            tickets,
+        )
+
+    # Check-in history for this project (all months, most recent first)
+    history_rows = await db._q(
+        """SELECT c.id, c.lead_name, c.sent_at, c.month,
+                  r.approach_notes, r.remaining_hours, r.blockers, r.submitted_at
+           FROM project_checkins c
+           LEFT JOIN project_checkin_responses r ON r.checkin_id = c.id
+           WHERE c.opportunity_id = ?
+           ORDER BY c.sent_at DESC
+           LIMIT 30""",
+        [opp_id],
+    )
+
+    return {
+        "opportunity_id":   opp_id,
+        "opportunity_name": opp.get("OpportunityName") or f"Job #{opp_id}",
+        "property_name":    opp.get("PropertyName") or "",
+        "opp_number":       opp.get("OpportunityNumber"),
+        "status":           opp.get("OpportunityStatusName"),
+        "hrs_est":          opp.get("EstimatedLaborHours"),
+        "hrs_act":          opp.get("ActualLaborHours"),
+        "revenue_est":      opp.get("WonDollars") or opp.get("EstimatedDollars"),
+        "revenue_act":      opp.get("ActualEarnedRevenue"),
+        "pct_complete":     opp.get("PercentComplete"),
+        "month":            month,
+        "tickets":          [{
+            "WorkTicketID":         t.get("WorkTicketID"),
+            "WorkTicketNumber":     t.get("WorkTicketNumber"),
+            "WorkTicketStatusName": t.get("WorkTicketStatusName"),
+            "ScheduledStartDate":   (t.get("ScheduledStartDate") or "")[:10],
+            "HoursEst":             t.get("HoursEst"),
+            "HoursAct":             t.get("HoursAct"),
+            "CrewLeaderName":       t.get("CrewLeaderName"),
+        } for t in tickets],
+        "ai_tip":  ai_tip,
+        "history": [dict(r) for r in history_rows],
+    }
+
+
+@public_router.post("/project/{opp_id}/respond")
+async def submit_project_response(
+    opp_id: int, body: CheckinResponseIn, db: Database = Depends(get_db)
+):
+    """Submit a check-in response from the permanent project page (no token)."""
+    if not body.approach_notes or not body.approach_notes.strip():
+        raise HTTPException(status_code=422, detail="approach_notes is required")
+
+    tz    = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    month = datetime.now(tz).strftime("%Y-%m")
+
+    # Find or create a today-scoped checkin record for this opp
+    today = _date.today().isoformat()
+    rows  = await db._q(
+        "SELECT * FROM project_checkins WHERE opportunity_id = ? AND date(sent_at) = ?",
+        [opp_id, today],
+    )
+
+    if rows:
+        checkin_id = rows[0]["id"]
+        opp_name   = rows[0]["opportunity_name"] or f"Job #{opp_id}"
+        prop_name  = rows[0]["property_name"] or ""
+        lead_name  = rows[0]["lead_name"] or "Lead"
+        ai_tip     = rows[0]["ai_tip"] or ""
+    else:
+        # No email sent today — create a stub record so history is preserved
+        from app.api.construction_plan import _fetch_opp_actuals
+        actuals   = await _fetch_opp_actuals([opp_id])
+        opp       = actuals.get(opp_id, {})
+        opp_name  = opp.get("OpportunityName") or f"Job #{opp_id}"
+        prop_name = opp.get("PropertyName") or ""
+        tickets   = await _fetch_project_tickets(opp_id, month)
+
+        # Lead name from tickets
+        lead_name = next(
+            ((t.get("CrewLeaderName") or "").strip() for t in tickets if t.get("CrewLeaderName")),
+            "Lead",
+        )
+        ai_tip    = ""
+        token     = secrets.token_urlsafe(32)
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+        snapshot   = json.dumps([{
+            "WorkTicketID": t.get("WorkTicketID"),
+            "WorkTicketNumber": t.get("WorkTicketNumber"),
+            "WorkTicketStatusName": t.get("WorkTicketStatusName"),
+            "ScheduledStartDate": (t.get("ScheduledStartDate") or "")[:10],
+            "HoursEst": t.get("HoursEst"),
+            "HoursAct": t.get("HoursAct"),
+        } for t in tickets])
+
+        await db._x(
+            """INSERT INTO project_checkins
+               (token, opportunity_id, opportunity_name, property_name,
+                lead_name, lead_email, month, ai_tip, ticket_snapshot, expires_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            [token, opp_id, opp_name, prop_name, lead_name, "", month, ai_tip, snapshot, expires_at],
+        )
+        new_rows  = await db._q("SELECT id FROM project_checkins WHERE token = ?", [token])
+        checkin_id = new_rows[0]["id"]
+
+    # Save response
+    await db._x(
+        """INSERT INTO project_checkin_responses
+           (checkin_id, remaining_hours, approach_notes, blockers)
+           VALUES (?,?,?,?)""",
+        [checkin_id, body.remaining_hours, body.approach_notes.strip(), body.blockers],
+    )
+    await db._x(
+        "UPDATE project_checkins SET responded_at = datetime('now') WHERE id = ?", [checkin_id]
+    )
+
+    # Notify management
+    today_str   = datetime.now().strftime("%B %d, %Y")
+    mgmt_emails = [e.strip() for e in settings.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if e.strip()]
+    html = _render_mgmt_email(
+        opp_name=opp_name, property_name=prop_name, lead_name=lead_name,
+        response_notes=body.approach_notes.strip(),
+        remaining_hours=body.remaining_hours,
+        blockers=body.blockers,
+        ai_tip=ai_tip,
+        today_str=today_str,
+    )
+    try:
+        graph = GraphClient()
+        await graph.send_email(
+            mailbox=settings.MS_AP_INBOX,
+            to_addresses=mgmt_emails,
+            subject=f"✅ Project Update: {lead_name} — {prop_name or opp_name}",
+            body_html=html,
+        )
+    except Exception as e:
+        logger.warning(f"Management notification failed: {e}")
 
     return {"ok": True, "message": "Thanks — your update has been sent to the team."}
 
