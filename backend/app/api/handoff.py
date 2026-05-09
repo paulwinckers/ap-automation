@@ -357,60 +357,59 @@ async def _fetch_receipts(opp_id: int, ticket_ids: Optional[List[int]] = None) -
 
     # ── Strategy 1: per work ticket ───────────────────────────────────────────
     if ticket_ids:
-        # Try bulk `in` filter first (one request)
+        # Try bulk `in` filter first (one request); attempt with expand, then without
         id_list = ",".join(str(i) for i in ticket_ids[:50])
         for endpoint in ("PurchaseReceipts", "Receipts"):
-            try:
-                res  = await _aspire._get(endpoint, {
-                    "$filter": f"WorkTicketID in ({id_list})",
-                    "$expand": "ReceiptItems",
-                    "$top": "500",
-                })
-                rows = _aspire._extract_list(res)
-                if rows:
-                    _log_first(rows, f"{endpoint} WorkTicketID in (...)")
-                    return rows
-            except Exception as e:
-                logger.debug(f"Receipts {endpoint} bulk ticket filter failed: {e}")
+            for expand_param in ({"$expand": "ReceiptItems"}, {}):
+                try:
+                    params = {"$filter": f"WorkTicketID in ({id_list})", "$top": "500"}
+                    params.update(expand_param)
+                    res  = await _aspire._get(endpoint, params)
+                    rows = _aspire._extract_list(res)
+                    if rows:
+                        _log_first(rows, f"{endpoint} WorkTicketID in (...) expand={bool(expand_param)}")
+                        return rows
+                except Exception as e:
+                    logger.debug(f"Receipts {endpoint} bulk ticket filter (expand={bool(expand_param)}) failed: {e}")
 
         # Fall back: per-ticket fetch (Aspire sometimes requires this)
         seen: set = set()
         for tid in ticket_ids[:30]:
             for endpoint in ("PurchaseReceipts", "Receipts"):
-                try:
-                    res  = await _aspire._get(endpoint, {
-                        "$filter": f"WorkTicketID eq {tid}",
-                        "$expand": "ReceiptItems",
-                        "$top": "100",
-                    })
-                    rows = _aspire._extract_list(res)
-                    if rows:
-                        _log_first(rows, f"{endpoint} WorkTicketID eq {tid}")
-                        for r in rows:
-                            rid = r.get("ReceiptID") or r.get("ReceiptNumber") or id(r)
-                            if rid not in seen:
-                                seen.add(rid)
-                                all_rows.append(r)
-                        break
-                except Exception:
-                    continue
+                for expand_param in ({"$expand": "ReceiptItems"}, {}):
+                    try:
+                        params = {"$filter": f"WorkTicketID eq {tid}", "$top": "100"}
+                        params.update(expand_param)
+                        res  = await _aspire._get(endpoint, params)
+                        rows = _aspire._extract_list(res)
+                        if rows:
+                            _log_first(rows, f"{endpoint} WorkTicketID eq {tid} expand={bool(expand_param)}")
+                            for r in rows:
+                                rid = r.get("ReceiptID") or r.get("ReceiptNumber") or id(r)
+                                if rid not in seen:
+                                    seen.add(rid)
+                                    all_rows.append(r)
+                            break  # found working params for this endpoint
+                    except Exception:
+                        continue
+                if tid in [r.get("WorkTicketID") for r in all_rows]:
+                    break  # found working endpoint for this ticket
         if all_rows:
             return all_rows
 
     # ── Strategy 2: filter by OpportunityID ───────────────────────────────────
     for endpoint in ("PurchaseReceipts", "Receipts"):
-        try:
-            res  = await _aspire._get(endpoint, {
-                "$filter": f"OpportunityID eq {opp_id}",
-                "$expand": "ReceiptItems",
-                "$top": "200",
-            })
-            rows = _aspire._extract_list(res)
-            if rows:
-                _log_first(rows, f"{endpoint} OpportunityID eq {opp_id}")
-                return rows
-        except Exception as e:
-            logger.debug(f"Receipts {endpoint} OpportunityID filter failed: {e}")
+        for expand_param in ({"$expand": "ReceiptItems"}, {}):
+            try:
+                params = {"$filter": f"OpportunityID eq {opp_id}", "$top": "200"}
+                params.update(expand_param)
+                res  = await _aspire._get(endpoint, params)
+                rows = _aspire._extract_list(res)
+                if rows:
+                    _log_first(rows, f"{endpoint} OpportunityID eq {opp_id} expand={bool(expand_param)}")
+                    return rows
+            except Exception as e:
+                logger.debug(f"Receipts {endpoint} OpportunityID filter (expand={bool(expand_param)}) failed: {e}")
 
     logger.warning(f"Could not fetch receipts for opportunity {opp_id} — all strategies returned empty")
     return []
