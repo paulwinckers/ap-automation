@@ -183,6 +183,44 @@ async def _fetch_catalog_vendors(catalog_ids: List[int]) -> Dict[int, str]:
         return {}
 
 
+async def _fetch_vendor_names(vendor_ids: List[int]) -> Dict[int, str]:
+    """
+    Given a list of VendorIDs (from Receipts.VendorID), return VendorID → name.
+    Aspire Contacts endpoint is the source of truth for vendor/contact names.
+    """
+    if not vendor_ids:
+        return {}
+    unique_ids = list(set(vendor_ids))
+    out: Dict[int, str] = {}
+    chunk_size = 20
+    for i in range(0, len(unique_ids), chunk_size):
+        chunk = unique_ids[i:i + chunk_size]
+        or_filter = " or ".join(f"ContactID eq {vid}" for vid in chunk)
+        for endpoint, id_field, name_field in [
+            ("Contacts", "ContactID", "FullName"),
+            ("Contacts", "ContactID", "CompanyName"),
+        ]:
+            try:
+                res = await _aspire._get(endpoint, {
+                    "$filter": f"({or_filter})",
+                    "$select": f"{id_field},FullName,CompanyName",
+                    "$top": str(len(chunk) + 10),
+                })
+                rows = _aspire._extract_list(res)
+                if rows:
+                    logger.info(f"Vendor names from {endpoint}: {len(rows)} rows, keys: {sorted(rows[0].keys())}")
+                    for r in rows:
+                        cid = r.get(id_field)
+                        if cid and cid not in out:
+                            name = r.get("FullName") or r.get("CompanyName") or ""
+                            if name:
+                                out[cid] = name
+                    break
+            except Exception as e:
+                logger.warning(f"Vendor name fetch via {endpoint} failed: {e}")
+    return out
+
+
 async def _fetch_opportunity(opp_number: int) -> Dict[str, Any]:
     """Fetch opportunity by display number (OpportunityNumber)."""
     res = await _aspire._get("Opportunities", {
@@ -386,6 +424,7 @@ def _build_docx(
     scope_summary:   Dict[str, str],
     tickets:         List[Dict[str, Any]],
     receipts:        List[Dict[str, Any]],
+    receipt_vendors: Dict[int, str] | None = None,
 ) -> bytes:
     """Build the complete handoff pack and return as bytes."""
     from docx import Document
@@ -952,8 +991,11 @@ def _build_docx(
 
         for i, receipt in enumerate(receipts_sorted, start=1):
             # Field names confirmed from Aspire UI screenshot
-            vendor    = _str(
-                receipt.get("VendorName")
+            # VendorID is the authoritative field — look up name from Contacts
+            vid    = receipt.get("VendorID")
+            vendor = (
+                ((receipt_vendors or {}).get(vid) if vid else None)
+                or receipt.get("VendorName")
                 or receipt.get("Vendor1Name")
                 or receipt.get("Vendor")
                 or receipt.get("SupplierName")
@@ -961,8 +1003,7 @@ def _build_docx(
                 or receipt.get("ContactFullName")
                 or receipt.get("CompanyName")
                 or receipt.get("PayeeName")
-                or receipt.get("VendorContactName"),
-                "—"
+                or "—"
             )
             rcpt_num  = _str(receipt.get("ReceiptNumber") or receipt.get("ReceiptID"), "—")
             status    = _str(receipt.get("ReceiptStatusName") or receipt.get("StatusName"), "—")
@@ -1178,9 +1219,13 @@ async def generate_handoff(
     service_ids = [s["OpportunityServiceID"] for s in services if s.get("OpportunityServiceID")]
     service_items = await _fetch_service_items(opp_id, service_ids)
 
-    # Vendor lookup: CatalogItemID → VendorName
+    # Vendor lookup: CatalogItemID → VendorName (for materials table)
     catalog_ids = [i["CatalogItemID"] for i in service_items if i.get("CatalogItemID")]
     catalog_vendors = await _fetch_catalog_vendors(catalog_ids)
+
+    # Vendor lookup: VendorID → Name (for PO/receipts table)
+    receipt_vendor_ids = [r["VendorID"] for r in receipts if r.get("VendorID")]
+    receipt_vendors = await _fetch_vendor_names(receipt_vendor_ids)
 
     logger.info(
         f"Handoff #{opportunity_number}: {len(service_groups)} groups, "
@@ -1199,7 +1244,7 @@ async def generate_handoff(
         total_hours   = total_hours,
     )
 
-    docx_bytes = _build_docx(opp, services, service_groups, service_items, catalog_vendors, scope_summary, tickets, receipts)
+    docx_bytes = _build_docx(opp, services, service_groups, service_items, catalog_vendors, scope_summary, tickets, receipts, receipt_vendors)
 
     opp_name_slug = (opp.get("OpportunityName") or f"Opportunity-{opportunity_number}") \
         .replace(" ", "_").replace("/", "-")[:60]
