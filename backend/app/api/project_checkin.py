@@ -596,41 +596,39 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
     if not name:
         return {"leads": leads, "projects": []}
 
-    # Fetch recent work tickets.  We use a broad date filter (18 months back)
-    # so that jobs scheduled in past months with lower WorkTicketIDs still appear,
-    # while keeping the result set manageable.  CrewLeaderName OData filters are
-    # unreliable in Aspire, so we filter in Python after fetch.
-    from datetime import timedelta
-    date_cutoff = (datetime.now() - timedelta(days=548)).strftime("%Y-%m-%d")  # ~18 months
+    # Fetch work tickets via paginated requests (500 per page, WorkTicketID desc).
+    # Aspire rejects $orderby on non-ID fields and large $top values, so we page
+    # through using $skip.  We stop early once we've seen enough tickets or have
+    # covered the range where this lead's active jobs would appear.
+    PAGE = 500
+    MAX_PAGES = 20   # 20 × 500 = 10 000 tickets max
+    SELECT = (
+        "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
+        "OpportunityID,OpportunityNumber,ScheduledStartDate,CompleteDate,"
+        "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
+    )
 
     all_tickets: list[dict] = []
-    for date_fmt in (
-        f"ScheduledStartDate ge {date_cutoff}",
-        f"ScheduledStartDate ge {date_cutoff}T00:00:00Z",
-        None,   # last-resort: no date filter, just top 1000
-    ):
-        params: dict = {
-            "$select":  (
-                "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
-                "OpportunityID,OpportunityNumber,ScheduledStartDate,CompleteDate,"
-                "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
-            ),
-            "$orderby": "ScheduledStartDate desc",
-            "$top":     "10000",
-        }
-        if date_fmt:
-            params["$filter"] = date_fmt
+    for page in range(MAX_PAGES):
+        skip = page * PAGE
         try:
-            res = await _aspire._get("WorkTickets", params)
-            all_tickets = _aspire._extract_list(res)
-            logger.info(
-                f"my-project: fetched {len(all_tickets)} tickets "
-                f"(filter={date_fmt or 'none'}), filtering for '{name}'"
-            )
-            if all_tickets:
+            res = await _aspire._get("WorkTickets", {
+                "$select":  SELECT,
+                "$orderby": "WorkTicketID desc",
+                "$top":     str(PAGE),
+                "$skip":    str(skip),
+            })
+            batch = _aspire._extract_list(res)
+            if not batch:
+                logger.info(f"my-project: no more tickets at skip={skip}, stopping pagination")
                 break
+            all_tickets.extend(batch)
+            logger.info(f"my-project: page {page + 1} — {len(batch)} tickets (total so far: {len(all_tickets)})")
+            if len(batch) < PAGE:
+                break   # last page
         except Exception as e:
-            logger.warning(f"my-project WorkTickets fetch (filter={date_fmt}): {e}")
+            logger.warning(f"my-project WorkTickets page {page + 1} (skip={skip}) failed: {e}")
+            break
 
     # Filter to this crew leader first — log ALL unique opp IDs found so we
     # can cross-check against expected jobs (e.g. Osachoff opp 1965)
