@@ -925,9 +925,8 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         ("RelatedID",         f"RelatedID eq {opp_id}"),
     ]
     for filter_name, filt in filter_attempts:
-        # Try with ActivityComments expand first, fall back to base fields only
-        for expand in [True, False]:
-            params: dict = {
+        try:
+            res = await _aspire._get("Activities", {
                 "$filter":  filt,
                 "$orderby": "CreatedDate desc",
                 "$top":     "50",
@@ -935,22 +934,34 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
                     "ActivityID,Subject,ActivityType,ActivityCategoryName,"
                     "Status,Notes,Description,CreatedDate,CompleteDate,CreatedByUserName,IsMileStone"
                 ),
-            }
-            if expand:
-                params["$expand"] = "ActivityComments($select=Comment,CreatedDate,CreatedByUserName;$orderby=CreatedDate asc)"
-            try:
-                res = await _aspire._get("Activities", params)
-                batch = _aspire._extract_list(res)
-                logger.info(
-                    f"Activities filter={filter_name} expand={expand}: {len(batch)} results for opp_id={opp_id}"
-                )
-                if batch:
-                    activities = batch
-                    break
-            except Exception as e:
-                logger.warning(f"Activities filter={filter_name} expand={expand} failed for opp {opp_id}: {e}")
-        if activities:
-            break
+            })
+            batch = _aspire._extract_list(res)
+            logger.info(
+                f"Activities filter={filter_name}: {len(batch)} results for opp_id={opp_id} opp_num={opp_number_str}"
+            )
+            if batch:
+                activities = batch
+                break
+        except Exception as e:
+            logger.warning(f"Activities filter={filter_name} failed for opp {opp_id}: {e}")
+
+    # Fetch comments for each activity separately
+    async def _fetch_activity_comments(activity_id: int) -> list[dict]:
+        try:
+            res = await _aspire._get("ActivityComments", {
+                "$filter":  f"ActivityID eq {activity_id}",
+                "$orderby": "CreatedDate asc",
+                "$select":  "Comment,CreatedDate,CreatedByUserName",
+            })
+            return _aspire._extract_list(res)
+        except Exception:
+            return []
+
+    if activities:
+        comment_tasks = [_fetch_activity_comments(a["ActivityID"]) for a in activities if a.get("ActivityID")]
+        comment_results = await asyncio.gather(*comment_tasks)
+        for a, comments in zip(activities, comment_results):
+            a["_comments"] = [c for c in comments if c.get("Comment")]
 
     # Check-in history for this project (all months, most recent first)
     history_rows = await db._q(
@@ -1009,8 +1020,7 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
                     "CreatedDate":       (c.get("CreatedDate") or "")[:10],
                     "CreatedByUserName": c.get("CreatedByUserName") or "",
                 }
-                for c in (a.get("ActivityComments") or [])
-                if c.get("Comment")
+                for c in (a.get("_comments") or [])
             ],
         } for a in activities],
     }
