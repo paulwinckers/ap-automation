@@ -650,78 +650,82 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
     if not tickets:
         return {"leads": leads, "projects": []}
 
-    # Group by OpportunityID — collect ticket-level hour totals
-    opp_map: dict[int, dict] = {}
+    COMPLETE_TICKET_STATUSES = {"complete", "completed"}
+
+    # Group by OpportunityNumber (consolidates change orders sharing the same base job).
+    # Track all OpportunityIDs in the group; use the highest for _fetch_opp_actuals.
+    opp_num_map: dict[float, dict] = {}
     for t in tickets:
-        oid = t.get("OpportunityID")
+        oid     = t.get("OpportunityID")
+        opp_num = t.get("OpportunityNumber")
         if not oid:
             continue
-        if oid not in opp_map:
-            opp_map[oid] = {
-                "opp_id":        oid,
+        key = opp_num if opp_num is not None else float(oid)
+        if key not in opp_num_map:
+            opp_num_map[key] = {
+                "opp_ids":       set(),
+                "primary_oid":   oid,   # highest ID = most recent change order
                 "hrs_est":       0.0,
                 "hrs_act":       0.0,
                 "ticket_count":  0,
                 "latest_date":   "",
-                "statuses":      set(),
+                "active_tickets": 0,    # tickets NOT complete
             }
-        e = opp_map[oid]
+        e = opp_num_map[key]
+        e["opp_ids"].add(oid)
+        if oid > e["primary_oid"]:
+            e["primary_oid"] = oid      # keep highest OpportunityID as representative
         e["hrs_est"]      += float(t.get("HoursEst") or 0)
         e["hrs_act"]      += float(t.get("HoursAct") or 0)
         e["ticket_count"] += 1
         d = (t.get("ScheduledStartDate") or "")[:10]
         if d > e["latest_date"]:
             e["latest_date"] = d
-        status = (t.get("WorkTicketStatusName") or "").lower()
-        e["statuses"].add(status)
+        t_status = (t.get("WorkTicketStatusName") or "").strip().lower()
+        if t_status not in COMPLETE_TICKET_STATUSES:
+            e["active_tickets"] += 1
 
-    # Fetch opportunity details (name, property, status) in bulk
-    opp_ids  = list(opp_map.keys())
-    actuals  = await _fetch_opp_actuals(opp_ids)
+    # Fetch opportunity details using the primary (highest) OpportunityID per group
+    primary_ids = [e["primary_oid"] for e in opp_num_map.values()]
+    actuals     = await _fetch_opp_actuals(primary_ids)
 
-    # Build enriched project list — filter to Construction division only
-    # scheduled = in production at Dario's — sort alongside active jobs
-    _STATUS_ORDER = {"in production": 0, "in progress": 0, "scheduled": 0, "active": 0, "won": 0, "in queue": 1, "complete": 2, "completed": 2}
-
+    # Build enriched project list — filter to Construction division, log others
     projects = []
-    for oid, e in opp_map.items():
+    for key, e in opp_num_map.items():
+        oid      = e["primary_oid"]
         opp      = actuals.get(oid, {})
         opp_name = opp.get("OpportunityName") or f"Job #{oid}"
         prop     = opp.get("PropertyName") or ""
-        status   = opp.get("OpportunityStatusName") or ""
         division = opp.get("DivisionName") or ""
 
-        # Filter to Construction division only
+        # Skip non-construction divisions (log so we can debug)
         if division and "construction" not in division.lower():
-            logger.debug(f"my-project: skipping opp {oid} '{opp_name}' — division='{division}'")
+            logger.info(f"my-project: skipping '{opp_name}' — division='{division}'")
             continue
 
-        sort_key = _STATUS_ORDER.get(status.lower(), 2)
+        # Use ticket activity to determine if job is active or complete
+        # (opportunity status like 'Won' doesn't reliably indicate work is ongoing)
+        all_done = e["active_tickets"] == 0
+        status   = "Complete" if all_done else (opp.get("OpportunityStatusName") or "Active")
+
         projects.append({
             "opp_id":       oid,
             "opp_name":     opp_name,
             "property":     prop,
             "status":       status,
+            "all_done":     all_done,
             "hrs_est":      round(e["hrs_est"], 1),
             "hrs_act":      round(e["hrs_act"], 1),
             "ticket_count": e["ticket_count"],
             "latest_date":  e["latest_date"],
-            "_sort":        (sort_key, e["latest_date"]),
         })
 
-    projects.sort(key=lambda x: (x.pop("_sort")[0], x["latest_date"]), reverse=False)
-    # Re-sort: active/in-progress first (ascending sort_key), then by latest_date desc within group
-    projects.sort(key=lambda x: (
-        _STATUS_ORDER.get((x["status"] or "").lower(), 2),
-        x["latest_date"]
-    ), reverse=False)
-    # Reverse date within each status group — most recent first
-    from itertools import groupby
-    final: list[dict] = []
-    for _, grp in groupby(projects, key=lambda x: _STATUS_ORDER.get((x["status"] or "").lower(), 2)):
-        final.extend(sorted(grp, key=lambda x: x["latest_date"], reverse=True))
+    logger.info(f"my-project '{name}': returning {len(projects)} construction projects")
+    # Active jobs first (all_done=False), then completed; within each group newest first
+    projects.sort(key=lambda x: (x["all_done"], x["latest_date"]), reverse=True)
+    projects.sort(key=lambda x: x["all_done"])   # stable: False (active) before True (done)
 
-    return {"leads": leads, "projects": final}
+    return {"leads": leads, "projects": projects}
 
 
 # ── Public token routes ───────────────────────────────────────────────────────

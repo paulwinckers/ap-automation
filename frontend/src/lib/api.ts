@@ -1389,7 +1389,7 @@ export async function getCheckinStatus(month?: string): Promise<CheckinStatus[]>
 
 export interface MyProjectResult {
   leads:    { name: string; display: string }[];
-  projects: { opp_id: number; opp_name: string; property: string; status: string; hrs_est: number; hrs_act: number; ticket_count: number; latest_date: string }[];
+  projects: { opp_id: number; opp_name: string; property: string; status: string; all_done: boolean; hrs_est: number; hrs_act: number; ticket_count: number; latest_date: string }[];
 }
 
 export async function myProjectLookup(name?: string): Promise<MyProjectResult> {

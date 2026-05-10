@@ -19,6 +19,7 @@ interface Project {
   opp_name:     string;
   property:     string;
   status:       string;
+  all_done:     boolean;
   hrs_est:      number;
   hrs_act:      number;
   ticket_count: number;
@@ -101,9 +102,9 @@ export default function FieldProjectLookup() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
 
-  const CLOSED_STATUSES = new Set(['complete', 'completed', 'closed', 'cancelled', 'canceled', 'lost']);
-  const activeProjects    = projects.filter(p => !CLOSED_STATUSES.has((p.status || '').toLowerCase()));
-  const completedProjects = projects.filter(p =>  CLOSED_STATUSES.has((p.status || '').toLowerCase()));
+  // Use ticket-based all_done flag — more reliable than opportunity status
+  const activeProjects    = projects.filter(p => !p.all_done);
+  const completedProjects = projects.filter(p =>  p.all_done);
 
   // Load lead list from D1 on mount
   useEffect(() => {
