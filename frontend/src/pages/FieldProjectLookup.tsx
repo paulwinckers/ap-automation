@@ -10,7 +10,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { myProjectLookup, getAspireEmployees } from '../lib/api';
+import { myProjectLookup } from '../lib/api';
 
 const LS_KEY = 'field_lead_name';
 
@@ -63,35 +63,29 @@ function HoursBar({ est, act }: { est: number; act: number }) {
 export default function FieldProjectLookup() {
   const navigate = useNavigate();
 
-  const [employees, setEmployees]   = useState<{ name: string }[]>([]);
-  const [empsLoading, setEmpsLoading] = useState(true);
+  const [leads, setLeads]           = useState<{ name: string; display: string }[]>([]);
+  const [leadsLoading, setLeadsLoading] = useState(true);
   const [selected, setSelected]     = useState(() => localStorage.getItem(LS_KEY) || '');
   const [projects, setProjects]     = useState<Project[]>([]);
   const [loading, setLoading]       = useState(false);
   const [searched, setSearched]     = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  // Load employee list from Aspire on mount
+  // Load lead list from D1 on mount
   useEffect(() => {
-    getAspireEmployees()
-      .then(list => {
-        const sorted = list
-          .map(e => ({ name: e.FullName }))
-          .filter(e => e.name)
-          .sort((a, b) => a.name.localeCompare(b.name));
-        setEmployees(sorted);
-      })
+    myProjectLookup()
+      .then(r => setLeads(r.leads))
       .catch(() => {})
-      .finally(() => setEmpsLoading(false));
+      .finally(() => setLeadsLoading(false));
   }, []);
 
-  // Auto-search if a name was remembered and employees loaded
+  // Auto-search if a name was remembered and leads loaded
   useEffect(() => {
-    if (selected && employees.length > 0) {
+    if (selected && leads.length > 0) {
       runLookup(selected);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [employees]);
+  }, [leads]);
 
   const activeName = selected;
 
@@ -137,8 +131,12 @@ export default function FieldProjectLookup() {
         <div style={S.card}>
           <div style={S.ctitle}>Who are you?</div>
 
-          {empsLoading ? (
-            <div style={S.empty}>Loading employees…</div>
+          {leadsLoading ? (
+            <div style={S.empty}>Loading…</div>
+          ) : leads.length === 0 ? (
+            <div style={{ fontSize: 13, color: '#6b7280' }}>
+              No crew leads set up yet — ask your manager to add you via the Leads panel.
+            </div>
           ) : (
             <div style={{ display: 'flex', gap: 8 }}>
               <select
@@ -147,8 +145,8 @@ export default function FieldProjectLookup() {
                 onChange={e => { setSelected(e.target.value); setProjects([]); setSearched(false); }}
               >
                 <option value="">Select your name…</option>
-                {employees.map(e => (
-                  <option key={e.name} value={e.name}>{e.name}</option>
+                {leads.map(l => (
+                  <option key={l.name} value={l.name}>{l.display}</option>
                 ))}
               </select>
               <button
