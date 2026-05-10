@@ -573,12 +573,13 @@ async def checkin_status(month: Optional[str] = None, db: Database = Depends(get
 # ── My-project lookup — must be defined BEFORE /{token} to avoid capture ──────
 
 @public_router.get("/my-project")
-async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
+async def my_project_lookup(name: str = "", show_all: bool = False, db: Database = Depends(get_db)):
     """
     Return the list of known leads (for the name-picker dropdown) and,
     when a name is given, all opportunities where that person is crew leader
-    (past ~12 months + future).  Sorted: In Progress first, then Scheduled,
-    then recently Completed, then anything else.
+    (past ~12 months + future).  When show_all=true, returns projects for ALL
+    known leads with a lead_name field on each project.
+    Sorted: In Progress first, then Scheduled, then recently Completed.
     """
     from app.api.construction_plan import _fetch_opp_actuals
 
@@ -593,8 +594,11 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
         for r in lead_rows
     ]
 
-    if not name:
+    if not name and not show_all:
         return {"leads": leads, "projects": []}
+
+    # Known lead names for filtering when show_all=True
+    known_leads = {l["name"].strip().lower(): l["name"] for l in leads}
 
     # Fetch work tickets via paginated requests (500 per page, WorkTicketID desc).
     # Aspire rejects $orderby on non-ID fields and large $top values, so we page
@@ -630,21 +634,20 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
             logger.warning(f"my-project WorkTickets page {page + 1} (skip={skip}) failed: {e}")
             break
 
-    # Filter to this crew leader first — log ALL unique opp IDs found so we
-    # can cross-check against expected jobs (e.g. Osachoff opp 1965)
-    leader_tickets = [
-        t for t in all_tickets
-        if (t.get("CrewLeaderName") or "").strip().lower() == name.lower()
-    ]
-    if leader_tickets:
-        opp_ids_found = sorted({t.get("OpportunityID") for t in leader_tickets if t.get("OpportunityID")})
-        statuses      = {(t.get("WorkTicketStatusName") or "").strip() for t in leader_tickets}
-        logger.info(
-            f"my-project '{name}': {len(leader_tickets)} tickets — "
-            f"opp_ids={opp_ids_found} statuses={statuses}"
-        )
+    # Filter to matching crew leader(s)
+    if show_all:
+        leader_tickets = [
+            t for t in all_tickets
+            if (t.get("CrewLeaderName") or "").strip().lower() in known_leads
+        ]
+        logger.info(f"my-project show_all: {len(leader_tickets)} tickets across {len(known_leads)} leads")
     else:
-        logger.warning(f"my-project '{name}': 0 tickets matched after CrewLeaderName filter")
+        leader_tickets = [
+            t for t in all_tickets
+            if (t.get("CrewLeaderName") or "").strip().lower() == name.lower()
+        ]
+        if not leader_tickets:
+            logger.warning(f"my-project '{name}': 0 tickets matched after CrewLeaderName filter")
 
     # Status filter — exclude cancelled/void only; include everything else
     # (In Production, In Queue, Scheduled, Open, In Progress, Complete/recent, etc.)
@@ -662,10 +665,7 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
         return True  # all other statuses shown
 
     tickets = [t for t in leader_tickets if _keep_ticket(t)]
-    logger.info(
-        f"my-project '{name}': {len(tickets)} tickets after status filter "
-        f"(excl. cancelled/void, completed only if ≥{cutoff_date})"
-    )
+    logger.info(f"my-project: {len(tickets)} tickets after status filter")
 
     if not tickets:
         return {"leads": leads, "projects": []}
@@ -674,17 +674,20 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
 
     # Group by OpportunityNumber (consolidates change orders sharing the same base job).
     # Track all OpportunityIDs in the group; use the highest for _fetch_opp_actuals.
-    opp_num_map: dict[float, dict] = {}
+    opp_num_map: dict[tuple, dict] = {}
     for t in tickets:
-        oid     = t.get("OpportunityID")
-        opp_num = t.get("OpportunityNumber")
+        oid      = t.get("OpportunityID")
+        opp_num  = t.get("OpportunityNumber")
+        crew     = (t.get("CrewLeaderName") or "").strip()
         if not oid:
             continue
-        key = opp_num if opp_num is not None else float(oid)
+        opp_key = opp_num if opp_num is not None else float(oid)
+        key = (opp_key, crew)  # unique per opp+lead so show_all doesn't merge across leads
         if key not in opp_num_map:
             opp_num_map[key] = {
                 "opp_ids":       set(),
                 "primary_oid":   oid,   # highest ID = most recent change order
+                "lead_name":     crew,
                 "hrs_est":       0.0,
                 "hrs_act":       0.0,
                 "ticket_count":  0,
@@ -739,9 +742,11 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
             "hrs_act":      round(e["hrs_act"], 1),
             "ticket_count": e["ticket_count"],
             "latest_date":  e["latest_date"],
+            "lead_name":    e["lead_name"],
         })
 
-    logger.info(f"my-project '{name}': returning {len(projects)} construction projects")
+    label = "ALL" if show_all else name
+    logger.info(f"my-project '{label}': returning {len(projects)} construction projects")
     # Active jobs first (all_done=False), then completed; within each group newest first
     projects.sort(key=lambda x: (x["all_done"], x["latest_date"]), reverse=True)
     projects.sort(key=lambda x: x["all_done"])   # stable: False (active) before True (done)
