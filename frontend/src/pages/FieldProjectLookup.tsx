@@ -122,6 +122,9 @@ export default function FieldProjectLookup() {
           <a href="/" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }} title="Home">
             <img src="/darios-logo.png" alt="Dario's" style={{ height: 32, filter: 'brightness(0) invert(1)' }} />
           </a>
+          <a href="/" style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(255,255,255,0.15)', borderRadius: 20, padding: '5px 12px' }}>
+            ← Home
+          </a>
         </div>
         <div style={S.hsub}>My Projects</div>
         <div style={S.hdesc}>Construction project dashboard</div>
