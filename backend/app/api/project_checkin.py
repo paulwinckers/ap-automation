@@ -1205,20 +1205,50 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             tickets,
         )
 
-    # Smart prompts + project summary + scope notes — all generated in parallel
+    # Smart prompts + project summary + scope notes + attachments — all in parallel
     smart_prompts:    list[dict] = []
     project_summary:  str        = ""
     scope_summary:    str        = ""
     opp_name_str = opp.get("OpportunityName") or f"Job #{opp_id}"
     prop_str     = opp.get("PropertyName") or ""
+
+    async def _fetch_opp_attachments() -> list[dict]:
+        """Fetch files attached to this opportunity in Aspire."""
+        try:
+            res = await _aspire._get("Attachments", {
+                "$filter": f"ObjectCode eq 'Opportunity' and ObjectId eq {opp_id}",
+                "$top":    "50",
+            })
+            rows = _aspire._extract_list(res)
+        except Exception as e:
+            logger.warning(f"Attachments fetch failed for opp {opp_id}: {e}")
+            return []
+
+        out = []
+        for r in rows:
+            out.append({
+                "attachment_id":   r.get("AttachmentID") or r.get("Id"),
+                "file_name":       r.get("FileName") or r.get("Name") or r.get("AttachmentName") or "File",
+                "file_url":        r.get("FileUrl") or r.get("Url") or r.get("AttachmentUrl") or "",
+                "attachment_type": r.get("AttachmentTypeName") or r.get("TypeName") or "",
+                "type_id":         r.get("AttachmentTypeId") or r.get("TypeId"),
+                "expose_to_crew":  bool(r.get("ExposeToCrew")),
+                "created_date":    (r.get("CreatedDate") or r.get("DateCreated") or "")[:10],
+            })
+        return out
+
     if tickets:
-        project_summary, smart_prompts, scope_summary = await asyncio.gather(
+        project_summary, smart_prompts, scope_summary, attachments = await asyncio.gather(
             _generate_project_summary(opp_name_str, prop_str, opp, tickets),
             _generate_smart_prompts(opp_name_str, prop_str, tickets),
             _fetch_scope_notes(opp_id),
+            _fetch_opp_attachments(),
         )
     else:
-        scope_summary = await _fetch_scope_notes(opp_id)
+        scope_summary, attachments = await asyncio.gather(
+            _fetch_scope_notes(opp_id),
+            _fetch_opp_attachments(),
+        )
 
     # Aspire activities for this opportunity
     activities: list[dict] = []
@@ -1299,6 +1329,7 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         } for t in tickets],
         "ai_tip":          ai_tip,
         "scope_summary":   scope_summary,
+        "attachments":     attachments,
         "project_summary": project_summary,
         "smart_prompts":   smart_prompts,
         "history": [dict(r) for r in history_rows],
