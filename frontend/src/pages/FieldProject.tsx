@@ -8,6 +8,8 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
+import { downloadHandoffPack } from '../lib/api';
+
 const API = import.meta.env.VITE_API_URL ?? '';
 
 interface Ticket {
@@ -121,6 +123,8 @@ export default function FieldProject() {
   const [blockers,       setBlockers]       = useState('');
   const [submitting,     setSubmitting]     = useState(false);
   const [submitMsg,      setSubmitMsg]      = useState('');
+  const [handoffLoading, setHandoffLoading] = useState(false);
+  const [handoffMsg,     setHandoffMsg]     = useState('');
 
   // Tab: 'tickets' | 'history' | 'update'
   const [tab, setTab] = useState<'tickets' | 'history' | 'update'>('tickets');
@@ -205,7 +209,6 @@ export default function FieldProject() {
   const totalRem        = totalEst - totalAct;
   const overBudget      = totalAct > totalEst && totalEst > 0;
   const responded  = data.history.filter(h => h.submitted_at).length;
-  const tipParas   = (data.ai_tip || '').split('\n\n').filter(Boolean);
 
   return (
     <div style={SHELL}>
@@ -274,18 +277,6 @@ export default function FieldProject() {
           {/* ── Tickets tab ──────────────────────────────────────────────── */}
           {tab === 'tickets' && (
             <>
-              {/* AI tip */}
-              {data.ai_tip && (
-                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '14px 16px', marginBottom: 16 }}>
-                  <div style={{ fontWeight: 700, fontSize: 11, color: '#15803d', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    💡 Coaching Tips
-                  </div>
-                  {tipParas.map((p, i) => (
-                    <p key={i} style={{ margin: i < tipParas.length - 1 ? '0 0 8px' : 0, fontSize: 13, color: '#1e293b', lineHeight: 1.6 }}>{p}</p>
-                  ))}
-                </div>
-              )}
-
               {/* Header row */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -367,12 +358,37 @@ export default function FieldProject() {
                 </>
               )}
 
-              <button
-                onClick={() => setTab('update')}
-                style={{ width: '100%', marginTop: 16, padding: '13px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: 15, cursor: 'pointer' }}
-              >
-                ✏️ Submit Today's Update
-              </button>
+              <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+                <button
+                  onClick={() => setTab('update')}
+                  style={{ flex: 1, padding: '13px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: 15, cursor: 'pointer' }}
+                >
+                  ✏️ Submit Update
+                </button>
+                {data.opp_number && (
+                  <button
+                    disabled={handoffLoading}
+                    onClick={async () => {
+                      setHandoffLoading(true);
+                      setHandoffMsg('');
+                      try {
+                        await downloadHandoffPack(Math.round(Number(data.opp_number)));
+                        setHandoffMsg('');
+                      } catch (e: any) {
+                        setHandoffMsg(e.message || 'Download failed');
+                      } finally {
+                        setHandoffLoading(false);
+                      }
+                    }}
+                    style={{ padding: '13px 16px', background: '#1e3a5f', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: 14, cursor: handoffLoading ? 'wait' : 'pointer', whiteSpace: 'nowrap', opacity: handoffLoading ? 0.6 : 1 }}
+                  >
+                    {handoffLoading ? '⏳' : '📄'} Handoff
+                  </button>
+                )}
+              </div>
+              {handoffMsg && (
+                <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>{handoffMsg}</div>
+              )}
             </>
           )}
 
@@ -431,6 +447,18 @@ export default function FieldProject() {
               <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a', marginBottom: 18 }}>
                 Submit Your Update
               </div>
+
+              {/* Coaching tip */}
+              {data.ai_tip && (
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '14px 16px', marginBottom: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 11, color: '#15803d', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    💡 Today's Coaching Tips
+                  </div>
+                  {(data.ai_tip || '').split('\n\n').filter(Boolean).map((p, i, arr) => (
+                    <p key={i} style={{ margin: i < arr.length - 1 ? '0 0 8px' : 0, fontSize: 13, color: '#1e293b', lineHeight: 1.6 }}>{p}</p>
+                  ))}
+                </div>
+              )}
 
               <div style={{ marginBottom: 14 }}>
                 <label style={LABEL}>Estimated hours remaining on active ticket(s)</label>

@@ -730,6 +730,7 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
 
         projects.append({
             "opp_id":       oid,
+            "opp_number":   opp.get("OpportunityNumber"),
             "opp_name":     opp_name,
             "property":     prop,
             "status":       status,
