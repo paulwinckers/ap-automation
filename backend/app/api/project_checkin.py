@@ -597,35 +597,26 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
     if not name:
         return {"leads": leads, "projects": []}
 
-    # Query Aspire WorkTickets by date range (Aspire OData doesn't reliably support
-    # string eq filters on CrewLeaderName — filter in Python after fetch).
-    tz    = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
-    since = (datetime.now(tz) - timedelta(days=365)).strftime("%Y-%m-%d")
+    # Fetch recent work tickets — no date filter (Aspire date range filters can
+    # silently return empty).  Sort by WorkTicketID desc (newest first), take
+    # top 500, then filter by CrewLeaderName in Python.
     all_tickets: list[dict] = []
+    try:
+        res = await _aspire._get("WorkTickets", {
+            "$select":  (
+                "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
+                "OpportunityID,ScheduledStartDate,CompleteDate,"
+                "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
+            ),
+            "$orderby": "WorkTicketID desc",
+            "$top":     "500",
+        })
+        all_tickets = _aspire._extract_list(res)
+        logger.info(f"my-project: fetched {len(all_tickets)} total tickets, filtering for '{name}'")
+    except Exception as e:
+        logger.warning(f"my-project WorkTickets fetch failed: {e}")
 
-    for date_filter in (
-        f"ScheduledStartDate ge {since}",
-        f"ScheduledStartDate ge {since}T00:00:00Z",
-    ):
-        try:
-            res = await _aspire._get("WorkTickets", {
-                "$filter":  date_filter,
-                "$select":  (
-                    "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
-                    "OpportunityID,ScheduledStartDate,CompleteDate,"
-                    "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
-                ),
-                "$orderby": "ScheduledStartDate desc",
-                "$top":     "500",
-            })
-            all_tickets = _aspire._extract_list(res)
-            logger.info(f"my-project: fetched {len(all_tickets)} tickets, filtering for '{name}'")
-            if all_tickets:
-                break
-        except Exception as e:
-            logger.warning(f"my-project WorkTickets query failed: {e}")
-
-    # Filter to this crew leader in Python
+    # Filter to this crew leader in Python (case-insensitive)
     tickets = [
         t for t in all_tickets
         if (t.get("CrewLeaderName") or "").strip().lower() == name.lower()
