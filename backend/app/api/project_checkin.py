@@ -181,6 +181,94 @@ async def _generate_ai_tip(
         )
 
 
+async def _generate_smart_prompts(
+    opp_name: str,
+    property_name: str,
+    tickets: list[dict],
+) -> list[dict]:
+    """
+    Analyse ticket data and return structured prompts for the Update tab.
+    Each prompt has: id, type, icon, situation, question, options (list of strings).
+    """
+    prompts: list[dict] = []
+
+    COMPLETE = {"complete", "completed"}
+    ACTIVE   = {"open", "in progress", "scheduled", "in production", "in queue"}
+
+    # ── 1. Over-budget tickets ────────────────────────────────────────────────
+    over_tickets = []
+    for t in tickets:
+        est = float(t.get("HoursEst") or 0)
+        act = float(t.get("HoursAct") or 0)
+        status = (t.get("WorkTicketStatusName") or "").strip().lower()
+        name   = t.get("ServiceName") or f"#{t.get('WorkTicketNumber')}"
+        if est > 0 and act > est * 1.05 and status not in COMPLETE:
+            over_tickets.append({
+                "name":  name,
+                "num":   t.get("WorkTicketNumber"),
+                "over":  round(act - est, 1),
+                "est":   round(est, 1),
+                "act":   round(act, 1),
+            })
+
+    for tk in over_tickets:
+        prompts.append({
+            "id":        f"over_{tk['num']}",
+            "type":      "over_hours",
+            "icon":      "⚠️",
+            "situation": f"{tk['name']} is {tk['over']}h over budget ({tk['act']}h actual vs {tk['est']}h est)",
+            "question":  "What's the reason for the extra hours?",
+            "options": [
+                "Some hours should be reallocated to a different ticket",
+                "Change order needed — unexpected site conditions discovered",
+                "Change order needed — client requested additional scope",
+                "Estimate was too aggressive for this scope",
+                "Other — I'll explain in my notes",
+            ],
+        })
+
+    # ── 2. Upcoming / next tickets ────────────────────────────────────────────
+    upcoming = sorted(
+        [t for t in tickets if (t.get("WorkTicketStatusName") or "").strip().lower() in ACTIVE],
+        key=lambda t: t.get("ScheduledStartDate") or "",
+    )
+    if upcoming:
+        names = [
+            t.get("ServiceName") or f"#{t.get('WorkTicketNumber')}"
+            for t in upcoming[:3]
+        ]
+        prompts.append({
+            "id":        "next_tickets",
+            "type":      "upcoming",
+            "icon":      "📅",
+            "situation": "Coming up: " + ", ".join(names),
+            "question":  "What needs to happen before these tickets can start?",
+            "options": [
+                "All clear — crew and materials are ready",
+                "Need to order materials — I'll detail below",
+                "Waiting on subcontractor or delivery",
+                "Site prep still required",
+                "Other — I'll explain in my notes",
+            ],
+        })
+
+    # ── 3. Materials / ordering prompt ───────────────────────────────────────
+    prompts.append({
+        "id":        "materials",
+        "type":      "materials",
+        "icon":      "📦",
+        "situation": "Materials check",
+        "question":  "Any materials that need to be ordered for upcoming work?",
+        "options": [
+            "All materials on order or on site",
+            "Need to order — I'll list below",
+            "Waiting on supplier to confirm availability",
+        ],
+    })
+
+    return prompts
+
+
 # ── Email templates ───────────────────────────────────────────────────────────
 
 def _render_checkin_email(
@@ -936,6 +1024,15 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             tickets,
         )
 
+    # Smart prompts for the Update tab — always generated fresh from live ticket data
+    smart_prompts: list[dict] = []
+    if tickets:
+        smart_prompts = await _generate_smart_prompts(
+            opp.get("OpportunityName") or f"Job #{opp_id}",
+            opp.get("PropertyName") or "",
+            tickets,
+        )
+
     # Aspire activities for this opportunity
     activities: list[dict] = []
     try:
@@ -1013,7 +1110,8 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             "Revenue":              t.get("Revenue"),
             "EarnedRevenue":        t.get("EarnedRevenue"),
         } for t in tickets],
-        "ai_tip":  ai_tip,
+        "ai_tip":       ai_tip,
+        "smart_prompts": smart_prompts,
         "history": [dict(r) for r in history_rows],
         "activities": [{
             "ActivityID":           a.get("ActivityID"),
