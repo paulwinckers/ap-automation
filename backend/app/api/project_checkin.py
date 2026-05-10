@@ -607,7 +607,7 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
     for date_fmt in (
         f"ScheduledStartDate ge {date_cutoff}",
         f"ScheduledStartDate ge {date_cutoff}T00:00:00Z",
-        None,   # last-resort: no date filter, just top 500
+        None,   # last-resort: no date filter, just top 1000
     ):
         params: dict = {
             "$select":  (
@@ -616,7 +616,7 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
                 "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
             ),
             "$orderby": "WorkTicketID desc",
-            "$top":     "500",
+            "$top":     "1000",
         }
         if date_fmt:
             params["$filter"] = date_fmt
@@ -632,15 +632,21 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
         except Exception as e:
             logger.warning(f"my-project WorkTickets fetch (filter={date_fmt}): {e}")
 
-    # Filter to this crew leader first — log branches/statuses so we can tune
+    # Filter to this crew leader first — log ALL unique opp IDs found so we
+    # can cross-check against expected jobs (e.g. Osachoff opp 1965)
     leader_tickets = [
         t for t in all_tickets
         if (t.get("CrewLeaderName") or "").strip().lower() == name.lower()
     ]
     if leader_tickets:
-        branches  = {(t.get("BranchName") or "").strip() for t in leader_tickets}
-        statuses  = {(t.get("WorkTicketStatusName") or "").strip() for t in leader_tickets}
-        logger.info(f"my-project '{name}': {len(leader_tickets)} tickets — branches={branches} statuses={statuses}")
+        opp_ids_found = sorted({t.get("OpportunityID") for t in leader_tickets if t.get("OpportunityID")})
+        statuses      = {(t.get("WorkTicketStatusName") or "").strip() for t in leader_tickets}
+        logger.info(
+            f"my-project '{name}': {len(leader_tickets)} tickets — "
+            f"opp_ids={opp_ids_found} statuses={statuses}"
+        )
+    else:
+        logger.warning(f"my-project '{name}': 0 tickets matched after CrewLeaderName filter")
 
     # Status filter — exclude cancelled/void only; include everything else
     # (In Production, In Queue, Scheduled, Open, In Progress, Complete/recent, etc.)
