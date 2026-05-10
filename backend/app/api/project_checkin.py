@@ -863,9 +863,10 @@ async def _fetch_all_opp_tickets(opp_id: int) -> list[dict]:
         "CrewLeaderName,PercentComplete,"
         "Revenue,EarnedRevenue,Price"
     )
-    # Try with service name expand, then without
+    # Try expand variants then plain — Aspire rejects nested $select inside $expand
     attempts = [
         {"$expand": "OpportunityService($select=ServiceName)"},
+        {"$expand": "OpportunityService"},
         {},
     ]
     for extra_params in attempts:
@@ -879,13 +880,15 @@ async def _fetch_all_opp_tickets(opp_id: int) -> list[dict]:
         try:
             res = await _aspire._get("WorkTickets", params)
             rows = _aspire._extract_list(res)
-            logger.info(
-                f"Project page tickets: {len(rows)} for opp {opp_id} "
-                f"(expand={'yes' if extra_params else 'no'})"
-            )
+            expand_desc = extra_params.get("$expand", "none")
+            logger.info(f"Project page tickets: {len(rows)} for opp {opp_id} (expand={expand_desc})")
+            if rows and extra_params.get("$expand"):
+                sample_svc = rows[0].get("OpportunityService")
+                logger.info(f"OpportunityService sample: {sample_svc}")
             return rows
         except Exception as e:
-            logger.warning(f"Project page tickets fetch (expand={'yes' if extra_params else 'no'}): {e}")
+            expand_desc = extra_params.get("$expand", "none")
+            logger.warning(f"Project page tickets fetch (expand={expand_desc}): {e}")
     return []
 
 
