@@ -680,7 +680,8 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
     actuals  = await _fetch_opp_actuals(opp_ids)
 
     # Build enriched project list
-    _STATUS_ORDER = {"in progress": 0, "scheduled": 1, "active": 0, "complete": 3, "completed": 3}
+    # scheduled = in production at Dario's — sort alongside active jobs
+    _STATUS_ORDER = {"in production": 0, "in progress": 0, "scheduled": 0, "active": 0, "in queue": 1, "complete": 2, "completed": 2}
 
     projects = []
     for oid, e in opp_map.items():
