@@ -597,19 +597,19 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
     if not name:
         return {"leads": leads, "projects": []}
 
-    # Query Aspire WorkTickets for this crew leader — past 12 months + all future
-    tz         = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
-    since      = (datetime.now(tz) - timedelta(days=365)).strftime("%Y-%m-%d")
-    tickets: list[dict] = []
-    safe_name  = name.replace("'", "''")   # escape single quotes for OData
+    # Query Aspire WorkTickets by date range (Aspire OData doesn't reliably support
+    # string eq filters on CrewLeaderName — filter in Python after fetch).
+    tz    = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    since = (datetime.now(tz) - timedelta(days=365)).strftime("%Y-%m-%d")
+    all_tickets: list[dict] = []
 
-    for date_fmt in (
-        f"CrewLeaderName eq '{safe_name}' and ScheduledStartDate ge {since}",
-        f"CrewLeaderName eq '{safe_name}' and ScheduledStartDate ge {since}T00:00:00Z",
+    for date_filter in (
+        f"ScheduledStartDate ge {since}",
+        f"ScheduledStartDate ge {since}T00:00:00Z",
     ):
         try:
             res = await _aspire._get("WorkTickets", {
-                "$filter":  date_fmt,
+                "$filter":  date_filter,
                 "$select":  (
                     "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
                     "OpportunityID,ScheduledStartDate,CompleteDate,"
@@ -618,11 +618,19 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
                 "$orderby": "ScheduledStartDate desc",
                 "$top":     "500",
             })
-            tickets = _aspire._extract_list(res)
-            if tickets:
+            all_tickets = _aspire._extract_list(res)
+            logger.info(f"my-project: fetched {len(all_tickets)} tickets, filtering for '{name}'")
+            if all_tickets:
                 break
         except Exception as e:
             logger.warning(f"my-project WorkTickets query failed: {e}")
+
+    # Filter to this crew leader in Python
+    tickets = [
+        t for t in all_tickets
+        if (t.get("CrewLeaderName") or "").strip().lower() == name.lower()
+    ]
+    logger.info(f"my-project: {len(tickets)} tickets assigned to '{name}'")
 
     if not tickets:
         return {"leads": leads, "projects": []}
