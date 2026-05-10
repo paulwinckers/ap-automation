@@ -4,8 +4,9 @@
  *
  * 1. Loads the list of known leads from D1.
  * 2. Lead picks their name (remembered in localStorage).
- * 3. Shows all opportunities where they are crew leader (past year + future).
- * 4. They tap a project to open the permanent /field/project/:oppId page.
+ * 3. Shows all opportunities where they are crew leader (past year + future),
+ *    grouped by property so multiple jobs at the same site appear as one card.
+ * 4. They tap a sub-project to open the permanent /field/project/:oppId page.
  */
 
 import { useState, useEffect } from 'react';
@@ -26,19 +27,67 @@ interface Project {
   latest_date:  string;
 }
 
+interface PropertyGroup {
+  key:          string;       // property name (grouping key)
+  projects:     Project[];
+  hrs_est:      number;
+  hrs_act:      number;
+  ticket_count: number;
+  latest_date:  string;
+  all_done:     boolean;      // true only if every opp is done
+  status:       string;       // most active status in the group
+}
+
 const STATUS_COLOR: Record<string, { bg: string; text: string; dot: string }> = {
   'in production': { bg: '#dcfce7', text: '#15803d', dot: '#16a34a' },
   'in progress':   { bg: '#dcfce7', text: '#15803d', dot: '#16a34a' },
   'scheduled':     { bg: '#dcfce7', text: '#15803d', dot: '#16a34a' },
   'active':        { bg: '#dcfce7', text: '#15803d', dot: '#16a34a' },
-  'won':           { bg: '#dcfce7', text: '#15803d', dot: '#16a34a' }, // won = active/upcoming
+  'won':           { bg: '#dcfce7', text: '#15803d', dot: '#16a34a' },
   'in queue':      { bg: '#dbeafe', text: '#1d4ed8', dot: '#2563eb' },
   'complete':      { bg: '#f3f4f6', text: '#6b7280', dot: '#9ca3af' },
   'completed':     { bg: '#f3f4f6', text: '#6b7280', dot: '#9ca3af' },
 };
 
+// Priority order for picking the "best" status to show on a grouped card
+const STATUS_PRIORITY = [
+  'in production', 'in progress', 'scheduled', 'active', 'won', 'in queue', 'complete', 'completed',
+];
+
 function statusStyle(s: string) {
   return STATUS_COLOR[(s || '').toLowerCase()] || { bg: '#fef9c3', text: '#854d0e', dot: '#ca8a04' };
+}
+
+function bestStatus(projects: Project[]): string {
+  for (const s of STATUS_PRIORITY) {
+    if (projects.some(p => (p.status || '').toLowerCase() === s)) {
+      return projects.find(p => (p.status || '').toLowerCase() === s)!.status;
+    }
+  }
+  return projects[0]?.status || 'Unknown';
+}
+
+function groupByProperty(projects: Project[]): PropertyGroup[] {
+  const map = new Map<string, Project[]>();
+  for (const p of projects) {
+    const key = (p.property || p.opp_name).trim();
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(p);
+  }
+  const groups: PropertyGroup[] = [];
+  for (const [key, list] of map.entries()) {
+    groups.push({
+      key,
+      projects:     list,
+      hrs_est:      list.reduce((s, p) => s + p.hrs_est, 0),
+      hrs_act:      list.reduce((s, p) => s + p.hrs_act, 0),
+      ticket_count: list.reduce((s, p) => s + p.ticket_count, 0),
+      latest_date:  list.map(p => p.latest_date).filter(Boolean).sort().reverse()[0] || '',
+      all_done:     list.every(p => p.all_done),
+      status:       bestStatus(list),
+    });
+  }
+  return groups;
 }
 
 function fmtDate(d: string) {
@@ -64,28 +113,71 @@ function HoursBar({ est, act }: { est: number; act: number }) {
   );
 }
 
-function ProjectCard({ p, onClick }: { p: Project; onClick: () => void }) {
-  const ss = statusStyle(p.status);
+function PropertyCard({ group, onSelect }: { group: PropertyGroup; onSelect: (opp_id: number) => void }) {
+  const ss  = statusStyle(group.status);
+  const multi = group.projects.length > 1;
+
   return (
-    <div style={S.projectCard} onClick={onClick}>
+    <div style={S.projectCard}>
+      {/* Header row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={S.projName}>{p.property || p.opp_name}</div>
-          {p.property && p.opp_name !== p.property && (
-            <div style={S.projSub}>{p.opp_name}</div>
+          <div style={S.projName}>{group.key}</div>
+          {!multi && group.projects[0].opp_name !== group.key && (
+            <div style={S.projSub}>{group.projects[0].opp_name}</div>
           )}
         </div>
         <span style={{ ...S.badge, background: ss.bg, color: ss.text }}>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: ss.dot, display: 'inline-block', marginRight: 5 }} />
-          {p.status || 'Unknown'}
+          {group.status || 'Unknown'}
         </span>
       </div>
-      <HoursBar est={p.hrs_est} act={p.hrs_act} />
+
+      {/* Hours bar (combined) */}
+      <HoursBar est={group.hrs_est} act={group.hrs_act} />
+
+      {/* Meta */}
       <div style={S.projMeta}>
-        <span>📋 {p.ticket_count} ticket{p.ticket_count !== 1 ? 's' : ''}</span>
-        {p.latest_date && <span>📅 {fmtDate(p.latest_date)}</span>}
+        <span>📋 {group.ticket_count} ticket{group.ticket_count !== 1 ? 's' : ''}</span>
+        {group.latest_date && <span>📅 {fmtDate(group.latest_date)}</span>}
       </div>
-      <div style={S.tapHint}>Tap to open →</div>
+
+      {/* Sub-project rows (when multiple opps at the same property) */}
+      {multi ? (
+        <div style={{ marginTop: 10, borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
+          {group.projects.map(p => {
+            const ps = statusStyle(p.status);
+            return (
+              <div
+                key={p.opp_id}
+                style={S.subRow}
+                onClick={() => onSelect(p.opp_id)}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{p.opp_name}</div>
+                  <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>
+                    {p.hrs_act.toFixed(1)}h / {p.hrs_est.toFixed(1)}h est · {p.ticket_count} ticket{p.ticket_count !== 1 ? 's' : ''}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <span style={{ ...S.badge, background: ps.bg, color: ps.text, fontSize: 10 }}>
+                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: ps.dot, display: 'inline-block', marginRight: 4 }} />
+                    {p.status}
+                  </span>
+                  <span style={{ color: '#9ca3af', fontSize: 13 }}>›</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div
+          style={S.tapHint}
+          onClick={() => onSelect(group.projects[0].opp_id)}
+        >
+          Tap to open →
+        </div>
+      )}
     </div>
   );
 }
@@ -93,18 +185,20 @@ function ProjectCard({ p, onClick }: { p: Project; onClick: () => void }) {
 export default function FieldProjectLookup() {
   const navigate = useNavigate();
 
-  const [leads, setLeads]           = useState<{ name: string; display: string }[]>([]);
+  const [leads, setLeads]               = useState<{ name: string; display: string }[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(true);
-  const [selected, setSelected]     = useState(() => localStorage.getItem(LS_KEY) || '');
-  const [projects, setProjects]     = useState<Project[]>([]);
-  const [loading, setLoading]       = useState(false);
-  const [searched, setSearched]     = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  const [selected, setSelected]         = useState(() => localStorage.getItem(LS_KEY) || '');
+  const [projects, setProjects]         = useState<Project[]>([]);
+  const [loading, setLoading]           = useState(false);
+  const [searched, setSearched]         = useState(false);
+  const [searchError, setSearchError]   = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
 
-  // Use ticket-based all_done flag — more reliable than opportunity status
   const activeProjects    = projects.filter(p => !p.all_done);
   const completedProjects = projects.filter(p =>  p.all_done);
+
+  const activeGroups    = groupByProperty(activeProjects);
+  const completedGroups = groupByProperty(completedProjects);
 
   // Load lead list from D1 on mount
   useEffect(() => {
@@ -121,8 +215,6 @@ export default function FieldProjectLookup() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads]);
-
-  const activeName = selected;
 
   async function runLookup(name: string) {
     if (!name) return;
@@ -141,10 +233,6 @@ export default function FieldProjectLookup() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function handleGo() {
-    runLookup(activeName);
   }
 
   return (
@@ -188,9 +276,9 @@ export default function FieldProjectLookup() {
                 ))}
               </select>
               <button
-                style={{ ...S.goBtn, opacity: activeName && !loading ? 1 : 0.4 }}
-                disabled={!activeName || loading}
-                onClick={handleGo}
+                style={{ ...S.goBtn, opacity: selected && !loading ? 1 : 0.4 }}
+                disabled={!selected || loading}
+                onClick={() => runLookup(selected)}
               >
                 {loading ? '…' : 'Go'}
               </button>
@@ -210,17 +298,17 @@ export default function FieldProjectLookup() {
           )}
         </div>
 
-        {/* Project list */}
-        {loading && (
-          <div style={S.loadingMsg}>Loading projects…</div>
-        )}
+        {/* Loading */}
+        {loading && <div style={S.loadingMsg}>Loading projects…</div>}
 
+        {/* Error */}
         {searchError && (
           <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 10, padding: '12px 14px', fontSize: 13, color: '#dc2626', marginBottom: 12 }}>
             {searchError}
           </div>
         )}
 
+        {/* Empty state */}
         {searched && !loading && !searchError && activeProjects.length === 0 && completedProjects.length === 0 && (
           <div style={S.emptyState}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>🏗️</div>
@@ -229,20 +317,19 @@ export default function FieldProjectLookup() {
           </div>
         )}
 
-        {/* Active / in-production projects */}
-        {activeProjects.map(p => <ProjectCard key={p.opp_id} p={p} onClick={() => navigate(`/field/project/${p.opp_id}`)} />)}
+        {/* Active property groups */}
+        {activeGroups.map(g => (
+          <PropertyCard key={g.key} group={g} onSelect={id => navigate(`/field/project/${id}`)} />
+        ))}
 
-        {/* Completed jobs toggle */}
-        {searched && !loading && completedProjects.length > 0 && (
-          <button
-            style={S.completedToggle}
-            onClick={() => setShowCompleted(v => !v)}
-          >
+        {/* Completed toggle */}
+        {searched && !loading && completedGroups.length > 0 && (
+          <button style={S.completedToggle} onClick={() => setShowCompleted(v => !v)}>
             {showCompleted ? '▲ Hide' : '▼ Show'} completed jobs ({completedProjects.length})
           </button>
         )}
-        {showCompleted && completedProjects.map(p => (
-          <ProjectCard key={p.opp_id} p={p} onClick={() => navigate(`/field/project/${p.opp_id}`)} />
+        {showCompleted && completedGroups.map(g => (
+          <PropertyCard key={g.key} group={g} onSelect={id => navigate(`/field/project/${id}`)} />
         ))}
 
       </div>
@@ -266,13 +353,17 @@ const S: Record<string, React.CSSProperties> = {
   emptyState: { textAlign: 'center', padding: '40px 20px', color: '#374151' },
   projectCard: {
     background: '#fff', border: '1px solid #e2e6ed', borderRadius: 12, padding: 16,
-    marginBottom: 10, cursor: 'pointer',
-    transition: 'box-shadow .15s, border-color .15s',
+    marginBottom: 10,
   },
   projName:   { fontSize: 15, fontWeight: 700, color: '#111827', marginBottom: 2 },
   projSub:    { fontSize: 12, color: '#6b7280' },
   badge:      { fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 20, whiteSpace: 'nowrap', flexShrink: 0, marginLeft: 8, display: 'flex', alignItems: 'center' },
   projMeta:   { display: 'flex', gap: 14, marginTop: 8, fontSize: 12, color: '#6b7280' },
-  tapHint:        { marginTop: 10, fontSize: 12, color: '#9ca3af', textAlign: 'right' },
+  tapHint:    { marginTop: 10, fontSize: 12, color: '#9ca3af', textAlign: 'right', cursor: 'pointer' },
+  subRow: {
+    display: 'flex', alignItems: 'center', gap: 10,
+    padding: '9px 0', borderBottom: '1px solid #f3f4f6',
+    cursor: 'pointer',
+  },
   completedToggle: { width: '100%', padding: '12px 16px', background: '#fff', border: '1px solid #e2e6ed', borderRadius: 10, marginBottom: 8, fontSize: 13, color: '#6b7280', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' },
 };

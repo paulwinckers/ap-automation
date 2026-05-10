@@ -224,7 +224,7 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
             <SortTh field="creator"       align="left"   {...sp}>Created By</SortTh>
             <th style={{ ...TH_BASE, textAlign: 'left', color: '#6b7280' }}>Assigned To</th>
             <th style={{ ...TH_BASE, textAlign: 'left', color: '#6b7280' }}>Comments</th>
-            {showGroup !== 'status' && <SortTh field="status" align="left" {...sp}>Status</SortTh>}
+            <SortTh field="created_date"  align="right"  {...sp}>Created</SortTh>
             <SortTh field="priority"      align="center" {...sp}>Priority</SortTh>
             <SortTh field="due_date"      align="right"  {...sp}>Due Date</SortTh>
             <th style={{ ...TH_BASE, textAlign: 'center' }}></th>
@@ -277,10 +277,12 @@ function ActivityTable({ activities, showGroup }: { activities: Activity[]; show
                 <Td style={{ maxWidth: 220 }}>
                   <CommentsCell comments={a.comments} />
                 </Td>
-                {/* Status (shown when not grouped by status) */}
-                {showGroup !== 'status' && (
-                  <Td><span style={{ fontSize: 11, color: '#6b7280' }}>{a.status || '—'}</span></Td>
-                )}
+                {/* Created Date */}
+                <Td align="right">
+                  <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>
+                    {fmtDate(a.created_date)}
+                  </span>
+                </Td>
                 {/* Priority badge */}
                 <Td align="center">
                   {a.priority ? (
@@ -540,17 +542,6 @@ export default function ActivitiesDashboard() {
             <select value={filterCreator} onChange={e => setFilterCreator(e.target.value)} style={SEL(filterCreator !== 'All')}>
               <option value="All">All</option>
               {creator_list.map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </div>
-        )}
-
-        {/* Status */}
-        {statuses.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Status:</label>
-            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={SEL(filterStatus !== 'All')}>
-              <option value="All">All</option>
-              {statuses.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
         )}

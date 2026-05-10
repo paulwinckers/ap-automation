@@ -38,6 +38,19 @@ interface HistoryEntry {
   submitted_at:    string | null;
 }
 
+interface Activity {
+  ActivityID:           number;
+  Subject:              string;
+  ActivityType:         string;
+  ActivityCategoryName: string;
+  Status:               string;
+  Notes:                string;
+  CreatedDate:          string;
+  CompleteDate:         string;
+  CreatedByUserName:    string;
+  IsMileStone:          boolean;
+}
+
 interface ProjectData {
   opportunity_id:   number;
   opportunity_name: string;
@@ -53,6 +66,7 @@ interface ProjectData {
   tickets:          Ticket[];
   ai_tip:           string | null;
   history:          HistoryEntry[];
+  activities:       Activity[];
 }
 
 function fmtHrs(h: number | null | undefined): string {
@@ -395,17 +409,61 @@ export default function FieldProject() {
           {/* ── History tab ──────────────────────────────────────────────── */}
           {tab === 'history' && (
             <>
-              <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-                Check-in History
+              {/* Aspire Activities */}
+              <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                Aspire Activities ({(data.activities || []).length})
+              </div>
+              {(data.activities || []).length === 0 ? (
+                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '16px 0 24px' }}>
+                  No activities logged in Aspire
+                </div>
+              ) : (
+                <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', marginBottom: 24 }}>
+                  {(data.activities || []).map((a, i) => (
+                    <div key={a.ActivityID} style={{
+                      padding: '11px 14px',
+                      background: i % 2 === 0 ? '#fff' : '#f9fafb',
+                      borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#111827', marginBottom: 2 }}>
+                            {a.IsMileStone ? '🏁 ' : ''}{a.Subject || '(no subject)'}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                            {[a.ActivityType, a.ActivityCategoryName].filter(Boolean).join(' · ')}
+                            {a.CreatedByUserName ? ` · ${a.CreatedByUserName}` : ''}
+                          </div>
+                        </div>
+                        <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                          <div style={{ fontSize: 11, color: '#9ca3af' }}>{a.CompleteDate || a.CreatedDate}</div>
+                          {a.Status && (
+                            <span style={{ fontSize: 10, fontWeight: 600, background: a.Status.toLowerCase().includes('complet') ? '#dcfce7' : '#fef3c7', color: a.Status.toLowerCase().includes('complet') ? '#15803d' : '#92400e', padding: '1px 6px', borderRadius: 8, marginTop: 3, display: 'inline-block' }}>
+                              {a.Status}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {a.Notes && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap', background: '#f8fafc', borderRadius: 6, padding: '6px 10px' }}>
+                          {a.Notes.length > 300 ? a.Notes.slice(0, 300) + '…' : a.Notes}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Check-in History */}
+              <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                Check-in History ({responded})
               </div>
               {data.history.length === 0 ? (
-                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '24px 0' }}>
+                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '16px 0' }}>
                   No check-ins yet
                 </div>
-              ) : data.history.map((h, i) => (
-                <div key={h.id} style={{
-                  marginBottom: 12, border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden',
-                }}>
+              ) : data.history.map((h) => (
+                <div key={h.id} style={{ marginBottom: 12, border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
                   <div style={{
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     padding: '10px 14px',
@@ -416,14 +474,10 @@ export default function FieldProject() {
                       <span style={{ fontWeight: 600, fontSize: 13, color: '#0f172a' }}>
                         {h.submitted_at ? '✅' : '⏳'} {h.submitted_at ? fmtRelative(h.submitted_at) : 'Awaiting'}
                       </span>
-                      <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>
-                        {fmtDate(h.sent_at)}
-                      </span>
+                      <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>{fmtDate(h.sent_at)}</span>
                     </div>
                     {h.remaining_hours != null && (
-                      <span style={{ fontSize: 12, fontWeight: 700, color: '#15803d' }}>
-                        {h.remaining_hours}h rem
-                      </span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#15803d' }}>{h.remaining_hours}h rem</span>
                     )}
                   </div>
                   {h.approach_notes && (

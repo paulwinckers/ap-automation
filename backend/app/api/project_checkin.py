@@ -916,6 +916,23 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             tickets,
         )
 
+    # Aspire activities for this opportunity
+    activities: list[dict] = []
+    try:
+        res = await _aspire._get("Activities", {
+            "$filter":  f"OpportunityID eq {opp_id}",
+            "$orderby": "CreatedDate desc",
+            "$top":     "50",
+            "$select":  (
+                "ActivityID,Subject,ActivityType,ActivityCategoryName,"
+                "Status,Notes,CreatedDate,CompleteDate,CreatedByUserName,IsMileStone"
+            ),
+        })
+        activities = _aspire._extract_list(res)
+        logger.info(f"Project activities: {len(activities)} for opp {opp_id}")
+    except Exception as e:
+        logger.warning(f"Project activities fetch failed for opp {opp_id}: {e}")
+
     # Check-in history for this project (all months, most recent first)
     history_rows = await db._q(
         """SELECT c.id, c.lead_name, c.sent_at, c.month,
@@ -956,6 +973,18 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         } for t in tickets],
         "ai_tip":  ai_tip,
         "history": [dict(r) for r in history_rows],
+        "activities": [{
+            "ActivityID":           a.get("ActivityID"),
+            "Subject":              a.get("Subject") or "",
+            "ActivityType":         a.get("ActivityType") or "",
+            "ActivityCategoryName": a.get("ActivityCategoryName") or "",
+            "Status":               a.get("Status") or "",
+            "Notes":                a.get("Notes") or "",
+            "CreatedDate":          (a.get("CreatedDate") or "")[:10],
+            "CompleteDate":         (a.get("CompleteDate") or "")[:10],
+            "CreatedByUserName":    a.get("CreatedByUserName") or "",
+            "IsMileStone":          bool(a.get("IsMileStone")),
+        } for a in activities],
     }
 
 
