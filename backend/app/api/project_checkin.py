@@ -181,6 +181,83 @@ async def _generate_ai_tip(
         )
 
 
+async def _generate_project_summary(
+    opp_name: str,
+    property_name: str,
+    opp: dict,
+    tickets: list[dict],
+) -> str:
+    """
+    Generate a concise project summary for the crew lead using Claude.
+    Covers overall status, hours, active work, and what's coming next.
+    """
+    COMPLETE = {"complete", "completed"}
+    ACTIVE   = {"open", "in progress", "scheduled", "in production", "in queue"}
+
+    total_est  = sum(float(t.get("HoursEst") or 0) for t in tickets)
+    total_act  = sum(float(t.get("HoursAct") or 0) for t in tickets)
+    pct_used   = (total_act / total_est * 100) if total_est > 0 else 0
+    remaining  = max(total_est - total_act, 0)
+
+    active_tickets = [t for t in tickets if (t.get("WorkTicketStatusName") or "").lower() in ACTIVE]
+    done_tickets   = [t for t in tickets if (t.get("WorkTicketStatusName") or "").lower() in COMPLETE]
+
+    def tk_line(t: dict) -> str:
+        name = t.get("ServiceName") or f"#{t.get('WorkTicketNumber')}"
+        est  = float(t.get("HoursEst") or 0)
+        act  = float(t.get("HoursAct") or 0)
+        date = (t.get("ScheduledStartDate") or "")[:10]
+        status = t.get("WorkTicketStatusName") or ""
+        over = f" [OVER by {act-est:.1f}h]" if est > 0 and act > est * 1.05 else ""
+        return f"  - {name}: {act:.1f}h actual / {est:.1f}h est, status={status}, date={date}{over}"
+
+    # Sort active by scheduled date
+    active_sorted = sorted(active_tickets, key=lambda t: t.get("ScheduledStartDate") or "")
+
+    context = (
+        f"Project: {opp_name}" + (f" at {property_name}" if property_name else "") + "\n"
+        f"Overall status: {opp.get('OpportunityStatusName', 'Unknown')}\n"
+        f"Budget: {total_act:.1f}h actual vs {total_est:.1f}h estimated ({pct_used:.0f}% used), ~{remaining:.1f}h remaining\n"
+        f"Tickets complete: {len(done_tickets)} of {len(tickets)}\n"
+        f"\nActive / upcoming tickets ({len(active_sorted)}):\n" +
+        "\n".join(tk_line(t) for t in active_sorted[:8]) +
+        (f"\n\n(plus {len(active_sorted)-8} more active tickets)" if len(active_sorted) > 8 else "")
+    )
+
+    prompt = (
+        "You are a construction project manager writing a quick briefing for a field crew lead. "
+        "Write a short project summary (3-5 sentences, plain language, no bullet points) covering:\n"
+        "1. Where the project stands overall (hours used vs budget, how many tickets done)\n"
+        "2. What's currently active or next on site\n"
+        "3. Any concern worth flagging (over-budget tickets, tight schedule, etc.)\n"
+        "Be direct and practical — this is for a crew lead checking in from their phone. "
+        "Do not use headings or lists. Just flowing sentences.\n\n"
+        + context + "\n\nProject summary:"
+    )
+
+    try:
+        client = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        msg = await client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return msg.content[0].text.strip()
+    except Exception as e:
+        logger.warning(f"Project summary generation failed: {e}")
+        # Fallback: plain text summary
+        lines = []
+        lines.append(f"You've used {total_act:.1f}h of {total_est:.1f}h estimated ({pct_used:.0f}%), with ~{remaining:.1f}h remaining across {len(tickets)} tickets ({len(done_tickets)} complete).")
+        if active_sorted:
+            next_names = [t.get("ServiceName") or f"#{t.get('WorkTicketNumber')}" for t in active_sorted[:3]]
+            lines.append(f"Active work: {', '.join(next_names)}.")
+        over = [t for t in tickets if float(t.get("HoursEst") or 0) > 0 and float(t.get("HoursAct") or 0) > float(t.get("HoursEst") or 0) * 1.05]
+        if over:
+            over_names = [t.get("ServiceName") or f"#{t.get('WorkTicketNumber')}" for t in over[:2]]
+            lines.append(f"Heads up: {', '.join(over_names)} {'is' if len(over)==1 else 'are'} over budget.")
+        return " ".join(lines)
+
+
 async def _generate_smart_prompts(
     opp_name: str,
     property_name: str,
@@ -1024,13 +1101,15 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             tickets,
         )
 
-    # Smart prompts for the Update tab — always generated fresh from live ticket data
-    smart_prompts: list[dict] = []
+    # Smart prompts + project summary for the Update tab — generated fresh each load
+    smart_prompts:    list[dict] = []
+    project_summary:  str        = ""
     if tickets:
-        smart_prompts = await _generate_smart_prompts(
-            opp.get("OpportunityName") or f"Job #{opp_id}",
-            opp.get("PropertyName") or "",
-            tickets,
+        opp_name_str = opp.get("OpportunityName") or f"Job #{opp_id}"
+        prop_str     = opp.get("PropertyName") or ""
+        project_summary, smart_prompts = await asyncio.gather(
+            _generate_project_summary(opp_name_str, prop_str, opp, tickets),
+            _generate_smart_prompts(opp_name_str, prop_str, tickets),
         )
 
     # Aspire activities for this opportunity
@@ -1110,8 +1189,9 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             "Revenue":              t.get("Revenue"),
             "EarnedRevenue":        t.get("EarnedRevenue"),
         } for t in tickets],
-        "ai_tip":       ai_tip,
-        "smart_prompts": smart_prompts,
+        "ai_tip":          ai_tip,
+        "project_summary": project_summary,
+        "smart_prompts":   smart_prompts,
         "history": [dict(r) for r in history_rows],
         "activities": [{
             "ActivityID":           a.get("ActivityID"),
