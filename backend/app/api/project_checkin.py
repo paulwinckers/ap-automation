@@ -917,33 +917,20 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         )
 
     # Aspire activities for this opportunity
-    # Try multiple filter strategies — Aspire field name for opportunity link varies
     activities: list[dict] = []
-    opp_number_str = str(opp.get("OpportunityNumber") or "").strip()
-    filter_attempts = [
-        ("OpportunityID",     f"OpportunityID eq {opp_id}"),
-        ("RelatedID",         f"RelatedID eq {opp_id}"),
-    ]
-    for filter_name, filt in filter_attempts:
-        try:
-            res = await _aspire._get("Activities", {
-                "$filter":  filt,
-                "$orderby": "CreatedDate desc",
-                "$top":     "50",
-                "$select":  (
-                    "ActivityID,Subject,ActivityType,ActivityCategoryName,"
-                    "Status,Notes,CreatedDate,CompleteDate,CreatedByUserName,IsMileStone"
-                ),
-            })
-            batch = _aspire._extract_list(res)
-            logger.info(
-                f"Activities filter={filter_name}: {len(batch)} results for opp_id={opp_id} opp_num={opp_number_str}"
-            )
-            if batch:
-                activities = batch
-                break
-        except Exception as e:
-            logger.warning(f"Activities filter={filter_name} failed for opp {opp_id}: {e}")
+    try:
+        res = await _aspire._get("Activities", {
+            "$filter":  f"OpportunityID eq {opp_id}",
+            "$orderby": "CreatedDate desc",
+            "$top":     "50",
+            "$select":  (
+                "ActivityID,Subject,ActivityType,ActivityCategoryName,"
+                "Status,Notes,CreatedDate,CompleteDate,CreatedByUserName,IsMileStone"
+            ),
+        })
+        activities = _aspire._extract_list(res)
+    except Exception as e:
+        logger.warning(f"Activities fetch failed for opp {opp_id}: {e}")
 
     # Fetch comments for each activity separately
     async def _fetch_activity_comments(activity_id: int) -> list[dict]:
