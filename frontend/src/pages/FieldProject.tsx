@@ -988,7 +988,7 @@ export default function FieldProject() {
                               <div style={{ fontSize: 11, color: '#9ca3af' }}>#{t.WorkTicketNumber}</div>
                             </div>
                             <a
-                              href="/field/purchase-order"
+                              href={`/field/purchase-order?oppId=${data.opportunity_id}&oppName=${encodeURIComponent(data.opportunity_name)}&propName=${encodeURIComponent(data.property_name || '')}&wtId=${t.WorkTicketID}&wtNum=${t.WorkTicketNumber}&svcName=${encodeURIComponent(t.ServiceName || '')}`}
                               style={{
                                 padding: '7px 12px', background: '#16a34a', color: '#fff',
                                 borderRadius: 8, fontSize: 12, fontWeight: 700,

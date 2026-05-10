@@ -12,7 +12,8 @@
  *   7. Success — show PO number
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   getPOVendors,
   searchPOJobs,
@@ -46,15 +47,56 @@ const BLU  = '#3b82f6';
 const EMPTY_ITEM: POLineItem = { description: '', qty: 1, unit_cost: 0, uom: '' };
 
 export default function FieldPurchaseOrder() {
-  const [step, setStep] = useState<Step>(1);
+  const [searchParams] = useSearchParams();
+
+  // Pre-fill from query params (set by "Create PO" button on project page)
+  const preOppId   = searchParams.get('oppId');
+  const preOppName = searchParams.get('oppName');
+  const prePropName= searchParams.get('propName');
+  const preWtId    = searchParams.get('wtId');
+  const preWtNum   = searchParams.get('wtNum');
+  const preSvcName = searchParams.get('svcName');
+
+  const prefilled = !!(preOppId && preWtId);
+
+  const [step, setStep] = useState<Step>(prefilled ? 3 : 1);
 
   // Job / ticket selection
   const [jobQuery, setJobQuery]           = useState('');
   const [jobResults, setJobResults]       = useState<POJobResult[]>([]);
   const [jobLoading, setJobLoading]       = useState(false);
-  const [selectedJob, setSelectedJob]     = useState<POJobResult | null>(null);
-  const [workTickets, setWorkTickets]     = useState<POWorkTicket[]>([]);
-  const [selectedTicket, setSelectedTicket] = useState<POWorkTicket | null>(null);
+
+  // Pre-populate from URL params when arriving from the project page
+  const initialJob = useMemo<POJobResult | null>(() => {
+    if (!prefilled) return null;
+    return {
+      type:              'opportunity',
+      opportunity_id:    Number(preOppId),
+      opportunity_name:  preOppName || '',
+      property_name:     prePropName || '',
+      work_ticket_id:    preWtId ? Number(preWtId) : null,
+      work_ticket_num:   preWtNum ? Number(preWtNum) : null,
+      work_ticket_title: preSvcName || null,
+      status:            null,
+      date:              null,
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const initialTicket = useMemo<POWorkTicket | null>(() => {
+    if (!prefilled || !preWtId) return null;
+    return {
+      WorkTicketID:         Number(preWtId),
+      WorkTicketNumber:     preWtNum ? Number(preWtNum) : 0,
+      WorkTicketTitle:      preSvcName || null,
+      WorkTicketStatusName: null,
+      ScheduledStartDate:   null,
+      PropertyName:         prePropName || null,
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [selectedJob, setSelectedJob]     = useState<POJobResult | null>(initialJob);
+  const [workTickets, setWorkTickets]     = useState<POWorkTicket[]>(initialTicket ? [initialTicket] : []);
+  const [selectedTicket, setSelectedTicket] = useState<POWorkTicket | null>(initialTicket);
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [inventoryOnly, setInventoryOnly] = useState(false);
 
@@ -88,12 +130,16 @@ export default function FieldPurchaseOrder() {
   const jobTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const vendorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load preferred vendors, employee list, and UOM types on mount
+  // Load preferred vendors, employee list, and UOM types on mount.
+  // Also pre-fetch ticket materials when arriving from the project page.
   useEffect(() => {
     getPOVendors().then(r => setVendors(r.vendors)).catch(() => {});
     getAspireEmployees().then(r => setEmployees(r)).catch(() => {});
     getPOUomTypes().then(r => setUomTypes(r)).catch(() => {});
-  }, []);
+    if (prefilled && preWtId) {
+      fetchTicketItems(Number(preWtId));
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced job search
   useEffect(() => {
@@ -398,8 +444,15 @@ export default function FieldPurchaseOrder() {
       {selectedJob && (
         <div style={{ ...card, padding: '10px 14px', marginBottom: 8 }}>
           <span style={{ color: '#64748b', fontSize: 12 }}>Job: </span>
-          <span style={{ fontSize: 13 }}>{selectedJob.opportunity_name}</span>
-          {selectedTicket && pill(`Ticket #${selectedTicket.WorkTicketNumber}`)}
+          <span style={{ fontSize: 13 }}>{selectedJob.property_name || selectedJob.opportunity_name}</span>
+          {selectedJob.property_name && selectedJob.opportunity_name && (
+            <span style={{ color: '#64748b', fontSize: 11 }}> · {selectedJob.opportunity_name}</span>
+          )}
+          {selectedTicket && pill(
+            (selectedTicket.WorkTicketTitle || preSvcName)
+              ? `${selectedTicket.WorkTicketTitle || preSvcName} (#${selectedTicket.WorkTicketNumber})`
+              : `Ticket #${selectedTicket.WorkTicketNumber}`
+          )}
         </div>
       )}
       {inventoryOnly && (
