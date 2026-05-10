@@ -626,24 +626,25 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
         statuses  = {(t.get("WorkTicketStatusName") or "").strip() for t in leader_tickets}
         logger.info(f"my-project '{name}': {len(leader_tickets)} tickets — branches={branches} statuses={statuses}")
 
-    # Status filter: In Production + In Queue always; Complete within last 90 days
-    ACTIVE_STATUSES   = {"in production", "in queue"}
-    COMPLETE_STATUSES = {"complete", "completed"}
+    # Status filter — exclude cancelled/void only; include everything else
+    # (In Production, In Queue, Scheduled, Open, In Progress, Complete/recent, etc.)
+    EXCLUDED_STATUSES = {"cancelled", "canceled", "void", "voided"}
     cutoff_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
 
     def _keep_ticket(t: dict) -> bool:
         status = (t.get("WorkTicketStatusName") or "").strip().lower()
-        if status in ACTIVE_STATUSES:
-            return True
-        if status in COMPLETE_STATUSES:
+        if status in EXCLUDED_STATUSES:
+            return False
+        # Keep completed tickets only if finished within the last 90 days
+        if status in {"complete", "completed"}:
             complete_date = (t.get("CompleteDate") or t.get("ScheduledStartDate") or "")[:10]
             return complete_date >= cutoff_date
-        return False
+        return True  # all other statuses shown
 
     tickets = [t for t in leader_tickets if _keep_ticket(t)]
     logger.info(
         f"my-project '{name}': {len(tickets)} tickets after status filter "
-        f"(active/queue + complete ≥{cutoff_date})"
+        f"(excl. cancelled/void, completed only if ≥{cutoff_date})"
     )
 
     if not tickets:
