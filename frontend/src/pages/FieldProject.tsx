@@ -63,11 +63,13 @@ interface PromptMemory {
 interface Attachment {
   attachment_id:   number | null;
   file_name:       string;
-  file_url:        string;
+  file_extension:  string;
+  file_url:        string;  // external URL if available (ExternalContentID)
   attachment_type: string;
   type_id:         number | null;
   expose_to_crew:  boolean;
   created_date:    string;
+  note:            string;
 }
 
 interface Activity {
@@ -447,8 +449,12 @@ export default function FieldProject() {
 
                 const renderAtt = (att: Attachment, i: number, highlight = false) => {
                   const t = (att.attachment_type || '').toLowerCase();
-                  const icon = t.includes('plan') ? '🗺️' : t.includes('photo') ? '📷' :
-                               t.includes('invoice') ? '🧾' : t.includes('doc') ? '📄' : '📎';
+                  const ext = (att.file_extension || '').toLowerCase();
+                  const icon = t.includes('plan') ? '🗺️' : t.includes('photo') || ['jpg','jpeg','png','gif','webp'].includes(ext) ? '📷' :
+                               t.includes('invoice') ? '🧾' : ['doc','docx'].includes(ext) ? '📝' :
+                               ext === 'pdf' ? '📄' : '📎';
+                  // Use external URL if available, otherwise proxy through our backend
+                  const viewUrl = att.file_url || (att.attachment_id ? `${API}/checkin/attachment/${att.attachment_id}` : '');
                   return (
                     <div key={att.attachment_id ?? i} style={{
                       padding: '10px 14px',
@@ -462,16 +468,21 @@ export default function FieldProject() {
                           {att.file_name}
                         </div>
                         <div style={{ fontSize: 11, color: highlight ? '#0369a1' : '#9ca3af' }}>
-                          {att.attachment_type || 'Attachment'}{att.created_date ? ` · ${att.created_date}` : ''}
+                          {att.attachment_type || 'Attachment'}
+                          {att.file_extension ? ` · .${att.file_extension.toUpperCase()}` : ''}
+                          {att.created_date ? ` · ${att.created_date}` : ''}
                         </div>
+                        {att.note && (
+                          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{att.note}</div>
+                        )}
                       </div>
-                      {att.file_url ? (
-                        <a href={att.file_url} target="_blank" rel="noopener noreferrer"
+                      {viewUrl ? (
+                        <a href={viewUrl} target="_blank" rel="noopener noreferrer"
                           style={{ padding: '5px 11px', background: highlight ? '#0369a1' : '#1e3a5f', color: '#fff', borderRadius: 7, fontSize: 12, fontWeight: 600, textDecoration: 'none', flexShrink: 0 }}>
                           View
                         </a>
                       ) : (
-                        <span style={{ fontSize: 11, color: '#cbd5e1', flexShrink: 0 }}>No link</span>
+                        <span style={{ fontSize: 11, color: '#cbd5e1', flexShrink: 0 }}>Unavailable</span>
                       )}
                     </div>
                   );

@@ -1259,54 +1259,38 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
     async def _fetch_opp_attachments() -> list[dict]:
         """
         Fetch files attached to this opportunity in Aspire.
-        Tries multiple filter strategies because Aspire field names vary.
+        Field names confirmed from Aspire API docs (Oct 2025).
         """
         rows: list[dict] = []
-
-        # Try filter strategies in order until one returns results
-        filters = [
-            f"ObjectCode eq 'Opportunity' and ObjectId eq {opp_id}",
-            f"ObjectCode eq 'Opportunity' and ObjectID eq {opp_id}",
-            f"OpportunityID eq {opp_id}",
-        ]
-        for filt in filters:
-            try:
-                res = await _aspire._get("Attachments", {
-                    "$filter": filt,
-                    "$top":    "50",
-                })
-                rows = _aspire._extract_list(res)
-                if rows:
-                    logger.info(f"Attachments: filter '{filt}' returned {len(rows)} rows")
-                    if rows:
-                        logger.info(f"Attachments sample keys: {sorted(rows[0].keys())}")
-                    break
-            except Exception as e:
-                logger.info(f"Attachments filter '{filt}' failed: {e}")
+        try:
+            res = await _aspire._get("Attachments", {
+                "$filter": f"OpportunityID eq {opp_id}",
+                "$top":    "50",
+                "$orderby": "DateUploaded desc",
+            })
+            rows = _aspire._extract_list(res)
+            logger.info(f"Attachments: {len(rows)} rows for opp {opp_id}")
+        except Exception as e:
+            logger.warning(f"Attachments fetch failed for opp {opp_id}: {e}")
 
         out = []
         for r in rows:
-            att_type = (
-                r.get("AttachmentTypeName") or r.get("TypeName")
-                or r.get("AttachmentType") or r.get("Type") or ""
-            )
+            att_id   = r.get("AttachmentID")
+            ext      = (r.get("FileExtension") or "").lstrip(".").lower()
+            name     = r.get("AttachmentName") or r.get("OriginalFileName") or "File"
+            # ExternalContentID may be a SharePoint/OneDrive URL for linked files
+            ext_url  = r.get("ExternalContentID") or ""
+            file_url = ext_url if ext_url.startswith("http") else ""
             out.append({
-                "attachment_id":   r.get("AttachmentID") or r.get("Id"),
-                "file_name":       (
-                    r.get("FileName") or r.get("Name") or r.get("AttachmentName")
-                    or r.get("DisplayName") or "File"
-                ),
-                "file_url":        (
-                    r.get("FileUrl") or r.get("Url") or r.get("AttachmentUrl")
-                    or r.get("DownloadUrl") or r.get("FilePath") or ""
-                ),
-                "attachment_type": att_type,
-                "type_id":         r.get("AttachmentTypeId") or r.get("TypeId"),
-                "expose_to_crew":  bool(r.get("ExposeToCrew") or r.get("ShowToCrew")),
-                "created_date":    (
-                    r.get("CreatedDate") or r.get("DateCreated")
-                    or r.get("UploadDate") or r.get("UploadedDate") or ""
-                )[:10],
+                "attachment_id":   att_id,
+                "file_name":       name,
+                "file_extension":  ext,
+                "file_url":        file_url,
+                "attachment_type": r.get("AttachmentTypeName") or "",
+                "type_id":         r.get("AttachmentTypeID"),
+                "expose_to_crew":  bool(r.get("ExposeToCrew")),
+                "created_date":    (r.get("DateUploaded") or "")[:10],
+                "note":            r.get("Note") or "",
             })
         return out
 
@@ -1606,6 +1590,56 @@ async def get_project_materials(opp_id: int):
         "pos":                pos,
         "tickets_without_po": tickets_without_po,
     }
+
+
+@public_router.get("/attachment/{attachment_id}")
+async def proxy_attachment(attachment_id: int):
+    """
+    Stream an Aspire attachment to the browser.
+    Aspire doesn't expose a public file URL, so we proxy through the backend.
+    The attachment is fetched via Aspire's authenticated API and returned as a
+    file download with the correct Content-Type.
+    """
+    from fastapi.responses import StreamingResponse
+    import httpx
+    import mimetypes
+
+    # Aspire attachment download URL pattern (OData binary property)
+    token = await _aspire._get_token()
+    download_url = f"{_aspire.base_url}/Attachments({attachment_id})/FileData"
+
+    MIME_MAP = {
+        "pdf": "application/pdf",
+        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "gif": "image/gif", "webp": "image/webp",
+        "doc": "application/msword",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls": "application/vnd.ms-excel",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "dwg": "application/acad", "dxf": "image/vnd.dxf",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(download_url, headers={"Authorization": f"Bearer {token}"})
+            resp.raise_for_status()
+
+            # Try to detect content type from Content-Type header or file extension
+            content_type = resp.headers.get("content-type", "application/octet-stream")
+            # Get filename from Aspire response headers or fall back to generic name
+            disposition = resp.headers.get("content-disposition", "")
+            filename = "attachment"
+            if 'filename="' in disposition:
+                filename = disposition.split('filename="')[1].rstrip('"')
+
+            return StreamingResponse(
+                iter([resp.content]),
+                media_type=content_type,
+                headers={"Content-Disposition": f'inline; filename="{filename}"'},
+            )
+    except Exception as e:
+        logger.warning(f"Attachment proxy failed for id {attachment_id}: {e}")
+        raise HTTPException(status_code=404, detail=f"Could not retrieve attachment: {e}")
 
 
 @public_router.post("/project/{opp_id}/respond")
