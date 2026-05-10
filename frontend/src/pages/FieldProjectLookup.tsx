@@ -10,7 +10,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { myProjectLookup } from '../lib/api';
+import { myProjectLookup, getAspireEmployees } from '../lib/api';
 
 const LS_KEY = 'field_lead_name';
 
@@ -63,33 +63,37 @@ function HoursBar({ est, act }: { est: number; act: number }) {
 export default function FieldProjectLookup() {
   const navigate = useNavigate();
 
-  const [leads, setLeads]         = useState<{ name: string; display: string }[]>([]);
-  const [leadsLoading, setLeadsLoading] = useState(true);
-  const [apiError, setApiError]   = useState(false);
-  const [selected, setSelected]   = useState(() => localStorage.getItem(LS_KEY) || '');
-  const [manualName, setManualName] = useState('');
-  const [projects, setProjects]   = useState<Project[]>([]);
-  const [loading, setLoading]     = useState(false);
-  const [searched, setSearched]   = useState(false);
+  const [employees, setEmployees]   = useState<{ name: string }[]>([]);
+  const [empsLoading, setEmpsLoading] = useState(true);
+  const [selected, setSelected]     = useState(() => localStorage.getItem(LS_KEY) || '');
+  const [projects, setProjects]     = useState<Project[]>([]);
+  const [loading, setLoading]       = useState(false);
+  const [searched, setSearched]     = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  // Load lead list on mount
+  // Load employee list from Aspire on mount
   useEffect(() => {
-    myProjectLookup()
-      .then(r => { setLeads(r.leads); })
-      .catch(() => setApiError(true))
-      .finally(() => setLeadsLoading(false));
+    getAspireEmployees()
+      .then(list => {
+        const sorted = list
+          .map(e => ({ name: e.FullName }))
+          .filter(e => e.name)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setEmployees(sorted);
+      })
+      .catch(() => {})
+      .finally(() => setEmpsLoading(false));
   }, []);
 
-  // Auto-search if a name was remembered and leads loaded
+  // Auto-search if a name was remembered and employees loaded
   useEffect(() => {
-    if (selected && leads.length > 0) {
+    if (selected && employees.length > 0) {
       runLookup(selected);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leads]);
+  }, [employees]);
 
-  const activeName = leads.length > 0 ? selected : manualName.trim();
+  const activeName = selected;
 
   async function runLookup(name: string) {
     if (!name) return;
@@ -133,16 +137,9 @@ export default function FieldProjectLookup() {
         <div style={S.card}>
           <div style={S.ctitle}>Who are you?</div>
 
-          {apiError && (
-            <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 10 }}>
-              ⚠️ Could not connect to server. Type your Aspire name below to search anyway.
-            </div>
-          )}
-
-          {leadsLoading ? (
-            <div style={S.empty}>Loading…</div>
-          ) : leads.length > 0 ? (
-            /* Dropdown from leads table */
+          {empsLoading ? (
+            <div style={S.empty}>Loading employees…</div>
+          ) : (
             <div style={{ display: 'flex', gap: 8 }}>
               <select
                 style={{ ...S.sel, flex: 1 }}
@@ -150,8 +147,8 @@ export default function FieldProjectLookup() {
                 onChange={e => { setSelected(e.target.value); setProjects([]); setSearched(false); }}
               >
                 <option value="">Select your name…</option>
-                {leads.map(l => (
-                  <option key={l.name} value={l.name}>{l.display}</option>
+                {employees.map(e => (
+                  <option key={e.name} value={e.name}>{e.name}</option>
                 ))}
               </select>
               <button
@@ -162,37 +159,14 @@ export default function FieldProjectLookup() {
                 {loading ? '…' : 'Go'}
               </button>
             </div>
-          ) : (
-            /* No leads configured — free-text fallback */
-            <div>
-              <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 10px' }}>
-                Enter your name exactly as it appears in Aspire:
-              </p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  style={{ ...S.sel, flex: 1 }}
-                  placeholder="e.g. Clayton Rushton"
-                  value={manualName}
-                  onChange={e => { setManualName(e.target.value); setProjects([]); setSearched(false); }}
-                  onKeyDown={e => e.key === 'Enter' && handleGo()}
-                />
-                <button
-                  style={{ ...S.goBtn, opacity: activeName && !loading ? 1 : 0.4 }}
-                  disabled={!activeName || loading}
-                  onClick={handleGo}
-                >
-                  {loading ? '…' : 'Go'}
-                </button>
-              </div>
-            </div>
           )}
 
-          {(selected || manualName) && (
+          {selected && (
             <div style={{ marginTop: 8, fontSize: 11, color: '#6b7280' }}>
               Not you?{' '}
               <button
                 style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: 11, cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}
-                onClick={() => { setSelected(''); setManualName(''); localStorage.removeItem(LS_KEY); setProjects([]); setSearched(false); }}
+                onClick={() => { setSelected(''); localStorage.removeItem(LS_KEY); setProjects([]); setSearched(false); }}
               >
                 Clear
               </button>

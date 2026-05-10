@@ -616,21 +616,22 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
     except Exception as e:
         logger.warning(f"my-project WorkTickets fetch failed: {e}")
 
-    # Filter to this crew leader + Construction division + active/recent statuses
-    # Statuses to include: In Production, In Queue, plus Complete within last 90 days
+    # Filter to this crew leader first — log branches/statuses so we can tune
+    leader_tickets = [
+        t for t in all_tickets
+        if (t.get("CrewLeaderName") or "").strip().lower() == name.lower()
+    ]
+    if leader_tickets:
+        branches  = {(t.get("BranchName") or "").strip() for t in leader_tickets}
+        statuses  = {(t.get("WorkTicketStatusName") or "").strip() for t in leader_tickets}
+        logger.info(f"my-project '{name}': {len(leader_tickets)} tickets — branches={branches} statuses={statuses}")
+
+    # Status filter: In Production + In Queue always; Complete within last 90 days
     ACTIVE_STATUSES   = {"in production", "in queue"}
     COMPLETE_STATUSES = {"complete", "completed"}
     cutoff_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
 
     def _keep_ticket(t: dict) -> bool:
-        # Must be this crew leader
-        if (t.get("CrewLeaderName") or "").strip().lower() != name.lower():
-            return False
-        # Must be Construction division
-        branch = (t.get("BranchName") or "").lower()
-        if "construction" not in branch:
-            return False
-        # Status filter: active statuses always included; completed only if recent
         status = (t.get("WorkTicketStatusName") or "").strip().lower()
         if status in ACTIVE_STATUSES:
             return True
@@ -639,10 +640,10 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
             return complete_date >= cutoff_date
         return False
 
-    tickets = [t for t in all_tickets if _keep_ticket(t)]
+    tickets = [t for t in leader_tickets if _keep_ticket(t)]
     logger.info(
-        f"my-project: {len(tickets)} construction tickets (in production/queue + recent complete) "
-        f"assigned to '{name}' from {len(all_tickets)} total"
+        f"my-project '{name}': {len(tickets)} tickets after status filter "
+        f"(active/queue + complete ≥{cutoff_date})"
     )
 
     if not tickets:
