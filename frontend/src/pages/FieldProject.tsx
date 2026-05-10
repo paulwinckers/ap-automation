@@ -38,6 +38,28 @@ interface HistoryEntry {
   submitted_at:    string | null;
 }
 
+interface ActivityComment {
+  Comment:           string;
+  CreatedDate:       string;
+  CreatedByUserName: string;
+}
+
+interface SmartPrompt {
+  id:        string;
+  type:      string;
+  icon:      string;
+  situation: string;
+  question:  string;
+  options:   string[];
+  actHours?: number;  // for over_hours prompts — used to detect if hours changed
+}
+
+interface PromptMemory {
+  answer:      string;
+  answeredAt:  number;  // epoch ms
+  actHours?:   number;  // snapshot of actHours when answered
+}
+
 interface Activity {
   ActivityID:           number;
   Subject:              string;
@@ -48,7 +70,34 @@ interface Activity {
   CreatedDate:          string;
   CompleteDate:         string;
   CreatedByUserName:    string;
+  comments:             ActivityComment[];
   IsMileStone:          boolean;
+}
+
+interface MaterialItem {
+  description: string;
+  quantity:    number;
+  unit_cost:   number;
+  total:       number;
+}
+
+interface MaterialPO {
+  receipt_id:     number;
+  display_number: number | null;
+  work_ticket_id: number | null;
+  ticket_number:  string | number | null;
+  service_name:   string;
+  vendor_name:    string;
+  received_date:  string;
+  total:          number;
+  status:         string;
+  note:           string;
+  items:          MaterialItem[];
+}
+
+interface MaterialsData {
+  pos:                MaterialPO[];
+  tickets_without_po: { WorkTicketID: number; ServiceName: string; WorkTicketNumber: string | number }[];
 }
 
 interface ProjectData {
@@ -65,6 +114,8 @@ interface ProjectData {
   month:            string;
   tickets:          Ticket[];
   ai_tip:           string | null;
+  project_summary:  string;
+  smart_prompts:    SmartPrompt[];
   history:          HistoryEntry[];
   activities:       Activity[];
 }
@@ -139,9 +190,63 @@ export default function FieldProject() {
   const [submitMsg,      setSubmitMsg]      = useState('');
   const [handoffLoading, setHandoffLoading] = useState(false);
   const [handoffMsg,     setHandoffMsg]     = useState('');
+  // Smart prompt selections: promptId → selected option string
+  const [promptSelections, setPromptSelections] = useState<Record<string, string>>({});
+  // Show prompts that were previously answered and suppressed
+  const [showDismissed, setShowDismissed] = useState(false);
 
-  // Tab: 'tickets' | 'history' | 'update'
-  const [tab, setTab] = useState<'tickets' | 'history' | 'update'>('tickets');
+  // ── Prompt memory helpers (localStorage) ─────────────────────────────────
+  const promptMemoryKey = (promptId: string) => `pm_${oppId}_${promptId}`;
+
+  function getPromptMemory(promptId: string): PromptMemory | null {
+    try {
+      const raw = localStorage.getItem(promptMemoryKey(promptId));
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  }
+
+  function savePromptMemory(promptId: string, answer: string, actHours?: number) {
+    try {
+      const mem: PromptMemory = { answer, answeredAt: Date.now(), actHours };
+      localStorage.setItem(promptMemoryKey(promptId), JSON.stringify(mem));
+    } catch {}
+  }
+
+  function isPromptSuppressed(p: SmartPrompt): boolean {
+    const mem = getPromptMemory(p.id);
+    if (!mem || !mem.answer) return false;
+    const ageMs = Date.now() - mem.answeredAt;
+    if (p.type === 'over_hours') {
+      // Re-show if hours increased by more than 1h since last answer
+      const hoursIncrease = (p.actHours ?? 0) - (mem.actHours ?? 0);
+      return hoursIncrease < 1;
+    }
+    // Materials / upcoming: suppress for 24h
+    return ageMs < 24 * 60 * 60 * 1000;
+  }
+
+  // Tab: 'tickets' | 'history' | 'update' | 'materials'
+  const [tab, setTab] = useState<'tickets' | 'history' | 'update' | 'materials'>('tickets');
+
+  // Materials tab — lazy-loaded on first open
+  const [materialsData,    setMaterialsData]    = useState<MaterialsData | null>(null);
+  const [materialsLoading, setMaterialsLoading] = useState(false);
+  const [materialsError,   setMaterialsError]   = useState('');
+
+  const loadMaterials = async (force = false) => {
+    if (!force && materialsData !== null) return; // already fetched
+    setMaterialsLoading(true);
+    setMaterialsError('');
+    try {
+      const r = await fetch(`${API}/checkin/project/${oppId}/materials`);
+      if (!r.ok) throw new Error('Failed to load materials');
+      setMaterialsData(await r.json());
+    } catch (e: any) {
+      setMaterialsError(e.message || 'Could not load materials');
+    } finally {
+      setMaterialsLoading(false);
+    }
+  };
 
   const load = async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -164,9 +269,10 @@ export default function FieldProject() {
 
   useEffect(() => { load(); }, [oppId]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent, combinedNotes?: string) => {
     e.preventDefault();
-    if (!approachNotes.trim()) return;
+    const notes = combinedNotes ?? approachNotes.trim();
+    if (!notes) return;
     setSubmitting(true);
     setSubmitMsg('');
     try {
@@ -174,7 +280,7 @@ export default function FieldProject() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          approach_notes:  approachNotes.trim(),
+          approach_notes:  notes,
           remaining_hours: remainingHours ? parseFloat(remainingHours) : null,
           blockers:        blockers.trim() || null,
         }),
@@ -265,23 +371,29 @@ export default function FieldProject() {
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', borderBottom: '1px solid #f1f5f9' }}>
-          {(['tickets', 'history', 'update'] as const).map(t => (
+        <div style={{ display: 'flex', borderBottom: '1px solid #f1f5f9', overflowX: 'auto' }}>
+          {([
+            { key: 'tickets',   label: `📋 Tickets (${data.tickets.length})` },
+            { key: 'history',   label: `📝 History (${(data.activities || []).filter(a => (a.ActivityType || '').toLowerCase() !== 'email').length + responded})` },
+            { key: 'materials', label: '📦 Materials' },
+            { key: 'update',    label: '✏️ Update' },
+          ] as const).map(({ key, label }) => (
             <button
-              key={t}
-              onClick={() => setTab(t)}
+              key={key}
+              onClick={() => {
+                setTab(key);
+                if (key === 'materials') loadMaterials();
+              }}
               style={{
-                flex: 1, padding: '12px 4px', border: 'none', background: 'none',
-                fontWeight: tab === t ? 700 : 500,
-                fontSize: 13,
-                color: tab === t ? '#16a34a' : '#6b7280',
-                borderBottom: tab === t ? '2px solid #16a34a' : '2px solid transparent',
-                cursor: 'pointer', textTransform: 'capitalize',
+                flex: '0 0 auto', padding: '12px 10px', border: 'none', background: 'none',
+                fontWeight: tab === key ? 700 : 500,
+                fontSize: 12,
+                color: tab === key ? '#16a34a' : '#6b7280',
+                borderBottom: tab === key ? '2px solid #16a34a' : '2px solid transparent',
+                cursor: 'pointer', whiteSpace: 'nowrap',
               }}
             >
-              {t === 'tickets' ? `📋 Tickets (${data.tickets.length})` :
-               t === 'history' ? `📝 History (${responded})` :
-               '✏️ Update'}
+              {label}
             </button>
           ))}
         </div>
@@ -373,12 +485,6 @@ export default function FieldProject() {
               )}
 
               <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-                <button
-                  onClick={() => setTab('update')}
-                  style={{ flex: 1, padding: '13px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: 15, cursor: 'pointer' }}
-                >
-                  ✏️ Submit Update
-                </button>
                 {data.opp_number && (
                   <button
                     disabled={handoffLoading}
@@ -409,50 +515,84 @@ export default function FieldProject() {
           {/* ── History tab ──────────────────────────────────────────────── */}
           {tab === 'history' && (
             <>
-              {/* Aspire Activities */}
-              <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-                Aspire Activities ({(data.activities || []).length})
-              </div>
-              {(data.activities || []).length === 0 ? (
-                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '16px 0 24px' }}>
-                  No activities logged in Aspire
-                </div>
-              ) : (
-                <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', marginBottom: 24 }}>
-                  {(data.activities || []).map((a, i) => (
-                    <div key={a.ActivityID} style={{
-                      padding: '11px 14px',
-                      background: i % 2 === 0 ? '#fff' : '#f9fafb',
-                      borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
-                    }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: '#111827', marginBottom: 2 }}>
-                            {a.IsMileStone ? '🏁 ' : ''}{a.Subject || '(no subject)'}
-                          </div>
-                          <div style={{ fontSize: 11, color: '#9ca3af' }}>
-                            {[a.ActivityType, a.ActivityCategoryName].filter(Boolean).join(' · ')}
-                            {a.CreatedByUserName ? ` · ${a.CreatedByUserName}` : ''}
-                          </div>
-                        </div>
-                        <div style={{ flexShrink: 0, textAlign: 'right' }}>
-                          <div style={{ fontSize: 11, color: '#9ca3af' }}>{a.CompleteDate || a.CreatedDate}</div>
-                          {a.Status && (
-                            <span style={{ fontSize: 10, fontWeight: 600, background: a.Status.toLowerCase().includes('complet') ? '#dcfce7' : '#fef3c7', color: a.Status.toLowerCase().includes('complet') ? '#15803d' : '#92400e', padding: '1px 6px', borderRadius: 8, marginTop: 3, display: 'inline-block' }}>
-                              {a.Status}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {a.Notes && (
-                        <div style={{ marginTop: 6, fontSize: 12, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap', background: '#f8fafc', borderRadius: 6, padding: '6px 10px' }}>
-                          {a.Notes.length > 300 ? a.Notes.slice(0, 300) + '…' : a.Notes}
-                        </div>
-                      )}
+              {/* Aspire Activities — filter out Email notification logs, strip HTML from notes */}
+              {(() => {
+                const stripHtml = (s: string) => {
+                  try {
+                    const doc = new DOMParser().parseFromString(s, 'text/html');
+                    return (doc.body.textContent || '').replace(/\s{2,}/g, ' ').trim();
+                  } catch {
+                    return s.replace(/<[^>]*>/g, ' ').replace(/\s{2,}/g, ' ').trim();
+                  }
+                };
+                const visibleActs = (data.activities || []).filter(
+                  a => (a.ActivityType || '').toLowerCase() !== 'email'
+                );
+                return (
+                  <>
+                    <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                      Aspire Activities ({visibleActs.length})
                     </div>
-                  ))}
-                </div>
-              )}
+                    {visibleActs.length === 0 ? (
+                      <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '16px 0 24px' }}>
+                        No activities logged in Aspire
+                      </div>
+                    ) : (
+                      <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', marginBottom: 24 }}>
+                        {visibleActs.map((a, i) => {
+                          const plainNotes = stripHtml(a.Notes || '');
+                          return (
+                            <div key={a.ActivityID} style={{
+                              padding: '11px 14px',
+                              background: i % 2 === 0 ? '#fff' : '#f9fafb',
+                              borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
+                            }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: '#111827', marginBottom: 2 }}>
+                                    {a.IsMileStone ? '🏁 ' : ''}{a.Subject || '(no subject)'}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                                    {[a.ActivityType, a.ActivityCategoryName].filter(Boolean).join(' · ')}
+                                    {a.CreatedByUserName ? ` · ${a.CreatedByUserName}` : ''}
+                                  </div>
+                                </div>
+                                <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                                  <div style={{ fontSize: 11, color: '#9ca3af' }}>{a.CompleteDate || a.CreatedDate}</div>
+                                  {a.Status && (
+                                    <span style={{ fontSize: 10, fontWeight: 600, background: a.Status.toLowerCase().includes('complet') ? '#dcfce7' : '#fef3c7', color: a.Status.toLowerCase().includes('complet') ? '#15803d' : '#92400e', padding: '1px 6px', borderRadius: 8, marginTop: 3, display: 'inline-block' }}>
+                                      {a.Status}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              {plainNotes && (
+                                <div style={{ marginTop: 6, fontSize: 12, color: '#374151', lineHeight: 1.6, background: '#f8fafc', borderRadius: 6, padding: '6px 10px' }}>
+                                  {plainNotes.length > 300 ? plainNotes.slice(0, 300) + '…' : plainNotes}
+                                </div>
+                              )}
+                              {(a.comments || []).length > 0 && (
+                                <div style={{ marginTop: 8 }}>
+                                  {(a.comments || []).map((c, ci) => (
+                                    <div key={ci} style={{ marginTop: 6, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '7px 10px' }}>
+                                      <div style={{ fontSize: 10, color: '#92400e', fontWeight: 600, marginBottom: 3 }}>
+                                        💬 {c.CreatedByUserName}{c.CreatedDate ? ` · ${c.CreatedDate}` : ''}
+                                      </div>
+                                      <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                                        {stripHtml(c.Comment)}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* Check-in History */}
               <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
@@ -497,19 +637,137 @@ export default function FieldProject() {
 
           {/* ── Update tab ───────────────────────────────────────────────── */}
           {tab === 'update' && (
-            <form onSubmit={handleSubmit}>
-              <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a', marginBottom: 18 }}>
-                Submit Your Update
+            <form onSubmit={e => {
+              e.preventDefault();
+              // Prepend prompt selections to approach notes if any selected
+              const answered = (data.smart_prompts || []).filter(p => promptSelections[p.id]);
+              // Persist answers so they're suppressed on next load
+              answered.forEach(p => savePromptMemory(p.id, promptSelections[p.id], p.actHours));
+              const promptLines = answered.map(p => `${p.icon} ${p.situation}\n→ ${promptSelections[p.id]}`);
+              const combined = promptLines.length > 0
+                ? promptLines.join('\n\n') + (approachNotes.trim() ? '\n\n' + approachNotes.trim() : '')
+                : approachNotes.trim();
+              if (!combined.trim()) return;
+              handleSubmit(e, combined);
+            }}>
+              <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a', marginBottom: 12 }}>
+                Site Update
               </div>
+
+              {/* ── Project Summary ── */}
+              {data.project_summary && (
+                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '14px 16px', marginBottom: 18 }}>
+                  <div style={{ fontWeight: 700, fontSize: 11, color: '#475569', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    🗂 Project Status
+                  </div>
+                  <p style={{ margin: 0, fontSize: 13, color: '#1e293b', lineHeight: 1.65 }}>
+                    {data.project_summary}
+                  </p>
+                </div>
+              )}
+
+              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
+                Answer the prompts below, then add any notes.
+              </div>
+
+              {/* ── Smart Prompts ── */}
+              {(() => {
+                const allPrompts   = data.smart_prompts || [];
+                const visible      = allPrompts.filter(p => !isPromptSuppressed(p));
+                const suppressed   = allPrompts.filter(p =>  isPromptSuppressed(p));
+                const toRender     = showDismissed ? allPrompts : visible;
+
+                return (
+                  <>
+                    {toRender.map(p => {
+                      const mem = getPromptMemory(p.id);
+                      const isSuppressed = isPromptSuppressed(p);
+                      return (
+                        <div key={p.id} style={{
+                          marginBottom: 14,
+                          border: `1.5px solid ${isSuppressed ? '#e5e7eb' : p.type === 'over_hours' ? '#fca5a5' : p.type === 'upcoming' ? '#93c5fd' : '#d1d5db'}`,
+                          borderRadius: 10,
+                          overflow: 'hidden',
+                          opacity: isSuppressed ? 0.65 : 1,
+                        }}>
+                          <div style={{
+                            padding: '10px 14px',
+                            background: isSuppressed ? '#f9fafb' : p.type === 'over_hours' ? '#fff1f2' : p.type === 'upcoming' ? '#eff6ff' : '#f9fafb',
+                          }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: isSuppressed ? '#6b7280' : p.type === 'over_hours' ? '#dc2626' : p.type === 'upcoming' ? '#1d4ed8' : '#374151', marginBottom: 2 }}>
+                              {isSuppressed ? '✓ ' : ''}{p.icon} {p.situation}
+                            </div>
+                            <div style={{ fontSize: 13, color: '#0f172a', fontWeight: 600 }}>
+                              {isSuppressed && mem?.answer
+                                ? <span style={{ fontWeight: 400, color: '#6b7280', fontSize: 12 }}>Previously: {mem.answer}</span>
+                                : p.question}
+                            </div>
+                          </div>
+                          {!isSuppressed && (
+                            <div style={{ padding: '8px 10px 10px', background: '#fff', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                              {p.options.map(opt => {
+                                const selected = promptSelections[p.id] === opt;
+                                return (
+                                  <button
+                                    key={opt}
+                                    type="button"
+                                    onClick={() => {
+                                      const newVal = selected ? '' : opt;
+                                      setPromptSelections(prev => ({ ...prev, [p.id]: newVal }));
+                                      if (newVal) savePromptMemory(p.id, newVal, p.actHours);
+                                    }}
+                                    style={{
+                                      padding: '6px 11px',
+                                      borderRadius: 20,
+                                      border: selected ? '2px solid #16a34a' : '1.5px solid #d1d5db',
+                                      background: selected ? '#dcfce7' : '#fff',
+                                      color: selected ? '#15803d' : '#374151',
+                                      fontSize: 12,
+                                      fontWeight: selected ? 700 : 400,
+                                      cursor: 'pointer',
+                                      textAlign: 'left',
+                                    }}
+                                  >
+                                    {selected ? '✓ ' : ''}{opt}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {suppressed.length > 0 && !showDismissed && (
+                      <button
+                        type="button"
+                        onClick={() => setShowDismissed(true)}
+                        style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: 12, cursor: 'pointer', padding: '0 0 14px', textDecoration: 'underline' }}
+                      >
+                        ↩ Show {suppressed.length} previously answered prompt{suppressed.length !== 1 ? 's' : ''}
+                      </button>
+                    )}
+                    {showDismissed && suppressed.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowDismissed(false)}
+                        style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: 12, cursor: 'pointer', padding: '0 0 14px', textDecoration: 'underline' }}
+                      >
+                        ↑ Hide answered prompts
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* Coaching tip */}
               {data.ai_tip && (
-                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '14px 16px', marginBottom: 20 }}>
-                  <div style={{ fontWeight: 700, fontSize: 11, color: '#15803d', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    💡 Today's Coaching Tips
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
+                  <div style={{ fontWeight: 700, fontSize: 11, color: '#15803d', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    💡 Coaching Tip
                   </div>
                   {(data.ai_tip || '').split('\n\n').filter(Boolean).map((p, i, arr) => (
-                    <p key={i} style={{ margin: i < arr.length - 1 ? '0 0 8px' : 0, fontSize: 13, color: '#1e293b', lineHeight: 1.6 }}>{p}</p>
+                    <p key={i} style={{ margin: i < arr.length - 1 ? '0 0 6px' : 0, fontSize: 12, color: '#1e293b', lineHeight: 1.5 }}>{p}</p>
                   ))}
                 </div>
               )}
@@ -527,21 +785,21 @@ export default function FieldProject() {
 
               <div style={{ marginBottom: 14 }}>
                 <label style={LABEL}>
-                  Today's plan &amp; approach <span style={{ color: '#ef4444' }}>*</span>
+                  Additional notes <span style={{ color: '#6b7280', fontWeight: 400 }}>(optional if prompts answered)</span>
                 </label>
                 <textarea
-                  required rows={5}
-                  placeholder="What's your plan for moving the project forward? What will the crew focus on? Any adjustments?"
+                  rows={4}
+                  placeholder="Any other details, plan for tomorrow, or context for the team…"
                   value={approachNotes}
                   onChange={e => setApproachNotes(e.target.value)}
-                  style={{ ...INPUT, resize: 'vertical', minHeight: 110 }}
+                  style={{ ...INPUT, resize: 'vertical', minHeight: 90 }}
                 />
               </div>
 
               <div style={{ marginBottom: 22 }}>
                 <label style={LABEL}>Blockers or issues (optional)</label>
                 <textarea
-                  rows={3}
+                  rows={2}
                   placeholder="Anything slowing you down?"
                   value={blockers}
                   onChange={e => setBlockers(e.target.value)}
@@ -560,20 +818,185 @@ export default function FieldProject() {
                 </div>
               )}
 
-              <button
-                type="submit"
-                disabled={submitting || !approachNotes.trim()}
-                style={{
-                  width: '100%', padding: '15px',
-                  background: approachNotes.trim() ? '#16a34a' : '#94a3b8',
-                  color: '#fff', border: 'none', borderRadius: 10,
-                  fontWeight: 800, fontSize: 16,
-                  cursor: approachNotes.trim() ? 'pointer' : 'not-allowed',
-                }}
-              >
-                {submitting ? 'Sending…' : 'Send Update to Team →'}
-              </button>
+              {(() => {
+                const hasPrompts = (data.smart_prompts || []).some(p => promptSelections[p.id]);
+                const canSubmit  = hasPrompts || approachNotes.trim();
+                return (
+                  <button
+                    type="submit"
+                    disabled={submitting || !canSubmit}
+                    style={{
+                      width: '100%', padding: '15px',
+                      background: canSubmit ? '#16a34a' : '#94a3b8',
+                      color: '#fff', border: 'none', borderRadius: 10,
+                      fontWeight: 800, fontSize: 16,
+                      cursor: canSubmit ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    {submitting ? 'Sending…' : 'Send Update to Team →'}
+                  </button>
+                );
+              })()}
             </form>
+          )}
+
+          {/* ── Materials tab ─────────────────────────────────────────── */}
+          {tab === 'materials' && (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Purchase Orders / Materials
+                </div>
+                <button
+                  onClick={() => loadMaterials(true)}
+                  style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: 12 }}
+                >
+                  {materialsLoading ? '↻' : '↺ refresh'}
+                </button>
+              </div>
+
+              {materialsLoading && (
+                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '32px 0' }}>
+                  Loading materials…
+                </div>
+              )}
+
+              {materialsError && !materialsLoading && (
+                <div style={{ textAlign: 'center', color: '#dc2626', fontSize: 13, padding: '24px 0' }}>
+                  {materialsError}
+                </div>
+              )}
+
+              {!materialsLoading && materialsData && (
+                <>
+                  {/* PO list */}
+                  {materialsData.pos.length === 0 && materialsData.tickets_without_po.length === 0 && (
+                    <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '24px 0' }}>
+                      No purchase orders found for this job
+                    </div>
+                  )}
+
+                  {materialsData.pos.length > 0 && (
+                    <div style={{ marginBottom: 20 }}>
+                      {materialsData.pos.map((po) => (
+                        <div key={po.receipt_id} style={{
+                          border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', marginBottom: 10,
+                        }}>
+                          {/* PO header */}
+                          <div style={{
+                            background: '#f8fafc', padding: '10px 14px',
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+                          }}>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: 13, color: '#111827' }}>
+                                PO #{po.display_number ?? po.receipt_id}
+                              </div>
+                              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+                                {po.service_name && <span>{po.service_name} · </span>}
+                                {po.vendor_name}
+                                {po.received_date && <span> · {po.received_date}</span>}
+                              </div>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>
+                                {po.total ? `$${Number(po.total).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                              </div>
+                              {po.status && (
+                                <span style={{
+                                  fontSize: 10, fontWeight: 600, marginTop: 3, display: 'inline-block',
+                                  padding: '1px 7px', borderRadius: 8,
+                                  background: po.status.toLowerCase().includes('approved') ? '#dcfce7' : po.status.toLowerCase().includes('new') ? '#fef3c7' : '#f1f5f9',
+                                  color: po.status.toLowerCase().includes('approved') ? '#15803d' : po.status.toLowerCase().includes('new') ? '#92400e' : '#475569',
+                                }}>
+                                  {po.status}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Note snippet */}
+                          {po.note && (
+                            <div style={{ padding: '6px 14px', fontSize: 11, color: '#6b7280', borderTop: '1px solid #f1f5f9', background: '#fff' }}>
+                              {po.note}
+                            </div>
+                          )}
+
+                          {/* Line items (if Aspire returns them) */}
+                          {po.items.length > 0 && (
+                            <div style={{ borderTop: '1px solid #f1f5f9' }}>
+                              {/* Table header */}
+                              <div style={{
+                                display: 'grid', gridTemplateColumns: '1fr 56px 64px 64px',
+                                padding: '5px 14px', background: '#f8fafc',
+                                fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em',
+                              }}>
+                                <div>Item</div><div style={{ textAlign: 'right' }}>Qty</div>
+                                <div style={{ textAlign: 'right' }}>Unit</div>
+                                <div style={{ textAlign: 'right' }}>Total</div>
+                              </div>
+                              {po.items.map((item, idx) => (
+                                <div key={idx} style={{
+                                  display: 'grid', gridTemplateColumns: '1fr 56px 64px 64px',
+                                  padding: '6px 14px',
+                                  background: idx % 2 === 0 ? '#fff' : '#f9fafb',
+                                  fontSize: 12, color: '#374151',
+                                  borderTop: '1px solid #f1f5f9',
+                                }}>
+                                  <div style={{ paddingRight: 8 }}>{item.description}</div>
+                                  <div style={{ textAlign: 'right', color: '#6b7280' }}>{item.quantity}</div>
+                                  <div style={{ textAlign: 'right', color: '#6b7280' }}>
+                                    {item.unit_cost ? `$${Number(item.unit_cost).toFixed(2)}` : '—'}
+                                  </div>
+                                  <div style={{ textAlign: 'right', fontWeight: 600 }}>
+                                    {item.total ? `$${Number(item.total).toFixed(2)}` : '—'}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Tickets without any PO */}
+                  {materialsData.tickets_without_po.length > 0 && (
+                    <>
+                      <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+                        Tickets Without PO
+                      </div>
+                      <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', marginBottom: 20 }}>
+                        {materialsData.tickets_without_po.map((t, i) => (
+                          <div key={t.WorkTicketID} style={{
+                            padding: '11px 14px',
+                            background: i % 2 === 0 ? '#fff' : '#f9fafb',
+                            borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          }}>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>
+                                {t.ServiceName || `Ticket #${t.WorkTicketNumber}`}
+                              </div>
+                              <div style={{ fontSize: 11, color: '#9ca3af' }}>#{t.WorkTicketNumber}</div>
+                            </div>
+                            <a
+                              href="/field/purchase-order"
+                              style={{
+                                padding: '7px 12px', background: '#16a34a', color: '#fff',
+                                borderRadius: 8, fontSize: 12, fontWeight: 700,
+                                textDecoration: 'none', whiteSpace: 'nowrap',
+                              }}
+                            >
+                              ＋ Create PO
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </>
           )}
 
         </div>

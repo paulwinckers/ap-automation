@@ -1217,6 +1217,105 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
     }
 
 
+@public_router.get("/project/{opp_id}/materials")
+async def get_project_materials(opp_id: int):
+    """
+    Return PO/Receipt summary for all work tickets in this opportunity.
+    Used by the Materials tab on the project page.
+    """
+    # 1. Get work tickets (reuses the same helper as get_project_page)
+    tickets = await _fetch_all_opp_tickets(opp_id)
+    ticket_map: dict[int, dict] = {
+        t.get("WorkTicketID"): {
+            "WorkTicketID":     t.get("WorkTicketID"),
+            "WorkTicketNumber": t.get("WorkTicketNumber"),
+            "ServiceName":      t.get("ServiceName") or f"#{t.get('WorkTicketNumber')}",
+        }
+        for t in tickets if t.get("WorkTicketID")
+    }
+    ticket_ids = list(ticket_map.keys())
+
+    if not ticket_ids:
+        return {"pos": [], "tickets_without_po": []}
+
+    # 2. Fetch Receipts for those work tickets (chunked OR filter)
+    all_receipts: list[dict] = []
+    chunk_size = 8  # keep filter URL short to avoid 400
+    for i in range(0, len(ticket_ids), chunk_size):
+        chunk = ticket_ids[i : i + chunk_size]
+        or_filter = " or ".join(f"WorkTicketID eq {tid}" for tid in chunk)
+        try:
+            res = await _aspire._get("Receipts", {
+                "$filter":  f"({or_filter})",
+                "$top":     "200",
+                "$orderby": "ReceiptID desc",
+            })
+            all_receipts.extend(_aspire._extract_list(res))
+        except Exception as e:
+            logger.warning(f"Receipts fetch for opp {opp_id} chunk {chunk} failed (non-fatal): {e}")
+
+    # 3. Deduplicate
+    seen_ids: set[int] = set()
+    deduped: list[dict] = []
+    for r in all_receipts:
+        rid = r.get("ReceiptID")
+        if rid and rid not in seen_ids:
+            seen_ids.add(rid)
+            deduped.append(r)
+
+    # 4. Which tickets have at least one receipt?
+    tickets_with_po: set[int] = {
+        r.get("WorkTicketID") for r in deduped if r.get("WorkTicketID")
+    }
+    tickets_without_po = [
+        v for k, v in ticket_map.items() if k not in tickets_with_po
+    ]
+
+    # 5. Format receipts
+    pos: list[dict] = []
+    for r in deduped:
+        rid = r.get("ReceiptID")
+        display_number = (rid - 1) if rid else None
+
+        # Extract line items — Aspire may or may not return ReceiptItems inline
+        raw_items = r.get("ReceiptItems") or []
+        items: list[dict] = []
+        for item in raw_items:
+            items.append({
+                "description": (
+                    item.get("Description")
+                    or item.get("ReceiptItemDescription")
+                    or item.get("ItemDescription")
+                    or "—"
+                ),
+                "quantity":  item.get("Quantity") or item.get("ItemQuantity") or 0,
+                "unit_cost": item.get("ItemUnitCost") or item.get("UnitCost") or 0,
+                "total":     item.get("ReceiptItemPrice") or item.get("ItemTotal") or 0,
+            })
+
+        wt_id       = r.get("WorkTicketID")
+        ticket_info = ticket_map.get(wt_id, {})
+
+        pos.append({
+            "receipt_id":     rid,
+            "display_number": display_number,
+            "work_ticket_id": wt_id,
+            "ticket_number":  ticket_info.get("WorkTicketNumber"),
+            "service_name":   ticket_info.get("ServiceName") or "",
+            "vendor_name":    r.get("VendorName") or str(r.get("VendorID") or "Unknown Vendor"),
+            "received_date":  (r.get("ReceivedDate") or "")[:10],
+            "total":          r.get("ReceiptTotalCost") or 0,
+            "status":         r.get("ReceiptStatusName") or "",
+            "note":           (r.get("ReceiptNote") or "").strip()[:120],
+            "items":          items,
+        })
+
+    return {
+        "pos":                pos,
+        "tickets_without_po": tickets_without_po,
+    }
+
+
 @public_router.post("/project/{opp_id}/respond")
 async def submit_project_response(
     opp_id: int, body: CheckinResponseIn, db: Database = Depends(get_db)
