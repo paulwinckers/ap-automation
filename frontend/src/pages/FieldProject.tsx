@@ -13,11 +13,14 @@ const API = import.meta.env.VITE_API_URL ?? '';
 interface Ticket {
   WorkTicketID:         number;
   WorkTicketNumber:     string | number;
+  WorkTicketTitle:      string;
   WorkTicketStatusName: string;
   ScheduledStartDate:   string;
   HoursEst:             number | null;
   HoursAct:             number | null;
   CrewLeaderName:       string | null;
+  Revenue:              number | null;
+  EarnedRevenue:        number | null;
 }
 
 interface HistoryEntry {
@@ -50,7 +53,12 @@ interface ProjectData {
 
 function fmtHrs(h: number | null | undefined): string {
   if (h == null) return '—';
-  return `${parseFloat(h as any).toFixed(1)}h`;
+  return parseFloat(h as any).toFixed(1);
+}
+
+function fmtMoney(v: number | null | undefined): string {
+  if (v == null) return '—';
+  return '$' + parseFloat(v as any).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function fmtDate(s: string | null | undefined): string {
@@ -186,10 +194,12 @@ export default function FieldProject() {
 
   if (!data) return null;
 
-  const totalEst = data.tickets.reduce((s, t) => s + (t.HoursEst ?? 0), 0);
-  const totalAct = data.tickets.reduce((s, t) => s + (t.HoursAct ?? 0), 0);
-  const totalRem = totalEst - totalAct;
-  const overBudget = totalAct > totalEst && totalEst > 0;
+  const totalEst      = data.tickets.reduce((s, t) => s + (t.HoursEst ?? 0), 0);
+  const totalAct      = data.tickets.reduce((s, t) => s + (t.HoursAct ?? 0), 0);
+  const totalRem      = totalEst - totalAct;
+  const totalRevenue  = data.tickets.reduce((s, t) => s + (t.Revenue ?? 0), 0);
+  const totalEarned   = data.tickets.reduce((s, t) => s + (t.EarnedRevenue ?? 0), 0);
+  const overBudget    = totalAct > totalEst && totalEst > 0;
   const responded  = data.history.filter(h => h.submitted_at).length;
   const tipParas   = (data.ai_tip || '').split('\n\n').filter(Boolean);
 
@@ -221,13 +231,13 @@ export default function FieldProject() {
         {/* Summary chips */}
         <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #f1f5f9' }}>
           {[
-            { label: 'Est', value: fmtHrs(totalEst) },
-            { label: 'Actual', value: fmtHrs(totalAct), alert: overBudget },
+            { label: 'Est Hrs',   value: fmtHrs(totalEst) },
+            { label: 'Act Hrs',   value: fmtHrs(totalAct), alert: overBudget },
             { label: 'Remaining', value: fmtHrs(totalRem), alert: totalRem < 0 },
-            { label: 'Updates', value: `${responded}` },
+            { label: 'Updates',   value: `${responded}` },
           ].map(({ label, value, alert }) => (
-            <div key={label} style={{ flex: 1, padding: '12px 8px', textAlign: 'center', borderRight: '1px solid #f1f5f9' }}>
-              <div style={{ fontSize: 18, fontWeight: 800, color: alert ? '#ef4444' : '#0f172a' }}>{value}</div>
+            <div key={label} style={{ flex: 1, padding: '12px 4px', textAlign: 'center', borderRight: '1px solid #f1f5f9' }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: alert ? '#ef4444' : '#0f172a' }}>{value}</div>
               <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 1 }}>{label}</div>
             </div>
           ))}
@@ -262,10 +272,7 @@ export default function FieldProject() {
             <>
               {/* AI tip */}
               {data.ai_tip && (
-                <div style={{
-                  background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10,
-                  padding: '14px 16px', marginBottom: 16,
-                }}>
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '14px 16px', marginBottom: 16 }}>
                   <div style={{ fontWeight: 700, fontSize: 11, color: '#15803d', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                     💡 Coaching Tips
                   </div>
@@ -275,62 +282,78 @@ export default function FieldProject() {
                 </div>
               )}
 
-              {/* Work tickets */}
-              <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                {data.month} Work Tickets
-                <button
-                  onClick={() => load(true)}
-                  style={{ marginLeft: 10, background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: 12 }}
-                >
+              {/* Header row */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Work Tickets ({data.tickets.length})
+                </div>
+                <button onClick={() => load(true)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: 12 }}>
                   {refreshing ? '↻' : '↺ refresh'}
                 </button>
               </div>
 
               {data.tickets.length === 0 ? (
                 <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '24px 0' }}>
-                  No work tickets scheduled this month
+                  No work tickets found for this job
                 </div>
               ) : (
-                <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
-                  {data.tickets.map((t, i) => {
-                    const est = t.HoursEst ?? 0;
-                    const act = t.HoursAct ?? 0;
-                    const rem = est - act;
-                    return (
-                      <div key={t.WorkTicketID} style={{
-                        padding: '12px 14px',
-                        background: i % 2 === 0 ? '#fff' : '#f9fafb',
-                        borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                          <div>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>#{t.WorkTicketNumber}</span>
-                            {t.CrewLeaderName && (
-                              <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>{t.CrewLeaderName}</span>
-                            )}
+                <>
+                  {/* Totals row */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr repeat(4, auto)', gap: '0 12px', padding: '8px 12px', background: '#f8fafc', borderRadius: 8, marginBottom: 6, fontSize: 12, fontWeight: 700, color: '#374151' }}>
+                    <span>Totals</span>
+                    <span style={{ textAlign: 'right' }}>{fmtHrs(totalEst)}h est</span>
+                    <span style={{ textAlign: 'right', color: overBudget ? '#ef4444' : '#374151' }}>{fmtHrs(totalAct)}h act</span>
+                    <span style={{ textAlign: 'right', color: totalEarned > 0 ? '#15803d' : '#94a3b8' }}>{fmtMoney(totalEarned || null)}</span>
+                    <span style={{ textAlign: 'right', color: '#6b7280' }}>{fmtMoney(totalRevenue || null)}</span>
+                  </div>
+
+                  {/* Ticket rows */}
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
+                    {data.tickets.map((t, i) => {
+                      const est = t.HoursEst ?? 0;
+                      const act = t.HoursAct ?? 0;
+                      const title = t.WorkTicketTitle || `#${t.WorkTicketNumber}`;
+                      return (
+                        <div key={t.WorkTicketID} style={{
+                          padding: '11px 14px',
+                          background: i % 2 === 0 ? '#fff' : '#f9fafb',
+                          borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
+                        }}>
+                          {/* Service name + status */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 5 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: '#111827', marginBottom: 1 }}>{title}</div>
+                              <div style={{ fontSize: 11, color: '#9ca3af' }}>#{t.WorkTicketNumber} · {fmtDate(t.ScheduledStartDate)}</div>
+                            </div>
+                            <StatusBadge status={t.WorkTicketStatusName || '—'} />
                           </div>
-                          <StatusBadge status={t.WorkTicketStatusName || '—'} />
+                          {/* Hours + revenue */}
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginTop: 6 }}>
+                            {[
+                              { label: 'Est', value: `${fmtHrs(est)}h` },
+                              { label: 'Actual', value: `${fmtHrs(act)}h`, alert: act > est && est > 0 },
+                              { label: 'Earned', value: fmtMoney(t.EarnedRevenue), highlight: (t.EarnedRevenue ?? 0) > 0 },
+                              { label: 'Revenue', value: fmtMoney(t.Revenue) },
+                            ].map(({ label, value, alert, highlight }) => (
+                              <div key={label} style={{ background: '#f8fafc', borderRadius: 6, padding: '5px 8px', textAlign: 'center' }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: alert ? '#ef4444' : highlight ? '#15803d' : '#111827' }}>{value}</div>
+                                <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }}>{label}</div>
+                              </div>
+                            ))}
+                          </div>
+                          <div style={{ marginTop: 6 }}>
+                            <HoursBar est={est} act={act} />
+                          </div>
                         </div>
-                        <div style={{ display: 'flex', gap: 12, fontSize: 12, color: '#64748b', marginBottom: 6 }}>
-                          <span>{fmtDate(t.ScheduledStartDate)}</span>
-                          <span>Est <strong style={{ color: '#374151' }}>{fmtHrs(est)}</strong></span>
-                          <span>Act <strong style={{ color: act > est && est > 0 ? '#ef4444' : '#374151' }}>{fmtHrs(act)}</strong></span>
-                          <span>Rem <strong style={{ color: rem < 0 ? '#ef4444' : '#15803d' }}>{fmtHrs(rem)}</strong></span>
-                        </div>
-                        <HoursBar est={est} act={act} />
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
 
               <button
                 onClick={() => setTab('update')}
-                style={{
-                  width: '100%', marginTop: 16, padding: '13px', background: '#16a34a',
-                  color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700,
-                  fontSize: 15, cursor: 'pointer',
-                }}
+                style={{ width: '100%', marginTop: 16, padding: '13px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: 15, cursor: 'pointer' }}
               >
                 ✏️ Submit Today's Update
               </button>

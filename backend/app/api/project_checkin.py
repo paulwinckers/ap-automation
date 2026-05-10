@@ -844,11 +844,33 @@ async def submit_checkin_response(
 
 # ── Permanent project page endpoints (no token, bookmarkable) ─────────────────
 
+async def _fetch_all_opp_tickets(opp_id: int) -> list[dict]:
+    """Fetch ALL work tickets for an opportunity (all months, with title + revenue)."""
+    try:
+        res = await _aspire._get("WorkTickets", {
+            "$filter":  f"OpportunityID eq {opp_id}",
+            "$orderby": "WorkTicketID asc",
+            "$top":     "200",
+            "$select": (
+                "WorkTicketID,WorkTicketNumber,WorkTicketTitle,WorkTicketStatusName,"
+                "OpportunityID,ScheduledStartDate,CompleteDate,"
+                "HoursEst,HoursAct,CrewLeaderName,PercentComplete,"
+                "Revenue,EarnedRevenue"
+            ),
+        })
+        rows = _aspire._extract_list(res)
+        logger.info(f"Project page tickets: {len(rows)} for opp {opp_id}")
+        return rows
+    except Exception as e:
+        logger.warning(f"Project page tickets fetch failed for opp {opp_id}: {e}")
+        return []
+
+
 @public_router.get("/project/{opp_id}")
 async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
     """
     Return live project data for the permanent project page.
-    Fetches current month's work tickets from Aspire + check-in history from D1.
+    Fetches ALL work tickets from Aspire + check-in history from D1.
     No token required — bookmarkable by lead.
     """
     from app.api.construction_plan import _fetch_opp_actuals
@@ -856,10 +878,10 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
     tz    = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
     month = datetime.now(tz).strftime("%Y-%m")
 
-    # Live Aspire data
+    # Live Aspire data — all tickets for this opportunity
     actuals = await _fetch_opp_actuals([opp_id])
     opp     = actuals.get(opp_id, {})
-    tickets = await _fetch_project_tickets(opp_id, month)
+    tickets = await _fetch_all_opp_tickets(opp_id)
 
     # Most recent AI tip from D1 (avoid regenerating every page load)
     tip_rows = await db._q(
@@ -900,14 +922,17 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         "revenue_act":      opp.get("ActualEarnedRevenue"),
         "pct_complete":     opp.get("PercentComplete"),
         "month":            month,
-        "tickets":          [{
+        "tickets": [{
             "WorkTicketID":         t.get("WorkTicketID"),
             "WorkTicketNumber":     t.get("WorkTicketNumber"),
+            "WorkTicketTitle":      t.get("WorkTicketTitle") or "",
             "WorkTicketStatusName": t.get("WorkTicketStatusName"),
             "ScheduledStartDate":   (t.get("ScheduledStartDate") or "")[:10],
             "HoursEst":             t.get("HoursEst"),
             "HoursAct":             t.get("HoursAct"),
             "CrewLeaderName":       t.get("CrewLeaderName"),
+            "Revenue":              t.get("Revenue"),
+            "EarnedRevenue":        t.get("EarnedRevenue"),
         } for t in tickets],
         "ai_tip":  ai_tip,
         "history": [dict(r) for r in history_rows],
