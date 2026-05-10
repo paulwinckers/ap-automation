@@ -615,7 +615,7 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
                 "OpportunityID,OpportunityNumber,ScheduledStartDate,CompleteDate,"
                 "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
             ),
-            "$orderby": "WorkTicketID desc",
+            "$orderby": "ScheduledStartDate desc",
             "$top":     "1000",
         }
         if date_fmt:
