@@ -115,6 +115,7 @@ interface ProjectData {
   month:            string;
   tickets:          Ticket[];
   ai_tip:           string | null;
+  scope_summary:    string;
   project_summary:  string;
   smart_prompts:    SmartPrompt[];
   history:          HistoryEntry[];
@@ -413,6 +414,18 @@ export default function FieldProject() {
                   {refreshing ? '↻' : '↺ refresh'}
                 </button>
               </div>
+
+              {/* Project Scope */}
+              {data.scope_summary && (
+                <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 10, padding: '12px 14px', marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, fontSize: 11, color: '#0369a1', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    📐 Project Scope
+                  </div>
+                  <p style={{ margin: 0, fontSize: 13, color: '#0c4a6e', lineHeight: 1.65 }}>
+                    {data.scope_summary}
+                  </p>
+                </div>
+              )}
 
               {data.tickets.length === 0 ? (
                 <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '24px 0' }}>

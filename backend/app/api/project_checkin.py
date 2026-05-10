@@ -181,6 +181,109 @@ async def _generate_ai_tip(
         )
 
 
+async def _fetch_scope_notes(opp_id: int) -> str:
+    """
+    Fetch raw scope/estimator notes from Aspire for an opportunity and return
+    a Claude-generated plain-English summary suitable for field crew.
+
+    Sources:
+      1. Opportunity record — any note-like fields (Notes, EstimatorNotes, etc.)
+      2. OpportunityServices records — ServiceNotes / ServiceGroupNotes per service
+    """
+    import re as _re
+
+    def _strip_html(s: str) -> str:
+        if not s:
+            return ""
+        text = _re.sub(r"<[^>]+>", " ", s)
+        text = _re.sub(r"&[a-zA-Z]+;", " ", text)
+        return _re.sub(r"\s{2,}", " ", text).strip()
+
+    # 1. Fetch opportunity without $select to get all fields
+    opp_raw: dict = {}
+    try:
+        res = await _aspire._get("Opportunities", {
+            "$filter": f"OpportunityID eq {opp_id}",
+            "$top":    "1",
+        })
+        rows = _aspire._extract_list(res)
+        if rows:
+            opp_raw = rows[0]
+    except Exception as e:
+        logger.warning(f"Scope notes: opportunity fetch failed for {opp_id}: {e}")
+
+    # 2. Fetch OpportunityServices for service-level notes
+    svc_rows: list[dict] = []
+    try:
+        res = await _aspire._get("OpportunityServices", {
+            "$filter": f"OpportunityID eq {opp_id}",
+            "$top":    "30",
+        })
+        svc_rows = _aspire._extract_list(res)
+    except Exception as e:
+        logger.warning(f"Scope notes: OpportunityServices fetch failed for {opp_id}: {e}")
+
+    # 3. Collect all note-like text from opportunity
+    NOTE_KEYS = {
+        "Notes", "EstimatorNotes", "SalesNotes", "InternalNotes",
+        "Description", "CustomerNotes", "PrivateNotes", "Scope",
+        "ScopeNotes", "WorkDescription", "JobDescription", "Comments",
+        "ServiceGroupNotes", "ServiceGroupNote",
+    }
+    opp_notes: list[str] = []
+    for key, val in opp_raw.items():
+        if key in NOTE_KEYS and val and isinstance(val, str):
+            clean = _strip_html(val.strip())
+            if clean:
+                opp_notes.append(f"[{key}] {clean}")
+
+    # 4. Collect service-level notes
+    svc_notes: list[str] = []
+    for svc in svc_rows:
+        svc_name = (
+            svc.get("ServiceNameAbr") or svc.get("ServiceName") or svc.get("DisplayName") or "Service"
+        )
+        for key in ("Notes", "ServiceNotes", "ServiceGroupNotes", "ServiceGroupNote", "Description"):
+            val = svc.get(key)
+            if val and isinstance(val, str):
+                clean = _strip_html(val.strip())
+                if clean:
+                    svc_notes.append(f"[{svc_name}] {clean}")
+                break  # one note per service
+
+    all_notes = opp_notes + svc_notes
+    if not all_notes:
+        return ""
+
+    raw_text = "\n\n".join(all_notes)
+    # If very short, just return it without calling Claude
+    if len(raw_text) < 120 and not any("<" in n for n in all_notes):
+        return raw_text
+
+    prompt = (
+        "You are summarizing estimator and scope notes for a construction field crew lead. "
+        "Below are raw notes from the project estimator and service descriptions. "
+        "Rewrite them as a single clear paragraph (3-6 sentences) in plain English that a field lead "
+        "can read quickly. Focus on: what work is being done, any special conditions or materials, "
+        "and key things the crew needs to know. Remove any HTML, redundant formatting, and internal "
+        "business jargon. Do not use bullet points or headings — just flowing sentences.\n\n"
+        "Raw notes:\n" + raw_text + "\n\nScope summary:"
+    )
+
+    try:
+        client = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        msg = await client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=250,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return (msg.content[0].text or "").strip()
+    except Exception as e:
+        logger.warning(f"Scope summary AI call failed for opp {opp_id}: {e}")
+        # Return the raw cleaned notes as fallback
+        return raw_text[:600]
+
+
 async def _generate_project_summary(
     opp_name: str,
     property_name: str,
@@ -1102,16 +1205,20 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             tickets,
         )
 
-    # Smart prompts + project summary for the Update tab — generated fresh each load
+    # Smart prompts + project summary + scope notes — all generated in parallel
     smart_prompts:    list[dict] = []
     project_summary:  str        = ""
+    scope_summary:    str        = ""
+    opp_name_str = opp.get("OpportunityName") or f"Job #{opp_id}"
+    prop_str     = opp.get("PropertyName") or ""
     if tickets:
-        opp_name_str = opp.get("OpportunityName") or f"Job #{opp_id}"
-        prop_str     = opp.get("PropertyName") or ""
-        project_summary, smart_prompts = await asyncio.gather(
+        project_summary, smart_prompts, scope_summary = await asyncio.gather(
             _generate_project_summary(opp_name_str, prop_str, opp, tickets),
             _generate_smart_prompts(opp_name_str, prop_str, tickets),
+            _fetch_scope_notes(opp_id),
         )
+    else:
+        scope_summary = await _fetch_scope_notes(opp_id)
 
     # Aspire activities for this opportunity
     activities: list[dict] = []
@@ -1191,6 +1298,7 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             "EarnedRevenue":        t.get("EarnedRevenue"),
         } for t in tickets],
         "ai_tip":          ai_tip,
+        "scope_summary":   scope_summary,
         "project_summary": project_summary,
         "smart_prompts":   smart_prompts,
         "history": [dict(r) for r in history_rows],
