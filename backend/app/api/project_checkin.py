@@ -1271,30 +1271,62 @@ async def get_project_materials(opp_id: int):
         v for k, v in ticket_map.items() if k not in tickets_with_po
     ]
 
+    import re as _re
+
+    def _strip_html(s: str) -> str:
+        """Strip HTML tags and collapse whitespace."""
+        if not s:
+            return ""
+        text = _re.sub(r"<[^>]+>", " ", s)
+        text = _re.sub(r"\s{2,}", " ", text)
+        return text.strip()
+
     # 5. Format receipts
     pos: list[dict] = []
     for r in deduped:
         rid = r.get("ReceiptID")
         display_number = (rid - 1) if rid else None
 
-        # Extract line items — Aspire may or may not return ReceiptItems inline
+        # Extract line items — Aspire returns ReceiptItems inline.
+        # Log field names on first receipt to help debug description/total keys.
         raw_items = r.get("ReceiptItems") or []
+        if raw_items:
+            logger.info(f"ReceiptItem sample keys: {sorted(raw_items[0].keys())}")
+
         items: list[dict] = []
         for item in raw_items:
+            qty      = float(item.get("ItemQuantity") or item.get("Quantity") or 0)
+            unit_cost = float(item.get("ItemUnitCost") or item.get("UnitCost") or item.get("ItemEstUnitCost") or 0)
+            total    = float(
+                item.get("ReceiptItemPrice")
+                or item.get("ItemTotal")
+                or item.get("TotalCost")
+                or item.get("ReceiptItemCost")
+                or item.get("ItemTotalCost")
+                or (qty * unit_cost)   # fallback: calculate from qty × unit_cost
+                or 0
+            )
+            desc = (
+                item.get("Description")
+                or item.get("ReceiptItemDescription")
+                or item.get("ItemDescription")
+                or item.get("ItemName")
+                or item.get("CatalogItemName")
+                or item.get("Name")
+                or ""
+            )
             items.append({
-                "description": (
-                    item.get("Description")
-                    or item.get("ReceiptItemDescription")
-                    or item.get("ItemDescription")
-                    or "—"
-                ),
-                "quantity":  item.get("Quantity") or item.get("ItemQuantity") or 0,
-                "unit_cost": item.get("ItemUnitCost") or item.get("UnitCost") or 0,
-                "total":     item.get("ReceiptItemPrice") or item.get("ItemTotal") or 0,
+                "description": desc or "—",
+                "quantity":    qty,
+                "unit_cost":   unit_cost,
+                "total":       total,
             })
 
         wt_id       = r.get("WorkTicketID")
         ticket_info = ticket_map.get(wt_id, {})
+
+        raw_note = (r.get("ReceiptNote") or "").strip()
+        clean_note = _strip_html(raw_note)[:160]
 
         pos.append({
             "receipt_id":     rid,
@@ -1306,8 +1338,10 @@ async def get_project_materials(opp_id: int):
             "received_date":  (r.get("ReceivedDate") or "")[:10],
             "total":          r.get("ReceiptTotalCost") or 0,
             "status":         r.get("ReceiptStatusName") or "",
-            "note":           (r.get("ReceiptNote") or "").strip()[:120],
+            "note":           clean_note,
             "items":          items,
+            # Raw item keys on first item — exposed for debugging, remove once stable
+            "_item_keys":     sorted(raw_items[0].keys()) if raw_items else [],
         })
 
     return {

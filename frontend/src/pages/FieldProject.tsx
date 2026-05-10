@@ -93,6 +93,7 @@ interface MaterialPO {
   status:         string;
   note:           string;
   items:          MaterialItem[];
+  _item_keys?:    string[];  // debug: actual field names from Aspire
 }
 
 interface MaterialsData {
@@ -918,6 +919,13 @@ export default function FieldProject() {
                           {po.note && (
                             <div style={{ padding: '6px 14px', fontSize: 11, color: '#6b7280', borderTop: '1px solid #f1f5f9', background: '#fff' }}>
                               {po.note}
+                            </div>
+                          )}
+
+                          {/* Debug: item field names — remove once description key is confirmed */}
+                          {po._item_keys && po._item_keys.length > 0 && (
+                            <div style={{ padding: '3px 14px', fontSize: 9, color: '#cbd5e1', borderTop: '1px solid #f8fafc', background: '#fff', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                              keys: {po._item_keys.join(', ')}
                             </div>
                           )}
 
