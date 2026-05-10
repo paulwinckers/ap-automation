@@ -863,33 +863,45 @@ async def _fetch_all_opp_tickets(opp_id: int) -> list[dict]:
         "CrewLeaderName,PercentComplete,"
         "Revenue,EarnedRevenue,Price"
     )
-    # Try expand variants then plain — Aspire rejects nested $select inside $expand
-    attempts = [
-        {"$expand": "OpportunityService($select=ServiceName)"},
-        {"$expand": "OpportunityService"},
-        {},
-    ]
-    for extra_params in attempts:
-        params: dict = {
+    try:
+        res = await _aspire._get("WorkTickets", {
             "$filter":  f"OpportunityID eq {opp_id}",
             "$orderby": "WorkTicketID asc",
             "$top":     "200",
             "$select":  SELECT,
-        }
-        params.update(extra_params)
-        try:
-            res = await _aspire._get("WorkTickets", params)
-            rows = _aspire._extract_list(res)
-            expand_desc = extra_params.get("$expand", "none")
-            logger.info(f"Project page tickets: {len(rows)} for opp {opp_id} (expand={expand_desc})")
-            if rows and extra_params.get("$expand"):
-                sample_svc = rows[0].get("OpportunityService")
-                logger.info(f"OpportunityService sample: {sample_svc}")
-            return rows
-        except Exception as e:
-            expand_desc = extra_params.get("$expand", "none")
-            logger.warning(f"Project page tickets fetch (expand={expand_desc}): {e}")
-    return []
+        })
+        rows = _aspire._extract_list(res)
+        logger.info(f"Project page tickets: {len(rows)} for opp {opp_id}")
+    except Exception as e:
+        logger.warning(f"Project page tickets fetch failed: {e}")
+        return []
+
+    # Fetch service names via OpportunityServices (same approach as PO page)
+    service_map: dict = {}
+    try:
+        svc_res = await _aspire._get("OpportunityServices", {
+            "$filter": f"OpportunityID eq {opp_id}",
+            "$top": "50",
+        })
+        for svc in _aspire._extract_list(svc_res):
+            sid = svc.get("OpportunityServiceID")
+            if sid:
+                service_map[sid] = (
+                    svc.get("ServiceNameAbr")
+                    or svc.get("DisplayName")
+                    or svc.get("ServiceName")
+                    or ""
+                )
+        logger.info(f"OpportunityServices: {len(service_map)} services for opp {opp_id}")
+    except Exception as e:
+        logger.warning(f"OpportunityServices fetch failed (non-fatal): {e}")
+
+    # Attach service name to each ticket
+    for t in rows:
+        svc_id = t.get("OpportunityServiceID")
+        t["ServiceName"] = service_map.get(svc_id) or "" if svc_id else ""
+
+    return rows
 
 
 @public_router.get("/project/{opp_id}")
@@ -990,7 +1002,7 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         "tickets": [{
             "WorkTicketID":         t.get("WorkTicketID"),
             "WorkTicketNumber":     t.get("WorkTicketNumber"),
-            "ServiceName":          (t.get("OpportunityService") or {}).get("ServiceName") or "",
+            "ServiceName":          t.get("ServiceName") or "",
             "WorkTicketStatusName": t.get("WorkTicketStatusName"),
             "ScheduledStartDate":   (t.get("ScheduledStartDate") or "")[:10],
             "HoursEst":             t.get("HoursEst"),
