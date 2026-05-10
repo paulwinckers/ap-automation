@@ -28,9 +28,10 @@ interface Project {
 const STATUS_COLOR: Record<string, { bg: string; text: string; dot: string }> = {
   'in production': { bg: '#dcfce7', text: '#15803d', dot: '#16a34a' },
   'in progress':   { bg: '#dcfce7', text: '#15803d', dot: '#16a34a' },
-  'scheduled':     { bg: '#dcfce7', text: '#15803d', dot: '#16a34a' }, // scheduled = in production
+  'scheduled':     { bg: '#dcfce7', text: '#15803d', dot: '#16a34a' },
   'active':        { bg: '#dcfce7', text: '#15803d', dot: '#16a34a' },
-  'in queue':      { bg: '#fef9c3', text: '#854d0e', dot: '#ca8a04' },
+  'won':           { bg: '#dcfce7', text: '#15803d', dot: '#16a34a' }, // won = active/upcoming
+  'in queue':      { bg: '#dbeafe', text: '#1d4ed8', dot: '#2563eb' },
   'complete':      { bg: '#f3f4f6', text: '#6b7280', dot: '#9ca3af' },
   'completed':     { bg: '#f3f4f6', text: '#6b7280', dot: '#9ca3af' },
 };
@@ -100,7 +101,7 @@ export default function FieldProjectLookup() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
 
-  const CLOSED_STATUSES = new Set(['complete', 'completed', 'closed', 'cancelled', 'canceled']);
+  const CLOSED_STATUSES = new Set(['complete', 'completed', 'closed', 'cancelled', 'canceled', 'lost']);
   const activeProjects    = projects.filter(p => !CLOSED_STATUSES.has((p.status || '').toLowerCase()));
   const completedProjects = projects.filter(p =>  CLOSED_STATUSES.has((p.status || '').toLowerCase()));
 

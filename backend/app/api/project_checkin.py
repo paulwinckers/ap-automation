@@ -679,9 +679,9 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
     opp_ids  = list(opp_map.keys())
     actuals  = await _fetch_opp_actuals(opp_ids)
 
-    # Build enriched project list
+    # Build enriched project list — filter to Construction division only
     # scheduled = in production at Dario's — sort alongside active jobs
-    _STATUS_ORDER = {"in production": 0, "in progress": 0, "scheduled": 0, "active": 0, "in queue": 1, "complete": 2, "completed": 2}
+    _STATUS_ORDER = {"in production": 0, "in progress": 0, "scheduled": 0, "active": 0, "won": 0, "in queue": 1, "complete": 2, "completed": 2}
 
     projects = []
     for oid, e in opp_map.items():
@@ -689,6 +689,13 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
         opp_name = opp.get("OpportunityName") or f"Job #{oid}"
         prop     = opp.get("PropertyName") or ""
         status   = opp.get("OpportunityStatusName") or ""
+        division = opp.get("DivisionName") or ""
+
+        # Filter to Construction division only
+        if division and "construction" not in division.lower():
+            logger.debug(f"my-project: skipping opp {oid} '{opp_name}' — division='{division}'")
+            continue
+
         sort_key = _STATUS_ORDER.get(status.lower(), 2)
         projects.append({
             "opp_id":       oid,
