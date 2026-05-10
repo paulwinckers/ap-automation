@@ -25,6 +25,12 @@ const DASHBOARDS = [
     sub:   'Job progress, hours & site updates',
   },
   {
+    to:    '/dashboards/construction/plan',
+    icon:  '📅',
+    label: 'Construction Plan',
+    sub:   'Monthly job planning, leads & check-ins',
+  },
+  {
     to:    '/dashboards/estimating',
     icon:  '💼',
     label: 'Estimating Dashboard',
