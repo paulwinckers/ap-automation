@@ -13,11 +13,13 @@ const API = import.meta.env.VITE_API_URL ?? '';
 interface Ticket {
   WorkTicketID:         number;
   WorkTicketNumber:     string | number;
-  WorkTicketTitle:      string;
+  ServiceName:          string;
   WorkTicketStatusName: string;
   ScheduledStartDate:   string;
   HoursEst:             number | null;
   HoursAct:             number | null;
+  HoursScheduled:       number | null;
+  HoursUnscheduled:     number | null;
   CrewLeaderName:       string | null;
   Revenue:              number | null;
   EarnedRevenue:        number | null;
@@ -194,12 +196,14 @@ export default function FieldProject() {
 
   if (!data) return null;
 
-  const totalEst      = data.tickets.reduce((s, t) => s + (t.HoursEst ?? 0), 0);
-  const totalAct      = data.tickets.reduce((s, t) => s + (t.HoursAct ?? 0), 0);
-  const totalRem      = totalEst - totalAct;
-  const totalRevenue  = data.tickets.reduce((s, t) => s + (t.Revenue ?? 0), 0);
-  const totalEarned   = data.tickets.reduce((s, t) => s + (t.EarnedRevenue ?? 0), 0);
-  const overBudget    = totalAct > totalEst && totalEst > 0;
+  const totalEst        = data.tickets.reduce((s, t) => s + (t.HoursEst ?? 0), 0);
+  const totalAct        = data.tickets.reduce((s, t) => s + (t.HoursAct ?? 0), 0);
+  const totalScheduled  = data.tickets.reduce((s, t) => s + (t.HoursScheduled ?? 0), 0);
+  const totalUnscheduled= data.tickets.reduce((s, t) => s + (t.HoursUnscheduled ?? 0), 0);
+  const totalRevenue    = data.tickets.reduce((s, t) => s + (t.Revenue ?? 0), 0);
+  const totalEarned     = data.tickets.reduce((s, t) => s + (t.EarnedRevenue ?? 0), 0);
+  const totalRem        = totalEst - totalAct;
+  const overBudget      = totalAct > totalEst && totalEst > 0;
   const responded  = data.history.filter(h => h.submitted_at).length;
   const tipParas   = (data.ai_tip || '').split('\n\n').filter(Boolean);
 
@@ -299,20 +303,30 @@ export default function FieldProject() {
               ) : (
                 <>
                   {/* Totals row */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr repeat(4, auto)', gap: '0 12px', padding: '8px 12px', background: '#f8fafc', borderRadius: 8, marginBottom: 6, fontSize: 12, fontWeight: 700, color: '#374151' }}>
-                    <span>Totals</span>
-                    <span style={{ textAlign: 'right' }}>{fmtHrs(totalEst)}h est</span>
-                    <span style={{ textAlign: 'right', color: overBudget ? '#ef4444' : '#374151' }}>{fmtHrs(totalAct)}h act</span>
-                    <span style={{ textAlign: 'right', color: totalEarned > 0 ? '#15803d' : '#94a3b8' }}>{fmtMoney(totalEarned || null)}</span>
-                    <span style={{ textAlign: 'right', color: '#6b7280' }}>{fmtMoney(totalRevenue || null)}</span>
+                  <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '8px 12px', marginBottom: 8, display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4 }}>
+                    {[
+                      { label: 'Est Hrs',     value: `${fmtHrs(totalEst)}h` },
+                      { label: 'Act Hrs',     value: `${fmtHrs(totalAct)}h`,        alert: overBudget },
+                      { label: 'Scheduled',   value: `${fmtHrs(totalScheduled)}h` },
+                      { label: 'Unsched.',    value: `${fmtHrs(totalUnscheduled)}h`, alert: totalUnscheduled > 0 },
+                      { label: 'Earned Rev',  value: fmtMoney(totalEarned || null),  highlight: totalEarned > 0 },
+                      { label: 'Revenue',     value: fmtMoney(totalRevenue || null) },
+                    ].map(({ label, value, alert, highlight }) => (
+                      <div key={label} style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: alert ? '#ef4444' : highlight ? '#15803d' : '#111827' }}>{value}</div>
+                        <div style={{ fontSize: 9, color: '#9ca3af', marginTop: 1 }}>{label}</div>
+                      </div>
+                    ))}
                   </div>
 
                   {/* Ticket rows */}
                   <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
                     {data.tickets.map((t, i) => {
-                      const est = t.HoursEst ?? 0;
-                      const act = t.HoursAct ?? 0;
-                      const title = t.WorkTicketTitle || `#${t.WorkTicketNumber}`;
+                      const est   = t.HoursEst ?? 0;
+                      const act   = t.HoursAct ?? 0;
+                      const sched = t.HoursScheduled ?? 0;
+                      const unsched = t.HoursUnscheduled ?? 0;
+                      const label = t.ServiceName || `#${t.WorkTicketNumber}`;
                       return (
                         <div key={t.WorkTicketID} style={{
                           padding: '11px 14px',
@@ -320,24 +334,26 @@ export default function FieldProject() {
                           borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
                         }}>
                           {/* Service name + status */}
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 5 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 13, fontWeight: 700, color: '#111827', marginBottom: 1 }}>{title}</div>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: '#111827', marginBottom: 1 }}>{label}</div>
                               <div style={{ fontSize: 11, color: '#9ca3af' }}>#{t.WorkTicketNumber} · {fmtDate(t.ScheduledStartDate)}</div>
                             </div>
                             <StatusBadge status={t.WorkTicketStatusName || '—'} />
                           </div>
-                          {/* Hours + revenue */}
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginTop: 6 }}>
+                          {/* Hours grid: Est / Actual / Scheduled / Unscheduled / Earned / Revenue */}
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4 }}>
                             {[
-                              { label: 'Est', value: `${fmtHrs(est)}h` },
-                              { label: 'Actual', value: `${fmtHrs(act)}h`, alert: act > est && est > 0 },
-                              { label: 'Earned', value: fmtMoney(t.EarnedRevenue), highlight: (t.EarnedRevenue ?? 0) > 0 },
-                              { label: 'Revenue', value: fmtMoney(t.Revenue) },
+                              { label: 'Est',      value: `${fmtHrs(est)}h` },
+                              { label: 'Actual',   value: `${fmtHrs(act)}h`,    alert: act > est && est > 0 },
+                              { label: 'Sched',    value: `${fmtHrs(sched)}h` },
+                              { label: 'Unsched',  value: `${fmtHrs(unsched)}h`, alert: unsched > 0 },
+                              { label: 'Earned',   value: fmtMoney(t.EarnedRevenue), highlight: (t.EarnedRevenue ?? 0) > 0 },
+                              { label: 'Revenue',  value: fmtMoney(t.Revenue) },
                             ].map(({ label, value, alert, highlight }) => (
-                              <div key={label} style={{ background: '#f8fafc', borderRadius: 6, padding: '5px 8px', textAlign: 'center' }}>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: alert ? '#ef4444' : highlight ? '#15803d' : '#111827' }}>{value}</div>
-                                <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }}>{label}</div>
+                              <div key={label} style={{ background: '#f8fafc', borderRadius: 5, padding: '4px 4px', textAlign: 'center' }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: alert ? '#ef4444' : highlight ? '#15803d' : '#111827' }}>{value}</div>
+                                <div style={{ fontSize: 9, color: '#9ca3af', marginTop: 1 }}>{label}</div>
                               </div>
                             ))}
                           </div>

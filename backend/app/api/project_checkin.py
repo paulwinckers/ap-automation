@@ -847,33 +847,39 @@ async def submit_checkin_response(
 async def _fetch_all_opp_tickets(opp_id: int) -> list[dict]:
     """Fetch ALL work tickets for an opportunity (all months).
 
-    We try progressively simpler selects so that unknown field names don't
-    cause a 400 that silently returns nothing.
+    Uses only confirmed-valid field names from the Aspire WorkTickets OData spec.
+    Tries with $expand for service name first; falls back to base fields only.
     """
-    BASE_SELECT = (
-        "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
+    SELECT = (
+        "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,OpportunityServiceID,"
         "OpportunityID,ScheduledStartDate,CompleteDate,"
-        "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
+        "HoursEst,HoursAct,HoursScheduled,HoursUnscheduled,"
+        "CrewLeaderName,PercentComplete,"
+        "Revenue,EarnedRevenue,Price"
     )
-    EXTRA_FIELDS = [
-        ",WorkTicketTitle,Revenue,EarnedRevenue",
-        ",Revenue,EarnedRevenue",
-        ",WorkTicketTitle",
-        "",   # base only — always works
+    # Try with service name expand, then without
+    attempts = [
+        {"$expand": "OpportunityService($select=ServiceName)"},
+        {},
     ]
-    for extra in EXTRA_FIELDS:
+    for extra_params in attempts:
+        params: dict = {
+            "$filter":  f"OpportunityID eq {opp_id}",
+            "$orderby": "WorkTicketID asc",
+            "$top":     "200",
+            "$select":  SELECT,
+        }
+        params.update(extra_params)
         try:
-            res = await _aspire._get("WorkTickets", {
-                "$filter":  f"OpportunityID eq {opp_id}",
-                "$orderby": "WorkTicketID asc",
-                "$top":     "200",
-                "$select":  BASE_SELECT + extra,
-            })
+            res = await _aspire._get("WorkTickets", params)
             rows = _aspire._extract_list(res)
-            logger.info(f"Project page tickets: {len(rows)} for opp {opp_id} (extra='{extra.strip(',') or 'none'}')")
+            logger.info(
+                f"Project page tickets: {len(rows)} for opp {opp_id} "
+                f"(expand={'yes' if extra_params else 'no'})"
+            )
             return rows
         except Exception as e:
-            logger.warning(f"Project page tickets (extra='{extra}'): {e}")
+            logger.warning(f"Project page tickets fetch (expand={'yes' if extra_params else 'no'}): {e}")
     return []
 
 
@@ -936,11 +942,13 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         "tickets": [{
             "WorkTicketID":         t.get("WorkTicketID"),
             "WorkTicketNumber":     t.get("WorkTicketNumber"),
-            "WorkTicketTitle":      t.get("WorkTicketTitle") or "",
+            "ServiceName":          (t.get("OpportunityService") or {}).get("ServiceName") or "",
             "WorkTicketStatusName": t.get("WorkTicketStatusName"),
             "ScheduledStartDate":   (t.get("ScheduledStartDate") or "")[:10],
             "HoursEst":             t.get("HoursEst"),
             "HoursAct":             t.get("HoursAct"),
+            "HoursScheduled":       t.get("HoursScheduled"),
+            "HoursUnscheduled":     t.get("HoursUnscheduled"),
             "CrewLeaderName":       t.get("CrewLeaderName"),
             "Revenue":              t.get("Revenue"),
             "EarnedRevenue":        t.get("EarnedRevenue"),
