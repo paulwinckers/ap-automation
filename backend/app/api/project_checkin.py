@@ -575,10 +575,14 @@ async def checkin_status(month: Optional[str] = None, db: Database = Depends(get
 @public_router.get("/my-project")
 async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
     """
-    Given a lead's name, return the most recent active project assigned to them.
-    Used by the landing-page "My Project" link so leads can navigate to their
-    permanent project page without needing the email link.
+    Return the list of known leads (for the name-picker dropdown) and,
+    when a name is given, all opportunities where that person is crew leader
+    (past ~12 months + future).  Sorted: In Progress first, then Scheduled,
+    then recently Completed, then anything else.
     """
+    from app.api.construction_plan import _fetch_opp_actuals
+    from datetime import timedelta
+
     name = (name or "").strip()
 
     # Always return lead list so the dropdown can populate
@@ -591,27 +595,102 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
     ]
 
     if not name:
-        return {"leads": leads, "project": None}
+        return {"leads": leads, "projects": []}
 
-    # Most recent checkin for this lead
-    rows = await db._q(
-        """SELECT opportunity_id, opportunity_name, property_name
-           FROM project_checkins
-           WHERE lower(lead_name) = lower(?)
-           ORDER BY sent_at DESC LIMIT 1""",
-        [name],
-    )
+    # Query Aspire WorkTickets for this crew leader — past 12 months + all future
+    tz         = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    since      = (datetime.now(tz) - timedelta(days=365)).strftime("%Y-%m-%d")
+    tickets: list[dict] = []
+    safe_name  = name.replace("'", "''")   # escape single quotes for OData
 
-    project = None
-    if rows:
-        r = dict(rows[0])
-        project = {
-            "opp_id":   r["opportunity_id"],
-            "opp_name": r["opportunity_name"] or f"Job #{r['opportunity_id']}",
-            "property":  r["property_name"] or "",
-        }
+    for date_fmt in (
+        f"CrewLeaderName eq '{safe_name}' and ScheduledStartDate ge {since}",
+        f"CrewLeaderName eq '{safe_name}' and ScheduledStartDate ge {since}T00:00:00Z",
+    ):
+        try:
+            res = await _aspire._get("WorkTickets", {
+                "$filter":  date_fmt,
+                "$select":  (
+                    "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
+                    "OpportunityID,ScheduledStartDate,CompleteDate,"
+                    "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
+                ),
+                "$orderby": "ScheduledStartDate desc",
+                "$top":     "500",
+            })
+            tickets = _aspire._extract_list(res)
+            if tickets:
+                break
+        except Exception as e:
+            logger.warning(f"my-project WorkTickets query failed: {e}")
 
-    return {"leads": leads, "project": project}
+    if not tickets:
+        return {"leads": leads, "projects": []}
+
+    # Group by OpportunityID — collect ticket-level hour totals
+    opp_map: dict[int, dict] = {}
+    for t in tickets:
+        oid = t.get("OpportunityID")
+        if not oid:
+            continue
+        if oid not in opp_map:
+            opp_map[oid] = {
+                "opp_id":        oid,
+                "hrs_est":       0.0,
+                "hrs_act":       0.0,
+                "ticket_count":  0,
+                "latest_date":   "",
+                "statuses":      set(),
+            }
+        e = opp_map[oid]
+        e["hrs_est"]      += float(t.get("HoursEst") or 0)
+        e["hrs_act"]      += float(t.get("HoursAct") or 0)
+        e["ticket_count"] += 1
+        d = (t.get("ScheduledStartDate") or "")[:10]
+        if d > e["latest_date"]:
+            e["latest_date"] = d
+        status = (t.get("WorkTicketStatusName") or "").lower()
+        e["statuses"].add(status)
+
+    # Fetch opportunity details (name, property, status) in bulk
+    opp_ids  = list(opp_map.keys())
+    actuals  = await _fetch_opp_actuals(opp_ids)
+
+    # Build enriched project list
+    _STATUS_ORDER = {"in progress": 0, "scheduled": 1, "active": 0, "complete": 3, "completed": 3}
+
+    projects = []
+    for oid, e in opp_map.items():
+        opp      = actuals.get(oid, {})
+        opp_name = opp.get("OpportunityName") or f"Job #{oid}"
+        prop     = opp.get("PropertyName") or ""
+        status   = opp.get("OpportunityStatusName") or ""
+        sort_key = _STATUS_ORDER.get(status.lower(), 2)
+        projects.append({
+            "opp_id":       oid,
+            "opp_name":     opp_name,
+            "property":     prop,
+            "status":       status,
+            "hrs_est":      round(e["hrs_est"], 1),
+            "hrs_act":      round(e["hrs_act"], 1),
+            "ticket_count": e["ticket_count"],
+            "latest_date":  e["latest_date"],
+            "_sort":        (sort_key, e["latest_date"]),
+        })
+
+    projects.sort(key=lambda x: (x.pop("_sort")[0], x["latest_date"]), reverse=False)
+    # Re-sort: active/in-progress first (ascending sort_key), then by latest_date desc within group
+    projects.sort(key=lambda x: (
+        _STATUS_ORDER.get((x["status"] or "").lower(), 2),
+        x["latest_date"]
+    ), reverse=False)
+    # Reverse date within each status group — most recent first
+    from itertools import groupby
+    final: list[dict] = []
+    for _, grp in groupby(projects, key=lambda x: _STATUS_ORDER.get((x["status"] or "").lower(), 2)):
+        final.extend(sorted(grp, key=lambda x: x["latest_date"], reverse=True))
+
+    return {"leads": leads, "projects": final}
 
 
 # ── Public token routes ───────────────────────────────────────────────────────
