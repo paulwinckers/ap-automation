@@ -631,8 +631,6 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
                 break
         except Exception as e:
             logger.warning(f"my-project WorkTickets fetch (filter={date_fmt}): {e}")
-    except Exception as e:
-        logger.warning(f"my-project WorkTickets fetch failed: {e}")
 
     # Filter to this crew leader first — log branches/statuses so we can tune
     leader_tickets = [
