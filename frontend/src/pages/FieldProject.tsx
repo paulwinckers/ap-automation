@@ -60,6 +60,16 @@ interface PromptMemory {
   actHours?:   number;  // snapshot of actHours when answered
 }
 
+interface Attachment {
+  attachment_id:   number | null;
+  file_name:       string;
+  file_url:        string;
+  attachment_type: string;
+  type_id:         number | null;
+  expose_to_crew:  boolean;
+  created_date:    string;
+}
+
 interface Activity {
   ActivityID:           number;
   Subject:              string;
@@ -116,6 +126,7 @@ interface ProjectData {
   tickets:          Ticket[];
   ai_tip:           string | null;
   scope_summary:    string;
+  attachments:      Attachment[];
   project_summary:  string;
   smart_prompts:    SmartPrompt[];
   history:          HistoryEntry[];
@@ -227,8 +238,11 @@ export default function FieldProject() {
     return ageMs < 24 * 60 * 60 * 1000;
   }
 
-  // Tab: 'tickets' | 'history' | 'update' | 'materials'
-  const [tab, setTab] = useState<'tickets' | 'history' | 'update' | 'materials'>('tickets');
+  // Tab: 'scope' | 'tickets' | 'history' | 'materials' | 'update'
+  const [tab, setTab] = useState<'scope' | 'tickets' | 'history' | 'materials' | 'update'>('scope');
+
+  // Per-ticket remaining hours on the Update tab: WorkTicketID → hours string
+  const [ticketHours, setTicketHours] = useState<Record<number, string>>({});
 
   // Materials tab — lazy-loaded on first open
   const [materialsData,    setMaterialsData]    = useState<MaterialsData | null>(null);
@@ -375,6 +389,7 @@ export default function FieldProject() {
         {/* Tabs */}
         <div style={{ display: 'flex', borderBottom: '1px solid #f1f5f9', overflowX: 'auto' }}>
           {([
+            { key: 'scope',     label: '📐 Scope' },
             { key: 'tickets',   label: `📋 Tickets (${data.tickets.length})` },
             { key: 'history',   label: `📝 History (${(data.activities || []).filter(a => (a.ActivityType || '').toLowerCase() !== 'email').length + responded})` },
             { key: 'materials', label: '📦 Materials' },
@@ -402,6 +417,77 @@ export default function FieldProject() {
 
         <div style={{ padding: '20px 16px' }}>
 
+          {/* ── Scope tab ────────────────────────────────────────────────── */}
+          {tab === 'scope' && (
+            <>
+              {/* Scope summary */}
+              {data.scope_summary ? (
+                <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 10, padding: '14px 16px', marginBottom: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 11, color: '#0369a1', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Project Scope
+                  </div>
+                  <p style={{ margin: 0, fontSize: 13, color: '#0c4a6e', lineHeight: 1.7 }}>
+                    {data.scope_summary}
+                  </p>
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '20px 0 8px', marginBottom: 12 }}>
+                  No scope notes found in Aspire for this job
+                </div>
+              )}
+
+              {/* Attachments */}
+              <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                Attachments ({(data.attachments || []).length})
+              </div>
+              {(data.attachments || []).length === 0 ? (
+                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '12px 0 20px' }}>
+                  No attachments found for this job
+                </div>
+              ) : (
+                <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
+                  {(data.attachments || []).map((att, i) => {
+                    const icon =
+                      att.attachment_type.toLowerCase().includes('plan') ? '🗺️' :
+                      att.attachment_type.toLowerCase().includes('photo') ? '📷' :
+                      att.attachment_type.toLowerCase().includes('invoice') ? '🧾' :
+                      att.attachment_type.toLowerCase().includes('doc') ? '📄' : '📎';
+                    return (
+                      <div key={att.attachment_id ?? i} style={{
+                        padding: '10px 14px',
+                        background: i % 2 === 0 ? '#fff' : '#f9fafb',
+                        borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
+                        display: 'flex', alignItems: 'center', gap: 10,
+                      }}>
+                        <span style={{ fontSize: 18, flexShrink: 0 }}>{icon}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {att.file_name}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                            {att.attachment_type || 'Attachment'}{att.created_date ? ` · ${att.created_date}` : ''}
+                          </div>
+                        </div>
+                        {att.file_url ? (
+                          <a
+                            href={att.file_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ padding: '5px 11px', background: '#1e3a5f', color: '#fff', borderRadius: 7, fontSize: 12, fontWeight: 600, textDecoration: 'none', flexShrink: 0 }}
+                          >
+                            View
+                          </a>
+                        ) : (
+                          <span style={{ fontSize: 11, color: '#cbd5e1', flexShrink: 0 }}>No link</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
           {/* ── Tickets tab ──────────────────────────────────────────────── */}
           {tab === 'tickets' && (
             <>
@@ -414,18 +500,6 @@ export default function FieldProject() {
                   {refreshing ? '↻' : '↺ refresh'}
                 </button>
               </div>
-
-              {/* Project Scope */}
-              {data.scope_summary && (
-                <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 10, padding: '12px 14px', marginBottom: 14 }}>
-                  <div style={{ fontWeight: 700, fontSize: 11, color: '#0369a1', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    📐 Project Scope
-                  </div>
-                  <p style={{ margin: 0, fontSize: 13, color: '#0c4a6e', lineHeight: 1.65 }}>
-                    {data.scope_summary}
-                  </p>
-                </div>
-              )}
 
               {data.tickets.length === 0 ? (
                 <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '24px 0' }}>
@@ -653,15 +727,38 @@ export default function FieldProject() {
           {tab === 'update' && (
             <form onSubmit={e => {
               e.preventDefault();
+
+              // Compute per-ticket hours summary
+              const ACTIVE_S = new Set(['open', 'in progress', 'scheduled', 'in production', 'in queue']);
+              const activeTickets = data.tickets.filter(t =>
+                ACTIVE_S.has((t.WorkTicketStatusName || '').toLowerCase())
+              );
+              const filledHours = activeTickets
+                .map(t => ({ t, h: parseFloat(ticketHours[t.WorkTicketID] || '') }))
+                .filter(x => !isNaN(x.h) && x.h >= 0);
+              const totalRemaining = filledHours.reduce((s, x) => s + x.h, 0);
+              const hoursLine = filledHours.length > 0
+                ? 'Hours remaining — ' + filledHours
+                    .map(x => `${x.t.ServiceName || '#' + x.t.WorkTicketNumber}: ${x.h}h`)
+                    .join(', ')
+                : '';
+              // Update the remainingHours state to be the total (for the API field)
+              const totalRemStr = filledHours.length > 0 ? String(totalRemaining) : remainingHours;
+
               // Prepend prompt selections to approach notes if any selected
               const answered = (data.smart_prompts || []).filter(p => promptSelections[p.id]);
-              // Persist answers so they're suppressed on next load
               answered.forEach(p => savePromptMemory(p.id, promptSelections[p.id], p.actHours));
               const promptLines = answered.map(p => `${p.icon} ${p.situation}\n→ ${promptSelections[p.id]}`);
-              const combined = promptLines.length > 0
-                ? promptLines.join('\n\n') + (approachNotes.trim() ? '\n\n' + approachNotes.trim() : '')
-                : approachNotes.trim();
+
+              const parts = [
+                hoursLine,
+                ...promptLines,
+                approachNotes.trim(),
+              ].filter(Boolean);
+              const combined = parts.join('\n\n');
               if (!combined.trim()) return;
+              // Pass total remaining hours through remainingHours field
+              if (filledHours.length > 0) setRemainingHours(totalRemStr);
               handleSubmit(e, combined);
             }}>
               <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a', marginBottom: 12 }}>
@@ -786,16 +883,52 @@ export default function FieldProject() {
                 </div>
               )}
 
-              <div style={{ marginBottom: 14 }}>
-                <label style={LABEL}>Estimated hours remaining on active ticket(s)</label>
-                <input
-                  type="number" min="0" step="0.5"
-                  placeholder="e.g. 12.5"
-                  value={remainingHours}
-                  onChange={e => setRemainingHours(e.target.value)}
-                  style={INPUT}
-                />
-              </div>
+              {/* Per-ticket remaining hours — only scheduled/active tickets */}
+              {(() => {
+                const ACTIVE_S = new Set(['open', 'in progress', 'scheduled', 'in production', 'in queue']);
+                const activeTickets = data.tickets.filter(t =>
+                  ACTIVE_S.has((t.WorkTicketStatusName || '').toLowerCase())
+                );
+                if (activeTickets.length === 0) return null;
+                return (
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={LABEL}>Hours remaining per ticket</label>
+                    <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
+                      {activeTickets.map((t, i) => {
+                        const label = t.ServiceName || `#${t.WorkTicketNumber}`;
+                        const est   = t.HoursEst ?? 0;
+                        const act   = t.HoursAct ?? 0;
+                        const rem   = Math.max(est - act, 0);
+                        return (
+                          <div key={t.WorkTicketID} style={{
+                            display: 'flex', alignItems: 'center', gap: 10,
+                            padding: '8px 12px',
+                            background: i % 2 === 0 ? '#fff' : '#f9fafb',
+                            borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
+                          }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {label}
+                              </div>
+                              <div style={{ fontSize: 10, color: '#9ca3af' }}>
+                                {act.toFixed(1)}h used of {est.toFixed(1)}h est · ~{rem.toFixed(1)}h rem
+                              </div>
+                            </div>
+                            <input
+                              type="number" min="0" step="0.5"
+                              placeholder={rem.toFixed(1)}
+                              value={ticketHours[t.WorkTicketID] ?? ''}
+                              onChange={e => setTicketHours(prev => ({ ...prev, [t.WorkTicketID]: e.target.value }))}
+                              style={{ ...INPUT, width: 72, marginBottom: 0, padding: '6px 8px', textAlign: 'right' }}
+                            />
+                            <span style={{ fontSize: 11, color: '#6b7280', flexShrink: 0 }}>h</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div style={{ marginBottom: 14 }}>
                 <label style={LABEL}>
