@@ -63,15 +63,22 @@ function HoursBar({ est, act }: { est: number; act: number }) {
 export default function FieldProjectLookup() {
   const navigate = useNavigate();
 
-  const [leads, setLeads]       = useState<{ name: string; display: string }[]>([]);
-  const [selected, setSelected] = useState(() => localStorage.getItem(LS_KEY) || '');
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading]   = useState(false);
-  const [searched, setSearched] = useState(false);
+  const [leads, setLeads]         = useState<{ name: string; display: string }[]>([]);
+  const [leadsError, setLeadsError] = useState(false);
+  const [selected, setSelected]   = useState(() => localStorage.getItem(LS_KEY) || '');
+  const [projects, setProjects]   = useState<Project[]>([]);
+  const [loading, setLoading]     = useState(false);
+  const [searched, setSearched]   = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   // Load lead list on mount
   useEffect(() => {
-    myProjectLookup().then(r => setLeads(r.leads)).catch(() => {});
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    myProjectLookup()
+      .then(r => { setLeads(r.leads); if (r.leads.length === 0) setLeadsError(true); })
+      .catch(() => setLeadsError(true))
+      .finally(() => clearTimeout(timer));
   }, []);
 
   // Auto-search if a name was remembered
@@ -86,12 +93,14 @@ export default function FieldProjectLookup() {
     if (!name) return;
     setLoading(true);
     setSearched(false);
+    setSearchError(null);
     try {
       const r = await myProjectLookup(name);
       setProjects(r.projects || []);
       setSearched(true);
       localStorage.setItem(LS_KEY, name);
-    } catch {
+    } catch (e: unknown) {
+      setSearchError((e as Error).message || 'Could not reach the server. Try again.');
       setProjects([]);
       setSearched(true);
     } finally {
@@ -117,8 +126,12 @@ export default function FieldProjectLookup() {
         {/* Name picker */}
         <div style={S.card}>
           <div style={S.ctitle}>Who are you?</div>
-          {leads.length === 0 ? (
+          {leads.length === 0 && !leadsError ? (
             <div style={S.empty}>Loading…</div>
+          ) : leadsError && leads.length === 0 ? (
+            <div style={{ color: '#dc2626', fontSize: 13 }}>
+              Could not load leads list. Check your connection or ask your manager to set up leads.
+            </div>
           ) : (
             <div style={{ display: 'flex', gap: 8 }}>
               <select
@@ -167,7 +180,13 @@ export default function FieldProjectLookup() {
           <div style={S.loadingMsg}>Loading projects…</div>
         )}
 
-        {searched && !loading && projects.length === 0 && (
+        {searchError && (
+          <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 10, padding: '12px 14px', fontSize: 13, color: '#dc2626', marginBottom: 12 }}>
+            {searchError}
+          </div>
+        )}
+
+        {searched && !loading && !searchError && projects.length === 0 && (
           <div style={S.emptyState}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>🏗️</div>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>No projects found</div>
