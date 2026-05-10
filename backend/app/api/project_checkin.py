@@ -932,7 +932,7 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
                 "$top":     "50",
                 "$select":  (
                     "ActivityID,Subject,ActivityType,ActivityCategoryName,"
-                    "Status,Notes,CreatedDate,CompleteDate,CreatedByUserName,IsMileStone"
+                    "Status,Notes,Description,CreatedDate,CompleteDate,CreatedByUserName,IsMileStone"
                 ),
             })
             batch = _aspire._extract_list(res)
@@ -1004,7 +1004,7 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             "ActivityType":         a.get("ActivityType") or "",
             "ActivityCategoryName": a.get("ActivityCategoryName") or "",
             "Status":               a.get("Status") or "",
-            "Notes":                a.get("Notes") or "",
+            "Notes":                a.get("Notes") or a.get("Description") or "",
             "CreatedDate":          (a.get("CreatedDate") or "")[:10],
             "CompleteDate":         (a.get("CompleteDate") or "")[:10],
             "CreatedByUserName":    a.get("CreatedByUserName") or "",
