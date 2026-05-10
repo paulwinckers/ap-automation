@@ -295,6 +295,7 @@ async def _generate_smart_prompts(
             "icon":      "⚠️",
             "situation": f"{tk['name']} is {tk['over']}h over budget ({tk['act']}h actual vs {tk['est']}h est)",
             "question":  "What's the reason for the extra hours?",
+            "actHours":  tk['act'],   # used by frontend to detect if hours changed since last answer
             "options": [
                 "Some hours should be reallocated to a different ticket",
                 "Change order needed — unexpected site conditions discovered",
