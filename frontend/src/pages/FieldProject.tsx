@@ -441,16 +441,20 @@ export default function FieldProject() {
               {/* Attachments — Design Plans first, then others */}
               {(() => {
                 const allAtts = data.attachments || [];
-                const isDesignPlan = (a: Attachment) =>
-                  (a.attachment_type || '').toLowerCase().includes('design plan') ||
-                  (a.attachment_type || '').toLowerCase().includes('design');
-                const plans  = allAtts.filter(a => isDesignPlan(a));
-                const others = allAtts.filter(a => !isDesignPlan(a));
+                const PLAN_TYPES = ['design plan', 'site plan', 'property info', 'irrigation map'];
+                const isKeyDoc = (a: Attachment) =>
+                  PLAN_TYPES.some(t => (a.attachment_type || '').toLowerCase().includes(t));
+                const plans  = allAtts.filter(a => isKeyDoc(a));
+                const others = allAtts.filter(a => !isKeyDoc(a));
 
                 const renderAtt = (att: Attachment, i: number, highlight = false) => {
                   const t = (att.attachment_type || '').toLowerCase();
                   const ext = (att.file_extension || '').toLowerCase();
-                  const icon = t.includes('plan') ? '🗺️' : t.includes('photo') || ['jpg','jpeg','png','gif','webp'].includes(ext) ? '📷' :
+                  const icon = t.includes('irrigation') ? '💧' :
+                               t.includes('site plan') ? '📍' :
+                               t.includes('property') ? '🏡' :
+                               t.includes('design') || t.includes('plan') ? '🗺️' :
+                               t.includes('photo') || ['jpg','jpeg','png','gif','webp'].includes(ext) ? '📷' :
                                t.includes('invoice') ? '🧾' : ['doc','docx'].includes(ext) ? '📝' :
                                ext === 'pdf' ? '📄' : '📎';
                   // Use external URL if available, otherwise proxy through our backend
@@ -493,7 +497,7 @@ export default function FieldProject() {
                     {plans.length > 0 && (
                       <>
                         <div style={{ fontWeight: 700, fontSize: 11, color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                          🗺️ Design Plans ({plans.length})
+                          📋 Key Documents ({plans.length})
                         </div>
                         <div style={{ border: '1.5px solid #bae6fd', borderRadius: 10, overflow: 'hidden', marginBottom: 16 }}>
                           {plans.map((att, i) => renderAtt(att, i, true))}
