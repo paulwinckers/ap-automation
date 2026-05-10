@@ -261,13 +261,14 @@ async def _fetch_scope_notes(opp_id: int) -> str:
     }
     opp_notes: list[str] = []
     for key, val in opp_raw.items():
-        # Accept explicit note keys OR any string field >30 chars that we haven't excluded
-        if (key in NOTE_KEYS or (len(val or "") > 30 and _is_note_field(key, val))):
-            if isinstance(val, str):
-                clean = _strip_html(val.strip())
-                if clean:
-                    opp_notes.append(f"[{key}] {clean}")
-                    logger.info(f"Scope: opp field '{key}' has content ({len(clean)} chars)")
+        if not isinstance(val, str):
+            continue
+        # Accept explicit note keys OR any long string field that passes the exclusion filter
+        if key in NOTE_KEYS or (len(val) > 30 and _is_note_field(key, val)):
+            clean = _strip_html(val.strip())
+            if clean:
+                opp_notes.append(f"[{key}] {clean}")
+                logger.info(f"Scope: opp field '{key}' has content ({len(clean)} chars)")
 
     # 4. Collect service-level notes — scan ALL string fields, not just hardcoded names
     svc_notes: list[str] = []
