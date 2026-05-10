@@ -436,55 +436,75 @@ export default function FieldProject() {
                 </div>
               )}
 
-              {/* Attachments */}
-              <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-                Attachments ({(data.attachments || []).length})
-              </div>
-              {(data.attachments || []).length === 0 ? (
-                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '12px 0 20px' }}>
-                  No attachments found for this job
-                </div>
-              ) : (
-                <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
-                  {(data.attachments || []).map((att, i) => {
-                    const icon =
-                      att.attachment_type.toLowerCase().includes('plan') ? '🗺️' :
-                      att.attachment_type.toLowerCase().includes('photo') ? '📷' :
-                      att.attachment_type.toLowerCase().includes('invoice') ? '🧾' :
-                      att.attachment_type.toLowerCase().includes('doc') ? '📄' : '📎';
-                    return (
-                      <div key={att.attachment_id ?? i} style={{
-                        padding: '10px 14px',
-                        background: i % 2 === 0 ? '#fff' : '#f9fafb',
-                        borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
-                        display: 'flex', alignItems: 'center', gap: 10,
-                      }}>
-                        <span style={{ fontSize: 18, flexShrink: 0 }}>{icon}</span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {att.file_name}
-                          </div>
-                          <div style={{ fontSize: 11, color: '#9ca3af' }}>
-                            {att.attachment_type || 'Attachment'}{att.created_date ? ` · ${att.created_date}` : ''}
-                          </div>
+              {/* Attachments — Design Plans first, then others */}
+              {(() => {
+                const allAtts = data.attachments || [];
+                const isDesignPlan = (a: Attachment) =>
+                  (a.attachment_type || '').toLowerCase().includes('design plan') ||
+                  (a.attachment_type || '').toLowerCase().includes('design');
+                const plans  = allAtts.filter(a => isDesignPlan(a));
+                const others = allAtts.filter(a => !isDesignPlan(a));
+
+                const renderAtt = (att: Attachment, i: number, highlight = false) => {
+                  const t = (att.attachment_type || '').toLowerCase();
+                  const icon = t.includes('plan') ? '🗺️' : t.includes('photo') ? '📷' :
+                               t.includes('invoice') ? '🧾' : t.includes('doc') ? '📄' : '📎';
+                  return (
+                    <div key={att.attachment_id ?? i} style={{
+                      padding: '10px 14px',
+                      background: highlight ? '#f0f9ff' : i % 2 === 0 ? '#fff' : '#f9fafb',
+                      borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
+                      display: 'flex', alignItems: 'center', gap: 10,
+                    }}>
+                      <span style={{ fontSize: 20, flexShrink: 0 }}>{icon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {att.file_name}
                         </div>
-                        {att.file_url ? (
-                          <a
-                            href={att.file_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ padding: '5px 11px', background: '#1e3a5f', color: '#fff', borderRadius: 7, fontSize: 12, fontWeight: 600, textDecoration: 'none', flexShrink: 0 }}
-                          >
-                            View
-                          </a>
-                        ) : (
-                          <span style={{ fontSize: 11, color: '#cbd5e1', flexShrink: 0 }}>No link</span>
-                        )}
+                        <div style={{ fontSize: 11, color: highlight ? '#0369a1' : '#9ca3af' }}>
+                          {att.attachment_type || 'Attachment'}{att.created_date ? ` · ${att.created_date}` : ''}
+                        </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+                      {att.file_url ? (
+                        <a href={att.file_url} target="_blank" rel="noopener noreferrer"
+                          style={{ padding: '5px 11px', background: highlight ? '#0369a1' : '#1e3a5f', color: '#fff', borderRadius: 7, fontSize: 12, fontWeight: 600, textDecoration: 'none', flexShrink: 0 }}>
+                          View
+                        </a>
+                      ) : (
+                        <span style={{ fontSize: 11, color: '#cbd5e1', flexShrink: 0 }}>No link</span>
+                      )}
+                    </div>
+                  );
+                };
+
+                return (
+                  <>
+                    {plans.length > 0 && (
+                      <>
+                        <div style={{ fontWeight: 700, fontSize: 11, color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+                          🗺️ Design Plans ({plans.length})
+                        </div>
+                        <div style={{ border: '1.5px solid #bae6fd', borderRadius: 10, overflow: 'hidden', marginBottom: 16 }}>
+                          {plans.map((att, i) => renderAtt(att, i, true))}
+                        </div>
+                      </>
+                    )}
+
+                    <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+                      Attachments ({allAtts.length})
+                    </div>
+                    {allAtts.length === 0 ? (
+                      <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '12px 0 20px' }}>
+                        No attachments found for this job
+                      </div>
+                    ) : others.length === 0 && plans.length > 0 ? null : (
+                      <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
+                        {others.map((att, i) => renderAtt(att, i, false))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </>
           )}
 

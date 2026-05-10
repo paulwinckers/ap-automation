@@ -1257,27 +1257,56 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
     prop_str     = opp.get("PropertyName") or ""
 
     async def _fetch_opp_attachments() -> list[dict]:
-        """Fetch files attached to this opportunity in Aspire."""
-        try:
-            res = await _aspire._get("Attachments", {
-                "$filter": f"ObjectCode eq 'Opportunity' and ObjectId eq {opp_id}",
-                "$top":    "50",
-            })
-            rows = _aspire._extract_list(res)
-        except Exception as e:
-            logger.warning(f"Attachments fetch failed for opp {opp_id}: {e}")
-            return []
+        """
+        Fetch files attached to this opportunity in Aspire.
+        Tries multiple filter strategies because Aspire field names vary.
+        """
+        rows: list[dict] = []
+
+        # Try filter strategies in order until one returns results
+        filters = [
+            f"ObjectCode eq 'Opportunity' and ObjectId eq {opp_id}",
+            f"ObjectCode eq 'Opportunity' and ObjectID eq {opp_id}",
+            f"OpportunityID eq {opp_id}",
+        ]
+        for filt in filters:
+            try:
+                res = await _aspire._get("Attachments", {
+                    "$filter": filt,
+                    "$top":    "50",
+                })
+                rows = _aspire._extract_list(res)
+                if rows:
+                    logger.info(f"Attachments: filter '{filt}' returned {len(rows)} rows")
+                    if rows:
+                        logger.info(f"Attachments sample keys: {sorted(rows[0].keys())}")
+                    break
+            except Exception as e:
+                logger.info(f"Attachments filter '{filt}' failed: {e}")
 
         out = []
         for r in rows:
+            att_type = (
+                r.get("AttachmentTypeName") or r.get("TypeName")
+                or r.get("AttachmentType") or r.get("Type") or ""
+            )
             out.append({
                 "attachment_id":   r.get("AttachmentID") or r.get("Id"),
-                "file_name":       r.get("FileName") or r.get("Name") or r.get("AttachmentName") or "File",
-                "file_url":        r.get("FileUrl") or r.get("Url") or r.get("AttachmentUrl") or "",
-                "attachment_type": r.get("AttachmentTypeName") or r.get("TypeName") or "",
+                "file_name":       (
+                    r.get("FileName") or r.get("Name") or r.get("AttachmentName")
+                    or r.get("DisplayName") or "File"
+                ),
+                "file_url":        (
+                    r.get("FileUrl") or r.get("Url") or r.get("AttachmentUrl")
+                    or r.get("DownloadUrl") or r.get("FilePath") or ""
+                ),
+                "attachment_type": att_type,
                 "type_id":         r.get("AttachmentTypeId") or r.get("TypeId"),
-                "expose_to_crew":  bool(r.get("ExposeToCrew")),
-                "created_date":    (r.get("CreatedDate") or r.get("DateCreated") or "")[:10],
+                "expose_to_crew":  bool(r.get("ExposeToCrew") or r.get("ShowToCrew")),
+                "created_date":    (
+                    r.get("CreatedDate") or r.get("DateCreated")
+                    or r.get("UploadDate") or r.get("UploadedDate") or ""
+                )[:10],
             })
         return out
 
@@ -1437,6 +1466,11 @@ async def scope_probe(opp_id: int):
         _try("OpportunityServiceGroups", "OpportunityServiceGroups",   {"$filter": f"OpportunityID eq {opp_id}", "$top": "10"}),
         _try("EstimateServiceGroups",    "EstimateServiceGroups",      {"$filter": f"OpportunityID eq {opp_id}", "$top": "10"}),
         _try("ServiceGroups",            "ServiceGroups",              {"$top": "3"}),
+        # Attachment probes — try different filter field name conventions
+        _try("Attachments_ObjectId",     "Attachments",                {"$filter": f"ObjectId eq {opp_id} and ObjectCode eq 'Opportunity'", "$top": "10"}),
+        _try("Attachments_ObjectID",     "Attachments",                {"$filter": f"ObjectID eq {opp_id} and ObjectCode eq 'Opportunity'", "$top": "10"}),
+        _try("Attachments_OpportunityID","Attachments",                {"$filter": f"OpportunityID eq {opp_id}", "$top": "10"}),
+        _try("Attachments_nofilter",     "Attachments",                {"$top": "3"}),  # just get fields
     )
 
     return results
