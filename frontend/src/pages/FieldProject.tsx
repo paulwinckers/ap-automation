@@ -935,12 +935,6 @@ export default function FieldProject() {
                             </div>
                           )}
 
-                          {/* Debug: item field names — remove once description key is confirmed */}
-                          {po._item_keys && po._item_keys.length > 0 && (
-                            <div style={{ padding: '3px 14px', fontSize: 9, color: '#cbd5e1', borderTop: '1px solid #f8fafc', background: '#fff', fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                              keys: {po._item_keys.join(', ')}
-                            </div>
-                          )}
 
                           {/* Line items (if Aspire returns them) */}
                           {po.items.length > 0 && (

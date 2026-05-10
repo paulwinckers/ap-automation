@@ -1406,7 +1406,8 @@ async def get_project_materials(opp_id: int):
             qty      = float(item.get("ItemQuantity") or item.get("Quantity") or 0)
             unit_cost = float(item.get("ItemUnitCost") or item.get("UnitCost") or item.get("ItemEstUnitCost") or 0)
             total    = float(
-                item.get("ReceiptItemPrice")
+                item.get("ItemExtendedCost")
+                or item.get("ReceiptItemPrice")
                 or item.get("ItemTotal")
                 or item.get("TotalCost")
                 or item.get("ReceiptItemCost")
@@ -1415,11 +1416,11 @@ async def get_project_materials(opp_id: int):
                 or 0
             )
             desc = (
-                item.get("Description")
+                item.get("ItemName")
+                or item.get("CatalogItemName")
+                or item.get("Description")
                 or item.get("ReceiptItemDescription")
                 or item.get("ItemDescription")
-                or item.get("ItemName")
-                or item.get("CatalogItemName")
                 or item.get("Name")
                 or ""
             )
@@ -1448,8 +1449,6 @@ async def get_project_materials(opp_id: int):
             "status":         r.get("ReceiptStatusName") or "",
             "note":           clean_note,
             "items":          items,
-            # Raw item keys on first item — exposed for debugging, remove once stable
-            "_item_keys":     sorted(raw_items[0].keys()) if raw_items else [],
         })
 
     return {
