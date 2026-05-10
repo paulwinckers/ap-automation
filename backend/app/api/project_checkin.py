@@ -212,46 +212,90 @@ async def _fetch_scope_notes(opp_id: int) -> str:
     except Exception as e:
         logger.warning(f"Scope notes: opportunity fetch failed for {opp_id}: {e}")
 
-    # 2. Fetch OpportunityServices for service-level notes
-    svc_rows: list[dict] = []
-    try:
-        res = await _aspire._get("OpportunityServices", {
-            "$filter": f"OpportunityID eq {opp_id}",
-            "$top":    "30",
-        })
-        svc_rows = _aspire._extract_list(res)
-    except Exception as e:
-        logger.warning(f"Scope notes: OpportunityServices fetch failed for {opp_id}: {e}")
+    # 2. Fetch OpportunityServices AND OpportunityServiceGroups in parallel
+    svc_rows:   list[dict] = []
+    group_rows: list[dict] = []
 
-    # 3. Collect all note-like text from opportunity
+    async def _fetch_svc():
+        try:
+            res = await _aspire._get("OpportunityServices", {
+                "$filter": f"OpportunityID eq {opp_id}",
+                "$top":    "30",
+            })
+            return _aspire._extract_list(res)
+        except Exception as e:
+            logger.warning(f"Scope notes: OpportunityServices fetch failed for {opp_id}: {e}")
+            return []
+
+    async def _fetch_groups():
+        try:
+            res = await _aspire._get("OpportunityServiceGroups", {
+                "$filter": f"OpportunityID eq {opp_id}",
+                "$top":    "30",
+            })
+            return _aspire._extract_list(res)
+        except Exception as e:
+            logger.info(f"Scope notes: OpportunityServiceGroups not available for {opp_id}: {e}")
+            return []
+
+    svc_rows, group_rows = await asyncio.gather(_fetch_svc(), _fetch_groups())
+
+    # Known non-note fields to skip (IDs, names, dates, statuses, numbers)
+    SKIP_SUFFIXES = ("ID", "Id", "Name", "Abr", "Date", "Status", "Number",
+                     "Code", "Type", "Color", "Sort", "Order", "Tax", "Rate",
+                     "Hours", "Cost", "Price", "Revenue", "Dollars", "Percent")
+
+    def _is_note_field(key: str, val) -> bool:
+        if not isinstance(val, str) or len(val.strip()) < 10:
+            return False
+        if any(key.endswith(s) for s in SKIP_SUFFIXES):
+            return False
+        return True
+
+    # 3. Collect all note-like text from opportunity (any string field that looks like prose)
     NOTE_KEYS = {
         "Notes", "EstimatorNotes", "SalesNotes", "InternalNotes",
         "Description", "CustomerNotes", "PrivateNotes", "Scope",
         "ScopeNotes", "WorkDescription", "JobDescription", "Comments",
-        "ServiceGroupNotes", "ServiceGroupNote",
+        "ServiceGroupNotes", "ServiceGroupNote", "Memo", "OpportunityNotes",
     }
     opp_notes: list[str] = []
     for key, val in opp_raw.items():
-        if key in NOTE_KEYS and val and isinstance(val, str):
-            clean = _strip_html(val.strip())
-            if clean:
-                opp_notes.append(f"[{key}] {clean}")
+        # Accept explicit note keys OR any string field >30 chars that we haven't excluded
+        if (key in NOTE_KEYS or (len(val or "") > 30 and _is_note_field(key, val))):
+            if isinstance(val, str):
+                clean = _strip_html(val.strip())
+                if clean:
+                    opp_notes.append(f"[{key}] {clean}")
+                    logger.info(f"Scope: opp field '{key}' has content ({len(clean)} chars)")
 
-    # 4. Collect service-level notes
+    # 4. Collect service-level notes — scan ALL string fields, not just hardcoded names
     svc_notes: list[str] = []
     for svc in svc_rows:
         svc_name = (
             svc.get("ServiceNameAbr") or svc.get("ServiceName") or svc.get("DisplayName") or "Service"
         )
-        for key in ("Notes", "ServiceNotes", "ServiceGroupNotes", "ServiceGroupNote", "Description"):
-            val = svc.get(key)
-            if val and isinstance(val, str):
-                clean = _strip_html(val.strip())
+        for key, val in svc.items():
+            if _is_note_field(key, val):
+                clean = _strip_html(str(val).strip())
                 if clean:
-                    svc_notes.append(f"[{svc_name}] {clean}")
-                break  # one note per service
+                    svc_notes.append(f"[{svc_name} – {key}] {clean}")
+                    logger.info(f"Scope: svc '{svc_name}' field '{key}' has content ({len(clean)} chars)")
 
-    all_notes = opp_notes + svc_notes
+    # 5. Scan OpportunityServiceGroups for note fields
+    group_notes: list[str] = []
+    for grp in group_rows:
+        grp_name = (
+            grp.get("ServiceGroupName") or grp.get("ServiceName") or grp.get("Name") or "Group"
+        )
+        for key, val in grp.items():
+            if _is_note_field(key, val):
+                clean = _strip_html(str(val).strip())
+                if clean:
+                    group_notes.append(f"[{grp_name}] {clean}")
+                    logger.info(f"Scope: service group '{grp_name}' field '{key}' ({len(clean)} chars)")
+
+    all_notes = opp_notes + group_notes + svc_notes
     if not all_notes:
         return ""
 
@@ -1354,6 +1398,48 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             ],
         } for a in activities],
     }
+
+
+@public_router.get("/project/{opp_id}/scope-probe")
+async def scope_probe(opp_id: int):
+    """
+    Dev endpoint: returns raw field names + values from every entity that might
+    hold Service Group Notes for this opportunity. Used to identify the correct
+    field/endpoint so _fetch_scope_notes can be fixed.
+    """
+    import asyncio as _asyncio
+
+    results: dict = {}
+
+    async def _try(label: str, endpoint: str, params: dict):
+        try:
+            res = await _aspire._get(endpoint, params)
+            rows = _aspire._extract_list(res)
+            if rows:
+                results[label] = {
+                    "count": len(rows),
+                    "keys":  sorted(rows[0].keys()),
+                    # All non-empty string values longer than 15 chars (likely notes)
+                    "strings": {
+                        k: v for k, v in rows[0].items()
+                        if isinstance(v, str) and len(v) > 15
+                    },
+                    "sample": rows[:2],
+                }
+            else:
+                results[label] = {"count": 0, "keys": [], "strings": {}}
+        except Exception as e:
+            results[label] = {"error": str(e)}
+
+    await _asyncio.gather(
+        _try("Opportunity",              "Opportunities",              {"$filter": f"OpportunityID eq {opp_id}", "$top": "1"}),
+        _try("OpportunityServices",      "OpportunityServices",        {"$filter": f"OpportunityID eq {opp_id}", "$top": "10"}),
+        _try("OpportunityServiceGroups", "OpportunityServiceGroups",   {"$filter": f"OpportunityID eq {opp_id}", "$top": "10"}),
+        _try("EstimateServiceGroups",    "EstimateServiceGroups",      {"$filter": f"OpportunityID eq {opp_id}", "$top": "10"}),
+        _try("ServiceGroups",            "ServiceGroups",              {"$top": "3"}),
+    )
+
+    return results
 
 
 @public_router.get("/project/{opp_id}/materials")
