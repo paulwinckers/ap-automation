@@ -940,8 +940,13 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
                 "$orderby": "CreatedDate asc",
                 "$select":  "Comment,CreatedDate,CreatedByUserName",
             })
-            return _aspire._extract_list(res)
-        except Exception:
+            batch = _aspire._extract_list(res)
+            logger.info(f"ActivityComments for activity {activity_id}: {len(batch)} results")
+            if batch:
+                logger.info(f"ActivityComments sample keys: {list(batch[0].keys())}")
+            return batch
+        except Exception as e:
+            logger.warning(f"ActivityComments fetch failed for activity {activity_id}: {e}")
             return []
 
     if activities:
