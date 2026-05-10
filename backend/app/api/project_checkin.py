@@ -925,8 +925,9 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         ("RelatedID",         f"RelatedID eq {opp_id}"),
     ]
     for filter_name, filt in filter_attempts:
-        try:
-            res = await _aspire._get("Activities", {
+        # Try with ActivityComments expand first, fall back to base fields only
+        for expand in [True, False]:
+            params: dict = {
                 "$filter":  filt,
                 "$orderby": "CreatedDate desc",
                 "$top":     "50",
@@ -934,29 +935,22 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
                     "ActivityID,Subject,ActivityType,ActivityCategoryName,"
                     "Status,Notes,Description,CreatedDate,CompleteDate,CreatedByUserName,IsMileStone"
                 ),
-            })
-            batch = _aspire._extract_list(res)
-            logger.info(
-                f"Activities filter={filter_name}: {len(batch)} results for opp_id={opp_id} opp_num={opp_number_str}"
-            )
-            if batch:
-                activities = batch
-                break
-        except Exception as e:
-            logger.warning(f"Activities filter={filter_name} failed for opp {opp_id}: {e}")
-
-    # Debug: if still no activities, fetch unfiltered sample to inspect field names
-    if not activities:
-        try:
-            res = await _aspire._get("Activities", {
-                "$orderby": "CreatedDate desc",
-                "$top":     "3",
-            })
-            sample = _aspire._extract_list(res)
-            if sample:
-                logger.info(f"Activities sample keys: {list(sample[0].keys())}")
-        except Exception as e:
-            logger.warning(f"Activities sample fetch failed: {e}")
+            }
+            if expand:
+                params["$expand"] = "ActivityComments($select=Comment,CreatedDate,CreatedByUserName;$orderby=CreatedDate asc)"
+            try:
+                res = await _aspire._get("Activities", params)
+                batch = _aspire._extract_list(res)
+                logger.info(
+                    f"Activities filter={filter_name} expand={expand}: {len(batch)} results for opp_id={opp_id}"
+                )
+                if batch:
+                    activities = batch
+                    break
+            except Exception as e:
+                logger.warning(f"Activities filter={filter_name} expand={expand} failed for opp {opp_id}: {e}")
+        if activities:
+            break
 
     # Check-in history for this project (all months, most recent first)
     history_rows = await db._q(
@@ -1009,6 +1003,15 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             "CompleteDate":         (a.get("CompleteDate") or "")[:10],
             "CreatedByUserName":    a.get("CreatedByUserName") or "",
             "IsMileStone":          bool(a.get("IsMileStone")),
+            "comments": [
+                {
+                    "Comment":           c.get("Comment") or "",
+                    "CreatedDate":       (c.get("CreatedDate") or "")[:10],
+                    "CreatedByUserName": c.get("CreatedByUserName") or "",
+                }
+                for c in (a.get("ActivityComments") or [])
+                if c.get("Comment")
+            ],
         } for a in activities],
     }
 
