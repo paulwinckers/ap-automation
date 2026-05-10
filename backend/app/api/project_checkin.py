@@ -581,7 +581,6 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
     then recently Completed, then anything else.
     """
     from app.api.construction_plan import _fetch_opp_actuals
-    from datetime import timedelta
 
     name = (name or "").strip()
 
@@ -597,22 +596,41 @@ async def my_project_lookup(name: str = "", db: Database = Depends(get_db)):
     if not name:
         return {"leads": leads, "projects": []}
 
-    # Fetch recent work tickets — no date filter (Aspire date range filters can
-    # silently return empty).  Sort by WorkTicketID desc (newest first), take
-    # top 500, then filter by CrewLeaderName in Python.
+    # Fetch recent work tickets.  We use a broad date filter (18 months back)
+    # so that jobs scheduled in past months with lower WorkTicketIDs still appear,
+    # while keeping the result set manageable.  CrewLeaderName OData filters are
+    # unreliable in Aspire, so we filter in Python after fetch.
+    from datetime import timedelta
+    date_cutoff = (datetime.now() - timedelta(days=548)).strftime("%Y-%m-%d")  # ~18 months
+
     all_tickets: list[dict] = []
-    try:
-        res = await _aspire._get("WorkTickets", {
+    for date_fmt in (
+        f"ScheduledStartDate ge {date_cutoff}",
+        f"ScheduledStartDate ge {date_cutoff}T00:00:00Z",
+        None,   # last-resort: no date filter, just top 500
+    ):
+        params: dict = {
             "$select":  (
                 "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
-                "OpportunityID,ScheduledStartDate,CompleteDate,"
+                "OpportunityID,OpportunityNumber,ScheduledStartDate,CompleteDate,"
                 "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
             ),
             "$orderby": "WorkTicketID desc",
             "$top":     "500",
-        })
-        all_tickets = _aspire._extract_list(res)
-        logger.info(f"my-project: fetched {len(all_tickets)} total tickets, filtering for '{name}'")
+        }
+        if date_fmt:
+            params["$filter"] = date_fmt
+        try:
+            res = await _aspire._get("WorkTickets", params)
+            all_tickets = _aspire._extract_list(res)
+            logger.info(
+                f"my-project: fetched {len(all_tickets)} tickets "
+                f"(filter={date_fmt or 'none'}), filtering for '{name}'"
+            )
+            if all_tickets:
+                break
+        except Exception as e:
+            logger.warning(f"my-project WorkTickets fetch (filter={date_fmt}): {e}")
     except Exception as e:
         logger.warning(f"my-project WorkTickets fetch failed: {e}")
 
