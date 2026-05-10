@@ -845,25 +845,36 @@ async def submit_checkin_response(
 # ── Permanent project page endpoints (no token, bookmarkable) ─────────────────
 
 async def _fetch_all_opp_tickets(opp_id: int) -> list[dict]:
-    """Fetch ALL work tickets for an opportunity (all months, with title + revenue)."""
-    try:
-        res = await _aspire._get("WorkTickets", {
-            "$filter":  f"OpportunityID eq {opp_id}",
-            "$orderby": "WorkTicketID asc",
-            "$top":     "200",
-            "$select": (
-                "WorkTicketID,WorkTicketNumber,WorkTicketTitle,WorkTicketStatusName,"
-                "OpportunityID,ScheduledStartDate,CompleteDate,"
-                "HoursEst,HoursAct,CrewLeaderName,PercentComplete,"
-                "Revenue,EarnedRevenue"
-            ),
-        })
-        rows = _aspire._extract_list(res)
-        logger.info(f"Project page tickets: {len(rows)} for opp {opp_id}")
-        return rows
-    except Exception as e:
-        logger.warning(f"Project page tickets fetch failed for opp {opp_id}: {e}")
-        return []
+    """Fetch ALL work tickets for an opportunity (all months).
+
+    We try progressively simpler selects so that unknown field names don't
+    cause a 400 that silently returns nothing.
+    """
+    BASE_SELECT = (
+        "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
+        "OpportunityID,ScheduledStartDate,CompleteDate,"
+        "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
+    )
+    EXTRA_FIELDS = [
+        ",WorkTicketTitle,Revenue,EarnedRevenue",
+        ",Revenue,EarnedRevenue",
+        ",WorkTicketTitle",
+        "",   # base only — always works
+    ]
+    for extra in EXTRA_FIELDS:
+        try:
+            res = await _aspire._get("WorkTickets", {
+                "$filter":  f"OpportunityID eq {opp_id}",
+                "$orderby": "WorkTicketID asc",
+                "$top":     "200",
+                "$select":  BASE_SELECT + extra,
+            })
+            rows = _aspire._extract_list(res)
+            logger.info(f"Project page tickets: {len(rows)} for opp {opp_id} (extra='{extra.strip(',') or 'none'}')")
+            return rows
+        except Exception as e:
+            logger.warning(f"Project page tickets (extra='{extra}'): {e}")
+    return []
 
 
 @public_router.get("/project/{opp_id}")
