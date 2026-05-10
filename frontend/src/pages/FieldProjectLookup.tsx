@@ -62,6 +62,32 @@ function HoursBar({ est, act }: { est: number; act: number }) {
   );
 }
 
+function ProjectCard({ p, onClick }: { p: Project; onClick: () => void }) {
+  const ss = statusStyle(p.status);
+  return (
+    <div style={S.projectCard} onClick={onClick}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={S.projName}>{p.property || p.opp_name}</div>
+          {p.property && p.opp_name !== p.property && (
+            <div style={S.projSub}>{p.opp_name}</div>
+          )}
+        </div>
+        <span style={{ ...S.badge, background: ss.bg, color: ss.text }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: ss.dot, display: 'inline-block', marginRight: 5 }} />
+          {p.status || 'Unknown'}
+        </span>
+      </div>
+      <HoursBar est={p.hrs_est} act={p.hrs_act} />
+      <div style={S.projMeta}>
+        <span>📋 {p.ticket_count} ticket{p.ticket_count !== 1 ? 's' : ''}</span>
+        {p.latest_date && <span>📅 {fmtDate(p.latest_date)}</span>}
+      </div>
+      <div style={S.tapHint}>Tap to open →</div>
+    </div>
+  );
+}
+
 export default function FieldProjectLookup() {
   const navigate = useNavigate();
 
@@ -72,6 +98,11 @@ export default function FieldProjectLookup() {
   const [loading, setLoading]       = useState(false);
   const [searched, setSearched]     = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [showCompleted, setShowCompleted] = useState(false);
+
+  const CLOSED_STATUSES = new Set(['complete', 'completed', 'closed', 'cancelled', 'canceled']);
+  const activeProjects    = projects.filter(p => !CLOSED_STATUSES.has((p.status || '').toLowerCase()));
+  const completedProjects = projects.filter(p =>  CLOSED_STATUSES.has((p.status || '').toLowerCase()));
 
   // Load lead list from D1 on mount
   useEffect(() => {
@@ -188,46 +219,29 @@ export default function FieldProjectLookup() {
           </div>
         )}
 
-        {searched && !loading && !searchError && projects.length === 0 && (
+        {searched && !loading && !searchError && activeProjects.length === 0 && completedProjects.length === 0 && (
           <div style={S.emptyState}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>🏗️</div>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>No projects found</div>
-            <div style={{ fontSize: 13, color: '#6b7280' }}>No work tickets assigned to {selected} in the past year.</div>
+            <div style={{ fontSize: 13, color: '#6b7280' }}>No active construction work tickets assigned to {selected}.</div>
           </div>
         )}
 
-        {projects.map(p => {
-          const ss = statusStyle(p.status);
-          return (
-            <div
-              key={p.opp_id}
-              style={S.projectCard}
-              onClick={() => navigate(`/field/project/${p.opp_id}`)}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={S.projName}>{p.property || p.opp_name}</div>
-                  {p.property && p.opp_name !== p.property && (
-                    <div style={S.projSub}>{p.opp_name}</div>
-                  )}
-                </div>
-                <span style={{ ...S.badge, background: ss.bg, color: ss.text }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: ss.dot, display: 'inline-block', marginRight: 5 }} />
-                  {p.status || 'Unknown'}
-                </span>
-              </div>
+        {/* Active / in-production projects */}
+        {activeProjects.map(p => <ProjectCard key={p.opp_id} p={p} onClick={() => navigate(`/field/project/${p.opp_id}`)} />)}
 
-              <HoursBar est={p.hrs_est} act={p.hrs_act} />
-
-              <div style={S.projMeta}>
-                <span>📋 {p.ticket_count} ticket{p.ticket_count !== 1 ? 's' : ''}</span>
-                {p.latest_date && <span>📅 {fmtDate(p.latest_date)}</span>}
-              </div>
-
-              <div style={S.tapHint}>Tap to open →</div>
-            </div>
-          );
-        })}
+        {/* Completed jobs toggle */}
+        {searched && !loading && completedProjects.length > 0 && (
+          <button
+            style={S.completedToggle}
+            onClick={() => setShowCompleted(v => !v)}
+          >
+            {showCompleted ? '▲ Hide' : '▼ Show'} completed jobs ({completedProjects.length})
+          </button>
+        )}
+        {showCompleted && completedProjects.map(p => (
+          <ProjectCard key={p.opp_id} p={p} onClick={() => navigate(`/field/project/${p.opp_id}`)} />
+        ))}
 
       </div>
     </div>
@@ -257,5 +271,6 @@ const S: Record<string, React.CSSProperties> = {
   projSub:    { fontSize: 12, color: '#6b7280' },
   badge:      { fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 20, whiteSpace: 'nowrap', flexShrink: 0, marginLeft: 8, display: 'flex', alignItems: 'center' },
   projMeta:   { display: 'flex', gap: 14, marginTop: 8, fontSize: 12, color: '#6b7280' },
-  tapHint:    { marginTop: 10, fontSize: 12, color: '#9ca3af', textAlign: 'right' },
+  tapHint:        { marginTop: 10, fontSize: 12, color: '#9ca3af', textAlign: 'right' },
+  completedToggle: { width: '100%', padding: '12px 16px', background: '#fff', border: '1px solid #e2e6ed', borderRadius: 10, marginBottom: 8, fontSize: 13, color: '#6b7280', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' },
 };
