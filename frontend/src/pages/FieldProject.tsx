@@ -294,8 +294,8 @@ export default function FieldProject() {
   const [handoffMsg,     setHandoffMsg]     = useState('');
   // Smart prompt selections: promptId → selected option string
   const [promptSelections, setPromptSelections] = useState<Record<string, string>>({});
-  // Show prompts that were previously answered and suppressed
-  const [showDismissed, setShowDismissed] = useState(false);
+  // Per-prompt additional free-form notes
+  const [promptNotes, setPromptNotes] = useState<Record<string, string>>({});
 
   // ── Prompt memory helpers (localStorage) ─────────────────────────────────
   const promptMemoryKey = (promptId: string) => `pm_${oppId}_${promptId}`;
@@ -428,6 +428,19 @@ export default function FieldProject() {
   };
 
   useEffect(() => { load(); loadJobAtts(); }, [oppId]);
+
+  // Pre-populate prompt selections from localStorage once data arrives
+  useEffect(() => {
+    if (!data) return;
+    const saved: Record<string, string> = {};
+    for (const p of (data.smart_prompts || [])) {
+      const mem = getPromptMemory(p.id);
+      if (mem?.answer) saved[p.id] = mem.answer;
+    }
+    if (Object.keys(saved).length > 0) {
+      setPromptSelections(prev => ({ ...saved, ...prev }));
+    }
+  }, [data?.smart_prompts?.length]);
 
   const handleSubmit = async (e: React.FormEvent, combinedNotes?: string) => {
     e.preventDefault();
@@ -941,10 +954,13 @@ export default function FieldProject() {
               // Update the remainingHours state to be the total (for the API field)
               const totalRemStr = filledHours.length > 0 ? String(totalRemaining) : remainingHours;
 
-              // Prepend prompt selections to approach notes if any selected
+              // Prepend prompt selections + any per-prompt notes to approach notes
               const answered = (data.smart_prompts || []).filter(p => promptSelections[p.id]);
               answered.forEach(p => savePromptMemory(p.id, promptSelections[p.id], p.actHours));
-              const promptLines = answered.map(p => `${p.icon} ${p.situation}\n→ ${promptSelections[p.id]}`);
+              const promptLines = answered.map(p => {
+                const note = (promptNotes[p.id] || '').trim();
+                return `${p.icon} ${p.situation}\n→ ${promptSelections[p.id]}${note ? `\n  Note: ${note}` : ''}`;
+              });
 
               const parts = [
                 hoursLine,
@@ -977,95 +993,66 @@ export default function FieldProject() {
                 Answer the prompts below, then add any notes.
               </div>
 
-              {/* ── Smart Prompts ── */}
-              {(() => {
-                const allPrompts   = data.smart_prompts || [];
-                const visible      = allPrompts.filter(p => !isPromptSuppressed(p));
-                const suppressed   = allPrompts.filter(p =>  isPromptSuppressed(p));
-                const toRender     = showDismissed ? allPrompts : visible;
-
+              {/* ── Smart Prompts ── always visible; pre-populated from memory ── */}
+              {(data.smart_prompts || []).map(p => {
+                const selected  = promptSelections[p.id] || '';
+                const hasAnswer = !!selected;
+                const borderColor = p.type === 'over_hours' ? '#fca5a5' : p.type === 'upcoming' ? '#93c5fd' : '#d1d5db';
+                const headerBg    = p.type === 'over_hours' ? '#fff1f2' : p.type === 'upcoming' ? '#eff6ff' : '#f9fafb';
+                const labelColor  = p.type === 'over_hours' ? '#dc2626' : p.type === 'upcoming' ? '#1d4ed8' : '#374151';
                 return (
-                  <>
-                    {toRender.map(p => {
-                      const mem = getPromptMemory(p.id);
-                      const isSuppressed = isPromptSuppressed(p);
-                      return (
-                        <div key={p.id} style={{
-                          marginBottom: 14,
-                          border: `1.5px solid ${isSuppressed ? '#e5e7eb' : p.type === 'over_hours' ? '#fca5a5' : p.type === 'upcoming' ? '#93c5fd' : '#d1d5db'}`,
-                          borderRadius: 10,
-                          overflow: 'hidden',
-                          opacity: isSuppressed ? 0.65 : 1,
-                        }}>
-                          <div style={{
-                            padding: '10px 14px',
-                            background: isSuppressed ? '#f9fafb' : p.type === 'over_hours' ? '#fff1f2' : p.type === 'upcoming' ? '#eff6ff' : '#f9fafb',
-                          }}>
-                            <div style={{ fontSize: 12, fontWeight: 700, color: isSuppressed ? '#6b7280' : p.type === 'over_hours' ? '#dc2626' : p.type === 'upcoming' ? '#1d4ed8' : '#374151', marginBottom: 2 }}>
-                              {isSuppressed ? '✓ ' : ''}{p.icon} {p.situation}
-                            </div>
-                            <div style={{ fontSize: 13, color: '#0f172a', fontWeight: 600 }}>
-                              {isSuppressed && mem?.answer
-                                ? <span style={{ fontWeight: 400, color: '#6b7280', fontSize: 12 }}>Previously: {mem.answer}</span>
-                                : p.question}
-                            </div>
-                          </div>
-                          {!isSuppressed && (
-                            <div style={{ padding: '8px 10px 10px', background: '#fff', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                              {p.options.map(opt => {
-                                const selected = promptSelections[p.id] === opt;
-                                return (
-                                  <button
-                                    key={opt}
-                                    type="button"
-                                    onClick={() => {
-                                      const newVal = selected ? '' : opt;
-                                      setPromptSelections(prev => ({ ...prev, [p.id]: newVal }));
-                                      if (newVal) savePromptMemory(p.id, newVal, p.actHours);
-                                    }}
-                                    style={{
-                                      padding: '6px 11px',
-                                      borderRadius: 20,
-                                      border: selected ? '2px solid #16a34a' : '1.5px solid #d1d5db',
-                                      background: selected ? '#dcfce7' : '#fff',
-                                      color: selected ? '#15803d' : '#374151',
-                                      fontSize: 12,
-                                      fontWeight: selected ? 700 : 400,
-                                      cursor: 'pointer',
-                                      textAlign: 'left',
-                                    }}
-                                  >
-                                    {selected ? '✓ ' : ''}{opt}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {suppressed.length > 0 && !showDismissed && (
-                      <button
-                        type="button"
-                        onClick={() => setShowDismissed(true)}
-                        style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: 12, cursor: 'pointer', padding: '0 0 14px', textDecoration: 'underline' }}
-                      >
-                        ↩ Show {suppressed.length} previously answered prompt{suppressed.length !== 1 ? 's' : ''}
-                      </button>
-                    )}
-                    {showDismissed && suppressed.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setShowDismissed(false)}
-                        style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: 12, cursor: 'pointer', padding: '0 0 14px', textDecoration: 'underline' }}
-                      >
-                        ↑ Hide answered prompts
-                      </button>
-                    )}
-                  </>
+                  <div key={p.id} style={{ marginBottom: 14, border: `1.5px solid ${borderColor}`, borderRadius: 10, overflow: 'hidden' }}>
+                    <div style={{ padding: '10px 14px', background: headerBg }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: labelColor, marginBottom: 2 }}>
+                        {hasAnswer ? '✓ ' : ''}{p.icon} {p.situation}
+                      </div>
+                      <div style={{ fontSize: 13, color: '#0f172a', fontWeight: 600 }}>{p.question}</div>
+                    </div>
+                    {/* Options — always clickable to change selection */}
+                    <div style={{ padding: '8px 10px 6px', background: '#fff', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {p.options.map(opt => {
+                        const isSelected = selected === opt;
+                        return (
+                          <button
+                            key={opt}
+                            type="button"
+                            onClick={() => {
+                              const newVal = isSelected ? '' : opt;
+                              setPromptSelections(prev => ({ ...prev, [p.id]: newVal }));
+                              if (newVal) savePromptMemory(p.id, newVal, p.actHours);
+                            }}
+                            style={{
+                              padding: '6px 11px', borderRadius: 20,
+                              border: isSelected ? '2px solid #16a34a' : '1.5px solid #d1d5db',
+                              background: isSelected ? '#dcfce7' : '#fff',
+                              color: isSelected ? '#15803d' : '#374151',
+                              fontSize: 12, fontWeight: isSelected ? 700 : 400,
+                              cursor: 'pointer', textAlign: 'left',
+                            }}
+                          >
+                            {isSelected ? '✓ ' : ''}{opt}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* Additional context note */}
+                    <div style={{ padding: '0 10px 10px', background: '#fff' }}>
+                      <textarea
+                        placeholder="Add additional context (optional)…"
+                        value={promptNotes[p.id] || ''}
+                        onChange={e => setPromptNotes(prev => ({ ...prev, [p.id]: e.target.value }))}
+                        rows={2}
+                        style={{
+                          width: '100%', boxSizing: 'border-box', fontSize: 12,
+                          border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 8px',
+                          resize: 'vertical', color: '#374151', fontFamily: 'inherit',
+                          background: '#f9fafb',
+                        }}
+                      />
+                    </div>
+                  </div>
                 );
-              })()}
+              })}
 
               {/* Coaching tip */}
               {data.ai_tip && (
