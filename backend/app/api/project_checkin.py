@@ -25,12 +25,17 @@ from datetime import datetime, timedelta, timezone, date as _date
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+import mimetypes
+import uuid
+
 import anthropic as _anthropic
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.database import Database
+from app.services import r2 as _r2
 from app.services.aspire import AspireClient
 from app.services.email_intake import GraphClient
 
@@ -1631,6 +1636,133 @@ async def proxy_attachment(attachment_id: int):
 
     # Fallback: Aspire homepage
     return RedirectResponse(url=aspire_base)
+
+
+# ── Job Attachment endpoints ──────────────────────────────────────────────────
+
+_ATT_TYPES = [
+    "Design Plan", "Site Plan", "Property Info", "Irrigation Map",
+    "Photo", "Contract", "Permit", "Other",
+]
+
+_MIME_OVERRIDE = {
+    "pdf":  "application/pdf",
+    "png":  "image/png",
+    "jpg":  "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif":  "image/gif",
+    "webp": "image/webp",
+    "heic": "image/heic",
+    "doc":  "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls":  "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "dwg":  "application/acad",
+}
+
+
+@public_router.get("/project/{opp_id}/job-attachments")
+async def list_job_attachments(opp_id: int, db: Database = Depends(get_db)):
+    """List all active attachments we store for this opportunity."""
+    rows = await db._q(
+        "SELECT id, opp_id, work_ticket_id, attachment_type, file_name, "
+        "file_extension, file_size, note, uploaded_by, uploaded_at "
+        "FROM job_attachments WHERE opp_id = ? AND is_active = 1 "
+        "ORDER BY attachment_type, uploaded_at DESC",
+        [opp_id],
+    )
+    return [dict(r) for r in rows]
+
+
+@public_router.post("/project/{opp_id}/job-attachments")
+async def upload_job_attachment(
+    opp_id:          int,
+    file:            UploadFile      = File(...),
+    attachment_type: str             = Form("General"),
+    note:            str             = Form(""),
+    uploaded_by:     str             = Form(""),
+    work_ticket_id:  Optional[int]   = Form(None),
+    db:              Database        = Depends(get_db),
+):
+    """Upload a file to R2 and register it for this opportunity."""
+    MAX_BYTES = 30 * 1024 * 1024  # 30 MB
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(400, "Empty file")
+    if len(file_bytes) > MAX_BYTES:
+        raise HTTPException(413, "File too large — 30 MB maximum")
+
+    if not _r2._r2_available():
+        raise HTTPException(503, "File storage not configured (R2 credentials missing)")
+
+    filename  = file.filename or "attachment"
+    ext       = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    safe_name = "".join(c if c.isalnum() or c in (".", "-", "_") else "_" for c in filename)
+    r2_key    = f"job-attachments/{opp_id}/{uuid.uuid4().hex[:8]}_{safe_name}"
+    ct        = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+    def _upload():
+        client = _r2._make_client()
+        client.put_object(
+            Bucket=settings.R2_BUCKET_NAME,
+            Key=r2_key,
+            Body=file_bytes,
+            ContentType=ct,
+        )
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _upload)
+
+    rows = await db._q(
+        "INSERT INTO job_attachments "
+        "(opp_id, work_ticket_id, attachment_type, file_name, file_extension, r2_key, file_size, note, uploaded_by) "
+        "VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
+        [opp_id, work_ticket_id, attachment_type or "General",
+         filename, ext, r2_key, len(file_bytes),
+         (note or "").strip() or None,
+         (uploaded_by or "").strip() or None],
+    )
+    att_id = rows[0]["id"] if rows else None
+    logger.info(f"Job attachment #{att_id} uploaded for opp {opp_id}: {filename} ({len(file_bytes)} bytes)")
+    return {"id": att_id, "file_name": filename, "r2_key": r2_key}
+
+
+@public_router.get("/job-attachment/{att_id}/file")
+async def serve_job_attachment(att_id: int, db: Database = Depends(get_db)):
+    """Stream a stored attachment from R2."""
+    rows = await db._q(
+        "SELECT r2_key, file_name, file_extension FROM job_attachments WHERE id = ? AND is_active = 1",
+        [att_id],
+    )
+    if not rows:
+        raise HTTPException(404, "Attachment not found")
+
+    r2_key    = rows[0]["r2_key"]
+    filename  = rows[0]["file_name"]
+    ext       = (rows[0]["file_extension"] or "").lower()
+    ct        = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+    file_bytes = await _r2.get_file_bytes(r2_key)
+    if file_bytes is None:
+        raise HTTPException(404, "File not found in storage")
+
+    return StreamingResponse(
+        iter([file_bytes]),
+        media_type=ct,
+        headers={
+            "Content-Disposition": f'inline; filename="{filename.replace(chr(34), "")}"',
+            "Content-Length":      str(len(file_bytes)),
+        },
+    )
+
+
+@public_router.delete("/job-attachment/{att_id}")
+async def delete_job_attachment(att_id: int, db: Database = Depends(get_db)):
+    """Soft-delete an attachment (sets is_active = 0)."""
+    await db._q(
+        "UPDATE job_attachments SET is_active = 0 WHERE id = ?", [att_id]
+    )
+    return {"ok": True}
 
 
 @public_router.post("/project/{opp_id}/respond")

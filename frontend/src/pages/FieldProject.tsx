@@ -64,13 +64,26 @@ interface Attachment {
   attachment_id:   number | null;
   file_name:       string;
   file_extension:  string;
-  file_url:        string;        // direct URL if ExternalContentID is an http link
-  aspire_url:      string;        // deep-link to opportunity in Aspire web portal
+  file_url:        string;
+  aspire_url:      string;
   attachment_type: string;
   type_id:         number | null;
   expose_to_crew:  boolean;
   created_date:    string;
   note:            string;
+}
+
+interface JobAttachment {
+  id:              number;
+  opp_id:          number;
+  work_ticket_id:  number | null;
+  attachment_type: string;
+  file_name:       string;
+  file_extension:  string;
+  file_size:       number | null;
+  note:            string | null;
+  uploaded_by:     string | null;
+  uploaded_at:     string;
 }
 
 interface Activity {
@@ -325,6 +338,16 @@ export default function FieldProject() {
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [materialsError,   setMaterialsError]   = useState('');
 
+  // Job attachments (our own DB, not Aspire)
+  const [jobAtts,        setJobAtts]        = useState<JobAttachment[]>([]);
+  const [jobAttsLoading, setJobAttsLoading] = useState(false);
+  const [showUpload,     setShowUpload]     = useState(false);
+  const [uploadFile,     setUploadFile]     = useState<File | null>(null);
+  const [uploadType,     setUploadType]     = useState('Design Plan');
+  const [uploadNote,     setUploadNote]     = useState('');
+  const [uploading,      setUploading]      = useState(false);
+  const [uploadMsg,      setUploadMsg]      = useState('');
+
   const loadMaterials = async (force = false) => {
     if (!force && materialsData !== null) return; // already fetched
     setMaterialsLoading(true);
@@ -338,6 +361,51 @@ export default function FieldProject() {
     } finally {
       setMaterialsLoading(false);
     }
+  };
+
+  const ATT_TYPES = ['Design Plan', 'Site Plan', 'Property Info', 'Irrigation Map', 'Photo', 'Contract', 'Permit', 'Other'];
+  const KEY_TYPES = new Set(['design plan', 'site plan', 'property info', 'irrigation map']);
+
+  const loadJobAtts = async () => {
+    if (!oppId) return;
+    setJobAttsLoading(true);
+    try {
+      const r = await fetch(`${API}/checkin/project/${oppId}/job-attachments`);
+      if (r.ok) setJobAtts(await r.json());
+    } finally {
+      setJobAttsLoading(false);
+    }
+  };
+
+  const submitUpload = async () => {
+    if (!uploadFile || !oppId) return;
+    setUploading(true);
+    setUploadMsg('');
+    try {
+      const fd = new FormData();
+      fd.append('file', uploadFile);
+      fd.append('attachment_type', uploadType);
+      fd.append('note', uploadNote);
+      const r = await fetch(`${API}/checkin/project/${oppId}/job-attachments`, { method: 'POST', body: fd });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error((j as any).detail || 'Upload failed');
+      }
+      setUploadFile(null);
+      setUploadNote('');
+      setShowUpload(false);
+      setUploadMsg('');
+      await loadJobAtts();
+    } catch (e: any) {
+      setUploadMsg(e.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const deleteJobAtt = async (id: number) => {
+    await fetch(`${API}/checkin/job-attachment/${id}`, { method: 'DELETE' });
+    setJobAtts(prev => prev.filter(a => a.id !== id));
   };
 
   const load = async (quiet = false) => {
@@ -359,7 +427,7 @@ export default function FieldProject() {
     }
   };
 
-  useEffect(() => { load(); }, [oppId]);
+  useEffect(() => { load(); loadJobAtts(); }, [oppId]);
 
   const handleSubmit = async (e: React.FormEvent, combinedNotes?: string) => {
     e.preventDefault();
@@ -512,87 +580,122 @@ export default function FieldProject() {
                 </div>
               )}
 
-              {/* Attachments — Design Plans first, then others */}
+              {/* Job Attachments — our own DB, fully downloadable */}
               {(() => {
-                const allAtts = data.attachments || [];
-                const PLAN_TYPES = ['design plan', 'site plan', 'property info', 'irrigation map'];
-                const isKeyDoc = (a: Attachment) =>
-                  PLAN_TYPES.some(t => (a.attachment_type || '').toLowerCase().includes(t));
-                const plans  = allAtts.filter(a => isKeyDoc(a));
-                const others = allAtts.filter(a => !isKeyDoc(a));
+                const attIcon = (t: string, ext: string) =>
+                  t.includes('irrigation') ? '💧' : t.includes('site plan') ? '📍' :
+                  t.includes('property') ? '🏡' : t.includes('design') || t.includes('plan') ? '🗺️' :
+                  t.includes('photo') || ['jpg','jpeg','png','gif','webp','heic'].includes(ext) ? '📷' :
+                  t.includes('contract') ? '📃' : t.includes('permit') ? '🏛️' :
+                  ext === 'pdf' ? '📄' : ['doc','docx'].includes(ext) ? '📝' : '📎';
 
-                const renderAtt = (att: Attachment, i: number, highlight = false) => {
-                  const t = (att.attachment_type || '').toLowerCase();
+                const keyDocs = jobAtts.filter(a => KEY_TYPES.has((a.attachment_type || '').toLowerCase()));
+                const others  = jobAtts.filter(a => !KEY_TYPES.has((a.attachment_type || '').toLowerCase()));
+
+                const renderJobAtt = (att: JobAttachment, i: number, highlight = false) => {
+                  const t   = (att.attachment_type || '').toLowerCase();
                   const ext = (att.file_extension || '').toLowerCase();
-                  const icon = t.includes('irrigation') ? '💧' :
-                               t.includes('site plan') ? '📍' :
-                               t.includes('property') ? '🏡' :
-                               t.includes('design') || t.includes('plan') ? '🗺️' :
-                               t.includes('photo') || ['jpg','jpeg','png','gif','webp'].includes(ext) ? '📷' :
-                               t.includes('invoice') ? '🧾' : ['doc','docx'].includes(ext) ? '📝' :
-                               ext === 'pdf' ? '📄' : '📎';
-                  // Direct URL (SharePoint/OneDrive linked file) takes priority.
-                  // Otherwise fall back to Aspire web portal deep-link.
-                  const directUrl  = att.file_url || '';
-                  const aspireUrl  = att.aspire_url || '';
-                  const viewUrl    = directUrl || aspireUrl;
-                  const isExternal = !directUrl && !!aspireUrl;
+                  const viewUrl = `${API}/checkin/job-attachment/${att.id}/file`;
                   return (
-                    <div key={att.attachment_id ?? i} style={{
+                    <div key={att.id} style={{
                       padding: '10px 14px',
                       background: highlight ? '#f0f9ff' : i % 2 === 0 ? '#fff' : '#f9fafb',
                       borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
                       display: 'flex', alignItems: 'center', gap: 10,
                     }}>
-                      <span style={{ fontSize: 20, flexShrink: 0 }}>{icon}</span>
+                      <span style={{ fontSize: 20, flexShrink: 0 }}>{attIcon(t, ext)}</span>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {att.file_name}
                         </div>
                         <div style={{ fontSize: 11, color: highlight ? '#0369a1' : '#9ca3af' }}>
-                          {att.attachment_type || 'Attachment'}
+                          {att.attachment_type}
                           {att.file_extension ? ` · .${att.file_extension.toUpperCase()}` : ''}
-                          {att.created_date ? ` · ${att.created_date}` : ''}
+                          {att.file_size ? ` · ${(att.file_size / 1024).toFixed(0)} KB` : ''}
                         </div>
-                        {att.note && (
-                          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{att.note}</div>
-                        )}
+                        {att.note && <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{att.note}</div>}
                       </div>
-                      {viewUrl ? (
+                      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                         <a href={viewUrl} target="_blank" rel="noopener noreferrer"
-                          style={{ padding: '5px 11px', background: highlight ? '#0369a1' : '#1e3a5f', color: '#fff', borderRadius: 7, fontSize: 12, fontWeight: 600, textDecoration: 'none', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                          {isExternal ? 'Open in Aspire ↗' : 'View'}
+                          style={{ padding: '5px 11px', background: highlight ? '#0369a1' : '#1e3a5f', color: '#fff', borderRadius: 7, fontSize: 12, fontWeight: 600, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                          View
                         </a>
-                      ) : (
-                        <span style={{ fontSize: 11, color: '#cbd5e1', flexShrink: 0 }}>Unavailable</span>
-                      )}
+                        <button onClick={() => { if (confirm('Delete this attachment?')) deleteJobAtt(att.id); }}
+                          style={{ padding: '5px 8px', background: 'none', border: '1px solid #fca5a5', color: '#ef4444', borderRadius: 7, fontSize: 11, cursor: 'pointer' }}>
+                          ✕
+                        </button>
+                      </div>
                     </div>
                   );
                 };
 
                 return (
                   <>
-                    {plans.length > 0 && (
+                    {/* Header row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                      <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Documents ({jobAtts.length})
+                        {jobAttsLoading && <span style={{ marginLeft: 6, color: '#cbd5e1' }}>loading…</span>}
+                      </div>
+                      <button onClick={() => setShowUpload(v => !v)}
+                        style={{ padding: '5px 12px', background: '#1e3a5f', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                        {showUpload ? '✕ Cancel' : '＋ Add'}
+                      </button>
+                    </div>
+
+                    {/* Upload panel */}
+                    {showUpload && (
+                      <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '14px 16px', marginBottom: 16 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: '#111827' }}>Upload Document</div>
+                        <div style={{ marginBottom: 10 }}>
+                          <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 4 }}>Type</label>
+                          <select value={uploadType} onChange={e => setUploadType(e.target.value)}
+                            style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13 }}>
+                            {ATT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        </div>
+                        <div style={{ marginBottom: 10 }}>
+                          <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 4 }}>File</label>
+                          <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,.doc,.docx,.xls,.xlsx,.dwg"
+                            onChange={e => setUploadFile(e.target.files?.[0] ?? null)}
+                            style={{ width: '100%', fontSize: 13 }} />
+                        </div>
+                        <div style={{ marginBottom: 12 }}>
+                          <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 4 }}>Note (optional)</label>
+                          <input value={uploadNote} onChange={e => setUploadNote(e.target.value)}
+                            placeholder="e.g. Rev 3, approved 2026-04-10"
+                            style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }} />
+                        </div>
+                        {uploadMsg && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{uploadMsg}</div>}
+                        <button onClick={submitUpload} disabled={!uploadFile || uploading}
+                          style={{ width: '100%', padding: '10px', background: uploadFile && !uploading ? '#16a34a' : '#d1d5db', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: uploadFile && !uploading ? 'pointer' : 'not-allowed' }}>
+                          {uploading ? 'Uploading…' : 'Upload'}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Key docs */}
+                    {keyDocs.length > 0 && (
                       <>
                         <div style={{ fontWeight: 700, fontSize: 11, color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                          📋 Key Documents ({plans.length})
+                          📋 Key Documents ({keyDocs.length})
                         </div>
                         <div style={{ border: '1.5px solid #bae6fd', borderRadius: 10, overflow: 'hidden', marginBottom: 16 }}>
-                          {plans.map((att, i) => renderAtt(att, i, true))}
+                          {keyDocs.map((att, i) => renderJobAtt(att, i, true))}
                         </div>
                       </>
                     )}
 
-                    <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                      Attachments ({allAtts.length})
-                    </div>
-                    {allAtts.length === 0 ? (
-                      <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '12px 0 20px' }}>
-                        No attachments found for this job
+                    {/* All other docs */}
+                    {others.length > 0 && (
+                      <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', marginBottom: 16 }}>
+                        {others.map((att, i) => renderJobAtt(att, i, false))}
                       </div>
-                    ) : others.length === 0 && plans.length > 0 ? null : (
-                      <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
-                        {others.map((att, i) => renderAtt(att, i, false))}
+                    )}
+
+                    {jobAtts.length === 0 && !jobAttsLoading && (
+                      <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '16px 0' }}>
+                        No documents uploaded yet — tap <strong>＋ Add</strong> to upload
                       </div>
                     )}
                   </>

@@ -464,3 +464,24 @@ CREATE TABLE IF NOT EXISTS project_checkin_responses (
     blockers        TEXT,
     submitted_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ── Job Attachments ───────────────────────────────────────────────────────────
+-- Our own file store — bypasses Aspire's API which has no download endpoint.
+-- Files are stored in R2; metadata here links to Aspire IDs.
+
+CREATE TABLE IF NOT EXISTS job_attachments (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    opp_id           INTEGER NOT NULL,       -- Aspire OpportunityID
+    work_ticket_id   INTEGER,                -- Aspire WorkTicketID (NULL = job-level)
+    attachment_type  TEXT    NOT NULL DEFAULT 'General',
+    file_name        TEXT    NOT NULL,
+    file_extension   TEXT,
+    r2_key           TEXT    NOT NULL,
+    file_size        INTEGER,
+    note             TEXT,
+    uploaded_by      TEXT,
+    uploaded_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    is_active        INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_job_att_opp    ON job_attachments(opp_id);
+CREATE INDEX IF NOT EXISTS idx_job_att_ticket ON job_attachments(work_ticket_id);
