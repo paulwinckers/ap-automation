@@ -1597,50 +1597,127 @@ async def get_project_materials(opp_id: int):
 async def proxy_attachment(attachment_id: int):
     """
     Stream an Aspire attachment to the browser.
-    Aspire doesn't expose a public file URL, so we proxy through the backend.
-    The attachment is fetched via Aspire's authenticated API and returned as a
-    file download with the correct Content-Type.
+    Tries multiple strategies: single-entity OData GET (often includes FileData),
+    list-filter GET, OData binary patterns, and download endpoint variants.
     """
-    from fastapi.responses import StreamingResponse
-    import httpx
-    import mimetypes
-
-    # Aspire attachment download URL pattern (OData binary property)
-    token = await _aspire._get_token()
-    download_url = f"{_aspire.base_url}/Attachments({attachment_id})/FileData"
-
     MIME_MAP = {
-        "pdf": "application/pdf",
-        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-        "gif": "image/gif", "webp": "image/webp",
-        "doc": "application/msword",
+        "pdf":  "application/pdf",
+        "png":  "image/png",
+        "jpg":  "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif":  "image/gif",
+        "webp": "image/webp",
+        "bmp":  "image/bmp",
+        "doc":  "application/msword",
         "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xls": "application/vnd.ms-excel",
+        "xls":  "application/vnd.ms-excel",
         "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "dwg": "application/acad", "dxf": "image/vnd.dxf",
+        "dwg":  "application/acad",
+        "dxf":  "image/vnd.dxf",
+        "svg":  "image/svg+xml",
     }
 
+    import base64
+    import httpx
+    from fastapi.responses import Response as _Resp
+
+    token = await _aspire._get_token()
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    # Helper: resolve filename/ext/content-type from a record dict
+    def _meta_from_record(rec: dict):
+        fn  = rec.get("AttachmentName") or rec.get("OriginalFileName") or "attachment"
+        ex  = (rec.get("FileExtension") or "").lstrip(".").lower()
+        ct  = MIME_MAP.get(ex, "application/octet-stream")
+        return fn, ex, ct
+
+    # Helper: attempt to decode + return base64 FileData
+    def _try_base64(rec: dict, fn, ct):
+        b64 = rec.get("FileData") or rec.get("fileData") or rec.get("File")
+        if b64 and isinstance(b64, str):
+            try:
+                data = base64.b64decode(b64)
+                logger.info(f"Attachment {attachment_id}: serving {len(data)} bytes (base64, {ct})")
+                return _Resp(content=data, media_type=ct,
+                             headers={"Content-Disposition": f'inline; filename="{fn}"'})
+            except Exception as e:
+                logger.warning(f"Attachment {attachment_id}: base64 decode failed: {e}")
+        return None
+
+    # Strategy 1a: single-entity OData GET — /Attachments(123)
+    # (direct single-entity requests often include all fields incl. FileData)
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(download_url, headers={"Authorization": f"Bearer {token}"})
-            resp.raise_for_status()
-
-            # Try to detect content type from Content-Type header or file extension
-            content_type = resp.headers.get("content-type", "application/octet-stream")
-            # Get filename from Aspire response headers or fall back to generic name
-            disposition = resp.headers.get("content-disposition", "")
-            filename = "attachment"
-            if 'filename="' in disposition:
-                filename = disposition.split('filename="')[1].rstrip('"')
-
-            return StreamingResponse(
-                iter([resp.content]),
-                media_type=content_type,
-                headers={"Content-Disposition": f'inline; filename="{filename}"'},
+            r = await client.get(
+                f"{_aspire.base_url}/Attachments({attachment_id})",
+                headers=auth_headers,
             )
+            if r.status_code == 200:
+                rec = r.json()
+                fn, ex, ct = _meta_from_record(rec)
+                result = _try_base64(rec, fn, ct)
+                if result:
+                    return result
+                # Also check ExternalContentID — might be a full URL
+                ext_url = rec.get("ExternalContentID") or ""
+                if ext_url.startswith("http"):
+                    logger.info(f"Attachment {attachment_id}: redirecting to ExternalContentID URL")
+                    from fastapi.responses import RedirectResponse
+                    return RedirectResponse(url=ext_url)
+            else:
+                logger.info(f"Attachment {attachment_id}: single-entity GET → {r.status_code}")
     except Exception as e:
-        logger.warning(f"Attachment proxy failed for id {attachment_id}: {e}")
-        raise HTTPException(status_code=404, detail=f"Could not retrieve attachment: {e}")
+        logger.info(f"Attachment {attachment_id}: single-entity GET failed: {e}")
+
+    # Strategy 1b: list-filter GET with $select=* to force all fields
+    try:
+        res = await _aspire._get("Attachments", {
+            "$filter": f"AttachmentID eq {attachment_id}",
+            "$top":    "1",
+        })
+        rows = _aspire._extract_list(res)
+    except Exception as e:
+        logger.warning(f"Attachment list-fetch failed for id {attachment_id}: {e}")
+        rows = []
+
+    record = rows[0] if rows else {}
+    fn, ex, ct = _meta_from_record(record) if record else ("attachment", "", "application/octet-stream")
+    result = _try_base64(record, fn, ct) if record else None
+    if result:
+        return result
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Strategy 2: OData binary endpoint patterns
+    for url_pattern in [
+        f"{_aspire.base_url}/Attachments({attachment_id})/$value",
+        f"{_aspire.base_url}/Attachments({attachment_id})/FileData/$value",
+        f"{_aspire.base_url}/Attachments({attachment_id})/FileData",
+        f"{_aspire.base_url}/Attachments/{attachment_id}/Download",
+        f"{_aspire.base_url}/Attachments/{attachment_id}/file",
+    ]:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(url_pattern, headers=auth_headers)
+                if resp.status_code == 200 and resp.content:
+                    resp_ct = resp.headers.get("content-type", ct)
+                    logger.info(f"Attachment {attachment_id}: served via {url_pattern}")
+                    return _Resp(
+                        content=resp.content,
+                        media_type=resp_ct,
+                        headers={"Content-Disposition": f'inline; filename="{fn}"'},
+                    )
+                else:
+                    logger.info(f"Attachment {attachment_id}: {url_pattern} → {resp.status_code}")
+        except Exception as e:
+            logger.info(f"Attachment {attachment_id}: {url_pattern} failed: {e}")
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"Attachment {attachment_id} ({fn}) file data could not be retrieved from Aspire. "
+               f"Record keys: {list(record.keys())}"
+    )
 
 
 @public_router.post("/project/{opp_id}/respond")
