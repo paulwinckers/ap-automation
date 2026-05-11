@@ -175,6 +175,79 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+function stripHtml(s: string): string {
+  try {
+    const doc = new DOMParser().parseFromString(s, 'text/html');
+    return (doc.body.textContent || '').replace(/\s{2,}/g, ' ').trim();
+  } catch {
+    return s.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+}
+
+// Comment popup — same pattern as ActivitiesDashboard
+function CommentsPopup({ comments }: { comments: ActivityComment[] }) {
+  const [open, setOpen] = useState(false);
+  if (!comments.length) return null;
+
+  const latest  = comments[comments.length - 1];
+  const preview = stripHtml(latest.Comment);
+  const short   = preview.length > 80 ? preview.slice(0, 80) + '…' : preview;
+  const hasMore = comments.length > 1 || preview.length > 80;
+
+  return (
+    <div style={{ marginTop: 8, position: 'relative' }}>
+      {/* Clickable preview */}
+      <div
+        onClick={() => hasMore && setOpen(o => !o)}
+        style={{
+          background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6,
+          padding: '7px 10px', cursor: hasMore ? 'pointer' : 'default',
+        }}
+      >
+        <div style={{ fontSize: 10, color: '#92400e', fontWeight: 600, marginBottom: 3 }}>
+          💬 {latest.CreatedByUserName}{latest.CreatedDate ? ` · ${latest.CreatedDate.slice(0, 10)}` : ''}
+          {comments.length > 1 && (
+            <span style={{ marginLeft: 6, background: '#fde68a', borderRadius: 8, padding: '1px 6px' }}>
+              +{comments.length - 1} more
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.5 }}>{short}</div>
+      </div>
+
+      {/* Full popup */}
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: 14, padding: '22px 24px', maxWidth: 480, width: '100%', maxHeight: '70vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <span style={{ fontWeight: 700, fontSize: 14, color: '#111827' }}>Comment History ({comments.length})</span>
+              <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#9ca3af' }}>✕</button>
+            </div>
+            {[...comments].reverse().map((c, i) => (
+              <div key={i} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: i < comments.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 4 }}>
+                  {c.CreatedByUserName}{c.CreatedDate ? ` · ${c.CreatedDate.slice(0, 10)}` : ''}
+                </div>
+                <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                  {stripHtml(c.Comment)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HoursBar({ est, act }: { est: number | null; act: number | null }) {
   const e = est ?? 0;
   const a = act ?? 0;
@@ -645,14 +718,6 @@ export default function FieldProject() {
             <>
               {/* Aspire Activities — filter out Email notification logs, strip HTML from notes */}
               {(() => {
-                const stripHtml = (s: string) => {
-                  try {
-                    const doc = new DOMParser().parseFromString(s, 'text/html');
-                    return (doc.body.textContent || '').replace(/\s{2,}/g, ' ').trim();
-                  } catch {
-                    return s.replace(/<[^>]*>/g, ' ').replace(/\s{2,}/g, ' ').trim();
-                  }
-                };
                 const visibleActs = (data.activities || []).filter(
                   a => (a.ActivityType || '').toLowerCase() !== 'email'
                 );
@@ -699,20 +764,7 @@ export default function FieldProject() {
                                   {plainNotes.length > 300 ? plainNotes.slice(0, 300) + '…' : plainNotes}
                                 </div>
                               )}
-                              {(a.comments || []).length > 0 && (
-                                <div style={{ marginTop: 8 }}>
-                                  {(a.comments || []).map((c, ci) => (
-                                    <div key={ci} style={{ marginTop: 6, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '7px 10px' }}>
-                                      <div style={{ fontSize: 10, color: '#92400e', fontWeight: 600, marginBottom: 3 }}>
-                                        💬 {c.CreatedByUserName}{c.CreatedDate ? ` · ${c.CreatedDate}` : ''}
-                                      </div>
-                                      <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                                        {stripHtml(c.Comment)}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
+                              <CommentsPopup comments={a.comments || []} />
                             </div>
                           );
                         })}
