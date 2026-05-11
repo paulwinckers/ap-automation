@@ -1277,7 +1277,7 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         # Build a deep-link to Aspire web portal for this opportunity's attachments.
         # Aspire's web app URL format: {ASPIRE_WEB_URL}/#/opportunity/{opp_id}
         aspire_base = (settings.ASPIRE_WEB_URL or "https://cloud.youraspire.com/app").rstrip("/")
-        aspire_opp_url = f"{aspire_base}/#/opportunity/{opp_id}"
+        aspire_opp_url = f"{aspire_base}/opportunities/details/{opp_id}"
 
         out = []
         for r in rows:
