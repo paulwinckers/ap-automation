@@ -25,6 +25,7 @@ interface Project {
   hrs_act:      number;
   ticket_count: number;
   latest_date:  string;
+  lead_name?:   string;
 }
 
 interface PropertyGroup {
@@ -36,6 +37,7 @@ interface PropertyGroup {
   latest_date:  string;
   all_done:     boolean;      // true only if every opp is done
   status:       string;       // most active status in the group
+  lead_name?:   string;       // set when all projects in group share the same lead
 }
 
 const STATUS_COLOR: Record<string, { bg: string; text: string; dot: string }> = {
@@ -76,6 +78,7 @@ function groupByProperty(projects: Project[]): PropertyGroup[] {
   }
   const groups: PropertyGroup[] = [];
   for (const [key, list] of map.entries()) {
+    const leadNames = [...new Set(list.map(p => p.lead_name).filter(Boolean))];
     groups.push({
       key,
       projects:     list,
@@ -85,6 +88,7 @@ function groupByProperty(projects: Project[]): PropertyGroup[] {
       latest_date:  list.map(p => p.latest_date).filter(Boolean).sort().reverse()[0] || '',
       all_done:     list.every(p => p.all_done),
       status:       bestStatus(list),
+      lead_name:    leadNames.length === 1 ? leadNames[0] : leadNames.join(', '),
     });
   }
   return groups;
@@ -125,6 +129,9 @@ function PropertyCard({ group, onSelect }: { group: PropertyGroup; onSelect: (op
           <div style={S.projName}>{group.key}</div>
           {!multi && group.projects[0].opp_name !== group.key && (
             <div style={S.projSub}>{group.projects[0].opp_name}</div>
+          )}
+          {group.lead_name && (
+            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>👷 {group.lead_name}</div>
           )}
         </div>
         <span style={{ ...S.badge, background: ss.bg, color: ss.text }}>
@@ -187,15 +194,26 @@ export default function FieldProjectLookup() {
 
   const [leads, setLeads]               = useState<{ name: string; display: string }[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(true);
+  const SHOW_ALL_VALUE = '__all__';
   const [selected, setSelected]         = useState(() => localStorage.getItem(LS_KEY) || '');
   const [projects, setProjects]         = useState<Project[]>([]);
   const [loading, setLoading]           = useState(false);
   const [searched, setSearched]         = useState(false);
   const [searchError, setSearchError]   = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [filterText, setFilterText]     = useState('');
 
-  const activeProjects    = projects.filter(p => !p.all_done);
-  const completedProjects = projects.filter(p =>  p.all_done);
+  const q = filterText.trim().toLowerCase();
+  const filteredProjects = q
+    ? projects.filter(p =>
+        (p.property   || '').toLowerCase().includes(q) ||
+        (p.opp_name   || '').toLowerCase().includes(q) ||
+        (p.lead_name  || '').toLowerCase().includes(q)
+      )
+    : projects;
+
+  const activeProjects    = filteredProjects.filter(p => !p.all_done);
+  const completedProjects = filteredProjects.filter(p =>  p.all_done);
 
   const activeGroups    = groupByProperty(activeProjects);
   const completedGroups = groupByProperty(completedProjects);
@@ -222,7 +240,8 @@ export default function FieldProjectLookup() {
     setSearched(false);
     setSearchError(null);
     try {
-      const r = await myProjectLookup(name);
+      const isAll = name === SHOW_ALL_VALUE;
+      const r = await myProjectLookup(isAll ? undefined : name, isAll);
       setProjects(r.projects || []);
       setSearched(true);
       localStorage.setItem(LS_KEY, name);
@@ -271,6 +290,7 @@ export default function FieldProjectLookup() {
                 onChange={e => { setSelected(e.target.value); setProjects([]); setSearched(false); }}
               >
                 <option value="">Select your name…</option>
+                <option value={SHOW_ALL_VALUE}>👥 Show All Projects</option>
                 {leads.map(l => (
                   <option key={l.name} value={l.name}>{l.display}</option>
                 ))}
@@ -308,12 +328,44 @@ export default function FieldProjectLookup() {
           </div>
         )}
 
+        {/* Search / filter input — shown once projects are loaded */}
+        {searched && !loading && projects.length > 0 && (
+          <div style={{ position: 'relative', marginBottom: 12 }}>
+            <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 15, color: '#9ca3af', pointerEvents: 'none' }}>🔍</span>
+            <input
+              type="text"
+              placeholder="Search projects…"
+              value={filterText}
+              onChange={e => setFilterText(e.target.value)}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                padding: '11px 36px 11px 36px',
+                border: '1.5px solid #e2e6ed', borderRadius: 10,
+                fontSize: 14, color: '#1a1d23', background: '#fff',
+                fontFamily: 'inherit', outline: 'none',
+              }}
+            />
+            {filterText && (
+              <button
+                onClick={() => setFilterText('')}
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', fontSize: 16, color: '#9ca3af', cursor: 'pointer', padding: 4 }}
+              >×</button>
+            )}
+          </div>
+        )}
+
         {/* Empty state */}
         {searched && !loading && !searchError && activeProjects.length === 0 && completedProjects.length === 0 && (
           <div style={S.emptyState}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>🏗️</div>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>No projects found</div>
-            <div style={{ fontSize: 13, color: '#6b7280' }}>No active construction work tickets assigned to {selected}.</div>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>{q ? '🔍' : '🏗️'}</div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>{q ? 'No matches' : 'No projects found'}</div>
+            <div style={{ fontSize: 13, color: '#6b7280' }}>
+              {q
+                ? `No projects match "${filterText}".`
+                : selected === SHOW_ALL_VALUE
+                  ? 'No active construction projects found.'
+                  : `No active construction work tickets assigned to ${selected}.`}
+            </div>
           </div>
         )}
 
