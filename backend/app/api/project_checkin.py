@@ -1713,10 +1713,11 @@ async def proxy_attachment(attachment_id: int):
         except Exception as e:
             logger.info(f"Attachment {attachment_id}: {url_pattern} failed: {e}")
 
+    ext_content_id = record.get("ExternalContentID") or ""
     raise HTTPException(
         status_code=404,
-        detail=f"Attachment {attachment_id} ({fn}) file data could not be retrieved from Aspire. "
-               f"Record keys: {list(record.keys())}"
+        detail=f"Attachment {attachment_id} ({fn}): no file data found. "
+               f"ExternalContentID={ext_content_id!r}"
     )
 
 
