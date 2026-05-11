@@ -494,6 +494,11 @@ export default function FieldProject() {
 
         {/* Header */}
         <div style={HDR}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+            <a href="/field/project" style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(255,255,255,0.15)', borderRadius: 20, padding: '5px 12px' }}>
+              ← Home
+            </a>
+          </div>
           <div style={HDR_LABEL}>Construction Project</div>
           <div style={HDR_TITLE}>{data.property_name || data.opportunity_name}</div>
           {data.property_name && (
