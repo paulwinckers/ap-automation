@@ -1567,7 +1567,6 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
     # ── Text / numeric: search by opportunity name AND property name ─────────
     if not q.isdigit() or not results:
         escaped = q.replace("'", "''")
-        active_statuses = {"won", "active", "in progress", "approved"}
         # JobStatusName tracks actual completion state independently of OpportunityStatusName.
         # A "Won" job keeps that status forever; JobStatusName flips to Complete/Closed when done.
         complete_job_statuses = {"complete", "completed", "closed", "cancelled", "canceled"}
@@ -1577,47 +1576,46 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
             "StartDate", "EndDate",
         ])
 
-        async def _search_opps(filt: str) -> list:
-            try:
-                res = await _aspire._get("Opportunities", {
-                    "$filter": filt,
-                    "$select": select_fields,
-                    "$top":    "20",
-                })
-                return _aspire._extract_list(res)
-            except Exception as e:
-                logger.warning(f"Opportunity search '{filt}' failed: {e}")
-                return []
-
-        # Search case-insensitively via tolower(); fall back to original case if unsupported
-        q_lower  = escaped.lower()
-        q_title  = escaped.title()
+        # Aspire OData does not support contains() on Opportunities — fetch in bulk
+        # and filter client-side with case-insensitive matching.
+        q_lower = q.lower()
 
         async def _search_all() -> list:
-            # Try tolower() first (OData standard, case-insensitive)
-            try:
-                res = await _aspire._get("Opportunities", {
-                    "$filter": (
-                        f"contains(tolower(OpportunityName), '{q_lower}') or "
-                        f"contains(tolower(PropertyName), '{q_lower}')"
-                    ),
-                    "$select": select_fields,
-                    "$top":    "20",
-                })
-                rows = _aspire._extract_list(res)
-                if rows is not None:  # even empty list means tolower() worked
-                    logger.info(f"PO job search tolower('{q_lower}'): {len(rows)} results")
-                    return rows
-            except Exception:
-                pass
-            # Fallback: try original case + title case in parallel
-            by_name, by_prop, by_title_name, by_title_prop = await _asyncio.gather(
-                _search_opps(f"contains(OpportunityName, '{escaped}')"),
-                _search_opps(f"contains(PropertyName, '{escaped}')"),
-                _search_opps(f"contains(OpportunityName, '{q_title}')"),
-                _search_opps(f"contains(PropertyName, '{q_title}')"),
-            )
-            return by_name + by_prop + by_title_name + by_title_prop
+            """Fetch active Won opportunities in pages, return those matching the query."""
+            matched: list = []
+            skip = 0
+            page_size = 500
+            total_scanned = 0
+            # Cap total fetched to avoid runaway queries
+            max_fetch = 2000
+            while skip < max_fetch:
+                try:
+                    res = await _aspire._get("Opportunities", {
+                        "$filter": "OpportunityStatusName eq 'Won'",
+                        "$select": select_fields,
+                        "$top":    str(page_size),
+                        "$skip":   str(skip),
+                    })
+                    page = _aspire._extract_list(res)
+                except Exception as e:
+                    logger.warning(f"PO job bulk fetch (skip={skip}) failed: {e}")
+                    break
+                if not page:
+                    break
+                total_scanned += len(page)
+                for o in page:
+                    name  = (o.get("OpportunityName") or "").lower()
+                    prop  = (o.get("PropertyName")    or "").lower()
+                    if q_lower in name or q_lower in prop:
+                        matched.append(o)
+                # If we already have plenty of matches, stop early
+                if len(matched) >= 50:
+                    break
+                if len(page) < page_size:
+                    break  # last page
+                skip += page_size
+            logger.info(f"PO job search '{q}': scanned {total_scanned} opps, {len(matched)} matched")
+            return matched
 
         all_opps = await _search_all()
 
