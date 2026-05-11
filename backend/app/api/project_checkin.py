@@ -1689,17 +1689,31 @@ async def proxy_attachment(attachment_id: int):
     if not record:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    # Strategy 2: OData binary endpoint patterns
-    for url_pattern in [
+    # Strategy 2: probe every plausible Aspire download URL pattern
+    # We log the status code for each so we can identify which one works.
+    probe_results: list[str] = []
+    probe_patterns = [
+        # OData stream
         f"{_aspire.base_url}/Attachments({attachment_id})/$value",
         f"{_aspire.base_url}/Attachments({attachment_id})/FileData/$value",
-        f"{_aspire.base_url}/Attachments({attachment_id})/FileData",
+        # REST-style helpers Aspire may expose
+        f"{_aspire.base_url}/Attachments({attachment_id})/Download",
+        f"{_aspire.base_url}/Attachments({attachment_id})/Content",
         f"{_aspire.base_url}/Attachments/{attachment_id}/Download",
-        f"{_aspire.base_url}/Attachments/{attachment_id}/file",
-    ]:
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
+        f"{_aspire.base_url}/Attachments/{attachment_id}/Content",
+        f"{_aspire.base_url}/Attachments/{attachment_id}/File",
+        # Aspire-specific non-OData paths
+        f"{_aspire.base_url}/AttachmentFile({attachment_id})",
+        f"{_aspire.base_url}/AttachmentFile/{attachment_id}",
+        f"{_aspire.base_url}/AttachmentFiles({attachment_id})",
+        f"{_aspire.base_url}/AttachmentDownload/{attachment_id}",
+        f"{_aspire.base_url}/File/Attachment/{attachment_id}",
+    ]
+    async with httpx.AsyncClient(timeout=30) as client:
+        for url_pattern in probe_patterns:
+            try:
                 resp = await client.get(url_pattern, headers=auth_headers)
+                probe_results.append(f"{resp.status_code}:{url_pattern.split(str(attachment_id))[1] or '/'}")
                 if resp.status_code == 200 and resp.content:
                     resp_ct = resp.headers.get("content-type", ct)
                     logger.info(f"Attachment {attachment_id}: served via {url_pattern}")
@@ -1708,16 +1722,14 @@ async def proxy_attachment(attachment_id: int):
                         media_type=resp_ct,
                         headers={"Content-Disposition": f'inline; filename="{fn}"'},
                     )
-                else:
-                    logger.info(f"Attachment {attachment_id}: {url_pattern} → {resp.status_code}")
-        except Exception as e:
-            logger.info(f"Attachment {attachment_id}: {url_pattern} failed: {e}")
+            except Exception as e:
+                probe_results.append(f"ERR:{url_pattern.split(str(attachment_id))[1] or '/'}")
+                logger.info(f"Attachment {attachment_id}: {url_pattern} failed: {e}")
 
-    ext_content_id = record.get("ExternalContentID") or ""
     raise HTTPException(
         status_code=404,
-        detail=f"Attachment {attachment_id} ({fn}): no file data found. "
-               f"ExternalContentID={ext_content_id!r}"
+        detail=f"Attachment {attachment_id} ({fn}): no download URL found. "
+               f"Probe results: {probe_results}"
     )
 
 
