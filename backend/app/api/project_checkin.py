@@ -955,11 +955,10 @@ async def my_project_lookup(name: str = "", show_all: bool = False, db: Database
 
     # Filter to matching crew leader(s)
     if show_all:
-        leader_tickets = [
-            t for t in all_tickets
-            if (t.get("CrewLeaderName") or "").strip().lower() in known_leads
-        ]
-        logger.info(f"my-project show_all: {len(leader_tickets)} tickets across {len(known_leads)} leads")
+        # No crew-leader restriction — include all tickets; construction division
+        # filter is applied later when opportunity details are fetched.
+        leader_tickets = all_tickets
+        logger.info(f"my-project show_all: {len(leader_tickets)} total tickets (pre division filter)")
     else:
         leader_tickets = [
             t for t in all_tickets
@@ -1001,7 +1000,9 @@ async def my_project_lookup(name: str = "", show_all: bool = False, db: Database
         if not oid:
             continue
         opp_key = opp_num if opp_num is not None else float(oid)
-        key = (opp_key, crew)  # unique per opp+lead so show_all doesn't merge across leads
+        # show_all: group by job only (one card per project, any lead)
+        # individual lead: group by job+lead so each person's view is accurate
+        key = opp_key if show_all else (opp_key, crew)
         if key not in opp_num_map:
             opp_num_map[key] = {
                 "opp_ids":       set(),
