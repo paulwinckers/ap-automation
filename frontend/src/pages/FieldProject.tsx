@@ -1411,17 +1411,24 @@ export default function FieldProject() {
 
             <form onSubmit={submitCO} style={{ padding: '16px 20px 0' }}>
 
-              {/* Your name */}
+              {/* Submitted by — employee dropdown */}
               <div style={{ marginBottom: 14 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 5 }}>Your Name *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. John Smith"
-                  value={coName}
-                  onChange={e => setCoName(e.target.value)}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1.5px solid #e2e6ed', borderRadius: 8, fontSize: 14, fontFamily: 'inherit', color: '#1a1d23' }}
-                />
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 5 }}>Submitted By *</label>
+                {empLoading ? (
+                  <div style={{ fontSize: 13, color: '#9ca3af', padding: '8px 0' }}>Loading employees…</div>
+                ) : (
+                  <select
+                    required
+                    value={coName}
+                    onChange={e => setCoName(e.target.value)}
+                    style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #e2e6ed', borderRadius: 8, fontSize: 14, fontFamily: 'inherit', color: coName ? '#1a1d23' : '#9ca3af', background: '#fff' }}
+                  >
+                    <option value="">— Select your name —</option>
+                    {employees.map(emp => (
+                      <option key={emp.id} value={emp.name}>{emp.name}</option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               {/* Scope of work */}
