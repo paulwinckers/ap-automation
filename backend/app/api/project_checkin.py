@@ -1335,28 +1335,47 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
     except Exception as e:
         logger.warning(f"Activities fetch failed for opp {opp_id}: {e}")
 
-    # Fetch comments for each activity separately
+    # Fetch comments for each activity — try multiple Aspire entity names
     async def _fetch_activity_comments(activity_id: int) -> list[dict]:
-        try:
-            res = await _aspire._get("ActivityComments", {
-                "$filter":  f"ActivityID eq {activity_id}",
-                "$orderby": "CreatedDate asc",
-                "$select":  "Comment,CreatedDate,CreatedByUserName",
-            })
-            batch = _aspire._extract_list(res)
-            logger.info(f"ActivityComments for activity {activity_id}: {len(batch)} results")
-            if batch:
-                logger.info(f"ActivityComments sample keys: {list(batch[0].keys())}")
-            return batch
-        except Exception as e:
-            logger.warning(f"ActivityComments fetch failed for activity {activity_id}: {e}")
-            return []
+        # Aspire may use ActivityComments, IssueComments, or ActivityNotes
+        for entity, filter_field in [
+            ("ActivityComments", "ActivityID"),
+            ("IssueComments",    "ActivityID"),
+            ("ActivityNotes",    "ActivityID"),
+        ]:
+            try:
+                res = await _aspire._get(entity, {
+                    "$filter":  f"{filter_field} eq {activity_id}",
+                    "$orderby": "CreatedDate asc",
+                })
+                batch = _aspire._extract_list(res)
+                if batch:
+                    logger.info(f"{entity} for activity {activity_id}: {len(batch)} results, keys={list(batch[0].keys())}")
+                    return batch
+                logger.info(f"{entity} for activity {activity_id}: 0 results")
+            except Exception as e:
+                logger.info(f"{entity} for activity {activity_id} failed: {e}")
+        return []
 
     if activities:
-        comment_tasks = [_fetch_activity_comments(a["ActivityID"]) for a in activities if a.get("ActivityID")]
-        comment_results = await asyncio.gather(*comment_tasks)
-        for a, comments in zip(activities, comment_results):
-            a["_comments"] = [c for c in comments if c.get("Comment")]
+        # Keep mapping from activity_id → comments to avoid zip misalignment
+        acts_with_id = [(i, a) for i, a in enumerate(activities) if a.get("ActivityID")]
+        comment_results = await asyncio.gather(
+            *[_fetch_activity_comments(a["ActivityID"]) for _, a in acts_with_id]
+        )
+        for (i, a), comments in zip(acts_with_id, comment_results):
+            # Normalise — find the comment text regardless of field name
+            normalised = []
+            for c in comments:
+                text = (c.get("Comment") or c.get("NoteText") or c.get("Note") or
+                        c.get("CommentText") or c.get("Text") or "").strip()
+                if text:
+                    normalised.append({
+                        "Comment":           text,
+                        "CreatedDate":       (c.get("CreatedDate") or c.get("DateCreated") or "")[:10],
+                        "CreatedByUserName": c.get("CreatedByUserName") or c.get("CreatedBy") or "",
+                    })
+            activities[i]["_comments"] = normalised
 
     # Check-in history for this project (all months, most recent first)
     history_rows = await db._q(
