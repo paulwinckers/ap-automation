@@ -1274,19 +1274,25 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         except Exception as e:
             logger.warning(f"Attachments fetch failed for opp {opp_id}: {e}")
 
+        # Build a deep-link to Aspire web portal for this opportunity's attachments.
+        # Aspire's web app URL format: {ASPIRE_WEB_URL}/#/opportunity/{opp_id}
+        aspire_base = (settings.ASPIRE_WEB_URL or "https://cloud.youraspire.com/app").rstrip("/")
+        aspire_opp_url = f"{aspire_base}/#/opportunity/{opp_id}"
+
         out = []
         for r in rows:
             att_id   = r.get("AttachmentID")
             ext      = (r.get("FileExtension") or "").lstrip(".").lower()
             name     = r.get("AttachmentName") or r.get("OriginalFileName") or "File"
-            # ExternalContentID may be a SharePoint/OneDrive URL for linked files
+            # ExternalContentID may be a direct URL (SharePoint/OneDrive linked file)
             ext_url  = r.get("ExternalContentID") or ""
             file_url = ext_url if ext_url.startswith("http") else ""
             out.append({
                 "attachment_id":   att_id,
                 "file_name":       name,
                 "file_extension":  ext,
-                "file_url":        file_url,
+                "file_url":        file_url,          # direct URL if available
+                "aspire_url":      aspire_opp_url,    # fallback: open opportunity in Aspire
                 "attachment_type": r.get("AttachmentTypeName") or "",
                 "type_id":         r.get("AttachmentTypeID"),
                 "expose_to_crew":  bool(r.get("ExposeToCrew")),

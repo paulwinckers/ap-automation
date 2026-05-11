@@ -64,7 +64,8 @@ interface Attachment {
   attachment_id:   number | null;
   file_name:       string;
   file_extension:  string;
-  file_url:        string;  // external URL if available (ExternalContentID)
+  file_url:        string;        // direct URL if ExternalContentID is an http link
+  aspire_url:      string;        // deep-link to opportunity in Aspire web portal
   attachment_type: string;
   type_id:         number | null;
   expose_to_crew:  boolean;
@@ -457,8 +458,12 @@ export default function FieldProject() {
                                t.includes('photo') || ['jpg','jpeg','png','gif','webp'].includes(ext) ? '📷' :
                                t.includes('invoice') ? '🧾' : ['doc','docx'].includes(ext) ? '📝' :
                                ext === 'pdf' ? '📄' : '📎';
-                  // Use external URL if available, otherwise proxy through our backend
-                  const viewUrl = att.file_url || (att.attachment_id ? `${API}/checkin/attachment/${att.attachment_id}` : '');
+                  // Direct URL (SharePoint/OneDrive linked file) takes priority.
+                  // Otherwise fall back to Aspire web portal deep-link.
+                  const directUrl  = att.file_url || '';
+                  const aspireUrl  = att.aspire_url || '';
+                  const viewUrl    = directUrl || aspireUrl;
+                  const isExternal = !directUrl && !!aspireUrl;
                   return (
                     <div key={att.attachment_id ?? i} style={{
                       padding: '10px 14px',
@@ -482,8 +487,8 @@ export default function FieldProject() {
                       </div>
                       {viewUrl ? (
                         <a href={viewUrl} target="_blank" rel="noopener noreferrer"
-                          style={{ padding: '5px 11px', background: highlight ? '#0369a1' : '#1e3a5f', color: '#fff', borderRadius: 7, fontSize: 12, fontWeight: 600, textDecoration: 'none', flexShrink: 0 }}>
-                          View
+                          style={{ padding: '5px 11px', background: highlight ? '#0369a1' : '#1e3a5f', color: '#fff', borderRadius: 7, fontSize: 12, fontWeight: 600, textDecoration: 'none', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                          {isExternal ? 'Open in Aspire ↗' : 'View'}
                         </a>
                       ) : (
                         <span style={{ fontSize: 11, color: '#cbd5e1', flexShrink: 0 }}>Unavailable</span>
