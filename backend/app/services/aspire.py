@@ -600,7 +600,7 @@ class AspireClient:
         # Try Contacts endpoint first (correct field is 'Active', not 'IsActive')
         try:
             result = await self._get("Contacts", {
-                "$select": "ContactID,UserID,FirstName,LastName,Email,Active,ContactTypeName",
+                "$select": "ContactID,UserID,UserName,FirstName,LastName,Email,Active,ContactTypeName",
                 "$filter": "Active eq true and ContactTypeName eq 'Employee'",
                 "$top":    "500",
                 "$orderby": "FirstName asc",
@@ -608,17 +608,22 @@ class AspireClient:
             contacts = self._extract_list(result)
             out = []
             for c in contacts:
-                cid    = c.get("ContactID")
-                uid    = c.get("UserID")
-                first  = (c.get("FirstName") or "").strip()
-                last   = (c.get("LastName")  or "").strip()
-                name   = f"{first} {last}".strip()
+                cid      = c.get("ContactID")
+                uid      = c.get("UserID")
+                username = (c.get("UserName") or "").strip()
+                email    = (c.get("Email") or "").strip()
+                first    = (c.get("FirstName") or "").strip()
+                last     = (c.get("LastName")  or "").strip()
+                name     = f"{first} {last}".strip()
                 if cid and name:
                     out.append({
                         "ContactID": cid,
-                        "UserID":    uid,   # used for AssignedTo in Issues
+                        "UserID":    uid,
+                        # AssignedTo in Issues expects the login username.
+                        # Use UserName if available, fall back to Email, then UserID str.
+                        "UserName":  username or email or (str(uid) if uid else ""),
                         "FullName":  name,
-                        "Email":     c.get("Email") or "",
+                        "Email":     email,
                     })
             logger.info(f"Employee list from Contacts: {len(out)}")
             return out

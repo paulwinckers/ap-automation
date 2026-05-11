@@ -1909,7 +1909,11 @@ async def get_project_employees(opp_id: int):
         employees = []
     return {
         "employees": [
-            {"id": e["UserID"], "name": e["FullName"]}
+            {
+                "id":       e["UserID"],
+                "name":     e["FullName"],
+                "username": e.get("UserName") or "",   # used as AssignedTo string
+            }
             for e in employees
             if e.get("UserID") and e.get("FullName")
         ]
@@ -1923,11 +1927,12 @@ _CO_MAX_VIDEO = 200 * 1024 * 1024  # 200 MB
 
 @public_router.post("/project/{opp_id}/change-order")
 async def create_change_order(
-    opp_id:         int,
-    submitter_name: str            = Form(...),
-    scope:          str            = Form(...),
-    assigned_to_id: Optional[int]  = Form(default=None),
-    files:          list[UploadFile] = File(default=[]),
+    opp_id:            int,
+    submitter_name:    str              = Form(...),
+    scope:             str              = Form(...),
+    assigned_to_id:    Optional[int]    = Form(default=None),
+    assigned_username: str              = Form(default=""),  # login/username for AssignedTo
+    files:             list[UploadFile] = File(default=[]),
 ):
     """
     Create a Change Order Request as an Aspire Issue linked to this opportunity.
@@ -1992,13 +1997,15 @@ async def create_change_order(
     notes_text = "\n".join(lines)
 
     # ── POST Issue to Aspire ──────────────────────────────────────────────────
-    # AssignedTo is a required string per the API docs.
-    # Aspire accepts the UserID as a string; fall back to the configured default.
+    # AssignedTo is a required string — Aspire expects the login username, not a numeric ID.
+    # Use the username passed from the frontend; fall back to the default API user.
     assigned_str = (
-        str(assigned_to_id)
-        if assigned_to_id
-        else str(settings.ASPIRE_DEFAULT_USER_ID or "")
+        assigned_username.strip()
+        or str(settings.ASPIRE_DEFAULT_USER_ID or "")
     )
+
+    today_dt     = _date.today()
+    due_date_str = f"{today_dt.isoformat()}T00:00:00Z"   # default due date = today
 
     subject = f"Change Order Request — {property_name or opp_name}"
     # Aspire only allows ONE of OpportunityID / PropertyID / WorkTicketID per request.
@@ -2008,6 +2015,7 @@ async def create_change_order(
         "Notes":         notes_text,
         "AssignedTo":    assigned_str,
         "OpportunityID": opp_id,
+        "DueDate":       due_date_str,
         "PublicComment": False,
         "IncludeClient": False,
     }
