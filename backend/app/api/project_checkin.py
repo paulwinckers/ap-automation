@@ -1944,21 +1944,6 @@ async def create_change_order(
     opp_name     = opp.get("OpportunityName") or f"Job #{opp_id}"
     property_name = opp.get("PropertyName") or ""
 
-    # Fetch PropertyID (not included in _fetch_opp_actuals $select)
-    property_id: Optional[int] = None
-    try:
-        res = await _aspire._get("Opportunities", {
-            "$filter": f"OpportunityID eq {opp_id}",
-            "$select": "OpportunityID,PropertyID",
-            "$top":    "1",
-        })
-        rows = _aspire._extract_list(res)
-        if rows:
-            pid = rows[0].get("PropertyID")
-            property_id = int(pid) if pid else None
-    except Exception as e:
-        logger.warning(f"CO: PropertyID fetch failed for opp {opp_id}: {e}")
-
     # ── Read uploaded files ───────────────────────────────────────────────────
     file_data: list[tuple[str, bytes]] = []
     for i, f in enumerate(files):
@@ -2016,16 +2001,16 @@ async def create_change_order(
     )
 
     subject = f"Change Order Request — {property_name or opp_name}"
+    # Aspire only allows ONE of OpportunityID / PropertyID / WorkTicketID per request.
+    # Use OpportunityID — most specific link and shows up on the job record.
     issue_body: dict = {
         "Subject":       subject,
         "Notes":         notes_text,
-        "AssignedTo":    assigned_str,   # required string field
-        "OpportunityID": opp_id,         # links CO directly to the job
+        "AssignedTo":    assigned_str,
+        "OpportunityID": opp_id,
         "PublicComment": False,
         "IncludeClient": False,
     }
-    if property_id:
-        issue_body["PropertyID"] = property_id
 
     logger.info(f"CO issue body: {issue_body}")
     try:
@@ -2045,21 +2030,6 @@ async def create_change_order(
             issue_id = None
 
     logger.info(f"CO issue created: IssueID={issue_id} for opp {opp_id}")
-
-    # ── Also attach files to the Property in Aspire ───────────────────────────
-    if property_id:
-        for fname, raw in file_data:
-            try:
-                await _aspire.upload_aspire_attachment(
-                    object_id=property_id,
-                    object_code="Property",
-                    filename=fname,
-                    file_bytes=raw,
-                    expose_to_crew=True,
-                )
-                logger.info(f"CO: attached {fname} to Property {property_id}")
-            except Exception as e:
-                logger.info(f"CO: Property attachment failed for {fname}: {e}")
 
     return {
         "ok":       True,
