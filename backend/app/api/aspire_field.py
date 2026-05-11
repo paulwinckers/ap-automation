@@ -1177,13 +1177,19 @@ async def create_field_issue(
             return d if d.endswith("Z") else d + "Z"
         return f"{d}T00:00:00Z"
 
+    # AssignedTo is a required string per the API docs — cast UserID to str.
+    assigned_str = (
+        str(assigned_uid)
+        if assigned_uid
+        else str(settings.ASPIRE_DEFAULT_USER_ID or "")
+    )
     issue_body: dict = {
         "Subject":       subject,
         "Notes":         notes_text,
+        "AssignedTo":    assigned_str,   # required string field
         "PublicComment": False,
+        "IncludeClient": False,
     }
-    if assigned_uid:
-        issue_body["AssignedTo"] = assigned_uid
     if property_id:
         issue_body["PropertyID"] = property_id
     # Note: Aspire POST /Issues API does not expose a Category field.

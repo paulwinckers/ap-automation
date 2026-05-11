@@ -2007,14 +2007,23 @@ async def create_change_order(
     notes_text = "\n".join(lines)
 
     # ── POST Issue to Aspire ──────────────────────────────────────────────────
-    subject    = f"Change Order Request — {property_name or opp_name}"
+    # AssignedTo is a required string per the API docs.
+    # Aspire accepts the UserID as a string; fall back to the configured default.
+    assigned_str = (
+        str(assigned_to_id)
+        if assigned_to_id
+        else str(settings.ASPIRE_DEFAULT_USER_ID or "")
+    )
+
+    subject = f"Change Order Request — {property_name or opp_name}"
     issue_body: dict = {
         "Subject":       subject,
         "Notes":         notes_text,
+        "AssignedTo":    assigned_str,   # required string field
+        "OpportunityID": opp_id,         # links CO directly to the job
         "PublicComment": False,
+        "IncludeClient": False,
     }
-    if assigned_to_id:
-        issue_body["AssignedTo"] = assigned_to_id
     if property_id:
         issue_body["PropertyID"] = property_id
 
