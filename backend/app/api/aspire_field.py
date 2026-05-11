@@ -1582,38 +1582,65 @@ async def search_po_jobs(q: str = Query(..., min_length=1)):
                 res = await _aspire._get("Opportunities", {
                     "$filter": filt,
                     "$select": select_fields,
-                    "$top":    "15",
+                    "$top":    "20",
                 })
                 return _aspire._extract_list(res)
             except Exception as e:
                 logger.warning(f"Opportunity search '{filt}' failed: {e}")
                 return []
 
-        # Run both searches in parallel
-        by_name, by_property = await _asyncio.gather(
-            _search_opps(f"contains(OpportunityName, '{escaped}')"),
-            _search_opps(f"contains(PropertyName, '{escaped}')"),
-        )
+        # Search case-insensitively via tolower(); fall back to original case if unsupported
+        q_lower  = escaped.lower()
+        q_title  = escaped.title()
+
+        async def _search_all() -> list:
+            # Try tolower() first (OData standard, case-insensitive)
+            try:
+                res = await _aspire._get("Opportunities", {
+                    "$filter": (
+                        f"contains(tolower(OpportunityName), '{q_lower}') or "
+                        f"contains(tolower(PropertyName), '{q_lower}')"
+                    ),
+                    "$select": select_fields,
+                    "$top":    "20",
+                })
+                rows = _aspire._extract_list(res)
+                if rows is not None:  # even empty list means tolower() worked
+                    logger.info(f"PO job search tolower('{q_lower}'): {len(rows)} results")
+                    return rows
+            except Exception:
+                pass
+            # Fallback: try original case + title case in parallel
+            by_name, by_prop, by_title_name, by_title_prop = await _asyncio.gather(
+                _search_opps(f"contains(OpportunityName, '{escaped}')"),
+                _search_opps(f"contains(PropertyName, '{escaped}')"),
+                _search_opps(f"contains(OpportunityName, '{q_title}')"),
+                _search_opps(f"contains(PropertyName, '{q_title}')"),
+            )
+            return by_name + by_prop + by_title_name + by_title_prop
+
+        all_opps = await _search_all()
 
         seen_opp_ids: set[int] = set()
-        for o in by_name + by_property:
+        for o in all_opps:
             oid = o.get("OpportunityID")
             if not oid or oid in seen_opp_ids:
                 continue
-            status     = (o.get("OpportunityStatusName") or "").lower()
             job_status = (o.get("JobStatusName") or "").lower()
-            if status in active_statuses and job_status not in complete_job_statuses:
-                seen_opp_ids.add(oid)
-                results.append({
-                    "type":             "opportunity",
-                    "opportunity_id":   oid,
-                    "opportunity_name": o.get("OpportunityName"),
-                    "property_name":    o.get("PropertyName"),
-                    "work_ticket_id":   None,
-                    "work_ticket_num":  None,
-                    "status":           o.get("OpportunityStatusName"),
-                    "date":             None,
-                })
+            # Exclude only definitively closed/cancelled jobs; include anything else
+            if job_status in complete_job_statuses:
+                continue
+            seen_opp_ids.add(oid)
+            results.append({
+                "type":             "opportunity",
+                "opportunity_id":   oid,
+                "opportunity_name": o.get("OpportunityName"),
+                "property_name":    o.get("PropertyName"),
+                "work_ticket_id":   None,
+                "work_ticket_num":  None,
+                "status":           o.get("OpportunityStatusName"),
+                "date":             None,
+            })
 
     return {"results": results[:12]}
 
