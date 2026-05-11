@@ -1899,6 +1899,166 @@ async def submit_project_response(
     return {"ok": True, "message": "Thanks — your update has been sent to the team."}
 
 
+@public_router.get("/project/{opp_id}/employees")
+async def get_project_employees(opp_id: int):
+    """Return active employee list for the Change Order assignee dropdown."""
+    try:
+        employees = await _aspire.get_aspire_employees()
+    except Exception as e:
+        logger.warning(f"Employee list fetch failed: {e}")
+        employees = []
+    return {
+        "employees": [
+            {"id": e["UserID"], "name": e["FullName"]}
+            for e in employees
+            if e.get("UserID") and e.get("FullName")
+        ]
+    }
+
+
+_CO_MAX_FILES = 10
+_CO_MAX_PHOTO = 15 * 1024 * 1024   # 15 MB
+_CO_MAX_VIDEO = 200 * 1024 * 1024  # 200 MB
+
+
+@public_router.post("/project/{opp_id}/change-order")
+async def create_change_order(
+    opp_id:         int,
+    submitter_name: str            = Form(...),
+    scope:          str            = Form(...),
+    assigned_to_id: Optional[int]  = Form(default=None),
+    files:          list[UploadFile] = File(default=[]),
+):
+    """
+    Create a Change Order Request as an Aspire Issue linked to this opportunity.
+    Photos/videos are uploaded to R2 and embedded as links in the Issue notes.
+    """
+    from app.api.construction_plan import _fetch_opp_actuals
+
+    if len(files) > _CO_MAX_FILES:
+        raise HTTPException(status_code=400, detail=f"Maximum {_CO_MAX_FILES} files allowed")
+
+    # ── Fetch opportunity details ─────────────────────────────────────────────
+    actuals      = await _fetch_opp_actuals([opp_id])
+    opp          = actuals.get(opp_id, {})
+    opp_name     = opp.get("OpportunityName") or f"Job #{opp_id}"
+    property_name = opp.get("PropertyName") or ""
+
+    # Fetch PropertyID (not included in _fetch_opp_actuals $select)
+    property_id: Optional[int] = None
+    try:
+        res = await _aspire._get("Opportunities", {
+            "$filter": f"OpportunityID eq {opp_id}",
+            "$select": "OpportunityID,PropertyID",
+            "$top":    "1",
+        })
+        rows = _aspire._extract_list(res)
+        if rows:
+            pid = rows[0].get("PropertyID")
+            property_id = int(pid) if pid else None
+    except Exception as e:
+        logger.warning(f"CO: PropertyID fetch failed for opp {opp_id}: {e}")
+
+    # ── Read uploaded files ───────────────────────────────────────────────────
+    file_data: list[tuple[str, bytes]] = []
+    for i, f in enumerate(files):
+        raw      = await f.read()
+        is_video = (f.filename or "").lower().rsplit(".", 1)[-1] in {"mp4", "mov", "avi", "mkv", "webm"}
+        max_size = _CO_MAX_VIDEO if is_video else _CO_MAX_PHOTO
+        if len(raw) > max_size:
+            label = "200 MB per video" if is_video else "15 MB per photo"
+            raise HTTPException(status_code=413, detail=f"File {i + 1} too large (max {label})")
+        file_data.append((f.filename or f"file_{i + 1}", raw))
+
+    # ── Upload to R2 ─────────────────────────────────────────────────────────
+    ONE_YEAR   = 365 * 24 * 3600
+    file_urls: list[str] = []
+    for fname, raw in file_data:
+        try:
+            result = await _r2.upload_field_photo(
+                file_bytes=raw,
+                filename=fname,
+                submitter=submitter_name,
+                entity_type="change_order",
+                entity_id=f"opp{opp_id}",
+                expires_in=ONE_YEAR,
+            )
+            if result:
+                _, url = result
+                file_urls.append(url)
+        except Exception as e:
+            logger.warning(f"CO: R2 upload failed for {fname}: {e}")
+
+    # ── Build Issue notes ─────────────────────────────────────────────────────
+    today = _date.today().isoformat()
+    lines = [
+        "Category: Change Order Request",
+        "Status: Issued",
+        f"Submitted by: {submitter_name}",
+        f"Date: {today}",
+        f"Property: {property_name}",
+        f"Opportunity: {opp_name} (ID: {opp_id})",
+        "",
+        "Scope of Work:",
+        scope.strip(),
+    ]
+    if file_urls:
+        lines += ["", f"Attachments ({len(file_urls)}):"] + [f"  {u}" for u in file_urls]
+    notes_text = "\n".join(lines)
+
+    # ── POST Issue to Aspire ──────────────────────────────────────────────────
+    subject    = f"Change Order Request — {property_name or opp_name}"
+    issue_body: dict = {
+        "Subject":       subject,
+        "Notes":         notes_text,
+        "PublicComment": False,
+    }
+    if assigned_to_id:
+        issue_body["AssignedTo"] = assigned_to_id
+    if property_id:
+        issue_body["PropertyID"] = property_id
+
+    logger.info(f"CO issue body: {issue_body}")
+    try:
+        result = await _aspire.create_issue(issue_body)
+    except Exception as e:
+        logger.error(f"CO issue creation failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to create change order in Aspire: {e}")
+
+    # Parse IssueID from response
+    if isinstance(result, (int, float)):
+        issue_id = int(result)
+    else:
+        raw_id = result.get("IssueID") or result.get("Id") or result.get("id")
+        try:
+            issue_id = int(raw_id) if raw_id is not None else None
+        except (ValueError, TypeError):
+            issue_id = None
+
+    logger.info(f"CO issue created: IssueID={issue_id} for opp {opp_id}")
+
+    # ── Also attach files to the Property in Aspire ───────────────────────────
+    if property_id:
+        for fname, raw in file_data:
+            try:
+                await _aspire.upload_aspire_attachment(
+                    object_id=property_id,
+                    object_code="Property",
+                    filename=fname,
+                    file_bytes=raw,
+                    expose_to_crew=True,
+                )
+                logger.info(f"CO: attached {fname} to Property {property_id}")
+            except Exception as e:
+                logger.info(f"CO: Property attachment failed for {fname}: {e}")
+
+    return {
+        "ok":       True,
+        "issue_id": issue_id,
+        "message":  "Change Order Request created in Aspire.",
+    }
+
+
 # ── Scheduler: fires at 06:00 Pacific daily ───────────────────────────────────
 
 _scheduler_task: asyncio.Task | None = None

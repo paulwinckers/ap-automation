@@ -338,6 +338,59 @@ export default function FieldProject() {
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [materialsError,   setMaterialsError]   = useState('');
 
+  // ── Change Order modal ─────────────────────────────────────────────────────
+  const [coOpen,        setCoOpen]        = useState(false);
+  const [coName,        setCoName]        = useState('');
+  const [coScope,       setCoScope]       = useState('');
+  const [coAssignee,    setCoAssignee]    = useState('');
+  const [coFiles,       setCoFiles]       = useState<FileList | null>(null);
+  const [coSubmitting,  setCoSubmitting]  = useState(false);
+  const [coMsg,         setCoMsg]         = useState('');
+  const [employees,     setEmployees]     = useState<{ id: number; name: string }[]>([]);
+  const [empLoading,    setEmpLoading]    = useState(false);
+
+  const openCO = async () => {
+    setCoOpen(true);
+    setCoMsg('');
+    if (employees.length === 0) {
+      setEmpLoading(true);
+      try {
+        const r = await fetch(`${API}/checkin/project/${oppId}/employees`);
+        const j = await r.json();
+        setEmployees(j.employees || []);
+      } catch { /* non-fatal */ }
+      setEmpLoading(false);
+    }
+  };
+
+  const submitCO = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!coName.trim() || !coScope.trim()) return;
+    setCoSubmitting(true);
+    setCoMsg('');
+    try {
+      const fd = new FormData();
+      fd.append('submitter_name', coName.trim());
+      fd.append('scope', coScope.trim());
+      if (coAssignee) fd.append('assigned_to_id', coAssignee);
+      if (coFiles) {
+        Array.from(coFiles).forEach(f => fd.append('files', f));
+      }
+      const r = await fetch(`${API}/checkin/project/${oppId}/change-order`, {
+        method: 'POST', body: fd,
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || 'Submit failed');
+      setCoMsg('✅ Change Order Request created in Aspire.');
+      setCoScope(''); setCoAssignee(''); setCoFiles(null);
+      setTimeout(() => { setCoOpen(false); setCoMsg(''); }, 2500);
+    } catch (err: any) {
+      setCoMsg(`❌ ${err.message || 'Something went wrong'}`);
+    } finally {
+      setCoSubmitting(false);
+    }
+  };
+
   // Job attachments (our own DB, not Aspire)
   const [jobAtts,        setJobAtts]        = useState<JobAttachment[]>([]);
   const [jobAttsLoading, setJobAttsLoading] = useState(false);
@@ -507,7 +560,13 @@ export default function FieldProject() {
 
         {/* Header */}
         <div style={HDR}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <button
+              onClick={openCO}
+              style={{ color: '#fff', fontSize: 13, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 20, padding: '5px 13px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}
+            >
+              ＋ Change Order
+            </button>
             <a href="/field/project" style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(255,255,255,0.15)', borderRadius: 20, padding: '5px 12px' }}>
               ← Home
             </a>
@@ -1336,6 +1395,103 @@ export default function FieldProject() {
           <span style={{ fontSize: 11, color: '#cbd5e1' }}>Darios Landscaping · Project Portal</span>
         </div>
       </div>
+
+      {/* ── Change Order Modal ─────────────────────────────────────────────── */}
+      {coOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: '16px 16px 0 0', width: '100%', maxWidth: 480, maxHeight: '92vh', overflowY: 'auto', padding: '0 0 32px' }}>
+            {/* Modal header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px 12px', borderBottom: '1px solid #f1f5f9', position: 'sticky', top: 0, background: '#fff', zIndex: 1 }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a' }}>Change Order Request</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{data?.property_name || data?.opportunity_name}</div>
+              </div>
+              <button onClick={() => { setCoOpen(false); setCoMsg(''); }} style={{ background: 'none', border: 'none', fontSize: 22, color: '#9ca3af', cursor: 'pointer', lineHeight: 1, padding: 4 }}>×</button>
+            </div>
+
+            <form onSubmit={submitCO} style={{ padding: '16px 20px 0' }}>
+
+              {/* Your name */}
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 5 }}>Your Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. John Smith"
+                  value={coName}
+                  onChange={e => setCoName(e.target.value)}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1.5px solid #e2e6ed', borderRadius: 8, fontSize: 14, fontFamily: 'inherit', color: '#1a1d23' }}
+                />
+              </div>
+
+              {/* Scope of work */}
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 5 }}>Scope of Change *</label>
+                <textarea
+                  required
+                  placeholder="Describe the change order scope, reason, and any cost/time impact…"
+                  value={coScope}
+                  onChange={e => setCoScope(e.target.value)}
+                  rows={5}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1.5px solid #e2e6ed', borderRadius: 8, fontSize: 14, fontFamily: 'inherit', color: '#1a1d23', resize: 'vertical' }}
+                />
+              </div>
+
+              {/* Assign to */}
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 5 }}>Assign To</label>
+                {empLoading ? (
+                  <div style={{ fontSize: 13, color: '#9ca3af', padding: '8px 0' }}>Loading employees…</div>
+                ) : (
+                  <select
+                    value={coAssignee}
+                    onChange={e => setCoAssignee(e.target.value)}
+                    style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #e2e6ed', borderRadius: 8, fontSize: 14, fontFamily: 'inherit', color: '#1a1d23', background: '#fff' }}
+                  >
+                    <option value="">— Unassigned —</option>
+                    {employees.map(emp => (
+                      <option key={emp.id} value={emp.id}>{emp.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* Photos / Videos */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 5 }}>Photos / Videos <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional, up to 10)</span></label>
+                <input
+                  type="file"
+                  accept="image/*,video/*"
+                  multiple
+                  onChange={e => setCoFiles(e.target.files)}
+                  style={{ width: '100%', fontSize: 13, color: '#374151' }}
+                />
+                {coFiles && coFiles.length > 0 && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
+                    {Array.from(coFiles).map(f => f.name).join(', ')}
+                  </div>
+                )}
+              </div>
+
+              {/* Message */}
+              {coMsg && (
+                <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 8, background: coMsg.startsWith('✅') ? '#f0fdf4' : '#fef2f2', color: coMsg.startsWith('✅') ? '#15803d' : '#dc2626', fontSize: 13, fontWeight: 600 }}>
+                  {coMsg}
+                </div>
+              )}
+
+              {/* Submit */}
+              <button
+                type="submit"
+                disabled={coSubmitting || !coName.trim() || !coScope.trim()}
+                style={{ width: '100%', padding: '13px', background: coSubmitting ? '#9ca3af' : '#1e3a2f', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: coSubmitting ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}
+              >
+                {coSubmitting ? 'Submitting…' : 'Submit Change Order Request'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
