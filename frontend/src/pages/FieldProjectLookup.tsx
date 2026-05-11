@@ -13,8 +13,6 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { myProjectLookup } from '../lib/api';
 
-const LS_KEY = 'field_lead_name';
-
 interface Project {
   opp_id:       number;
   opp_name:     string;
@@ -192,67 +190,35 @@ function PropertyCard({ group, onSelect }: { group: PropertyGroup; onSelect: (op
 export default function FieldProjectLookup() {
   const navigate = useNavigate();
 
-  const [leads, setLeads]               = useState<{ name: string; display: string }[]>([]);
-  const [leadsLoading, setLeadsLoading] = useState(true);
-  const SHOW_ALL_VALUE = '__all__';
-  const [selected, setSelected]         = useState(() => localStorage.getItem(LS_KEY) || '');
-  const [projects, setProjects]         = useState<Project[]>([]);
-  const [loading, setLoading]           = useState(false);
-  const [searched, setSearched]         = useState(false);
-  const [searchError, setSearchError]   = useState<string | null>(null);
+  const [projects, setProjects]           = useState<Project[]>([]);
+  const [loading, setLoading]             = useState(true);
+  const [searched, setSearched]           = useState(false);
+  const [searchError, setSearchError]     = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
-  const [filterText, setFilterText]     = useState('');
+  const [filterText, setFilterText]       = useState('');
 
   const q = filterText.trim().toLowerCase();
   const filteredProjects = q
     ? projects.filter(p =>
-        (p.property   || '').toLowerCase().includes(q) ||
-        (p.opp_name   || '').toLowerCase().includes(q) ||
-        (p.lead_name  || '').toLowerCase().includes(q)
+        (p.property  || '').toLowerCase().includes(q) ||
+        (p.opp_name  || '').toLowerCase().includes(q) ||
+        (p.lead_name || '').toLowerCase().includes(q)
       )
     : projects;
 
   const activeProjects    = filteredProjects.filter(p => !p.all_done);
   const completedProjects = filteredProjects.filter(p =>  p.all_done);
+  const activeGroups      = groupByProperty(activeProjects);
+  const completedGroups   = groupByProperty(completedProjects);
 
-  const activeGroups    = groupByProperty(activeProjects);
-  const completedGroups = groupByProperty(completedProjects);
-
-  // Load lead list from D1 on mount
+  // Auto-load all construction projects on mount
   useEffect(() => {
-    myProjectLookup()
-      .then(r => setLeads(r.leads))
-      .catch(() => {})
-      .finally(() => setLeadsLoading(false));
+    myProjectLookup(undefined, true)
+      .then(r => { setProjects(r.projects || []); setSearched(true); })
+      .catch(e => setSearchError((e as Error).message || 'Could not reach the server.'))
+      .finally(() => setLoading(false));
   }, []);
 
-  // Auto-search if a name was remembered and leads loaded
-  useEffect(() => {
-    if (selected && leads.length > 0) {
-      runLookup(selected);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leads]);
-
-  async function runLookup(name: string) {
-    if (!name) return;
-    setLoading(true);
-    setSearched(false);
-    setSearchError(null);
-    try {
-      const isAll = name === SHOW_ALL_VALUE;
-      const r = await myProjectLookup(isAll ? undefined : name, isAll);
-      setProjects(r.projects || []);
-      setSearched(true);
-      localStorage.setItem(LS_KEY, name);
-    } catch (e: unknown) {
-      setSearchError((e as Error).message || 'Could not reach the server. Try again.');
-      setProjects([]);
-      setSearched(false);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   return (
     <div style={S.phone}>
@@ -271,52 +237,6 @@ export default function FieldProjectLookup() {
       </div>
 
       <div style={S.content}>
-
-        {/* Name picker */}
-        <div style={S.card}>
-          <div style={S.ctitle}>Who are you?</div>
-
-          {leadsLoading ? (
-            <div style={S.empty}>Loading…</div>
-          ) : leads.length === 0 ? (
-            <div style={{ fontSize: 13, color: '#6b7280' }}>
-              No crew leads set up yet — ask your manager to add you via the Leads panel.
-            </div>
-          ) : (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <select
-                style={{ ...S.sel, flex: 1 }}
-                value={selected}
-                onChange={e => { setSelected(e.target.value); setProjects([]); setSearched(false); }}
-              >
-                <option value="">Select your name…</option>
-                <option value={SHOW_ALL_VALUE}>👥 Show All Projects</option>
-                {leads.map(l => (
-                  <option key={l.name} value={l.name}>{l.display}</option>
-                ))}
-              </select>
-              <button
-                style={{ ...S.goBtn, opacity: selected && !loading ? 1 : 0.4 }}
-                disabled={!selected || loading}
-                onClick={() => runLookup(selected)}
-              >
-                {loading ? '…' : 'Go'}
-              </button>
-            </div>
-          )}
-
-          {selected && (
-            <div style={{ marginTop: 8, fontSize: 11, color: '#6b7280' }}>
-              Not you?{' '}
-              <button
-                style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: 11, cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}
-                onClick={() => { setSelected(''); localStorage.removeItem(LS_KEY); setProjects([]); setSearched(false); }}
-              >
-                Clear
-              </button>
-            </div>
-          )}
-        </div>
 
         {/* Loading */}
         {loading && <div style={S.loadingMsg}>Loading projects…</div>}
@@ -360,11 +280,7 @@ export default function FieldProjectLookup() {
             <div style={{ fontSize: 32, marginBottom: 8 }}>{q ? '🔍' : '🏗️'}</div>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>{q ? 'No matches' : 'No projects found'}</div>
             <div style={{ fontSize: 13, color: '#6b7280' }}>
-              {q
-                ? `No projects match "${filterText}".`
-                : selected === SHOW_ALL_VALUE
-                  ? 'No active construction projects found.'
-                  : `No active construction work tickets assigned to ${selected}.`}
+              {q ? `No projects match "${filterText}".` : 'No active construction projects found.'}
             </div>
           </div>
         )}
