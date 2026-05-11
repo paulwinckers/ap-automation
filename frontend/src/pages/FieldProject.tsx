@@ -482,11 +482,9 @@ export default function FieldProject() {
 
   const totalEst        = data.tickets.reduce((s, t) => s + (t.HoursEst ?? 0), 0);
   const totalAct        = data.tickets.reduce((s, t) => s + (t.HoursAct ?? 0), 0);
-  const totalScheduled  = data.tickets.reduce((s, t) => s + (t.HoursScheduled ?? 0), 0);
-  const totalUnscheduled= data.tickets.reduce((s, t) => s + (t.HoursUnscheduled ?? 0), 0);
+  const totalRemaining  = data.tickets.reduce((s, t) => s + Math.max(0, (t.HoursEst ?? 0) - (t.HoursAct ?? 0)), 0);
   const totalRevenue    = data.tickets.reduce((s, t) => s + (t.Revenue ?? 0), 0);
   const totalEarned     = data.tickets.reduce((s, t) => s + (t.EarnedRevenue ?? 0), 0);
-  const totalRem        = totalEst - totalAct;
   const overBudget      = totalAct > totalEst && totalEst > 0;
   const responded  = data.history.filter(h => h.submitted_at).length;
 
@@ -520,7 +518,7 @@ export default function FieldProject() {
           {[
             { label: 'Est Hrs',   value: fmtHrs(totalEst) },
             { label: 'Act Hrs',   value: fmtHrs(totalAct), alert: overBudget },
-            { label: 'Remaining', value: fmtHrs(totalRem), alert: totalRem < 0 },
+            { label: 'Remaining', value: fmtHrs(totalRemaining), alert: overBudget },
             { label: 'Updates',   value: `${responded}` },
           ].map(({ label, value, alert }) => (
             <div key={label} style={{ flex: 1, padding: '12px 4px', textAlign: 'center', borderRight: '1px solid #f1f5f9' }}>
@@ -728,8 +726,7 @@ export default function FieldProject() {
                     {[
                       { label: 'Est Hrs',     value: `${fmtHrs(totalEst)}h` },
                       { label: 'Act Hrs',     value: `${fmtHrs(totalAct)}h`,        alert: overBudget },
-                      { label: 'Scheduled',   value: `${fmtHrs(totalScheduled)}h` },
-                      { label: 'Unsched.',    value: `${fmtHrs(totalUnscheduled)}h`, alert: totalUnscheduled > 0 },
+                      { label: 'Remaining',   value: `${fmtHrs(totalRemaining)}h` },
                       { label: 'Earned Rev',  value: fmtMoney(totalEarned || null),  highlight: totalEarned > 0 },
                       { label: 'Revenue',     value: fmtMoney(totalRevenue || null) },
                     ].map(({ label, value, alert, highlight }) => (
@@ -743,10 +740,10 @@ export default function FieldProject() {
                   {/* Ticket rows */}
                   <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
                     {data.tickets.map((t, i) => {
-                      const est   = t.HoursEst ?? 0;
-                      const act   = t.HoursAct ?? 0;
-                      const sched = t.HoursScheduled ?? 0;
-                      const unsched = t.HoursUnscheduled ?? 0;
+                      const est  = t.HoursEst ?? 0;
+                      const act  = t.HoursAct ?? 0;
+                      const rem  = Math.max(0, est - act);
+                      const over = act > est && est > 0;
                       const label = t.ServiceName || `#${t.WorkTicketNumber}`;
                       return (
                         <div key={t.WorkTicketID} style={{
@@ -762,13 +759,12 @@ export default function FieldProject() {
                             </div>
                             <StatusBadge status={t.WorkTicketStatusName || '—'} />
                           </div>
-                          {/* Hours grid: Est / Actual / Scheduled / Unscheduled / Earned / Revenue */}
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4 }}>
+                          {/* Hours grid: Est / Actual / Remaining / Earned / Revenue */}
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
                             {[
                               { label: 'Est',      value: `${fmtHrs(est)}h` },
-                              { label: 'Actual',   value: `${fmtHrs(act)}h`,    alert: act > est && est > 0 },
-                              { label: 'Sched',    value: `${fmtHrs(sched)}h` },
-                              { label: 'Unsched',  value: `${fmtHrs(unsched)}h`, alert: unsched > 0 },
+                              { label: 'Actual',   value: `${fmtHrs(act)}h`,   alert: over },
+                              { label: 'Rem',      value: over ? 'Over' : `${fmtHrs(rem)}h`, alert: over },
                               { label: 'Earned',   value: fmtMoney(t.EarnedRevenue), highlight: (t.EarnedRevenue ?? 0) > 0 },
                               { label: 'Revenue',  value: fmtMoney(t.Revenue) },
                             ].map(({ label, value, alert, highlight }) => (
