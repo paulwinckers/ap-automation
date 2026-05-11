@@ -1337,11 +1337,13 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
 
     # Fetch comments for each activity — try multiple Aspire entity names
     async def _fetch_activity_comments(activity_id: int) -> list[dict]:
-        # Aspire may use ActivityComments, IssueComments, or ActivityNotes
         for entity, filter_field in [
-            ("ActivityComments", "ActivityID"),
-            ("IssueComments",    "ActivityID"),
-            ("ActivityNotes",    "ActivityID"),
+            ("ActivityComments",  "ActivityID"),
+            ("IssueComments",     "ActivityID"),
+            ("ActivityNotes",     "ActivityID"),
+            ("ActivityReplies",   "ActivityID"),
+            ("Comments",          "ActivityID"),
+            ("ActivityLog",       "ActivityID"),
         ]:
             try:
                 res = await _aspire._get(entity, {
@@ -1350,11 +1352,27 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
                 })
                 batch = _aspire._extract_list(res)
                 if batch:
-                    logger.info(f"{entity} for activity {activity_id}: {len(batch)} results, keys={list(batch[0].keys())}")
+                    logger.info(f"FOUND: {entity} for activity {activity_id}: {len(batch)} results, keys={list(batch[0].keys())}")
                     return batch
-                logger.info(f"{entity} for activity {activity_id}: 0 results")
+                # 200 but empty — entity exists, just no comments
+                logger.info(f"{entity} for activity {activity_id}: exists but 0 results")
+                return []
             except Exception as e:
-                logger.info(f"{entity} for activity {activity_id} failed: {e}")
+                logger.info(f"{entity} for activity {activity_id}: 404/error")
+
+        # Last resort: fetch the full Activity entity (no $select) to see all fields
+        try:
+            res = await _aspire._get(f"Activities({activity_id})", {})
+            rec = res if isinstance(res, dict) else {}
+            all_keys = list(rec.keys())
+            logger.info(f"Activity({activity_id}) full field list: {all_keys}")
+            # If there's an embedded comments/notes collection, log it
+            for k, v in rec.items():
+                if isinstance(v, list) and v:
+                    logger.info(f"Activity({activity_id}).{k} is a list with {len(v)} items, sample: {v[0]}")
+        except Exception as e:
+            logger.info(f"Activity({activity_id}) full fetch failed: {e}")
+
         return []
 
     if activities:
