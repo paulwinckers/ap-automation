@@ -1933,6 +1933,7 @@ async def create_change_order(
     assigned_to_id:    Optional[int]    = Form(default=None),
     assigned_username: str              = Form(default=""),  # login/username for AssignedTo
     files:             list[UploadFile] = File(default=[]),
+    db:                Database         = Depends(get_db),
 ):
     """
     Create a Change Order Request as an Aspire Issue linked to this opportunity.
@@ -1960,10 +1961,12 @@ async def create_change_order(
             raise HTTPException(status_code=413, detail=f"File {i + 1} too large (max {label})")
         file_data.append((f.filename or f"file_{i + 1}", raw))
 
-    # ── Upload to R2 ─────────────────────────────────────────────────────────
-    ONE_YEAR   = 365 * 24 * 3600
-    file_urls: list[str] = []
+    # ── Upload to R2 + store in job_attachments for clean URLs ───────────────
+    api_base   = (settings.APP_BASE_URL or "").rstrip("/")
+    file_links: list[tuple[str, str]] = []   # (display_name, url)
+
     for fname, raw in file_data:
+        ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
         try:
             result = await _r2.upload_field_photo(
                 file_bytes=raw,
@@ -1971,13 +1974,30 @@ async def create_change_order(
                 submitter=submitter_name,
                 entity_type="change_order",
                 entity_id=f"opp{opp_id}",
-                expires_in=ONE_YEAR,
             )
             if result:
-                _, url = result
-                file_urls.append(url)
+                r2_key, _ = result
+                # Store in job_attachments so we can serve via a clean URL
+                await db._x(
+                    """INSERT INTO job_attachments
+                       (opp_id, attachment_type, file_name, file_extension, r2_key,
+                        file_size, note, uploaded_by)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    [opp_id, "Change Order", fname, ext, r2_key,
+                     len(raw), "Change Order Request attachment", submitter_name],
+                )
+                rows = await db._q(
+                    "SELECT id FROM job_attachments WHERE r2_key = ? LIMIT 1", [r2_key]
+                )
+                if rows and api_base:
+                    att_id = rows[0]["id"]
+                    url    = f"{api_base}/checkin/job-attachment/{att_id}/file"
+                    file_links.append((fname, url))
+                else:
+                    file_links.append((fname, ""))
         except Exception as e:
             logger.warning(f"CO: R2 upload failed for {fname}: {e}")
+            file_links.append((fname, ""))
 
     # ── Build Issue notes ─────────────────────────────────────────────────────
     today = _date.today().isoformat()
@@ -1992,8 +2012,11 @@ async def create_change_order(
         "Scope of Work:",
         scope.strip(),
     ]
-    if file_urls:
-        lines += ["", f"Attachments ({len(file_urls)}):"] + [f"  {u}" for u in file_urls]
+    if file_links:
+        lines.append("")
+        lines.append(f"Attachments ({len(file_links)}):")
+        for name, url in file_links:
+            lines.append(f"  {name}" + (f" — {url}" if url else ""))
     notes_text = "\n".join(lines)
 
     # ── POST Issue to Aspire ──────────────────────────────────────────────────
