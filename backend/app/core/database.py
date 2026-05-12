@@ -166,7 +166,10 @@ class _SQLiteBackend:
                 if not line.strip().startswith("--")
             ).strip().upper()
             if code.startswith(("CREATE TABLE", "CREATE INDEX")):
-                await self._db.execute(stmt)
+                try:
+                    await self._db.execute(stmt)
+                except Exception as e:
+                    logger.debug(f"Schema stmt skipped: {e}")
             elif code.startswith("ALTER TABLE"):
                 # Migration — ignore if column already exists
                 try:

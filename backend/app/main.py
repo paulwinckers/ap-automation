@@ -98,9 +98,15 @@ async def lifespan(app: FastAPI):
             "ANTHROPIC_API_KEY is not set — invoice extraction will fail with 401. "
             "Set this environment variable in your Railway dashboard."
         )
-    # Auto-seed vendor rules if DB is empty
+    # Connect DB on startup — this runs _apply_schema() which creates any new tables
     _db = Database()
     await _db.connect()
+    # Verify job_attachments table exists (logs an error if it's still missing)
+    try:
+        await _db._q("SELECT COUNT(*) FROM job_attachments LIMIT 1")
+        logger.info("DB startup check: job_attachments table OK")
+    except Exception as e:
+        logger.error(f"DB startup check FAILED — job_attachments table missing: {e}")
     await seed_vendors_if_empty(_db)
     await _db.close()
     # Start email polling on startup

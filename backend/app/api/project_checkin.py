@@ -1785,18 +1785,26 @@ async def upload_job_attachment(
         )
 
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, _upload)
+    try:
+        await loop.run_in_executor(None, _upload)
+    except Exception as exc:
+        logger.error(f"R2 upload failed for opp {opp_id} file {filename}: {exc}", exc_info=True)
+        raise HTTPException(502, f"File storage error: {exc}") from exc
 
-    rows = await db._q(
-        "INSERT INTO job_attachments "
-        "(opp_id, work_ticket_id, attachment_type, file_name, file_extension, r2_key, file_size, note, uploaded_by) "
-        "VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
-        [opp_id, work_ticket_id, attachment_type or "General",
-         filename, ext, r2_key, len(file_bytes),
-         (note or "").strip() or None,
-         (uploaded_by or "").strip() or None],
-    )
-    att_id = rows[0]["id"] if rows else None
+    try:
+        att_id = await db._x(
+            "INSERT INTO job_attachments "
+            "(opp_id, work_ticket_id, attachment_type, file_name, file_extension, r2_key, file_size, note, uploaded_by) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [opp_id, work_ticket_id, attachment_type or "General",
+             filename, ext, r2_key, len(file_bytes),
+             (note or "").strip() or None,
+             (uploaded_by or "").strip() or None],
+        )
+    except Exception as exc:
+        logger.error(f"DB insert failed for job attachment opp {opp_id}: {exc}", exc_info=True)
+        raise HTTPException(500, f"Database error: {exc}") from exc
+
     logger.info(f"Job attachment #{att_id} uploaded for opp {opp_id}: {filename} ({len(file_bytes)} bytes)")
     return {"id": att_id, "file_name": filename, "r2_key": r2_key}
 
