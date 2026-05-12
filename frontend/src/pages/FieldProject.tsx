@@ -1203,7 +1203,7 @@ export default function FieldProject() {
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: '#f5f3ff', border: '1.5px dashed #a5b4fc', borderRadius: 8, padding: '9px 12px', fontSize: 12, color: '#6366f1', marginBottom: 10 }}>
                     <span style={{ fontSize: 18 }}>📸</span>
                     <span>{advisorPhoto ? advisorPhoto.name : 'Attach site photo (optional)'}</span>
-                    <input type="file" accept="image/*" capture="environment"
+                    <input type="file" accept="image/*"
                       onChange={e => {
                         const f = e.target.files?.[0] ?? null;
                         if (advisorPreview) URL.revokeObjectURL(advisorPreview);
@@ -1333,7 +1333,7 @@ export default function FieldProject() {
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: '#f8fafc', border: '1.5px dashed #cbd5e1', borderRadius: 10, padding: '11px 14px', fontSize: 13, color: '#475569' }}>
                   <span style={{ fontSize: 20 }}>📷</span>
                   <span>Take or choose photos/videos</span>
-                  <input type="file" accept="image/*,video/*" capture="environment" multiple
+                  <input type="file" accept="image/*,video/*" multiple
                     onChange={e => { setPhotos(prev => [...prev, ...Array.from(e.target.files ?? [])]); e.target.value = ''; }}
                     style={{ display: 'none' }} />
                 </label>
