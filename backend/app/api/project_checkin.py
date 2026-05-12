@@ -2029,14 +2029,18 @@ async def create_change_order(
             logger.warning(f"CO: R2 upload failed for {fname}: {e}")
             file_links.append((fname, ""))
 
-    # ── Build Issue notes (HTML so links are clickable in Aspire) ────────────
+    # ── Build Issue notes (HTML — photos embed inline, videos as links) ──────
+    VIDEO_EXTS = {"mp4", "mov", "avi", "mkv", "webm"}
     parts = [f"<p>{scope.strip()}</p>"]
-    if file_links:
-        for orig_name, url in file_links:
-            if url:
-                parts.append(f'<p><a href="{url}">{orig_name}</a></p>')
-            else:
-                parts.append(f"<p>{orig_name}</p>")
+    for orig_name, url in file_links:
+        ext = orig_name.rsplit(".", 1)[-1].lower() if "." in orig_name else ""
+        if not url:
+            parts.append(f"<p>{orig_name}</p>")
+        elif ext in VIDEO_EXTS:
+            parts.append(f'<p><a href="{url}">{orig_name}</a></p>')
+        else:
+            # Embed photo inline so it displays directly in Aspire
+            parts.append(f'<p><img src="{url}" alt="{orig_name}" style="max-width:600px;"/></p>')
     notes_text = "".join(parts)
 
     # ── POST Issue to Aspire ──────────────────────────────────────────────────
@@ -2050,8 +2054,10 @@ async def create_change_order(
     issue_body: dict = {
         "Subject":              subject,
         "Notes":                notes_text,
-        "ActivityCategoryID":   29,                    # Change Order Request (by ID)
-        "ActivityCategoryName": "Change Order Request", # also by name — whichever Aspire accepts
+        "ActivityCategoryID":   29,                     # Change Order Request (ID)
+        "ActivityCategoryName": "Change Order Request",  # by name (whichever Aspire accepts)
+        "IssueCategoryID":      29,                     # alternate field name
+        "Priority":             "High",
         "OpportunityID":        opp_id,
         "DueDate":              due_date_str,
         "PublicComment":        False,
