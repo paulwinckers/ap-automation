@@ -1856,10 +1856,15 @@ async def delete_job_attachment(att_id: int, db: Database = Depends(get_db)):
 
 @public_router.post("/project/{opp_id}/respond")
 async def submit_project_response(
-    opp_id: int, body: CheckinResponseIn, db: Database = Depends(get_db)
+    opp_id:          int,
+    approach_notes:  str              = Form(...),
+    remaining_hours: Optional[float]  = Form(default=None),
+    blockers:        Optional[str]    = Form(default=None),
+    photos:          list[UploadFile] = File(default=[]),
+    db:              Database         = Depends(get_db),
 ):
     """Submit a check-in response from the permanent project page (no token)."""
-    if not body.approach_notes or not body.approach_notes.strip():
+    if not approach_notes or not approach_notes.strip():
         raise HTTPException(status_code=422, detail="approach_notes is required")
 
     tz    = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
@@ -1915,24 +1920,53 @@ async def submit_project_response(
         checkin_id = new_rows[0]["id"]
 
     # Save response
-    await db._x(
+    resp_rows = await db._q(
         """INSERT INTO project_checkin_responses
            (checkin_id, remaining_hours, approach_notes, blockers)
-           VALUES (?,?,?,?)""",
-        [checkin_id, body.remaining_hours, body.approach_notes.strip(), body.blockers],
+           VALUES (?,?,?,?) RETURNING id""",
+        [checkin_id, remaining_hours, approach_notes.strip(), blockers or None],
     )
+    response_id = resp_rows[0]["id"] if resp_rows else None
+
     await db._x(
         "UPDATE project_checkins SET responded_at = datetime('now') WHERE id = ?", [checkin_id]
     )
+
+    # Upload photos/videos to R2
+    _PHOTO_MAX_BYTES = 30 * 1024 * 1024
+    if _r2._r2_available():
+        for upload in (photos or []):
+            if not upload or not upload.filename:
+                continue
+            file_bytes = await upload.read()
+            if not file_bytes or len(file_bytes) > _PHOTO_MAX_BYTES:
+                continue
+            filename = upload.filename
+            ext      = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            safe     = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
+            r2_key   = f"checkin-photos/{checkin_id}/{uuid.uuid4().hex[:8]}_{safe}"
+            ct       = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            def _up(key=r2_key, body=file_bytes, content_type=ct):
+                _r2._make_client().put_object(
+                    Bucket=settings.R2_BUCKET_NAME,
+                    Key=key, Body=body, ContentType=content_type,
+                )
+            await asyncio.get_event_loop().run_in_executor(None, _up)
+            await db._q(
+                """INSERT INTO checkin_photos
+                   (checkin_id, response_id, file_name, file_extension, r2_key, file_size)
+                   VALUES (?,?,?,?,?,?) RETURNING id""",
+                [checkin_id, response_id, filename, ext, r2_key, len(file_bytes)],
+            )
 
     # Notify management
     today_str   = datetime.now().strftime("%B %d, %Y")
     mgmt_emails = [e.strip() for e in settings.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if e.strip()]
     html = _render_mgmt_email(
         opp_name=opp_name, property_name=prop_name, lead_name=lead_name,
-        response_notes=body.approach_notes.strip(),
-        remaining_hours=body.remaining_hours,
-        blockers=body.blockers,
+        response_notes=approach_notes.strip(),
+        remaining_hours=remaining_hours,
+        blockers=blockers,
         ai_tip=ai_tip,
         today_str=today_str,
     )

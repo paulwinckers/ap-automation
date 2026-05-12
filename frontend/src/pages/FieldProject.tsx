@@ -290,6 +290,15 @@ export default function FieldProject() {
   const [blockers,       setBlockers]       = useState('');
   const [submitting,     setSubmitting]     = useState(false);
   const [submitMsg,      setSubmitMsg]      = useState('');
+  const [photos,         setPhotos]         = useState<File[]>([]);
+  const [previews,       setPreviews]       = useState<string[]>([]);
+
+  // Build object-URL previews whenever photos list changes
+  useEffect(() => {
+    const urls = photos.map(f => URL.createObjectURL(f));
+    setPreviews(urls);
+    return () => urls.forEach(u => URL.revokeObjectURL(u));
+  }, [photos]);
   const [handoffLoading, setHandoffLoading] = useState(false);
   const [handoffMsg,     setHandoffMsg]     = useState('');
   // Smart prompt selections: promptId → selected option string
@@ -505,21 +514,22 @@ export default function FieldProject() {
     setSubmitting(true);
     setSubmitMsg('');
     try {
+      const fd = new FormData();
+      fd.append('approach_notes', notes);
+      if (remainingHours) fd.append('remaining_hours', remainingHours);
+      if (blockers.trim()) fd.append('blockers', blockers.trim());
+      photos.forEach(f => fd.append('photos', f));
+
       const r = await fetch(`${API}/checkin/project/${oppId}/respond`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          approach_notes:  notes,
-          remaining_hours: remainingHours ? parseFloat(remainingHours) : null,
-          blockers:        blockers.trim() || null,
-        }),
+        body: fd,
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         throw new Error((j as any).detail || 'Submit failed');
       }
       setSubmitMsg('✅ Update sent to the team.');
-      setApproachNotes(''); setRemainingHours(''); setBlockers('');
+      setApproachNotes(''); setRemainingHours(''); setBlockers(''); setPhotos([]);
       setTab('history');
       load(true);   // refresh history quietly
     } catch (err: any) {
@@ -1188,7 +1198,7 @@ export default function FieldProject() {
                 />
               </div>
 
-              <div style={{ marginBottom: 22 }}>
+              <div style={{ marginBottom: 16 }}>
                 <label style={LABEL}>Blockers or issues (optional)</label>
                 <textarea
                   rows={2}
@@ -1197,6 +1207,33 @@ export default function FieldProject() {
                   onChange={e => setBlockers(e.target.value)}
                   style={{ ...INPUT, resize: 'vertical' }}
                 />
+              </div>
+
+              {/* Photo / video upload */}
+              <div style={{ marginBottom: 22 }}>
+                <label style={LABEL}>Photos / Videos (optional)</label>
+                {previews.length > 0 && (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                    {previews.map((src, i) => (
+                      <div key={i} style={{ position: 'relative' }}>
+                        {photos[i]?.type.startsWith('video/') ? (
+                          <video src={src} style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, background: '#000' }} muted />
+                        ) : (
+                          <img src={src} alt="" style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8 }} />
+                        )}
+                        <button type="button" onClick={() => setPhotos(prev => prev.filter((_, j) => j !== i))}
+                          style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%', background: '#ef4444', color: '#fff', border: 'none', fontSize: 12, lineHeight: '20px', textAlign: 'center', cursor: 'pointer', padding: 0 }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: '#f8fafc', border: '1.5px dashed #cbd5e1', borderRadius: 10, padding: '11px 14px', fontSize: 13, color: '#475569' }}>
+                  <span style={{ fontSize: 20 }}>📷</span>
+                  <span>Take or choose photos/videos</span>
+                  <input type="file" accept="image/*,video/*" capture="environment" multiple
+                    onChange={e => { setPhotos(prev => [...prev, ...Array.from(e.target.files ?? [])]); e.target.value = ''; }}
+                    style={{ display: 'none' }} />
+                </label>
               </div>
 
               {submitMsg && (
