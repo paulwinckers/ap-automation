@@ -959,10 +959,10 @@ async def my_project_lookup(db: Database = Depends(get_db)):
                 found_end = True
                 break
 
-    # Status filter — drop cancelled/void; keep completed only if recent (90 days)
+    # Status filter — drop cancelled/void; keep completed only if recent (180 days)
     EXCLUDED_STATUSES    = {"cancelled", "canceled", "void", "voided"}
     COMPLETE_STATUSES    = {"complete", "completed"}
-    cutoff_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+    cutoff_date = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
 
     def _keep(t: dict) -> bool:
         status = (t.get("WorkTicketStatusName") or "").strip().lower()
