@@ -2030,23 +2030,11 @@ async def create_change_order(
             file_links.append((fname, ""))
 
     # ── Build Issue notes ─────────────────────────────────────────────────────
-    today = _date.today().isoformat()
-    lines = [
-        "Category: Change Order Request",
-        "Status: Issued",
-        f"Submitted by: {submitter_name}",
-        f"Date: {today}",
-        f"Property: {property_name}",
-        f"Opportunity: {opp_name} (ID: {opp_id})",
-        "",
-        "Scope of Work:",
-        scope.strip(),
-    ]
+    lines = [scope.strip()]
     if file_links:
         lines.append("")
-        lines.append(f"Attachments ({len(file_links)}):")
         for name, url in file_links:
-            lines.append(f"  {name}" + (f" — {url}" if url else ""))
+            lines.append(url if url else name)
     notes_text = "\n".join(lines)
 
     # ── POST Issue to Aspire ──────────────────────────────────────────────────
