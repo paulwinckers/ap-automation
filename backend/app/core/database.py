@@ -142,8 +142,10 @@ class _SQLiteBackend:
         self._db = await aiosqlite.connect(LOCAL_DB_PATH)
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA foreign_keys = ON")
-        if not db_exists:
-            await self._apply_schema()
+        # Always apply schema so new tables added after first-run are created.
+        # All statements use CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
+        # so this is idempotent and safe against existing databases.
+        await self._apply_schema()
         logger.info(f"SQLite database connected — {LOCAL_DB_PATH}")
 
     async def close(self):
