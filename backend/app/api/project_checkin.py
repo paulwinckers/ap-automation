@@ -2147,48 +2147,63 @@ async def create_change_order(
 @public_router.post("/project/{opp_id}/field-advisor")
 async def field_advisor(
     opp_id:   int,
-    question: str              = Form(...),
+    question: str                  = Form(...),
     photo:    Optional[UploadFile] = File(default=None),
 ):
     """
     AI field advisor for crew leads.
-    Accepts a text question and an optional site photo (base64-encoded for Claude vision).
-    Returns practical, actionable advice for common landscape construction problems.
+    Accepts a text question + optional site photo; returns practical field advice.
+    Every error path raises HTTPException so CORS headers are always present.
     """
     import base64 as _b64
 
-    if not settings.ANTHROPIC_API_KEY:
-        raise HTTPException(503, "AI advisor not configured")
-
-    SYSTEM = (
-        "You are an experienced landscape construction advisor helping crew leads solve real "
-        "jobsite problems. Your expertise covers: slope stabilization and erosion control, "
-        "grading and drainage, retaining walls and hardscape, irrigation troubleshooting, "
-        "plant installation and soil prep, concrete and paving, crew coordination, and "
-        "BC Landscape & Nursery Association best practices.\n\n"
-        "Give practical, field-ready advice a crew lead can act on today. "
-        "Use short bullet points or numbered steps where helpful. "
-        "If a photo is provided, describe what you observe before giving advice. "
-        "Keep responses focused and under 300 words unless the problem requires more detail."
-    )
-
-    # Build the message content
-    content: list[dict] = []
-
-    if photo and photo.filename:
-        raw = await photo.read()
-        if raw and len(raw) <= 20 * 1024 * 1024:  # 20 MB limit for vision
-            ext  = (photo.filename.rsplit(".", 1)[-1] if "." in photo.filename else "jpeg").lower()
-            mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
-                    "webp": "image/webp", "heic": "image/jpeg", "gif": "image/gif"}.get(ext, "image/jpeg")
-            content.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": mime, "data": _b64.b64encode(raw).decode()},
-            })
-
-    content.append({"type": "text", "text": question.strip() or "What do you observe and what should I know?"})
-
     try:
+        if not settings.ANTHROPIC_API_KEY:
+            raise HTTPException(503, "AI advisor not configured")
+
+        SYSTEM = (
+            "You are an experienced landscape construction advisor helping crew leads solve real "
+            "jobsite problems. Your expertise covers: slope stabilization and erosion control, "
+            "grading and drainage, retaining walls and hardscape, irrigation troubleshooting, "
+            "plant installation and soil prep, concrete and paving, crew coordination, and "
+            "BC Landscape & Nursery Association best practices.\n\n"
+            "Give practical, field-ready advice a crew lead can act on today. "
+            "Use short bullet points or numbered steps where helpful. "
+            "If a photo is provided, describe what you observe before giving advice. "
+            "Keep responses focused and under 300 words unless the problem requires more detail."
+        )
+
+        # ── Build message content ───────────────────────────────────────────
+        content: list[dict] = []
+
+        if photo and photo.filename:
+            raw = await photo.read()
+            # Claude vision limit: 5 MB raw (20 MB base64-encoded would exceed API limits)
+            # Silently skip if too large rather than crashing — text question still works
+            if raw and len(raw) <= 5 * 1024 * 1024:
+                ext  = (photo.filename.rsplit(".", 1)[-1] if "." in photo.filename else "jpeg").lower()
+                mime = {
+                    "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                    "webp": "image/webp", "heic": "image/jpeg", "gif": "image/gif",
+                }.get(ext, "image/jpeg")
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type":       "base64",
+                        "media_type": mime,
+                        "data":       _b64.b64encode(raw).decode("ascii"),
+                    },
+                })
+                logger.info(f"Field advisor: photo included ({len(raw)//1024} KB, {mime})")
+            elif raw:
+                logger.warning(f"Field advisor: photo too large ({len(raw)//1024} KB), skipping image")
+
+        content.append({
+            "type": "text",
+            "text": question.strip() or "What do you observe and what should I know?",
+        })
+
+        # ── Call Claude ─────────────────────────────────────────────────────
         client   = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
         response = await client.messages.create(
             model="claude-opus-4-5",
@@ -2197,11 +2212,14 @@ async def field_advisor(
             messages=[{"role": "user", "content": content}],
         )
         answer = response.content[0].text if response.content else "No response generated."
-    except Exception as e:
-        logger.error(f"Field advisor AI call failed: {e}", exc_info=True)
-        raise HTTPException(502, f"AI service error: {e}")
+        logger.info(f"Field advisor: answered for opp {opp_id} ({len(answer)} chars)")
+        return {"answer": answer}
 
-    return {"answer": answer}
+    except HTTPException:
+        raise  # propagate our own HTTP errors unchanged
+    except Exception as e:
+        logger.error(f"Field advisor unhandled error for opp {opp_id}: {e}", exc_info=True)
+        raise HTTPException(500, f"Advisor error: {e}") from e
 
 
 # ── Scheduler: fires at 06:00 Pacific daily ───────────────────────────────────
