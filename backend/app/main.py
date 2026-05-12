@@ -101,12 +101,13 @@ async def lifespan(app: FastAPI):
     # Connect DB on startup — this runs _apply_schema() which creates any new tables
     _db = Database()
     await _db.connect()
-    # Verify job_attachments table exists (logs an error if it's still missing)
-    try:
-        await _db._q("SELECT COUNT(*) FROM job_attachments LIMIT 1")
-        logger.info("DB startup check: job_attachments table OK")
-    except Exception as e:
-        logger.error(f"DB startup check FAILED — job_attachments table missing: {e}")
+    # Verify critical tables exist — logs an error if _ensure_schema() silently failed
+    for tbl in ("job_attachments", "checkin_photos", "project_checkins"):
+        try:
+            await _db._q(f"SELECT COUNT(*) FROM {tbl} LIMIT 1")
+            logger.info(f"DB startup check: {tbl} OK")
+        except Exception as e:
+            logger.error(f"DB startup check FAILED — {tbl} table missing: {e}")
     await seed_vendors_if_empty(_db)
     await _db.close()
     # Start email polling on startup

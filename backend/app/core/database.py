@@ -116,7 +116,9 @@ class _D1Backend:
                 try:
                     await self._run(stmt)
                 except Exception as e:
-                    logger.debug(f"Schema stmt skipped: {e}")
+                    # Log at WARNING so we can see it in Railway — silently skipping
+                    # CREATE TABLE failures means tables can silently go missing.
+                    logger.warning(f"D1 schema CREATE TABLE/INDEX failed (table may be missing): {e}")
             elif code.startswith("ALTER TABLE"):
                 # Migrations — safe to run every time; ignore "already exists" errors
                 try:
