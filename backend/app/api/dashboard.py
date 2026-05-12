@@ -1870,19 +1870,32 @@ _digest_scheduler_task: asyncio.Task | None = None
 
 
 async def _digest_scheduler_loop():
-    """Fire the Issues Digest every day at 19:00 in the configured timezone."""
+    """Fire the Issues Digest every day at 19:00 in the configured timezone.
+
+    Polls every 5 minutes so that server restarts near 7 PM don't cause a
+    24-hour miss.  An in-memory 'last run date' guard prevents double-firing
+    if the process restarts within the same window.
+    """
     import zoneinfo as _zi
     from datetime import datetime as _dt, timedelta as _td
 
     tz = _zi.ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    _last_run_date: str = ""          # e.g. "2026-05-11"
+    FIRE_HOUR   = 19                  # 7 PM local
+    WINDOW_MINS = 30                  # fire any time in [19:00, 19:30)
+
     while True:
-        now    = _dt.now(tz)
-        target = now.replace(hour=19, minute=0, second=0, microsecond=0)
-        if now >= target:
-            target += _td(days=1)
-        wait = (target - now).total_seconds()
-        logger.info(f"Issues digest scheduler: next run in {wait/3600:.1f}h at {target.strftime('%Y-%m-%d %H:%M %Z')}")
-        await asyncio.sleep(wait)
+        await asyncio.sleep(5 * 60)   # poll every 5 minutes
+        now       = _dt.now(tz)
+        today_str = now.strftime("%Y-%m-%d")
+
+        in_window = (now.hour == FIRE_HOUR and now.minute < WINDOW_MINS)
+        if not in_window or _last_run_date == today_str:
+            continue
+
+        # Mark fired before awaiting so a crash mid-send doesn't re-trigger
+        _last_run_date = today_str
+        logger.info(f"Issues digest scheduler: firing for {today_str} at {now.strftime('%H:%M %Z')}")
         try:
             import re as _re
             import traceback

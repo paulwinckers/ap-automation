@@ -518,19 +518,26 @@ _scheduler_task: asyncio.Task | None = None
 
 
 async def _scheduler_loop():
-    """Fire send_report_now() every day at 19:00 in the configured timezone."""
+    """Fire send_report_now() every day at 19:00 in the configured timezone.
+
+    Polls every 5 minutes so restarts near 7 PM don't cause a 24-hour miss.
+    """
     tz = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Edmonton")
+    _last_run_date: str = ""
+    FIRE_HOUR   = 19
+    WINDOW_MINS = 30
+
     while True:
-        now    = datetime.now(tz)
-        target = now.replace(hour=19, minute=0, second=0, microsecond=0)
-        if now >= target:
-            target += timedelta(days=1)
-        wait = (target - now).total_seconds()
+        await asyncio.sleep(5 * 60)
+        now       = datetime.now(tz)
+        today_str = now.strftime("%Y-%m-%d")
+        in_window = (now.hour == FIRE_HOUR and now.minute < WINDOW_MINS)
+        if not in_window or _last_run_date == today_str:
+            continue
+        _last_run_date = today_str
         logger.info(
-            f"Construction nightly report scheduled in {wait/3600:.1f}h "
-            f"({target.strftime('%a %b %d %H:%M %Z')})"
+            f"Construction nightly report: firing for {today_str} at {now.strftime('%H:%M %Z')}"
         )
-        await asyncio.sleep(wait)
         try:
             await send_report_now()
         except Exception as e:

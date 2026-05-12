@@ -2075,19 +2075,25 @@ _scheduler_task: asyncio.Task | None = None
 
 
 async def _scheduler_loop():
+    """Fire project check-ins every day at 06:00 in the configured timezone.
+
+    Polls every 5 minutes so restarts near 6 AM don't cause a 24-hour miss.
+    """
     tz = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    _last_run_date: str = ""
+    FIRE_HOUR   = 6
+    WINDOW_MINS = 30
+
     while True:
-        now    = datetime.now(tz)
-        target = now.replace(hour=6, minute=0, second=0, microsecond=0)
-        if now >= target:
-            target += timedelta(days=1)
-        wait = (target - now).total_seconds()
-        logger.info(
-            f"Check-in scheduler fires in {wait / 3600:.1f}h "
-            f"({target.strftime('%a %b %d %H:%M %Z')})"
-        )
-        await asyncio.sleep(wait)
-        month = datetime.now(tz).strftime("%Y-%m")
+        await asyncio.sleep(5 * 60)
+        now       = datetime.now(tz)
+        today_str = now.strftime("%Y-%m-%d")
+        in_window = (now.hour == FIRE_HOUR and now.minute < WINDOW_MINS)
+        if not in_window or _last_run_date == today_str:
+            continue
+        _last_run_date = today_str
+        logger.info(f"Check-in scheduler: firing for {today_str} at {now.strftime('%H:%M %Z')}")
+        month = now.strftime("%Y-%m")
         try:
             result = await _send_project_checkins(month)
             logger.info(f"Daily check-ins result: {result}")

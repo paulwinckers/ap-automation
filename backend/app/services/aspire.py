@@ -597,15 +597,15 @@ class AspireClient:
         Primary: Contacts endpoint filtered to Active employees.
         Fallback: derive from Opportunities SalesRep/OpsManager names.
         """
-        # Try Contacts endpoint first (correct field is 'Active', not 'IsActive')
+        # Try Contacts endpoint first (correct field is 'Active', not 'IsActive').
+        # Use _get_all so we page through every record — $top is silently capped by Aspire.
         try:
-            result = await self._get("Contacts", {
+            contacts = await self._get_all("Contacts", {
                 "$select": "ContactID,UserID,UserName,FirstName,LastName,Email,Active,ContactTypeName",
                 "$filter": "Active eq true and ContactTypeName eq 'Employee'",
-                "$top":    "500",
+                "$top":    "200",
                 "$orderby": "FirstName asc",
             })
-            contacts = self._extract_list(result)
             out = []
             for c in contacts:
                 cid      = c.get("ContactID")
@@ -990,16 +990,15 @@ class AspireClient:
         Used by the time-tracking PIN login screen.
         """
         try:
-            result = await self._get("Contacts", {
+            contacts = await self._get_all("Contacts", {
                 "$select": (
                     "ContactID,UserID,FirstName,LastName,Email,Active,"
                     "ContactTypeName,MobilePhone,EmployeePin"
                 ),
                 "$filter": "Active eq true and ContactTypeName eq 'Employee'",
-                "$top":    "500",
+                "$top":    "200",
                 "$orderby": "LastName asc",
             })
-            contacts = self._extract_list(result)
             out = []
             for c in contacts:
                 cid   = c.get("ContactID")
