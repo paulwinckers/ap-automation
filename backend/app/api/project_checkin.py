@@ -2029,13 +2029,15 @@ async def create_change_order(
             logger.warning(f"CO: R2 upload failed for {fname}: {e}")
             file_links.append((fname, ""))
 
-    # ── Build Issue notes ─────────────────────────────────────────────────────
-    lines = [scope.strip()]
+    # ── Build Issue notes (HTML so links are clickable in Aspire) ────────────
+    parts = [f"<p>{scope.strip()}</p>"]
     if file_links:
-        lines.append("")
-        for name, url in file_links:
-            lines.append(url if url else name)
-    notes_text = "\n".join(lines)
+        for orig_name, url in file_links:
+            if url:
+                parts.append(f'<p><a href="{url}">{orig_name}</a></p>')
+            else:
+                parts.append(f"<p>{orig_name}</p>")
+    notes_text = "".join(parts)
 
     # ── POST Issue to Aspire ──────────────────────────────────────────────────
     # Aspire AssignedTo expects a comma-delimited list of ContactIDs (integers as strings).
