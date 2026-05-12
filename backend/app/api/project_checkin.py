@@ -898,243 +898,153 @@ async def checkin_status(month: Optional[str] = None, db: Database = Depends(get
 # ── My-project lookup — must be defined BEFORE /{token} to avoid capture ──────
 
 @public_router.get("/my-project")
-async def my_project_lookup(name: str = "", show_all: bool = False, db: Database = Depends(get_db)):
+async def my_project_lookup(db: Database = Depends(get_db)):
     """
-    Return the list of known leads (for the name-picker dropdown) and,
-    when a name is given, all opportunities where that person is crew leader
-    (past ~12 months + future).  When show_all=true, returns projects for ALL
-    known leads with a lead_name field on each project.
-    Sorted: In Progress first, then Scheduled, then recently Completed.
+    Return all active construction projects (past 18 months + future),
+    grouped by property.  Sorted: active first, then recently completed.
+    Results are cached for 10 minutes to avoid repeated Aspire calls.
     """
     global _my_projects_cache, _my_projects_cache_ts
     from app.api.construction_plan import _fetch_opp_actuals
+    from datetime import timedelta as _td
 
-    name = (name or "").strip()
-
-    # ── Cache check (show_all only) ──────────────────────────────────────────
-    if show_all and _my_projects_cache is not None:
+    # ── Cache check ──────────────────────────────────────────────────────────
+    if _my_projects_cache is not None:
         age = _time.time() - _my_projects_cache_ts
         if age < _MY_PROJECTS_TTL:
             logger.info(f"my-project: cache hit (age={age:.0f}s)")
             return _my_projects_cache
 
-    # Always return lead list so the dropdown can populate
-    lead_rows = await db._q(
-        "SELECT aspire_name, display_name FROM construction_leads ORDER BY aspire_name", []
-    )
-    leads = [
-        {"name": r["aspire_name"], "display": r["display_name"] or r["aspire_name"]}
-        for r in lead_rows
-    ]
-
-    if not name and not show_all:
-        return {"leads": leads, "projects": []}
-
-    # Known lead names for filtering when show_all=True
-    known_leads = {l["name"].strip().lower(): l["name"] for l in leads}
-
+    # Fetch recent work tickets (last 18 months + future) — date filter avoids
+    # scanning the full all-time archive.
+    date_cutoff = (datetime.now() - _td(days=548)).strftime("%Y-%m-%d")
     SELECT = (
         "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
         "OpportunityID,OpportunityNumber,ScheduledStartDate,CompleteDate,"
-        "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
+        "HoursEst,HoursAct,PercentComplete"
     )
-    # Date cutoff: tickets scheduled in the last 18 months + all future tickets.
-    # Avoids scanning the full historical archive (saves many API pages).
-    from datetime import timedelta as _td
-    date_cutoff = (datetime.now() - _td(days=548)).strftime("%Y-%m-%d")
+    PAGE       = 500
+    MAX_PAGES  = 10
+    PARA_BATCH = 4
 
-    if show_all:
-        # show_all: fetch recent tickets only (date-filtered, no lead restriction).
-        # One pass of paginated calls with ScheduledStartDate filter cuts the
-        # ticket volume from ~10 000 to a few hundred.
-        PAGE       = 500
-        MAX_PAGES  = 10        # 10 × 500 = 5 000 max (plenty for 18-month window)
-        PARA_BATCH = 4
-
-        async def _fetch_page(page_num: int) -> list[dict]:
-            skip = page_num * PAGE
-            try:
-                res = await _aspire._get("WorkTickets", {
-                    "$select":  SELECT,
-                    "$filter":  f"ScheduledStartDate ge {date_cutoff}",
-                    "$orderby": "WorkTicketID desc",
-                    "$top":     str(PAGE),
-                    "$skip":    str(skip),
-                })
-                return _aspire._extract_list(res)
-            except Exception as e:
-                logger.warning(f"my-project show_all page {page_num + 1} failed: {e}")
-                return []
-
-        all_tickets: list[dict] = []
-        found_end = False
-        for batch_start in range(0, MAX_PAGES, PARA_BATCH):
-            if found_end:
-                break
-            page_nums = range(batch_start, min(batch_start + PARA_BATCH, MAX_PAGES))
-            batches   = await asyncio.gather(*[_fetch_page(p) for p in page_nums])
-            for batch in batches:
-                if not batch:
-                    found_end = True
-                    break
-                all_tickets.extend(batch)
-                logger.info(f"my-project show_all: fetched {len(batch)} tickets (total: {len(all_tickets)})")
-                if len(batch) < PAGE:
-                    found_end = True
-                    break
-
-        leader_tickets = all_tickets
-        logger.info(f"my-project show_all: {len(leader_tickets)} total tickets (pre division filter)")
-
-    else:
-        # Individual lead: filter by CrewLeaderName + date directly in the API query.
-        # This fetches only that person's tickets rather than all-time history.
-        # Use _get_all to handle pagination automatically.
-        safe_name = name.replace("'", "''")   # OData single-quote escape
+    async def _fetch_page(page_num: int) -> list[dict]:
+        skip = page_num * PAGE
         try:
-            res = await _aspire._get_all("WorkTickets", {
-                "$select": SELECT,
-                "$filter": (
-                    f"CrewLeaderName eq '{safe_name}'"
-                    f" and ScheduledStartDate ge {date_cutoff}"
-                ),
-                "$orderby": "ScheduledStartDate desc",
-                "$top": "500",
+            res = await _aspire._get("WorkTickets", {
+                "$select":  SELECT,
+                "$filter":  f"ScheduledStartDate ge {date_cutoff}",
+                "$orderby": "WorkTicketID desc",
+                "$top":     str(PAGE),
+                "$skip":    str(skip),
             })
-            leader_tickets = res
+            return _aspire._extract_list(res)
         except Exception as e:
-            logger.warning(f"my-project '{name}': CrewLeaderName filter failed ({e}), falling back to full scan")
-            # Fallback: fetch all recent tickets and filter in Python
-            try:
-                res = await _aspire._get_all("WorkTickets", {
-                    "$select": SELECT,
-                    "$filter": f"ScheduledStartDate ge {date_cutoff}",
-                    "$orderby": "WorkTicketID desc",
-                    "$top": "500",
-                })
-                leader_tickets = [
-                    t for t in res
-                    if (t.get("CrewLeaderName") or "").strip().lower() == name.lower()
-                ]
-            except Exception as e2:
-                logger.error(f"my-project '{name}': fallback scan also failed: {e2}")
-                leader_tickets = []
+            logger.warning(f"my-project page {page_num + 1} failed: {e}")
+            return []
 
-        if not leader_tickets:
-            logger.warning(f"my-project '{name}': 0 tickets matched")
+    all_tickets: list[dict] = []
+    found_end = False
+    for batch_start in range(0, MAX_PAGES, PARA_BATCH):
+        if found_end:
+            break
+        page_nums = range(batch_start, min(batch_start + PARA_BATCH, MAX_PAGES))
+        batches   = await asyncio.gather(*[_fetch_page(p) for p in page_nums])
+        for batch in batches:
+            if not batch:
+                found_end = True
+                break
+            all_tickets.extend(batch)
+            logger.info(f"my-project: fetched {len(batch)} tickets (total: {len(all_tickets)})")
+            if len(batch) < PAGE:
+                found_end = True
+                break
 
-    # Status filter — exclude cancelled/void only; include everything else
-    # (In Production, In Queue, Scheduled, Open, In Progress, Complete/recent, etc.)
-    EXCLUDED_STATUSES = {"cancelled", "canceled", "void", "voided"}
+    # Status filter — drop cancelled/void; keep completed only if recent (90 days)
+    EXCLUDED_STATUSES    = {"cancelled", "canceled", "void", "voided"}
+    COMPLETE_STATUSES    = {"complete", "completed"}
     cutoff_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
 
-    def _keep_ticket(t: dict) -> bool:
+    def _keep(t: dict) -> bool:
         status = (t.get("WorkTicketStatusName") or "").strip().lower()
         if status in EXCLUDED_STATUSES:
             return False
-        # Keep completed tickets only if finished within the last 90 days
-        if status in {"complete", "completed"}:
-            complete_date = (t.get("CompleteDate") or t.get("ScheduledStartDate") or "")[:10]
-            return complete_date >= cutoff_date
-        return True  # all other statuses shown
+        if status in COMPLETE_STATUSES:
+            done = (t.get("CompleteDate") or t.get("ScheduledStartDate") or "")[:10]
+            return done >= cutoff_date
+        return True
 
-    tickets = [t for t in leader_tickets if _keep_ticket(t)]
+    tickets = [t for t in all_tickets if _keep(t)]
     logger.info(f"my-project: {len(tickets)} tickets after status filter")
 
     if not tickets:
-        return {"leads": leads, "projects": []}
+        return {"projects": []}
 
-    COMPLETE_TICKET_STATUSES = {"complete", "completed"}
-
-    # Group by OpportunityNumber (consolidates change orders sharing the same base job).
-    # Track all OpportunityIDs in the group; use the highest for _fetch_opp_actuals.
-    opp_num_map: dict[tuple, dict] = {}
+    # Group by OpportunityNumber — one entry per job regardless of change orders
+    opp_map: dict = {}
     for t in tickets:
-        oid      = t.get("OpportunityID")
-        opp_num  = t.get("OpportunityNumber")
-        crew     = (t.get("CrewLeaderName") or "").strip()
+        oid     = t.get("OpportunityID")
+        opp_num = t.get("OpportunityNumber")
         if not oid:
             continue
-        opp_key = opp_num if opp_num is not None else float(oid)
-        # show_all: group by job only (one card per project, any lead)
-        # individual lead: group by job+lead so each person's view is accurate
-        key = opp_key if show_all else (opp_key, crew)
-        if key not in opp_num_map:
-            opp_num_map[key] = {
-                "opp_ids":       set(),
-                "primary_oid":   oid,   # highest ID = most recent change order
-                "lead_name":     crew,
+        key = opp_num if opp_num is not None else float(oid)
+        if key not in opp_map:
+            opp_map[key] = {
+                "primary_oid":   oid,
                 "hrs_est":       0.0,
                 "hrs_act":       0.0,
                 "ticket_count":  0,
                 "latest_date":   "",
-                "active_tickets": 0,    # tickets NOT complete
+                "active_tickets": 0,
             }
-        e = opp_num_map[key]
-        e["opp_ids"].add(oid)
+        e = opp_map[key]
         if oid > e["primary_oid"]:
-            e["primary_oid"] = oid      # keep highest OpportunityID as representative
+            e["primary_oid"] = oid
         e["hrs_est"]      += float(t.get("HoursEst") or 0)
         e["hrs_act"]      += float(t.get("HoursAct") or 0)
         e["ticket_count"] += 1
         d = (t.get("ScheduledStartDate") or "")[:10]
         if d > e["latest_date"]:
             e["latest_date"] = d
-        t_status = (t.get("WorkTicketStatusName") or "").strip().lower()
-        if t_status not in COMPLETE_TICKET_STATUSES:
+        if (t.get("WorkTicketStatusName") or "").strip().lower() not in COMPLETE_STATUSES:
             e["active_tickets"] += 1
 
-    # Fetch opportunity details using the primary (highest) OpportunityID per group
-    primary_ids = [e["primary_oid"] for e in opp_num_map.values()]
+    # Fetch opportunity details for all grouped jobs in parallel
+    primary_ids = [e["primary_oid"] for e in opp_map.values()]
     actuals     = await _fetch_opp_actuals(primary_ids)
 
-    # Build enriched project list — filter to Construction division, log others
+    # Build project list — construction division only
     projects = []
-    for key, e in opp_num_map.items():
+    for e in opp_map.values():
         oid      = e["primary_oid"]
         opp      = actuals.get(oid, {})
-        opp_name = opp.get("OpportunityName") or f"Job #{oid}"
-        prop     = opp.get("PropertyName") or ""
         division = opp.get("DivisionName") or ""
-
-        # Only show construction division jobs — skip anything without an explicit
-        # construction division name (blank DivisionName = maintenance/irrigation, skip those too)
         if "construction" not in division.lower():
-            logger.info(f"my-project: skipping '{opp_name}' — division='{division or '(blank)'}'")
             continue
 
-        # Use ticket activity to determine if job is active or complete
-        # (opportunity status like 'Won' doesn't reliably indicate work is ongoing)
         all_done = e["active_tickets"] == 0
         status   = "Complete" if all_done else (opp.get("OpportunityStatusName") or "Active")
+        opp_name = opp.get("OpportunityName") or f"Job #{oid}"
 
         projects.append({
             "opp_id":       oid,
             "opp_number":   opp.get("OpportunityNumber"),
             "opp_name":     opp_name,
-            "property":     prop,
+            "property":     opp.get("PropertyName") or "",
             "status":       status,
             "all_done":     all_done,
             "hrs_est":      round(e["hrs_est"], 1),
             "hrs_act":      round(e["hrs_act"], 1),
             "ticket_count": e["ticket_count"],
             "latest_date":  e["latest_date"],
-            "lead_name":    e["lead_name"],
         })
 
-    label = "ALL" if show_all else name
-    logger.info(f"my-project '{label}': returning {len(projects)} construction projects")
-    # Active jobs first (all_done=False), then completed; within each group newest first
-    projects.sort(key=lambda x: (x["all_done"], x["latest_date"]), reverse=True)
-    projects.sort(key=lambda x: x["all_done"])   # stable: False (active) before True (done)
+    logger.info(f"my-project: returning {len(projects)} construction projects")
+    projects.sort(key=lambda x: x["latest_date"], reverse=True)
+    projects.sort(key=lambda x: x["all_done"])   # active before completed
 
-    result = {"leads": leads, "projects": projects}
-
-    # Cache show_all results so repeat page loads are instant
-    if show_all:
-        _my_projects_cache    = result
-        _my_projects_cache_ts = _time.time()
-
+    result = {"projects": projects}
+    _my_projects_cache    = result
+    _my_projects_cache_ts = _time.time()
     return result
 
 

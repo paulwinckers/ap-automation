@@ -1,12 +1,9 @@
 /**
- * FieldProjectLookup.tsx — "My Project" landing for construction leads.
+ * FieldProjectLookup.tsx — Construction project search / job list.
  * Route: /field/project  (no oppId)
  *
- * 1. Loads the list of known leads from D1.
- * 2. Lead picks their name (remembered in localStorage).
- * 3. Shows all opportunities where they are crew leader (past year + future),
- *    grouped by property so multiple jobs at the same site appear as one card.
- * 4. They tap a sub-project to open the permanent /field/project/:oppId page.
+ * Loads all active construction jobs and lets the user search by
+ * property or job name. Tap a card to open the project page.
  */
 
 import { useState, useEffect } from 'react';
@@ -23,19 +20,17 @@ interface Project {
   hrs_act:      number;
   ticket_count: number;
   latest_date:  string;
-  lead_name?:   string;
 }
 
 interface PropertyGroup {
-  key:          string;       // property name (grouping key)
+  key:          string;
   projects:     Project[];
   hrs_est:      number;
   hrs_act:      number;
   ticket_count: number;
   latest_date:  string;
-  all_done:     boolean;      // true only if every opp is done
-  status:       string;       // most active status in the group
-  lead_name?:   string;       // set when all projects in group share the same lead
+  all_done:     boolean;
+  status:       string;
 }
 
 const STATUS_COLOR: Record<string, { bg: string; text: string; dot: string }> = {
@@ -76,7 +71,6 @@ function groupByProperty(projects: Project[]): PropertyGroup[] {
   }
   const groups: PropertyGroup[] = [];
   for (const [key, list] of map.entries()) {
-    const leadNames = [...new Set(list.map(p => p.lead_name).filter(Boolean))];
     groups.push({
       key,
       projects:     list,
@@ -86,7 +80,6 @@ function groupByProperty(projects: Project[]): PropertyGroup[] {
       latest_date:  list.map(p => p.latest_date).filter(Boolean).sort().reverse()[0] || '',
       all_done:     list.every(p => p.all_done),
       status:       bestStatus(list),
-      lead_name:    leadNames.length === 1 ? leadNames[0] : leadNames.join(', '),
     });
   }
   return groups;
@@ -127,9 +120,6 @@ function PropertyCard({ group, onSelect }: { group: PropertyGroup; onSelect: (op
           <div style={S.projName}>{group.key}</div>
           {!multi && group.projects[0].opp_name !== group.key && (
             <div style={S.projSub}>{group.projects[0].opp_name}</div>
-          )}
-          {group.lead_name && (
-            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>👷 {group.lead_name}</div>
           )}
         </div>
         <span style={{ ...S.badge, background: ss.bg, color: ss.text }}>
@@ -200,9 +190,8 @@ export default function FieldProjectLookup() {
   const q = filterText.trim().toLowerCase();
   const filteredProjects = q
     ? projects.filter(p =>
-        (p.property  || '').toLowerCase().includes(q) ||
-        (p.opp_name  || '').toLowerCase().includes(q) ||
-        (p.lead_name || '').toLowerCase().includes(q)
+        (p.property || '').toLowerCase().includes(q) ||
+        (p.opp_name || '').toLowerCase().includes(q)
       )
     : projects;
 
@@ -213,7 +202,7 @@ export default function FieldProjectLookup() {
 
   // Auto-load all construction projects on mount
   useEffect(() => {
-    myProjectLookup(undefined, true)
+    myProjectLookup()
       .then(r => { setProjects(r.projects || []); setSearched(true); })
       .catch(e => setSearchError((e as Error).message || 'Could not reach the server.'))
       .finally(() => setLoading(false));
