@@ -1068,11 +1068,19 @@ async def get_issue_by_id(issue_id: int):
     """
     Fetch a single Aspire issue by ID (for debugging field names/values).
     Returns the raw Aspire response so we can inspect Priority, category, etc.
+    Tries OData key format first, falls back to $filter.
     """
     _check_credentials()
+    # Try $filter approach (Issues don't support OData key format)
     try:
-        result = await _aspire._get(f"Issues({issue_id})", {})
-        return {"issue": result}
+        result = await _aspire._get("Issues", {
+            "$filter": f"IssueID eq {issue_id}",
+            "$top": "1",
+        })
+        items = _aspire._extract_list(result)
+        if items:
+            return {"issue": items[0], "all_keys": list(items[0].keys())}
+        return {"issue": None, "message": "Not found via $filter"}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
