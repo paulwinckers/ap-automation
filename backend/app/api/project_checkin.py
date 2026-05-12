@@ -1992,7 +1992,7 @@ async def create_change_order(
         file_data.append((f.filename or f"file_{i + 1}", raw))
 
     # ── Upload to R2 + store in job_attachments for clean URLs ───────────────
-    api_base   = (settings.APP_BASE_URL or "").rstrip("/")
+    api_base   = (settings.APP_BASE_URL or "https://ap-automation-production.up.railway.app").rstrip("/")
     file_links: list[tuple[str, str]] = []   # (display_name, url)
 
     for fname, raw in file_data:
@@ -2046,13 +2046,14 @@ async def create_change_order(
     subject = f"Change Order Request — {property_name or opp_name}"
     # Aspire only allows ONE of OpportunityID / PropertyID / WorkTicketID per request.
     issue_body: dict = {
-        "Subject":            subject,
-        "Notes":              notes_text,
-        "ActivityCategoryID": 29,   # Change Order Request
-        "OpportunityID":      opp_id,
-        "DueDate":            due_date_str,
-        "PublicComment":      False,
-        "IncludeClient":      False,
+        "Subject":              subject,
+        "Notes":                notes_text,
+        "ActivityCategoryID":   29,                    # Change Order Request (by ID)
+        "ActivityCategoryName": "Change Order Request", # also by name — whichever Aspire accepts
+        "OpportunityID":        opp_id,
+        "DueDate":              due_date_str,
+        "PublicComment":        False,
+        "IncludeClient":        False,
     }
     # Only set AssignedTo if a specific person was chosen — Aspire validates it must be ContactIDs
     if assigned_to_id:
