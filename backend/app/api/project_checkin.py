@@ -1372,6 +1372,47 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         )
 
     # Aspire activities for this opportunity
+    # Comments are embedded in the Notes HTML (Aspire has no separate comments endpoint).
+    # We parse them from the "Issue Comment History" table in the Notes field —
+    # the same approach used by the ActivitiesDashboard.
+    import re as _re
+
+    def _parse_comments_from_notes(notes_html: str) -> list[dict]:
+        """Extract comment rows from the HTML Aspire embeds in Notes."""
+        if not notes_html:
+            return []
+        section = _re.search(r'Issue Comment History</h3>(.*)', notes_html, _re.IGNORECASE | _re.DOTALL)
+        if not section:
+            return []
+        comments = []
+        rows = _re.findall(r'<tr>(.*?)</tr>', section.group(1), _re.DOTALL)
+        for row in rows:
+            cells = _re.findall(r'<td[^>]*>(.*?)</td>', row, _re.DOTALL)
+            if len(cells) < 2:
+                continue
+            meta    = _re.sub(r'<[^>]+>', ' ', cells[0]).strip()
+            comment = _re.sub(r'<[^>]+>', '', cells[1]).strip()
+            # Skip header rows
+            if not comment or comment == 'Comment' or meta in ('Created Date/By', ''):
+                continue
+            # meta format: "MM/DD/YY Author Name" — split date from name
+            date_str = ""
+            author   = meta
+            dm = _re.match(r'^(\d{1,2}/\d{1,2}/\d{2,4})\s*(.*)', meta)
+            if dm:
+                try:
+                    from datetime import datetime as _dt
+                    date_str = _dt.strptime(dm.group(1), "%m/%d/%y").strftime("%Y-%m-%d")
+                except Exception:
+                    date_str = dm.group(1)
+                author = dm.group(2).strip()
+            comments.append({
+                "Comment":           comment,
+                "CreatedDate":       date_str,
+                "CreatedByUserName": author,
+            })
+        return comments
+
     activities: list[dict] = []
     try:
         res = await _aspire._get("Activities", {
@@ -1387,65 +1428,9 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
     except Exception as e:
         logger.warning(f"Activities fetch failed for opp {opp_id}: {e}")
 
-    # Fetch comments for each activity — try multiple Aspire entity names
-    async def _fetch_activity_comments(activity_id: int) -> list[dict]:
-        for entity, filter_field in [
-            ("ActivityComments",  "ActivityID"),
-            ("IssueComments",     "ActivityID"),
-            ("ActivityNotes",     "ActivityID"),
-            ("ActivityReplies",   "ActivityID"),
-            ("Comments",          "ActivityID"),
-            ("ActivityLog",       "ActivityID"),
-        ]:
-            try:
-                res = await _aspire._get(entity, {
-                    "$filter":  f"{filter_field} eq {activity_id}",
-                    "$orderby": "CreatedDate asc",
-                })
-                batch = _aspire._extract_list(res)
-                if batch:
-                    logger.info(f"FOUND: {entity} for activity {activity_id}: {len(batch)} results, keys={list(batch[0].keys())}")
-                    return batch
-                # 200 but empty — entity exists, just no comments
-                logger.info(f"{entity} for activity {activity_id}: exists but 0 results")
-                return []
-            except Exception as e:
-                logger.info(f"{entity} for activity {activity_id}: 404/error")
-
-        # Last resort: fetch the full Activity entity (no $select) to see all fields
-        try:
-            res = await _aspire._get(f"Activities({activity_id})", {})
-            rec = res if isinstance(res, dict) else {}
-            all_keys = list(rec.keys())
-            logger.info(f"Activity({activity_id}) full field list: {all_keys}")
-            # If there's an embedded comments/notes collection, log it
-            for k, v in rec.items():
-                if isinstance(v, list) and v:
-                    logger.info(f"Activity({activity_id}).{k} is a list with {len(v)} items, sample: {v[0]}")
-        except Exception as e:
-            logger.info(f"Activity({activity_id}) full fetch failed: {e}")
-
-        return []
-
-    if activities:
-        # Keep mapping from activity_id → comments to avoid zip misalignment
-        acts_with_id = [(i, a) for i, a in enumerate(activities) if a.get("ActivityID")]
-        comment_results = await asyncio.gather(
-            *[_fetch_activity_comments(a["ActivityID"]) for _, a in acts_with_id]
-        )
-        for (i, a), comments in zip(acts_with_id, comment_results):
-            # Normalise — find the comment text regardless of field name
-            normalised = []
-            for c in comments:
-                text = (c.get("Comment") or c.get("NoteText") or c.get("Note") or
-                        c.get("CommentText") or c.get("Text") or "").strip()
-                if text:
-                    normalised.append({
-                        "Comment":           text,
-                        "CreatedDate":       (c.get("CreatedDate") or c.get("DateCreated") or "")[:10],
-                        "CreatedByUserName": c.get("CreatedByUserName") or c.get("CreatedBy") or "",
-                    })
-            activities[i]["_comments"] = normalised
+    # Parse comments from each activity's Notes HTML (no extra API calls needed)
+    for a in activities:
+        a["_comments"] = _parse_comments_from_notes(a.get("Notes") or "")
 
     # Check-in history for this project (all months, most recent first)
     history_rows = await db._q(
