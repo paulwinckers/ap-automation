@@ -1063,9 +1063,10 @@ async def my_project_lookup(name: str = "", show_all: bool = False, db: Database
         prop     = opp.get("PropertyName") or ""
         division = opp.get("DivisionName") or ""
 
-        # Skip non-construction divisions (log so we can debug)
-        if division and "construction" not in division.lower():
-            logger.info(f"my-project: skipping '{opp_name}' — division='{division}'")
+        # Only show construction division jobs — skip anything without an explicit
+        # construction division name (blank DivisionName = maintenance/irrigation, skip those too)
+        if "construction" not in division.lower():
+            logger.info(f"my-project: skipping '{opp_name}' — division='{division or '(blank)'}'")
             continue
 
         # Use ticket activity to determine if job is active or complete
