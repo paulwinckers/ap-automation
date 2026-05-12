@@ -1120,13 +1120,12 @@ async def submit_checkin_response(
         raise HTTPException(status_code=422, detail="approach_notes is required")
 
     # Save response
-    resp_rows = await db._q(
+    response_id = await db._x(
         """INSERT INTO project_checkin_responses
            (checkin_id, remaining_hours, approach_notes, blockers)
-           VALUES (?,?,?,?) RETURNING id""",
+           VALUES (?,?,?,?)""",
         [c["id"], remaining_hours, approach_notes.strip(), blockers or None],
     )
-    response_id = resp_rows[0]["id"] if resp_rows else None
 
     await db._x(
         "UPDATE project_checkins SET responded_at = datetime('now') WHERE id = ?", [c["id"]]
@@ -1139,29 +1138,32 @@ async def submit_checkin_response(
         for upload in (photos or []):
             if not upload or not upload.filename:
                 continue
-            file_bytes = await upload.read()
-            if not file_bytes or len(file_bytes) > _PHOTO_MAX_BYTES:
-                continue
-            filename = upload.filename
-            ext      = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-            safe     = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
-            r2_key   = f"checkin-photos/{c['id']}/{uuid.uuid4().hex[:8]}_{safe}"
-            ct       = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
-            def _up(key=r2_key, body=file_bytes, content_type=ct):
-                _r2._make_client().put_object(
-                    Bucket=settings.R2_BUCKET_NAME,
-                    Key=key, Body=body, ContentType=content_type,
+            try:
+                file_bytes = await upload.read()
+                if not file_bytes or len(file_bytes) > _PHOTO_MAX_BYTES:
+                    logger.warning(f"Skipping photo {upload.filename}: empty or too large ({len(file_bytes) if file_bytes else 0} bytes)")
+                    continue
+                filename = upload.filename
+                ext      = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                safe     = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
+                r2_key   = f"checkin-photos/{c['id']}/{uuid.uuid4().hex[:8]}_{safe}"
+                ct       = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+                def _up(key=r2_key, body=file_bytes, content_type=ct):
+                    _r2._make_client().put_object(
+                        Bucket=settings.R2_BUCKET_NAME,
+                        Key=key, Body=body, ContentType=content_type,
+                    )
+                await asyncio.get_event_loop().run_in_executor(None, _up)
+                photo_row_id = await db._x(
+                    """INSERT INTO checkin_photos
+                       (checkin_id, response_id, file_name, file_extension, r2_key, file_size)
+                       VALUES (?,?,?,?,?,?)""",
+                    [c["id"], response_id, filename, ext, r2_key, len(file_bytes)],
                 )
-            await asyncio.get_event_loop().run_in_executor(None, _up)
-            pr = await db._q(
-                """INSERT INTO checkin_photos
-                   (checkin_id, response_id, file_name, file_extension, r2_key, file_size)
-                   VALUES (?,?,?,?,?,?) RETURNING id""",
-                [c["id"], response_id, filename, ext, r2_key, len(file_bytes)],
-            )
-            if pr:
-                photo_ids.append(pr[0]["id"])
-                logger.info(f"Checkin photo #{pr[0]['id']} saved: {filename} ({len(file_bytes)} bytes)")
+                photo_ids.append(photo_row_id)
+                logger.info(f"Checkin photo #{photo_row_id} saved: {filename} ({len(file_bytes)} bytes)")
+            except Exception as photo_err:
+                logger.error(f"Failed to save photo {upload.filename}: {photo_err}", exc_info=True)
 
     # Notify management
     today_str   = datetime.now().strftime("%B %d, %Y")
@@ -1913,13 +1915,12 @@ async def submit_project_response(
         checkin_id = new_rows[0]["id"]
 
     # Save response
-    resp_rows = await db._q(
+    response_id = await db._x(
         """INSERT INTO project_checkin_responses
            (checkin_id, remaining_hours, approach_notes, blockers)
-           VALUES (?,?,?,?) RETURNING id""",
+           VALUES (?,?,?,?)""",
         [checkin_id, remaining_hours, approach_notes.strip(), blockers or None],
     )
-    response_id = resp_rows[0]["id"] if resp_rows else None
 
     await db._x(
         "UPDATE project_checkins SET responded_at = datetime('now') WHERE id = ?", [checkin_id]
@@ -1931,26 +1932,31 @@ async def submit_project_response(
         for upload in (photos or []):
             if not upload or not upload.filename:
                 continue
-            file_bytes = await upload.read()
-            if not file_bytes or len(file_bytes) > _PHOTO_MAX_BYTES:
-                continue
-            filename = upload.filename
-            ext      = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-            safe     = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
-            r2_key   = f"checkin-photos/{checkin_id}/{uuid.uuid4().hex[:8]}_{safe}"
-            ct       = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
-            def _up(key=r2_key, body=file_bytes, content_type=ct):
-                _r2._make_client().put_object(
-                    Bucket=settings.R2_BUCKET_NAME,
-                    Key=key, Body=body, ContentType=content_type,
+            try:
+                file_bytes = await upload.read()
+                if not file_bytes or len(file_bytes) > _PHOTO_MAX_BYTES:
+                    logger.warning(f"Skipping photo {upload.filename}: empty or too large ({len(file_bytes) if file_bytes else 0} bytes)")
+                    continue
+                filename = upload.filename
+                ext      = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                safe     = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
+                r2_key   = f"checkin-photos/{checkin_id}/{uuid.uuid4().hex[:8]}_{safe}"
+                ct       = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+                def _up(key=r2_key, body=file_bytes, content_type=ct):
+                    _r2._make_client().put_object(
+                        Bucket=settings.R2_BUCKET_NAME,
+                        Key=key, Body=body, ContentType=content_type,
+                    )
+                await asyncio.get_event_loop().run_in_executor(None, _up)
+                photo_row_id = await db._x(
+                    """INSERT INTO checkin_photos
+                       (checkin_id, response_id, file_name, file_extension, r2_key, file_size)
+                       VALUES (?,?,?,?,?,?)""",
+                    [checkin_id, response_id, filename, ext, r2_key, len(file_bytes)],
                 )
-            await asyncio.get_event_loop().run_in_executor(None, _up)
-            await db._q(
-                """INSERT INTO checkin_photos
-                   (checkin_id, response_id, file_name, file_extension, r2_key, file_size)
-                   VALUES (?,?,?,?,?,?) RETURNING id""",
-                [checkin_id, response_id, filename, ext, r2_key, len(file_bytes)],
-            )
+                logger.info(f"Checkin photo #{photo_row_id} saved: {filename} ({len(file_bytes)} bytes)")
+            except Exception as photo_err:
+                logger.error(f"Failed to save photo {upload.filename}: {photo_err}", exc_info=True)
 
     # Notify management
     today_str   = datetime.now().strftime("%B %d, %Y")
