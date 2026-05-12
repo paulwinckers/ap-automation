@@ -2046,12 +2046,13 @@ async def create_change_order(
     subject = f"Change Order Request — {property_name or opp_name}"
     # Aspire only allows ONE of OpportunityID / PropertyID / WorkTicketID per request.
     issue_body: dict = {
-        "Subject":       subject,
-        "Notes":         notes_text,
-        "OpportunityID": opp_id,
-        "DueDate":       due_date_str,
-        "PublicComment": False,
-        "IncludeClient": False,
+        "Subject":            subject,
+        "Notes":              notes_text,
+        "ActivityCategoryID": 29,   # Change Order Request
+        "OpportunityID":      opp_id,
+        "DueDate":            due_date_str,
+        "PublicComment":      False,
+        "IncludeClient":      False,
     }
     # Only set AssignedTo if a specific person was chosen — Aspire validates it must be ContactIDs
     if assigned_to_id:
