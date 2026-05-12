@@ -50,13 +50,17 @@ class JobIn(BaseModel):
 
 # ── Aspire helpers ────────────────────────────────────────────────────────────
 async def _fetch_opp_actuals(opp_ids: list[int]) -> dict[int, dict]:
-    """Fetch live actuals for a list of OpportunityIDs from Aspire."""
+    """Fetch live actuals for a list of OpportunityIDs from Aspire.
+    All chunks are requested in parallel to minimise wall-clock time.
+    """
+    import asyncio as _asyncio
     if not opp_ids:
         return {}
-    out: dict[int, dict] = {}
+
     chunk_size = 15
-    for i in range(0, len(opp_ids), chunk_size):
-        chunk = opp_ids[i:i + chunk_size]
+    chunks = [opp_ids[i:i + chunk_size] for i in range(0, len(opp_ids), chunk_size)]
+
+    async def _fetch_chunk(chunk: list[int]) -> list[dict]:
         or_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
         try:
             res = await _aspire._get("Opportunities", {
@@ -69,12 +73,18 @@ async def _fetch_opp_actuals(opp_ids: list[int]) -> dict[int, dict]:
                 ),
                 "$top": "200",
             })
-            for o in _aspire._extract_list(res):
-                oid = o.get("OpportunityID")
-                if oid:
-                    out[oid] = o
+            return _aspire._extract_list(res)
         except Exception as e:
             logger.warning(f"Aspire actuals fetch failed: {e}")
+            return []
+
+    results = await _asyncio.gather(*[_fetch_chunk(c) for c in chunks])
+    out: dict[int, dict] = {}
+    for records in results:
+        for o in records:
+            oid = o.get("OpportunityID")
+            if oid:
+                out[oid] = o
     return out
 
 

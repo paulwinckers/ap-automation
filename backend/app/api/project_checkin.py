@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import secrets
+import time as _time
 from datetime import datetime, timedelta, timezone, date as _date
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -46,6 +47,11 @@ public_router = APIRouter(prefix="/checkin",             tags=["project-checkin-
 
 _aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)
 _db     = Database()
+
+# ── My-Projects in-memory cache (show_all=True only) ─────────────────────────
+_my_projects_cache:    dict | None = None
+_my_projects_cache_ts: float       = 0.0
+_MY_PROJECTS_TTL = 10 * 60  # 10 minutes
 
 
 async def get_db() -> Database:
@@ -900,9 +906,17 @@ async def my_project_lookup(name: str = "", show_all: bool = False, db: Database
     known leads with a lead_name field on each project.
     Sorted: In Progress first, then Scheduled, then recently Completed.
     """
+    global _my_projects_cache, _my_projects_cache_ts
     from app.api.construction_plan import _fetch_opp_actuals
 
     name = (name or "").strip()
+
+    # ── Cache check (show_all only) ──────────────────────────────────────────
+    if show_all and _my_projects_cache is not None:
+        age = _time.time() - _my_projects_cache_ts
+        if age < _MY_PROJECTS_TTL:
+            logger.info(f"my-project: cache hit (age={age:.0f}s)")
+            return _my_projects_cache
 
     # Always return lead list so the dropdown can populate
     lead_rows = await db._q(
@@ -920,20 +934,18 @@ async def my_project_lookup(name: str = "", show_all: bool = False, db: Database
     known_leads = {l["name"].strip().lower(): l["name"] for l in leads}
 
     # Fetch work tickets via paginated requests (500 per page, WorkTicketID desc).
-    # Aspire rejects $orderby on non-ID fields and large $top values, so we page
-    # through using $skip.  We stop early once we've seen enough tickets or have
-    # covered the range where this lead's active jobs would appear.
-    PAGE = 500
-    MAX_PAGES = 20   # 20 × 500 = 10 000 tickets max
+    # Pages are fetched 4 at a time in parallel to cut wall-clock time.
+    PAGE       = 500
+    MAX_PAGES  = 20        # 20 × 500 = 10 000 tickets max
+    PARA_BATCH = 4         # pages fetched concurrently per round
     SELECT = (
         "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
         "OpportunityID,OpportunityNumber,ScheduledStartDate,CompleteDate,"
         "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
     )
 
-    all_tickets: list[dict] = []
-    for page in range(MAX_PAGES):
-        skip = page * PAGE
+    async def _fetch_page(page_num: int) -> list[dict]:
+        skip = page_num * PAGE
         try:
             res = await _aspire._get("WorkTickets", {
                 "$select":  SELECT,
@@ -941,17 +953,27 @@ async def my_project_lookup(name: str = "", show_all: bool = False, db: Database
                 "$top":     str(PAGE),
                 "$skip":    str(skip),
             })
-            batch = _aspire._extract_list(res)
+            return _aspire._extract_list(res)
+        except Exception as e:
+            logger.warning(f"my-project WorkTickets page {page_num + 1} (skip={skip}) failed: {e}")
+            return []
+
+    all_tickets: list[dict] = []
+    found_end = False
+    for batch_start in range(0, MAX_PAGES, PARA_BATCH):
+        if found_end:
+            break
+        page_nums = range(batch_start, min(batch_start + PARA_BATCH, MAX_PAGES))
+        batches   = await asyncio.gather(*[_fetch_page(p) for p in page_nums])
+        for batch in batches:
             if not batch:
-                logger.info(f"my-project: no more tickets at skip={skip}, stopping pagination")
+                found_end = True
                 break
             all_tickets.extend(batch)
-            logger.info(f"my-project: page {page + 1} — {len(batch)} tickets (total so far: {len(all_tickets)})")
+            logger.info(f"my-project: fetched {len(batch)} tickets (total: {len(all_tickets)})")
             if len(batch) < PAGE:
-                break   # last page
-        except Exception as e:
-            logger.warning(f"my-project WorkTickets page {page + 1} (skip={skip}) failed: {e}")
-            break
+                found_end = True
+                break
 
     # Filter to matching crew leader(s)
     if show_all:
@@ -1071,7 +1093,14 @@ async def my_project_lookup(name: str = "", show_all: bool = False, db: Database
     projects.sort(key=lambda x: (x["all_done"], x["latest_date"]), reverse=True)
     projects.sort(key=lambda x: x["all_done"])   # stable: False (active) before True (done)
 
-    return {"leads": leads, "projects": projects}
+    result = {"leads": leads, "projects": projects}
+
+    # Cache show_all results so repeat page loads are instant
+    if show_all:
+        _my_projects_cache    = result
+        _my_projects_cache_ts = _time.time()
+
+    return result
 
 
 # ── Public token routes ───────────────────────────────────────────────────────
