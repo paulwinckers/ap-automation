@@ -933,61 +933,95 @@ async def my_project_lookup(name: str = "", show_all: bool = False, db: Database
     # Known lead names for filtering when show_all=True
     known_leads = {l["name"].strip().lower(): l["name"] for l in leads}
 
-    # Fetch work tickets via paginated requests (500 per page, WorkTicketID desc).
-    # Pages are fetched 4 at a time in parallel to cut wall-clock time.
-    PAGE       = 500
-    MAX_PAGES  = 20        # 20 × 500 = 10 000 tickets max
-    PARA_BATCH = 4         # pages fetched concurrently per round
     SELECT = (
         "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
         "OpportunityID,OpportunityNumber,ScheduledStartDate,CompleteDate,"
         "HoursEst,HoursAct,CrewLeaderName,PercentComplete"
     )
+    # Date cutoff: tickets scheduled in the last 18 months + all future tickets.
+    # Avoids scanning the full historical archive (saves many API pages).
+    from datetime import timedelta as _td
+    date_cutoff = (datetime.now() - _td(days=548)).strftime("%Y-%m-%d")
 
-    async def _fetch_page(page_num: int) -> list[dict]:
-        skip = page_num * PAGE
-        try:
-            res = await _aspire._get("WorkTickets", {
-                "$select":  SELECT,
-                "$orderby": "WorkTicketID desc",
-                "$top":     str(PAGE),
-                "$skip":    str(skip),
-            })
-            return _aspire._extract_list(res)
-        except Exception as e:
-            logger.warning(f"my-project WorkTickets page {page_num + 1} (skip={skip}) failed: {e}")
-            return []
-
-    all_tickets: list[dict] = []
-    found_end = False
-    for batch_start in range(0, MAX_PAGES, PARA_BATCH):
-        if found_end:
-            break
-        page_nums = range(batch_start, min(batch_start + PARA_BATCH, MAX_PAGES))
-        batches   = await asyncio.gather(*[_fetch_page(p) for p in page_nums])
-        for batch in batches:
-            if not batch:
-                found_end = True
-                break
-            all_tickets.extend(batch)
-            logger.info(f"my-project: fetched {len(batch)} tickets (total: {len(all_tickets)})")
-            if len(batch) < PAGE:
-                found_end = True
-                break
-
-    # Filter to matching crew leader(s)
     if show_all:
-        # No crew-leader restriction — include all tickets; construction division
-        # filter is applied later when opportunity details are fetched.
+        # show_all: fetch recent tickets only (date-filtered, no lead restriction).
+        # One pass of paginated calls with ScheduledStartDate filter cuts the
+        # ticket volume from ~10 000 to a few hundred.
+        PAGE       = 500
+        MAX_PAGES  = 10        # 10 × 500 = 5 000 max (plenty for 18-month window)
+        PARA_BATCH = 4
+
+        async def _fetch_page(page_num: int) -> list[dict]:
+            skip = page_num * PAGE
+            try:
+                res = await _aspire._get("WorkTickets", {
+                    "$select":  SELECT,
+                    "$filter":  f"ScheduledStartDate ge {date_cutoff}",
+                    "$orderby": "WorkTicketID desc",
+                    "$top":     str(PAGE),
+                    "$skip":    str(skip),
+                })
+                return _aspire._extract_list(res)
+            except Exception as e:
+                logger.warning(f"my-project show_all page {page_num + 1} failed: {e}")
+                return []
+
+        all_tickets: list[dict] = []
+        found_end = False
+        for batch_start in range(0, MAX_PAGES, PARA_BATCH):
+            if found_end:
+                break
+            page_nums = range(batch_start, min(batch_start + PARA_BATCH, MAX_PAGES))
+            batches   = await asyncio.gather(*[_fetch_page(p) for p in page_nums])
+            for batch in batches:
+                if not batch:
+                    found_end = True
+                    break
+                all_tickets.extend(batch)
+                logger.info(f"my-project show_all: fetched {len(batch)} tickets (total: {len(all_tickets)})")
+                if len(batch) < PAGE:
+                    found_end = True
+                    break
+
         leader_tickets = all_tickets
         logger.info(f"my-project show_all: {len(leader_tickets)} total tickets (pre division filter)")
+
     else:
-        leader_tickets = [
-            t for t in all_tickets
-            if (t.get("CrewLeaderName") or "").strip().lower() == name.lower()
-        ]
+        # Individual lead: filter by CrewLeaderName + date directly in the API query.
+        # This fetches only that person's tickets rather than all-time history.
+        # Use _get_all to handle pagination automatically.
+        safe_name = name.replace("'", "''")   # OData single-quote escape
+        try:
+            res = await _aspire._get_all("WorkTickets", {
+                "$select": SELECT,
+                "$filter": (
+                    f"CrewLeaderName eq '{safe_name}'"
+                    f" and ScheduledStartDate ge {date_cutoff}"
+                ),
+                "$orderby": "ScheduledStartDate desc",
+                "$top": "500",
+            })
+            leader_tickets = res
+        except Exception as e:
+            logger.warning(f"my-project '{name}': CrewLeaderName filter failed ({e}), falling back to full scan")
+            # Fallback: fetch all recent tickets and filter in Python
+            try:
+                res = await _aspire._get_all("WorkTickets", {
+                    "$select": SELECT,
+                    "$filter": f"ScheduledStartDate ge {date_cutoff}",
+                    "$orderby": "WorkTicketID desc",
+                    "$top": "500",
+                })
+                leader_tickets = [
+                    t for t in res
+                    if (t.get("CrewLeaderName") or "").strip().lower() == name.lower()
+                ]
+            except Exception as e2:
+                logger.error(f"my-project '{name}': fallback scan also failed: {e2}")
+                leader_tickets = []
+
         if not leader_tickets:
-            logger.warning(f"my-project '{name}': 0 tickets matched after CrewLeaderName filter")
+            logger.warning(f"my-project '{name}': 0 tickets matched")
 
     # Status filter — exclude cancelled/void only; include everything else
     # (In Production, In Queue, Scheduled, Open, In Progress, Complete/recent, etc.)
