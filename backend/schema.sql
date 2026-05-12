@@ -487,8 +487,8 @@ CREATE INDEX IF NOT EXISTS idx_checkin_photos_checkin ON checkin_photos(checkin_
 
 CREATE TABLE IF NOT EXISTS job_attachments (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    opp_id           INTEGER NOT NULL,       -- Aspire OpportunityID
-    work_ticket_id   INTEGER,                -- Aspire WorkTicketID (NULL = job-level)
+    opp_id           INTEGER NOT NULL,
+    work_ticket_id   INTEGER,
     attachment_type  TEXT    NOT NULL DEFAULT 'General',
     file_name        TEXT    NOT NULL,
     file_extension   TEXT,

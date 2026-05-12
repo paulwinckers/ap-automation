@@ -101,13 +101,50 @@ async def lifespan(app: FastAPI):
     # Connect DB on startup — this runs _apply_schema() which creates any new tables
     _db = Database()
     await _db.connect()
-    # Verify critical tables exist — logs an error if _ensure_schema() silently failed
-    for tbl in ("job_attachments", "checkin_photos", "project_checkins"):
+    # Verify critical tables exist — self-heal if _ensure_schema() silently failed.
+    # We run the CREATE TABLE directly here (no inline comments, clean SQL) as a
+    # belt-and-suspenders in case D1 rejected the comment-bearing version from schema.sql.
+    _ENSURE_TABLES = {
+        "job_attachments": """
+            CREATE TABLE IF NOT EXISTS job_attachments (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                opp_id           INTEGER NOT NULL,
+                work_ticket_id   INTEGER,
+                attachment_type  TEXT    NOT NULL DEFAULT 'General',
+                file_name        TEXT    NOT NULL,
+                file_extension   TEXT,
+                r2_key           TEXT    NOT NULL,
+                file_size        INTEGER,
+                note             TEXT,
+                uploaded_by      TEXT,
+                uploaded_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+                is_active        INTEGER NOT NULL DEFAULT 1
+            )
+        """,
+        "checkin_photos": """
+            CREATE TABLE IF NOT EXISTS checkin_photos (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                checkin_id     INTEGER NOT NULL,
+                response_id    INTEGER,
+                file_name      TEXT    NOT NULL,
+                file_extension TEXT,
+                r2_key         TEXT    NOT NULL,
+                file_size      INTEGER,
+                uploaded_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
+    }
+    for tbl, ddl in _ENSURE_TABLES.items():
         try:
             await _db._q(f"SELECT COUNT(*) FROM {tbl} LIMIT 1")
-            logger.info(f"DB startup check: {tbl} OK")
-        except Exception as e:
-            logger.error(f"DB startup check FAILED — {tbl} table missing: {e}")
+            logger.info(f"DB startup: {tbl} OK")
+        except Exception:
+            logger.warning(f"DB startup: {tbl} missing — creating now")
+            try:
+                await _db._x(ddl.strip())
+                logger.info(f"DB startup: {tbl} created successfully")
+            except Exception as e2:
+                logger.error(f"DB startup: FAILED to create {tbl}: {e2}")
     await seed_vendors_if_empty(_db)
     await _db.close()
     # Start email polling on startup
