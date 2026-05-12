@@ -501,3 +501,18 @@ CREATE TABLE IF NOT EXISTS job_attachments (
 );
 CREATE INDEX IF NOT EXISTS idx_job_att_opp    ON job_attachments(opp_id);
 CREATE INDEX IF NOT EXISTS idx_job_att_ticket ON job_attachments(work_ticket_id);
+
+-- ── Field Advisor Log ─────────────────────────────────────────────────────────
+-- Every AI field advisor Q&A session logged here for management visibility.
+-- photo_r2_key is set when a jobsite photo was attached to the question.
+
+CREATE TABLE IF NOT EXISTS field_advisor_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    opp_id       INTEGER NOT NULL,
+    question     TEXT    NOT NULL,
+    answer       TEXT    NOT NULL,
+    has_photo    INTEGER NOT NULL DEFAULT 0,
+    photo_r2_key TEXT,
+    asked_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_advisor_log_opp ON field_advisor_log(opp_id, asked_at);

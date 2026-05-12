@@ -38,6 +38,15 @@ interface HistoryEntry {
   submitted_at:    string | null;
 }
 
+interface AdvisorLogEntry {
+  id:           number;
+  question:     string;
+  answer:       string;
+  has_photo:    number;   // 1 = photo was attached
+  photo_r2_key: string | null;
+  asked_at:     string;
+}
+
 interface ActivityComment {
   Comment:           string;
   CreatedDate:       string;
@@ -146,6 +155,7 @@ interface ProjectData {
   project_summary:  string;
   smart_prompts:    SmartPrompt[];
   history:          HistoryEntry[];
+  advisor_log:      AdvisorLogEntry[];
   activities:       Activity[];
 }
 
@@ -651,7 +661,7 @@ export default function FieldProject() {
             { key: 'tickets',   label: `📋 Tickets (${data.tickets.length})` },
             { key: 'update',    label: '✏️ Update' },
             { key: 'materials', label: '📦 Materials' },
-            { key: 'history',   label: `📝 History (${(data.activities || []).filter(a => (a.ActivityType || '').toLowerCase() !== 'email').length + responded})` },
+            { key: 'history',   label: `📝 History (${(data.activities || []).filter(a => (a.ActivityType || '').toLowerCase() !== 'email').length + responded + (data.advisor_log || []).length})` },
           ] as const).map(({ key, label }) => (
             <button
               key={key}
@@ -1027,6 +1037,34 @@ export default function FieldProject() {
                   )}
                 </div>
               ))}
+
+              {/* Field Advisor Q&A Log */}
+              {(data.advisor_log || []).length > 0 && (
+                <>
+                  <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10, marginTop: 24 }}>
+                    🤖 Field Advisor Q&amp;A ({(data.advisor_log || []).length})
+                  </div>
+                  {(data.advisor_log || []).map((entry) => (
+                    <div key={entry.id} style={{ marginBottom: 12, border: '1px solid #e9d5ff', borderRadius: 10, overflow: 'hidden' }}>
+                      {/* Question */}
+                      <div style={{ padding: '10px 14px', background: '#faf5ff', borderBottom: '1px solid #e9d5ff' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: '#6b21a8', flex: 1 }}>
+                            {entry.has_photo ? '📷 ' : '❓ '}{entry.question}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#a78bfa', flexShrink: 0 }}>
+                            {fmtRelative(entry.asked_at)}
+                          </div>
+                        </div>
+                      </div>
+                      {/* Answer */}
+                      <div style={{ padding: '10px 14px', fontSize: 13, color: '#374151', lineHeight: 1.65, whiteSpace: 'pre-wrap', background: '#fff' }}>
+                        {entry.answer}
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
             </>
           )}
 

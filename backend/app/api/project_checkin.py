@@ -1446,6 +1446,19 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         [opp_id],
     )
 
+    # Field Advisor Q&A log for this project (most recent first)
+    try:
+        advisor_rows = await db._q(
+            """SELECT id, question, answer, has_photo, photo_r2_key, asked_at
+               FROM field_advisor_log
+               WHERE opp_id = ?
+               ORDER BY asked_at DESC
+               LIMIT 50""",
+            [opp_id],
+        )
+    except Exception:
+        advisor_rows = []  # table may not exist yet on older deployments
+
     return {
         "opportunity_id":   opp_id,
         "opportunity_name": opp.get("OpportunityName") or f"Job #{opp_id}",
@@ -1478,6 +1491,7 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         "project_summary": project_summary,
         "smart_prompts":   smart_prompts,
         "history": [dict(r) for r in history_rows],
+        "advisor_log": [dict(r) for r in advisor_rows],
         "activities": [{
             "ActivityID":           a.get("ActivityID"),
             "Subject":              a.get("Subject") or "",
@@ -2155,10 +2169,12 @@ async def field_advisor(
     opp_id:   int,
     question: str                  = Form(...),
     photo:    Optional[UploadFile] = File(default=None),
+    db:       Database             = Depends(get_db),
 ):
     """
     AI field advisor for crew leads.
     Accepts a text question + optional site photo; returns practical field advice.
+    Logs every Q&A to field_advisor_log so management can see what crews flag.
     Every error path raises HTTPException so CORS headers are always present.
     """
     import base64 as _b64
@@ -2180,27 +2196,30 @@ async def field_advisor(
         )
 
         # ── Build message content ───────────────────────────────────────────
-        content: list[dict] = []
+        content:   list[dict] = []
+        photo_raw: bytes | None = None
+        photo_ext: str = ""
+        photo_mime: str = "image/jpeg"
 
         if photo and photo.filename:
             raw = await photo.read()
-            # Claude vision limit: 5 MB raw (20 MB base64-encoded would exceed API limits)
-            # Silently skip if too large rather than crashing — text question still works
+            # Claude vision limit: 5 MB raw
             if raw and len(raw) <= 5 * 1024 * 1024:
-                ext  = (photo.filename.rsplit(".", 1)[-1] if "." in photo.filename else "jpeg").lower()
-                mime = {
+                photo_raw  = raw
+                photo_ext  = (photo.filename.rsplit(".", 1)[-1] if "." in photo.filename else "jpeg").lower()
+                photo_mime = {
                     "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
                     "webp": "image/webp", "heic": "image/jpeg", "gif": "image/gif",
-                }.get(ext, "image/jpeg")
+                }.get(photo_ext, "image/jpeg")
                 content.append({
                     "type": "image",
                     "source": {
                         "type":       "base64",
-                        "media_type": mime,
+                        "media_type": photo_mime,
                         "data":       _b64.b64encode(raw).decode("ascii"),
                     },
                 })
-                logger.info(f"Field advisor: photo included ({len(raw)//1024} KB, {mime})")
+                logger.info(f"Field advisor: photo included ({len(raw)//1024} KB, {photo_mime})")
             elif raw:
                 logger.warning(f"Field advisor: photo too large ({len(raw)//1024} KB), skipping image")
 
@@ -2219,7 +2238,39 @@ async def field_advisor(
         )
         answer = response.content[0].text if response.content else "No response generated."
         logger.info(f"Field advisor: answered for opp {opp_id} ({len(answer)} chars)")
-        return {"answer": answer}
+
+        # ── Save photo to R2 (best-effort) ──────────────────────────────────
+        photo_r2_key: str | None = None
+        if photo_raw and _r2._r2_available():
+            try:
+                safe_ext  = photo_ext or "jpg"
+                r2_key    = f"advisor-photos/{opp_id}/{uuid.uuid4().hex[:8]}.{safe_ext}"
+                ct        = photo_mime
+                def _up(key=r2_key, body=photo_raw, content_type=ct):
+                    _r2._make_client().put_object(
+                        Bucket=settings.R2_BUCKET_NAME,
+                        Key=key, Body=body, ContentType=content_type,
+                    )
+                await asyncio.get_event_loop().run_in_executor(None, _up)
+                photo_r2_key = r2_key
+                logger.info(f"Field advisor: photo saved to R2 → {r2_key}")
+            except Exception as r2_err:
+                logger.warning(f"Field advisor: R2 photo save failed (non-fatal): {r2_err}")
+
+        # ── Log Q&A to DB (best-effort) ──────────────────────────────────────
+        log_id: int | None = None
+        try:
+            log_id = await db._x(
+                """INSERT INTO field_advisor_log
+                   (opp_id, question, answer, has_photo, photo_r2_key)
+                   VALUES (?,?,?,?,?)""",
+                [opp_id, question.strip(), answer, 1 if photo_raw else 0, photo_r2_key],
+            )
+            logger.info(f"Field advisor: logged Q&A #{log_id} for opp {opp_id}")
+        except Exception as log_err:
+            logger.warning(f"Field advisor: DB log failed (non-fatal): {log_err}")
+
+        return {"answer": answer, "log_id": log_id}
 
     except HTTPException:
         raise  # propagate our own HTTP errors unchanged

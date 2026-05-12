@@ -133,6 +133,17 @@ async def lifespan(app: FastAPI):
                 uploaded_at    TEXT    NOT NULL DEFAULT (datetime('now'))
             )
         """,
+        "field_advisor_log": """
+            CREATE TABLE IF NOT EXISTS field_advisor_log (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                opp_id       INTEGER NOT NULL,
+                question     TEXT    NOT NULL,
+                answer       TEXT    NOT NULL,
+                has_photo    INTEGER NOT NULL DEFAULT 0,
+                photo_r2_key TEXT,
+                asked_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:
