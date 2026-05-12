@@ -599,29 +599,31 @@ class AspireClient:
         """
         # Try Contacts endpoint first (correct field is 'Active', not 'IsActive').
         # Use _get_all so we page through every record — $top is silently capped by Aspire.
+        # NOTE: Do NOT include UserName in $select — it is not a valid Contacts field and
+        # causes Aspire to return a 400, which makes the whole call fall back to the
+        # Opportunities-only list (~17 names).  We derive the login username from Email.
         try:
             contacts = await self._get_all("Contacts", {
-                "$select": "ContactID,UserID,UserName,FirstName,LastName,Email,Active,ContactTypeName",
+                "$select": "ContactID,UserID,FirstName,LastName,Email,Active,ContactTypeName",
                 "$filter": "Active eq true and ContactTypeName eq 'Employee'",
                 "$top":    "200",
                 "$orderby": "FirstName asc",
             })
             out = []
             for c in contacts:
-                cid      = c.get("ContactID")
-                uid      = c.get("UserID")
-                username = (c.get("UserName") or "").strip()
-                email    = (c.get("Email") or "").strip()
-                first    = (c.get("FirstName") or "").strip()
-                last     = (c.get("LastName")  or "").strip()
-                name     = f"{first} {last}".strip()
+                cid   = c.get("ContactID")
+                uid   = c.get("UserID")
+                email = (c.get("Email") or "").strip()
+                first = (c.get("FirstName") or "").strip()
+                last  = (c.get("LastName")  or "").strip()
+                name  = f"{first} {last}".strip()
                 if cid and name:
                     out.append({
                         "ContactID": cid,
                         "UserID":    uid,
                         # AssignedTo in Issues expects the login username.
-                        # Use UserName if available, fall back to Email, then UserID str.
-                        "UserName":  username or email or (str(uid) if uid else ""),
+                        # Fall back to Email (Aspire often uses email as login), then UserID str.
+                        "UserName":  email or (str(uid) if uid else ""),
                         "FullName":  name,
                         "Email":     email,
                     })
