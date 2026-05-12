@@ -2051,25 +2051,26 @@ async def create_change_order(
 
     subject = f"Change Order Request — {property_name or opp_name}"
     # Aspire only allows ONE of OpportunityID / PropertyID / WorkTicketID per request.
+    # Category is NOT settable via the API (confirmed: no category field in POST /Issues spec).
+    # Priority accepts string values; "High" is the documented field name.
     issue_body: dict = {
-        "Subject":              subject,
-        "Notes":                notes_text,
-        "ActivityCategoryID":   29,                     # Change Order Request (ID)
-        "ActivityCategoryName": "Change Order Request",  # by name (whichever Aspire accepts)
-        "IssueCategoryID":      29,                     # alternate field name
-        "Priority":             "High",
-        "OpportunityID":        opp_id,
-        "DueDate":              due_date_str,
-        "PublicComment":        False,
-        "IncludeClient":        False,
+        "Subject":      subject,
+        "Notes":        notes_text,
+        "Priority":     "High",
+        "OpportunityID": opp_id,
+        "DueDate":      due_date_str,
+        "PublicComment": False,
+        "IncludeClient": False,
     }
-    # Only set AssignedTo if a specific person was chosen — Aspire validates it must be ContactIDs
+    # AssignedTo must be a comma-delimited list of ContactIDs (integers as strings).
+    # Omit entirely when no assignee selected (Aspire accepts missing field).
     if assigned_to_id:
         issue_body["AssignedTo"] = str(assigned_to_id)
 
     logger.info(f"CO issue body: {issue_body}")
     try:
         result = await _aspire.create_issue(issue_body)
+        logger.info(f"CO issue Aspire response: {result}")
     except Exception as e:
         logger.error(f"CO issue creation failed: {e}")
         raise HTTPException(status_code=502, detail=f"Failed to create change order in Aspire: {e}")

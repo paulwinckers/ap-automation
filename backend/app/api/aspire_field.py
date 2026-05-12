@@ -1063,6 +1063,20 @@ async def get_issue_categories():
     return {"categories": categories}
 
 
+@router.get("/issue/{issue_id}")
+async def get_issue_by_id(issue_id: int):
+    """
+    Fetch a single Aspire issue by ID (for debugging field names/values).
+    Returns the raw Aspire response so we can inspect Priority, category, etc.
+    """
+    _check_credentials()
+    try:
+        result = await _aspire._get(f"Issues({issue_id})", {})
+        return {"issue": result}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 
 
 
