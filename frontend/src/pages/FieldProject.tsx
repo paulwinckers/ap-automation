@@ -336,8 +336,34 @@ export default function FieldProject() {
     return ageMs < 24 * 60 * 60 * 1000;
   }
 
-  // Tab: 'scope' | 'tickets' | 'history' | 'materials' | 'update'
-  const [tab, setTab] = useState<'scope' | 'tickets' | 'history' | 'materials' | 'update'>('scope');
+  // Tab: 'scope' | 'tickets' | 'update' | 'materials' | 'history'
+  const [tab, setTab] = useState<'scope' | 'tickets' | 'update' | 'materials' | 'history'>('scope');
+
+  // Field Advisor
+  const [advisorQuestion, setAdvisorQuestion] = useState('');
+  const [advisorPhoto,    setAdvisorPhoto]    = useState<File | null>(null);
+  const [advisorPreview,  setAdvisorPreview]  = useState('');
+  const [advisorAnswer,   setAdvisorAnswer]   = useState('');
+  const [advisorLoading,  setAdvisorLoading]  = useState(false);
+
+  const askAdvisor = async () => {
+    if (!advisorQuestion.trim() && !advisorPhoto) return;
+    setAdvisorLoading(true);
+    setAdvisorAnswer('');
+    try {
+      const fd = new FormData();
+      fd.append('question', advisorQuestion.trim() || 'What do you observe in this photo and what should I know?');
+      if (advisorPhoto) fd.append('photo', advisorPhoto);
+      const r = await fetch(`${API}/checkin/project/${oppId}/field-advisor`, { method: 'POST', body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error((j as any).detail || 'AI request failed');
+      setAdvisorAnswer((j as any).answer || '');
+    } catch (e: any) {
+      setAdvisorAnswer(`⚠️ ${e.message || 'Something went wrong'}`);
+    } finally {
+      setAdvisorLoading(false);
+    }
+  };
 
   // Per-ticket remaining hours on the Update tab: WorkTicketID → hours string
   const [ticketHours, setTicketHours] = useState<Record<number, string>>({});
@@ -623,9 +649,9 @@ export default function FieldProject() {
           {([
             { key: 'scope',     label: '📐 Scope' },
             { key: 'tickets',   label: `📋 Tickets (${data.tickets.length})` },
-            { key: 'history',   label: `📝 History (${(data.activities || []).filter(a => (a.ActivityType || '').toLowerCase() !== 'email').length + responded})` },
-            { key: 'materials', label: '📦 Materials' },
             { key: 'update',    label: '✏️ Update' },
+            { key: 'materials', label: '📦 Materials' },
+            { key: 'history',   label: `📝 History (${(data.activities || []).filter(a => (a.ActivityType || '').toLowerCase() !== 'email').length + responded})` },
           ] as const).map(({ key, label }) => (
             <button
               key={key}
@@ -1126,17 +1152,56 @@ export default function FieldProject() {
                 );
               })}
 
-              {/* Coaching tip */}
-              {data.ai_tip && (
-                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
-                  <div style={{ fontWeight: 700, fontSize: 11, color: '#15803d', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    💡 Coaching Tip
+              {/* ── Field Advisor ── */}
+              <div style={{ marginBottom: 16, border: '1.5px solid #c7d2fe', borderRadius: 10, overflow: 'hidden' }}>
+                <div style={{ background: '#eef2ff', padding: '10px 14px' }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: '#4338ca' }}>🤖 Field Advisor</div>
+                  <div style={{ fontSize: 12, color: '#6366f1', marginTop: 2 }}>
+                    Snap a photo of a site problem and describe it — get instant AI guidance
                   </div>
-                  {(data.ai_tip || '').split('\n\n').filter(Boolean).map((p, i, arr) => (
-                    <p key={i} style={{ margin: i < arr.length - 1 ? '0 0 6px' : 0, fontSize: 12, color: '#1e293b', lineHeight: 1.5 }}>{p}</p>
-                  ))}
                 </div>
-              )}
+                <div style={{ background: '#fff', padding: '12px 14px' }}>
+                  {/* Photo picker */}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: '#f5f3ff', border: '1.5px dashed #a5b4fc', borderRadius: 8, padding: '9px 12px', fontSize: 12, color: '#6366f1', marginBottom: 10 }}>
+                    <span style={{ fontSize: 18 }}>📸</span>
+                    <span>{advisorPhoto ? advisorPhoto.name : 'Attach site photo (optional)'}</span>
+                    <input type="file" accept="image/*" capture="environment"
+                      onChange={e => {
+                        const f = e.target.files?.[0] ?? null;
+                        if (advisorPreview) URL.revokeObjectURL(advisorPreview);
+                        setAdvisorPhoto(f);
+                        setAdvisorPreview(f ? URL.createObjectURL(f) : '');
+                      }}
+                      style={{ display: 'none' }} />
+                  </label>
+                  {advisorPreview && (
+                    <div style={{ marginBottom: 10, position: 'relative', display: 'inline-block' }}>
+                      <img src={advisorPreview} alt="" style={{ width: 100, height: 100, objectFit: 'cover', borderRadius: 8, border: '2px solid #c7d2fe' }} />
+                      <button type="button"
+                        onClick={() => { URL.revokeObjectURL(advisorPreview); setAdvisorPhoto(null); setAdvisorPreview(''); }}
+                        style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%', background: '#ef4444', color: '#fff', border: 'none', fontSize: 12, cursor: 'pointer', padding: 0, lineHeight: '20px', textAlign: 'center' }}>×</button>
+                    </div>
+                  )}
+                  {/* Question input */}
+                  <textarea
+                    placeholder="Describe the issue — e.g. 'slope eroding near retaining wall, what should we do?'"
+                    value={advisorQuestion}
+                    onChange={e => setAdvisorQuestion(e.target.value)}
+                    rows={2}
+                    style={{ width: '100%', boxSizing: 'border-box', fontSize: 13, border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', resize: 'vertical', fontFamily: 'inherit', marginBottom: 10, color: '#374151', background: '#f9fafb' }}
+                  />
+                  <button type="button" onClick={askAdvisor}
+                    disabled={advisorLoading || (!advisorQuestion.trim() && !advisorPhoto)}
+                    style={{ width: '100%', padding: '10px', background: (!advisorLoading && (advisorQuestion.trim() || advisorPhoto)) ? '#4f46e5' : '#94a3b8', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: advisorLoading || (!advisorQuestion.trim() && !advisorPhoto) ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
+                    {advisorLoading ? '🤔 Thinking…' : '✨ Ask Field Advisor'}
+                  </button>
+                  {advisorAnswer && (
+                    <div style={{ marginTop: 12, background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 8, padding: '12px 14px', fontSize: 13, color: '#1e1b4b', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+                      {advisorAnswer}
+                    </div>
+                  )}
+                </div>
+              </div>
 
               {/* Per-ticket remaining hours — only scheduled/active tickets */}
               {(() => {
