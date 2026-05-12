@@ -372,11 +372,9 @@ export default function FieldProject() {
       const fd = new FormData();
       fd.append('submitter_name', coName.trim());
       fd.append('scope', coScope.trim());
-      // coAssignee stores "username|id" — split and send both
+      // coAssignee stores the ContactID — send it directly as assigned_to_id
       if (coAssignee) {
-        const [uname, uid] = coAssignee.split('|');
-        if (uname) fd.append('assigned_username', uname);
-        if (uid)   fd.append('assigned_to_id', uid);
+        fd.append('assigned_to_id', coAssignee);
       }
       if (coFiles) {
         Array.from(coFiles).forEach(f => fd.append('files', f));
@@ -1462,7 +1460,7 @@ export default function FieldProject() {
                   >
                     <option value="">— Unassigned —</option>
                     {employees.map(emp => (
-                      <option key={emp.id} value={`${emp.username}|${emp.id}`}>{emp.name}</option>
+                      <option key={emp.id} value={emp.id}>{emp.name}</option>
                     ))}
                   </select>
                 )}

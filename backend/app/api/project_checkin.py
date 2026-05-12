@@ -1939,12 +1939,12 @@ async def get_project_employees(opp_id: int):
     return {
         "employees": [
             {
-                "id":       e["UserID"],
-                "name":     e["FullName"],
-                "username": e.get("UserName") or "",   # used as AssignedTo string
+                "id":         e["ContactID"],   # ContactID — what Aspire AssignedTo expects
+                "name":       e["FullName"],
+                "username":   e.get("UserName") or "",
             }
             for e in employees
-            if e.get("UserID") and e.get("FullName")
+            if e.get("ContactID") and e.get("FullName")
         ]
     }
 
@@ -2049,28 +2049,24 @@ async def create_change_order(
     notes_text = "\n".join(lines)
 
     # ── POST Issue to Aspire ──────────────────────────────────────────────────
-    # AssignedTo is a required string — Aspire expects the login username, not a numeric ID.
-    # Use the username passed from the frontend; fall back to the default API user.
-    assigned_str = (
-        assigned_username.strip()
-        or str(settings.ASPIRE_DEFAULT_USER_ID or "")
-    )
-
+    # Aspire AssignedTo expects a comma-delimited list of ContactIDs (integers as strings).
+    # assigned_to_id is the ContactID from the employee dropdown.
     today_dt     = _date.today()
-    due_date_str = f"{today_dt.isoformat()}T00:00:00Z"   # default due date = today
+    due_date_str = f"{today_dt.isoformat()}T00:00:00Z"
 
     subject = f"Change Order Request — {property_name or opp_name}"
     # Aspire only allows ONE of OpportunityID / PropertyID / WorkTicketID per request.
-    # Use OpportunityID — most specific link and shows up on the job record.
     issue_body: dict = {
         "Subject":       subject,
         "Notes":         notes_text,
-        "AssignedTo":    assigned_str,
         "OpportunityID": opp_id,
         "DueDate":       due_date_str,
         "PublicComment": False,
         "IncludeClient": False,
     }
+    # Only set AssignedTo if a specific person was chosen — Aspire validates it must be ContactIDs
+    if assigned_to_id:
+        issue_body["AssignedTo"] = str(assigned_to_id)
 
     logger.info(f"CO issue body: {issue_body}")
     try:
