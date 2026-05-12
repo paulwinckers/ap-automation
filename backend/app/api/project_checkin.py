@@ -1160,6 +1160,15 @@ async def get_checkin_form(token: str, db: Database = Depends(get_db)):
         "SELECT * FROM project_checkin_responses WHERE checkin_id = ?", [c["id"]]
     )
     tickets = json.loads(c.get("ticket_snapshot") or "[]")
+
+    # Return any photos already stored for this check-in
+    photo_rows = await db._q(
+        "SELECT id, file_name, file_extension, file_size, uploaded_at "
+        "FROM checkin_photos WHERE checkin_id = ? ORDER BY uploaded_at",
+        [c["id"]],
+    )
+    photos = [dict(p) for p in photo_rows]
+
     return {
         "opportunity_name":  c["opportunity_name"],
         "property_name":     c["property_name"],
@@ -1170,12 +1179,18 @@ async def get_checkin_form(token: str, db: Database = Depends(get_db)):
         "already_responded": bool(resp_rows),
         "prior_response":    dict(resp_rows[0]) if resp_rows else None,
         "sent_at":           c["sent_at"],
+        "photos":            photos,
     }
 
 
 @public_router.post("/{token}/respond")
 async def submit_checkin_response(
-    token: str, body: CheckinResponseIn, db: Database = Depends(get_db)
+    token:           str,
+    approach_notes:  str              = Form(...),
+    remaining_hours: Optional[float]  = Form(default=None),
+    blockers:        Optional[str]    = Form(default=None),
+    photos:          list[UploadFile] = File(default=[]),
+    db:              Database         = Depends(get_db),
 ):
     rows = await db._q("SELECT * FROM project_checkins WHERE token = ?", [token])
     if not rows:
@@ -1191,19 +1206,52 @@ async def submit_checkin_response(
     except Exception:
         pass
 
-    if not body.approach_notes or not body.approach_notes.strip():
+    if not approach_notes or not approach_notes.strip():
         raise HTTPException(status_code=422, detail="approach_notes is required")
 
     # Save response
-    await db._x(
+    resp_rows = await db._q(
         """INSERT INTO project_checkin_responses
            (checkin_id, remaining_hours, approach_notes, blockers)
-           VALUES (?,?,?,?)""",
-        [c["id"], body.remaining_hours, body.approach_notes.strip(), body.blockers],
+           VALUES (?,?,?,?) RETURNING id""",
+        [c["id"], remaining_hours, approach_notes.strip(), blockers or None],
     )
+    response_id = resp_rows[0]["id"] if resp_rows else None
+
     await db._x(
         "UPDATE project_checkins SET responded_at = datetime('now') WHERE id = ?", [c["id"]]
     )
+
+    # Upload photos/videos to R2 and record in checkin_photos
+    _PHOTO_MAX_BYTES = 30 * 1024 * 1024   # 30 MB per file
+    photo_ids: list[int] = []
+    if _r2._r2_available():
+        for upload in (photos or []):
+            if not upload or not upload.filename:
+                continue
+            file_bytes = await upload.read()
+            if not file_bytes or len(file_bytes) > _PHOTO_MAX_BYTES:
+                continue
+            filename = upload.filename
+            ext      = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            safe     = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
+            r2_key   = f"checkin-photos/{c['id']}/{uuid.uuid4().hex[:8]}_{safe}"
+            ct       = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            def _up(key=r2_key, body=file_bytes, content_type=ct):
+                _r2._make_client().put_object(
+                    Bucket=settings.R2_BUCKET_NAME,
+                    Key=key, Body=body, ContentType=content_type,
+                )
+            await asyncio.get_event_loop().run_in_executor(None, _up)
+            pr = await db._q(
+                """INSERT INTO checkin_photos
+                   (checkin_id, response_id, file_name, file_extension, r2_key, file_size)
+                   VALUES (?,?,?,?,?,?) RETURNING id""",
+                [c["id"], response_id, filename, ext, r2_key, len(file_bytes)],
+            )
+            if pr:
+                photo_ids.append(pr[0]["id"])
+                logger.info(f"Checkin photo #{pr[0]['id']} saved: {filename} ({len(file_bytes)} bytes)")
 
     # Notify management
     today_str   = datetime.now().strftime("%B %d, %Y")
@@ -1212,9 +1260,9 @@ async def submit_checkin_response(
         opp_name        = c["opportunity_name"] or "",
         property_name   = c["property_name"] or "",
         lead_name       = c["lead_name"] or "",
-        response_notes  = body.approach_notes.strip(),
-        remaining_hours = body.remaining_hours,
-        blockers        = body.blockers,
+        response_notes  = approach_notes.strip(),
+        remaining_hours = remaining_hours,
+        blockers        = blockers,
         ai_tip          = c["ai_tip"] or "",
         today_str       = today_str,
     )
@@ -1229,7 +1277,36 @@ async def submit_checkin_response(
     except Exception as e:
         logger.warning(f"Management notification failed after checkin submit: {e}")
 
-    return {"ok": True, "message": "Thanks — your update has been sent to the team."}
+    return {"ok": True, "message": "Thanks — your update has been sent to the team.", "photo_ids": photo_ids}
+
+
+@public_router.get("/photo/{photo_id}/file")
+async def serve_checkin_photo(photo_id: int, db: Database = Depends(get_db)):
+    """Stream a check-in photo from R2. Public endpoint — photo IDs are non-guessable UUIDs."""
+    rows = await db._q(
+        "SELECT r2_key, file_name, file_extension FROM checkin_photos WHERE id = ?",
+        [photo_id],
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    r2_key   = rows[0]["r2_key"]
+    filename = rows[0]["file_name"]
+    ext      = (rows[0]["file_extension"] or "").lower()
+    ct       = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+    file_bytes = await _r2.get_file_bytes(r2_key)
+    if file_bytes is None:
+        raise HTTPException(status_code=404, detail="File not found in storage")
+
+    return StreamingResponse(
+        iter([file_bytes]),
+        media_type=ct,
+        headers={
+            "Content-Disposition": f'inline; filename="{filename.replace(chr(34), "")}"',
+            "Content-Length":      str(len(file_bytes)),
+        },
+    )
 
 
 # ── Permanent project page endpoints (no token, bookmarkable) ─────────────────

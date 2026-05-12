@@ -465,6 +465,22 @@ CREATE TABLE IF NOT EXISTS project_checkin_responses (
     submitted_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- ── Check-in Photos ──────────────────────────────────────────────────────────
+-- Photos/videos attached to a check-in response by the crew lead.
+-- Files are stored in R2; metadata links them to the check-in and response.
+
+CREATE TABLE IF NOT EXISTS checkin_photos (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    checkin_id   INTEGER NOT NULL,   -- FK to project_checkins.id
+    response_id  INTEGER,            -- FK to project_checkin_responses.id
+    file_name    TEXT    NOT NULL,
+    file_extension TEXT,
+    r2_key       TEXT    NOT NULL,
+    file_size    INTEGER,
+    uploaded_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_checkin_photos_checkin ON checkin_photos(checkin_id);
+
 -- ── Job Attachments ───────────────────────────────────────────────────────────
 -- Our own file store — bypasses Aspire's API which has no download endpoint.
 -- Files are stored in R2; metadata here links to Aspire IDs.

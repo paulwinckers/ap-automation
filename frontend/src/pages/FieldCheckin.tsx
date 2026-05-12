@@ -21,6 +21,12 @@ interface Ticket {
   HoursAct:             number | null;
 }
 
+interface CheckinPhoto {
+  id:         number;
+  file_name:  string;
+  file_extension: string;
+}
+
 interface CheckinData {
   opportunity_name:  string;
   property_name:     string;
@@ -31,6 +37,7 @@ interface CheckinData {
   already_responded: boolean;
   prior_response:    { approach_notes: string; remaining_hours: number | null; blockers: string | null } | null;
   sent_at:           string;
+  photos:            CheckinPhoto[];
 }
 
 function fmtHrs(h: number | null | undefined): string {
@@ -79,9 +86,11 @@ export default function FieldCheckin() {
   const [submitted,  setSubmitted]  = useState(false);
 
   // Form state
-  const [approachNotes,   setApproachNotes]   = useState('');
-  const [remainingHours,  setRemainingHours]  = useState('');
-  const [blockers,        setBlockers]        = useState('');
+  const [approachNotes,  setApproachNotes]  = useState('');
+  const [remainingHours, setRemainingHours] = useState('');
+  const [blockers,       setBlockers]       = useState('');
+  const [photos,         setPhotos]         = useState<File[]>([]);
+  const [previews,       setPreviews]       = useState<string[]>([]);
 
   useEffect(() => {
     fetch(`${API}/checkin/${token}`)
@@ -93,19 +102,39 @@ export default function FieldCheckin() {
       .catch(e => { setError(typeof e === 'string' ? e : 'This link is invalid or expired.'); setLoading(false); });
   }, [token]);
 
+  // Build object-URL previews whenever photos change
+  useEffect(() => {
+    const urls = photos.map(f => URL.createObjectURL(f));
+    setPreviews(urls);
+    return () => urls.forEach(u => URL.revokeObjectURL(u));
+  }, [photos]);
+
+  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    setPhotos(prev => [...prev, ...files]);
+    e.target.value = '';   // allow re-selecting same file
+  }
+
+  function removePhoto(idx: number) {
+    setPhotos(prev => prev.filter((_, i) => i !== idx));
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!approachNotes.trim()) return;
     setSubmitting(true);
     try {
+      // Use FormData so we can attach files alongside text fields
+      const fd = new FormData();
+      fd.append('approach_notes',  approachNotes.trim());
+      if (remainingHours) fd.append('remaining_hours', remainingHours);
+      if (blockers.trim()) fd.append('blockers', blockers.trim());
+      photos.forEach(f => fd.append('photos', f));
+
       const res = await fetch(`${API}/checkin/${token}/respond`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          approach_notes:  approachNotes.trim(),
-          remaining_hours: remainingHours ? parseFloat(remainingHours) : null,
-          blockers:        blockers.trim() || null,
-        }),
+        // No Content-Type header — browser sets multipart boundary automatically
+        body: fd,
       });
       if (!res.ok) {
         const j = await res.json();
@@ -165,6 +194,43 @@ export default function FieldCheckin() {
                     <span style={{ color: '#64748b', fontSize: 13 }}> remaining estimate</span>
                   </div>
                 )}
+              </div>
+            )}
+            {/* Photos: show local previews after fresh submit, or saved photos if already_responded */}
+            {submitted && previews.length > 0 && (
+              <div style={{ marginTop: 20, textAlign: 'left' }}>
+                <div style={SECTION_LABEL}>Photos Submitted ({previews.length})</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  {previews.map((src, i) => (
+                    photos[i]?.type.startsWith('video/') ? (
+                      <video key={i} src={src} style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8, background: '#000' }} muted />
+                    ) : (
+                      <img key={i} src={src} alt="" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8 }} />
+                    )
+                  ))}
+                </div>
+              </div>
+            )}
+            {!submitted && data?.photos && data.photos.length > 0 && (
+              <div style={{ marginTop: 20, textAlign: 'left' }}>
+                <div style={SECTION_LABEL}>Photos / Videos</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  {data.photos.map(p => {
+                    const isVideo = ['mp4','mov','avi','mkv','webm'].includes((p.file_extension || '').toLowerCase());
+                    const url = `${API}/checkin/photo/${p.id}/file`;
+                    return isVideo ? (
+                      <a key={p.id} href={url} target="_blank" rel="noreferrer"
+                        style={{ display:'flex', alignItems:'center', gap:6, fontSize:13, color:'#2563eb' }}>
+                        🎬 {p.file_name}
+                      </a>
+                    ) : (
+                      <a key={p.id} href={url} target="_blank" rel="noreferrer">
+                        <img src={url} alt={p.file_name}
+                          style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8 }} />
+                      </a>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
@@ -302,7 +368,7 @@ export default function FieldCheckin() {
             </div>
 
             {/* Blockers */}
-            <div style={{ marginBottom: 24 }}>
+            <div style={{ marginBottom: 20 }}>
               <label style={LABEL}>Blockers or issues (optional)</label>
               <textarea
                 rows={3}
@@ -311,6 +377,60 @@ export default function FieldCheckin() {
                 onChange={e => setBlockers(e.target.value)}
                 style={{ ...INPUT, resize: 'vertical' }}
               />
+            </div>
+
+            {/* Photo / video upload */}
+            <div style={{ marginBottom: 24 }}>
+              <label style={LABEL}>Photos / Videos (optional)</label>
+
+              {/* Thumbnail strip */}
+              {previews.length > 0 && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                  {previews.map((src, i) => {
+                    const isVideo = photos[i]?.type.startsWith('video/');
+                    return (
+                      <div key={i} style={{ position: 'relative' }}>
+                        {isVideo ? (
+                          <video src={src} style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8, background: '#000' }} muted />
+                        ) : (
+                          <img src={src} alt="" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8 }} />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removePhoto(i)}
+                          style={{
+                            position: 'absolute', top: -6, right: -6,
+                            width: 20, height: 20, borderRadius: '50%',
+                            background: '#ef4444', color: '#fff', border: 'none',
+                            fontSize: 12, lineHeight: '20px', textAlign: 'center',
+                            cursor: 'pointer', padding: 0,
+                          }}
+                        >×</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                background: '#f8fafc', border: '1.5px dashed #cbd5e1', borderRadius: 10,
+                padding: '12px 16px', fontSize: 14, color: '#475569',
+              }}>
+                <span style={{ fontSize: 22 }}>📷</span>
+                <span>Take or choose photos/videos</span>
+                <input
+                  type="file"
+                  accept="image/*,video/*"
+                  capture="environment"
+                  multiple
+                  onChange={handlePhotoChange}
+                  style={{ display: 'none' }}
+                />
+              </label>
+              <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+                Stored securely — not sent to Aspire
+              </div>
             </div>
 
             <button
