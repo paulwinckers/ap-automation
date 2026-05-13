@@ -5,7 +5,7 @@
  * Shows live work ticket hours from Aspire, AI coaching tip,
  * check-in history, and a form to submit an update at any time.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
 
@@ -302,6 +302,10 @@ export default function FieldProject() {
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState('');
   const [refreshing, setRefreshing] = useState(false);
+
+  // File input refs (label+hidden-input unreliable on some mobile browsers)
+  const photoInputRef        = useRef<HTMLInputElement>(null);
+  const advisorPhotoInputRef = useRef<HTMLInputElement>(null);
 
   // Form
   const [approachNotes,  setApproachNotes]  = useState('');
@@ -1208,18 +1212,26 @@ export default function FieldProject() {
                 </div>
                 <div style={{ background: '#fff', padding: '12px 14px' }}>
                   {/* Photo picker */}
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: '#f5f3ff', border: '1.5px dashed #a5b4fc', borderRadius: 8, padding: '9px 12px', fontSize: 12, color: '#6366f1', marginBottom: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => advisorPhotoInputRef.current?.click()}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: '#f5f3ff', border: '1.5px dashed #a5b4fc', borderRadius: 8, padding: '9px 12px', fontSize: 12, color: '#6366f1', marginBottom: 10, width: '100%', textAlign: 'left', fontFamily: 'inherit' }}
+                  >
                     <span style={{ fontSize: 18 }}>📸</span>
                     <span>{advisorPhoto ? advisorPhoto.name : 'Attach site photo (optional)'}</span>
-                    <input type="file" accept="image/*"
-                      onChange={e => {
-                        const f = e.target.files?.[0] ?? null;
-                        if (advisorPreview) URL.revokeObjectURL(advisorPreview);
-                        setAdvisorPhoto(f);
-                        setAdvisorPreview(f ? URL.createObjectURL(f) : '');
-                      }}
-                      style={{ display: 'none' }} />
-                  </label>
+                  </button>
+                  <input
+                    ref={advisorPhotoInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={e => {
+                      const f = e.target.files?.[0] ?? null;
+                      if (advisorPreview) URL.revokeObjectURL(advisorPreview);
+                      setAdvisorPhoto(f);
+                      setAdvisorPreview(f ? URL.createObjectURL(f) : '');
+                    }}
+                    style={{ display: 'none' }}
+                  />
                   {advisorPreview && (
                     <div style={{ marginBottom: 10, position: 'relative', display: 'inline-block' }}>
                       <img src={advisorPreview} alt="" style={{ width: 100, height: 100, objectFit: 'cover', borderRadius: 8, border: '2px solid #c7d2fe' }} />
@@ -1338,13 +1350,22 @@ export default function FieldProject() {
                     ))}
                   </div>
                 )}
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: '#f8fafc', border: '1.5px dashed #cbd5e1', borderRadius: 10, padding: '11px 14px', fontSize: 13, color: '#475569' }}>
+                <button
+                  type="button"
+                  onClick={() => photoInputRef.current?.click()}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: '#f8fafc', border: '1.5px dashed #cbd5e1', borderRadius: 10, padding: '11px 14px', fontSize: 13, color: '#475569', width: '100%', textAlign: 'left', fontFamily: 'inherit' }}
+                >
                   <span style={{ fontSize: 20 }}>📷</span>
                   <span>Take or choose photos/videos</span>
-                  <input type="file" accept="image/*,video/*" multiple
-                    onChange={e => { setPhotos(prev => [...prev, ...Array.from(e.target.files ?? [])]); e.target.value = ''; }}
-                    style={{ display: 'none' }} />
-                </label>
+                </button>
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*,video/*"
+                  multiple
+                  onChange={e => { setPhotos(prev => [...prev, ...Array.from(e.target.files ?? [])]); e.target.value = ''; }}
+                  style={{ display: 'none' }}
+                />
               </div>
 
               {submitMsg && (
