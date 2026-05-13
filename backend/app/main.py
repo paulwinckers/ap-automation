@@ -143,6 +143,56 @@ async def lifespan(app: FastAPI):
                 asked_at     TEXT    NOT NULL DEFAULT (datetime('now'))
             )
         """,
+        "reconciliation_periods": """
+            CREATE TABLE IF NOT EXISTS reconciliation_periods (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                period     TEXT NOT NULL UNIQUE,
+                label      TEXT NOT NULL,
+                status     TEXT NOT NULL DEFAULT 'open',
+                closed_at  TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
+        "vendor_statements": """
+            CREATE TABLE IF NOT EXISTS vendor_statements (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                period_id       INTEGER NOT NULL,
+                vendor_name     TEXT NOT NULL,
+                statement_date  TEXT,
+                closing_balance REAL,
+                currency        TEXT DEFAULT 'CAD',
+                aging_current   REAL DEFAULT 0,
+                aging_1_30      REAL DEFAULT 0,
+                aging_31_60     REAL DEFAULT 0,
+                aging_61_90     REAL DEFAULT 0,
+                aging_over_90   REAL DEFAULT 0,
+                pdf_filename    TEXT,
+                pdf_r2_key      TEXT,
+                intake_source   TEXT DEFAULT 'upload',
+                qbo_snapshot    TEXT,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
+        "statement_lines": """
+            CREATE TABLE IF NOT EXISTS statement_lines (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                statement_id    INTEGER NOT NULL,
+                line_date       TEXT,
+                invoice_number  TEXT,
+                raw_description TEXT,
+                amount          REAL,
+                running_balance REAL
+            )
+        """,
+        "vendor_qbo_links": """
+            CREATE TABLE IF NOT EXISTS vendor_qbo_links (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                statement_name  TEXT NOT NULL UNIQUE,
+                qbo_vendor_id   TEXT NOT NULL,
+                qbo_vendor_name TEXT NOT NULL,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:

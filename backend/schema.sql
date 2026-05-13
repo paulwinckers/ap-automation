@@ -167,6 +167,7 @@ CREATE TABLE IF NOT EXISTS vendor_statements (
     aging_61_90         REAL DEFAULT 0,
     aging_over_90       REAL DEFAULT 0,
     pdf_filename        TEXT,
+    pdf_r2_key          TEXT,
     intake_source       TEXT DEFAULT 'upload',
     qbo_snapshot        TEXT,
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
