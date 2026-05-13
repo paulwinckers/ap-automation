@@ -1700,7 +1700,30 @@ async def debug_job_search(name: str = "", opp_number: int = None):
             "tickets":           ticket_debug,
         })
 
-    return {"query": name, "opportunities": results}
+    # 3. Also run _fetch_opp_actuals to see what the batch lookup returns
+    found_ids = [o["OpportunityID"] for o in opps]
+    try:
+        actuals = await _fetch_opp_actuals(found_ids)
+        actuals_debug = {
+            oid: {
+                "OpportunityName": d.get("OpportunityName"),
+                "DivisionName":    d.get("DivisionName"),
+                "OpportunityStatus": d.get("OpportunityStatusName"),
+                "found_in_actuals": True,
+            }
+            for oid, d in actuals.items()
+        }
+        missing_from_actuals = [oid for oid in found_ids if oid not in actuals]
+    except Exception as e:
+        actuals_debug       = {"error": str(e)}
+        missing_from_actuals = []
+
+    return {
+        "query":                name or f"opp_number={opp_number}",
+        "opportunities":        results,
+        "actuals_lookup":       actuals_debug,
+        "missing_from_actuals": missing_from_actuals,
+    }
 
 
 @public_router.get("/project/{opp_id}/materials")
