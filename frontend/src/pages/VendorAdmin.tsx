@@ -522,8 +522,8 @@ function VendorAdminInner() {
                 </div>
               )}
 
-              {/* Confirmation email — employees only */}
-              {form.is_employee && (
+              {/* Confirmation email + job cost forwarding — employees only */}
+              {form.is_employee && (<>
                 <div style={S.field}>
                   <label style={S.label}>Confirmation email</label>
                   <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
@@ -586,7 +586,7 @@ function VendorAdminInner() {
                   />
                   <div style={S.hint}>When this employee submits a job cost expense, this person gets an email with the receipt to recode in QBO.</div>
                 </div>
-              )}
+              </>)}
 
               {/* Forward invoices to — job cost / mixed vendors only */}
               {!form.is_employee && (form.type === 'job_cost' || form.type === 'mixed') && (
