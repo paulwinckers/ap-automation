@@ -1615,14 +1615,17 @@ async def debug_job_search(name: str):
     from app.api.construction_plan import _fetch_opp_actuals
     import re as _re
 
-    # 1. Find matching opportunities by name
+    # 1. Find matching opportunities by name — Aspire OData doesn't support contains/tolower,
+    #    so fetch a broad recent set and filter in Python.
     try:
         opp_res = await _aspire._get("Opportunities", {
-            "$filter": f"contains(tolower(OpportunityName), tolower('{name}'))",
             "$select": "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityNumber",
-            "$top":    "10",
+            "$top":    "500",
         })
-        opps = _aspire._extract_list(opp_res)
+        all_opps = _aspire._extract_list(opp_res)
+        query    = name.lower()
+        opps     = [o for o in all_opps if query in (o.get("OpportunityName") or "").lower()
+                                        or query in (o.get("PropertyName")    or "").lower()]
     except Exception as e:
         raise HTTPException(500, f"Opportunity search failed: {e}")
 
