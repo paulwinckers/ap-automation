@@ -1390,7 +1390,13 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         """Extract comment rows from the HTML Aspire embeds in Notes."""
         if not notes_html:
             return []
-        section = _re.search(r'Issue Comment History</h3>(.*)', notes_html, _re.IGNORECASE | _re.DOTALL)
+        # Try multiple heading patterns Aspire uses across activity types
+        section = (
+            _re.search(r'Issue Comment History</h3>(.*)',  notes_html, _re.IGNORECASE | _re.DOTALL) or
+            _re.search(r'Comment History</h3>(.*)',        notes_html, _re.IGNORECASE | _re.DOTALL) or
+            _re.search(r'Comments?</h\d>(.*)',             notes_html, _re.IGNORECASE | _re.DOTALL) or
+            _re.search(r'Comment History</(?:div|p)>(.*)',notes_html, _re.IGNORECASE | _re.DOTALL)
+        )
         if not section:
             return []
         comments = []
@@ -1567,6 +1573,36 @@ async def scope_probe(opp_id: int):
     )
 
     return results
+
+
+@public_router.get("/project/{opp_id}/activity-probe")
+async def activity_probe(opp_id: int):
+    """Dev endpoint: returns raw Notes HTML for each activity so we can see Aspire's comment format."""
+    try:
+        res = await _aspire._get("Activities", {
+            "$filter":  f"OpportunityID eq {opp_id}",
+            "$orderby": "CreatedDate desc",
+            "$top":     "10",
+        })
+        activities = _aspire._extract_list(res)
+        return {
+            "count": len(activities),
+            "available_fields": sorted(activities[0].keys()) if activities else [],
+            "activities": [
+                {
+                    "ActivityID":   a.get("ActivityID"),
+                    "Subject":      a.get("Subject"),
+                    "ActivityType": a.get("ActivityType"),
+                    "Notes_raw":    a.get("Notes") or "",
+                    "Notes_length": len(a.get("Notes") or ""),
+                    # All string fields longer than 20 chars to spot comment containers
+                    "long_strings": {k: v for k, v in a.items() if isinstance(v, str) and len(v) > 20},
+                }
+                for a in activities[:5]
+            ],
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 @public_router.get("/project/{opp_id}/materials")
