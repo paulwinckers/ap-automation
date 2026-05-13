@@ -114,6 +114,7 @@ export default function Reconcile() {
   const [vendorResults, setVendorResults] = useState<{id: string; name: string}[]>([]);
   const [searchingVendors, setSearchingVendors] = useState(false);
   const [attachingPdf, setAttachingPdf] = useState<number | null>(null);
+  const [loadingDiffs, setLoadingDiffs] = useState(false);
   const fileRef    = useRef<HTMLInputElement>(null);
   const pdfRefs    = useRef<Record<number, HTMLInputElement | null>>({});
 
@@ -154,6 +155,7 @@ export default function Reconcile() {
   }
 
   async function loadAllDiffs(period: string) {
+    setLoadingDiffs(true);
     try {
       const res = await fetch(`${API}/reconcile/periods/${period}/diffs`);
       if (!res.ok) return;
@@ -162,6 +164,8 @@ export default function Reconcile() {
       setDiffs(data.diffs || {});
     } catch {
       // silently fail — individual refresh buttons still work
+    } finally {
+      setLoadingDiffs(false);
     }
   }
 
@@ -399,6 +403,19 @@ export default function Reconcile() {
           </div>
         )}
 
+        {/* Loading banner */}
+        {loadingDiffs && statements.length > 0 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16,
+            padding: '10px 16px', background: '#eff6ff', borderRadius: 8,
+            border: '1px solid #bfdbfe', color: '#1d4ed8', fontSize: 13, fontWeight: 500,
+          }}>
+            <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', fontSize: 16 }}>⟳</span>
+            Pulling QBO data for {statements.length} vendor{statements.length !== 1 ? 's' : ''}…
+          </div>
+        )}
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+
         {/* Column headers */}
         {statements.length > 0 && (
           <div style={{ display: 'flex', gap: 12, padding: '4px 16px 6px', fontSize: 11,
@@ -417,7 +434,7 @@ export default function Reconcile() {
           const diffData = diffs[stmt.id];
           const diff = diffData?.data?.diff;
           const summary = diff?.summary;
-          const isLoading = refreshing === stmt.id;
+          const isLoading = refreshing === stmt.id || (loadingDiffs && diffData === undefined);
           const isExpanded = expandedDiff === stmt.id;
 
           const qboBalForBorder = (diffData?.data as DiffResult | undefined)?.qbo_total_balance ?? null;
