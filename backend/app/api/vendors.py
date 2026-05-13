@@ -42,18 +42,19 @@ class VendorCreateRequest(BaseModel):
 
 
 class VendorUpdateRequest(BaseModel):
-    vendor_name:        Optional[str] = None
-    type:               Optional[VendorType] = None
-    default_gl_account: Optional[str] = None
-    default_gl_name:    Optional[str] = None
-    forward_to:         Optional[str] = None
-    vendor_id_aspire:   Optional[str] = None
-    vendor_id_qbo:      Optional[str] = None
-    notes:              Optional[str] = None
-    match_keyword:      Optional[str] = None
-    is_employee:        Optional[bool] = None
-    active:             Optional[bool] = None
-    aspire_post:        Optional[bool] = None   # enable direct Aspire receipt creation for this vendor
+    vendor_name:         Optional[str] = None
+    type:                Optional[VendorType] = None
+    default_gl_account:  Optional[str] = None
+    default_gl_name:     Optional[str] = None
+    forward_to:          Optional[str] = None
+    job_cost_forward_to: Optional[str] = None
+    vendor_id_aspire:    Optional[str] = None
+    vendor_id_qbo:       Optional[str] = None
+    notes:               Optional[str] = None
+    match_keyword:       Optional[str] = None
+    is_employee:         Optional[bool] = None
+    active:              Optional[bool] = None
+    aspire_post:         Optional[bool] = None   # enable direct Aspire receipt creation for this vendor
 
 
 @router.post("/reset-aspire-post")
@@ -164,6 +165,8 @@ async def update_vendor(
     updates = {k: v for k, v in raw.items() if v is not None}
     if "forward_to" in raw:
         updates["forward_to"] = raw["forward_to"] or None
+    if "job_cost_forward_to" in raw:
+        updates["job_cost_forward_to"] = raw["job_cost_forward_to"] or None
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
     if "type" in updates and updates["type"] is not None:
