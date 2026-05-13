@@ -221,7 +221,7 @@ export default function FieldProjectLookup() {
             ← Home
           </a>
         </div>
-        <div style={S.hsub}>My Projects</div>
+        <div style={S.hsub}>Construction Projects</div>
         <div style={S.hdesc}>Construction project dashboard</div>
       </div>
 
