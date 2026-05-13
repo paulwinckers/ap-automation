@@ -523,12 +523,31 @@ function VendorAdminInner() {
               {form.is_employee && (
                 <div style={S.field}>
                   <label style={S.label}>Confirmation email</label>
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                    {['keeland@darios.ca', 'paul@darios.ca', 'eduardo@darios.ca'].map(addr => (
+                      <button
+                        key={addr}
+                        type="button"
+                        onClick={() => setForm(f => ({ ...f, forward_to: addr }))}
+                        style={{
+                          padding: '4px 10px', fontSize: 12, borderRadius: 6, cursor: 'pointer',
+                          fontFamily: 'inherit', fontWeight: 600,
+                          border: '1.5px solid',
+                          borderColor: form.forward_to === addr ? '#2563eb' : '#e2e6ed',
+                          background: form.forward_to === addr ? '#eff6ff' : '#fff',
+                          color: form.forward_to === addr ? '#2563eb' : '#6b7280',
+                        }}
+                      >
+                        {addr.split('@')[0].charAt(0).toUpperCase() + addr.split('@')[0].slice(1)}
+                      </button>
+                    ))}
+                  </div>
                   <input
                     style={S.input}
                     type="email"
                     value={form.forward_to}
                     onChange={e => setForm(f => ({ ...f, forward_to: e.target.value }))}
-                    placeholder="e.g. jake@darios.ca"
+                    placeholder="e.g. vesna@darios.ca"
                   />
                   <div style={S.hint}>Employee receives a confirmation email once their receipt is posted to QBO.</div>
                 </div>
