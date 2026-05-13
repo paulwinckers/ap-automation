@@ -1606,26 +1606,35 @@ async def activity_probe(opp_id: int):
 
 
 @public_router.get("/debug/job-search")
-async def debug_job_search(name: str):
+async def debug_job_search(name: str = "", opp_number: int = None):
     """
-    Dev endpoint: search Aspire for opportunities matching a name, then fetch
+    Dev endpoint: search Aspire for opportunities matching a name or number, then fetch
     their work tickets (no date filter) and show exactly why each ticket
     passes or fails the my-project filters.
     """
     from app.api.construction_plan import _fetch_opp_actuals
-    import re as _re
 
-    # 1. Find matching opportunities by name — Aspire OData doesn't support contains/tolower,
-    #    so fetch a broad recent set and filter in Python.
+    # 1. Find matching opportunities
     try:
-        opp_res = await _aspire._get("Opportunities", {
-            "$select": "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityNumber",
-            "$top":    "500",
-        })
-        all_opps = _aspire._extract_list(opp_res)
-        query    = name.lower()
-        opps     = [o for o in all_opps if query in (o.get("OpportunityName") or "").lower()
-                                        or query in (o.get("PropertyName")    or "").lower()]
+        if opp_number:
+            # Direct lookup by OpportunityNumber (the human-readable job number)
+            opp_res = await _aspire._get("Opportunities", {
+                "$filter": f"OpportunityNumber eq {opp_number}",
+                "$select": "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityNumber",
+                "$top":    "10",
+            })
+            opps = _aspire._extract_list(opp_res)
+        else:
+            # Name search — fetch most-recent 2000 and filter in Python
+            opp_res = await _aspire._get("Opportunities", {
+                "$select":  "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityNumber",
+                "$orderby": "OpportunityID desc",
+                "$top":     "2000",
+            })
+            all_opps = _aspire._extract_list(opp_res)
+            query    = name.lower()
+            opps     = [o for o in all_opps if query in (o.get("OpportunityName") or "").lower()
+                                            or query in (o.get("PropertyName")    or "").lower()]
     except Exception as e:
         raise HTTPException(500, f"Opportunity search failed: {e}")
 
