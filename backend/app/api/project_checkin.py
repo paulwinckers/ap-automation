@@ -917,35 +917,49 @@ async def my_project_lookup(db: Database = Depends(get_db)):
 
         SELECT = "WorkTicketID,WorkTicketStatusName,OpportunityID,OpportunityNumber,ScheduledStartDate,CompleteDate,HoursEst,HoursAct"
 
-        # ── Fetch active tickets (In Production) ─────────────────────────────────
-        try:
-            res_active = await _aspire._get("WorkTickets", {
-                "$select":  SELECT,
-                "$filter":  "WorkTicketStatusName eq 'In Production'",
-                "$top":     "1000",
-            })
-            active_tickets = _aspire._extract_list(res_active)
-            logger.info(f"my-project: {len(active_tickets)} In Production tickets")
-        except Exception as e:
-            logger.warning(f"my-project: active ticket fetch failed: {e}")
-            active_tickets = []
+        # Fetch all tickets scheduled within the last 12 months + future.
+        # Aspire OData doesn't reliably support status-name filters, so we
+        # fetch a broad window and filter by status in Python.
+        date_cutoff = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        all_tickets: list[dict] = []
+        for skip in range(0, 3000, 500):
+            try:
+                res = await _aspire._get("WorkTickets", {
+                    "$select":  SELECT,
+                    "$filter":  f"ScheduledStartDate ge {date_cutoff}",
+                    "$orderby": "WorkTicketID desc",
+                    "$top":     "500",
+                    "$skip":    str(skip),
+                })
+                batch = _aspire._extract_list(res)
+                if not batch:
+                    break
+                all_tickets.extend(batch)
+                logger.info(f"my-project: fetched {len(batch)} tickets (total {len(all_tickets)})")
+                if len(batch) < 500:
+                    break
+            except Exception as e:
+                logger.warning(f"my-project: ticket page skip={skip} failed: {e}")
+                break
 
-        # ── Fetch recently completed tickets (last 90 days) ──────────────────────
+        # Python-side status filter
+        ACTIVE_STATUSES   = {"in production", "in queue", "scheduled", "open"}
+        COMPLETE_STATUSES = {"complete", "completed"}
         cutoff_90 = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
-        try:
-            res_done = await _aspire._get("WorkTickets", {
-                "$select":  SELECT,
-                "$filter":  f"WorkTicketStatusName eq 'Complete' and CompleteDate ge {cutoff_90}",
-                "$top":     "500",
-            })
-            done_tickets = _aspire._extract_list(res_done)
-            logger.info(f"my-project: {len(done_tickets)} recently completed tickets")
-        except Exception as e:
-            logger.warning(f"my-project: completed ticket fetch failed: {e}")
-            done_tickets = []
 
-        all_tickets = active_tickets + done_tickets
-        if not all_tickets:
+        def _keep(t: dict) -> bool:
+            status = (t.get("WorkTicketStatusName") or "").strip().lower()
+            if status in ACTIVE_STATUSES:
+                return True
+            if status in COMPLETE_STATUSES:
+                done = (t.get("CompleteDate") or t.get("ScheduledStartDate") or "")[:10]
+                return done >= cutoff_90
+            return False
+
+        tickets = [t for t in all_tickets if _keep(t)]
+        logger.info(f"my-project: {len(tickets)} tickets after status filter")
+
+        if not tickets:
             return {"projects": []}
 
         # ── Group by OpportunityID (use OpportunityNumber as key when available) ──
@@ -974,7 +988,7 @@ async def my_project_lookup(db: Database = Depends(get_db)):
             d = (t.get("ScheduledStartDate") or "")[:10]
             if d > e["latest_date"]:
                 e["latest_date"] = d
-            if (t.get("WorkTicketStatusName") or "").strip().lower() == "in production":
+            if (t.get("WorkTicketStatusName") or "").strip().lower() in ACTIVE_STATUSES:
                 e["active_tickets"] += 1
 
         # ── Fetch opportunity details ─────────────────────────────────────────────
