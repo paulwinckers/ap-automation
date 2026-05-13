@@ -467,9 +467,10 @@ async def _route_to_qbo(
         })
         logger.info(f"Invoice {invoice.id} posted to QBO — bill {bill_id}, GL {gl_account} ({gl_name}), TotalAmt: {qbo_amount}")
 
-        # Send confirmation email if this was an employee/field submission
+        # Send confirmation + optional AP notification for employee submissions
         if employee_name:
             emp_rule = await db.get_vendor_rule_by_name(employee_name)
+            # Confirmation email to the employee
             if emp_rule and emp_rule.forward_to:
                 from app.services.email_intake import send_qbo_confirmation
                 await send_qbo_confirmation(
@@ -482,12 +483,14 @@ async def _route_to_qbo(
                     file_bytes=invoice.file_bytes,
                     filename=invoice.pdf_filename,
                 )
-
-        # Notify AP when an employee tagged this as a job-cost expense
-        if notify_ap and employee_name:
-            ap_email = getattr(settings, "AP_FORWARD_EMAIL", None)
-            if ap_email:
-                await _notify_ap_employee_job_cost(invoice, employee_name, bill_id, gl_name or gl_account, qbo_amount, ap_email)
+            # AP notification when tagged as job cost
+            if notify_ap:
+                ap_email = (
+                    (emp_rule.job_cost_forward_to if emp_rule else None)
+                    or getattr(settings, "AP_FORWARD_EMAIL", None)
+                )
+                if ap_email:
+                    await _notify_ap_employee_job_cost(invoice, employee_name, bill_id, gl_name or gl_account, qbo_amount, ap_email)
 
         return RoutingOutcome.POSTED_QBO
 

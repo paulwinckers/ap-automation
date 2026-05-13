@@ -19,6 +19,7 @@ class VendorRule(BaseModel):
     default_gl_account:  Optional[str] = None
     default_gl_name:     Optional[str] = None
     forward_to:          Optional[str] = None   # email for confirmation / forwarding
+    job_cost_forward_to: Optional[str] = None   # AP email to notify when employee submits a job cost expense
     match_keyword:       Optional[str] = None   # override keyword for fuzzy matching
     notes:               Optional[str] = None
     is_employee:         bool = False
@@ -48,3 +49,4 @@ class VendorRuleUpdate(BaseModel):
     is_employee:         Optional[bool] = None
     active:              Optional[bool] = None
     aspire_post:         Optional[bool] = None
+    job_cost_forward_to: Optional[str] = None

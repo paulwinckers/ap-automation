@@ -75,6 +75,7 @@ const EMPTY_FORM = {
   default_gl_account: '',
   default_gl_name: '',
   forward_to: '',
+  job_cost_forward_to: '',
   vendor_id_aspire: '',
   vendor_id_qbo: '',
   notes: '',
@@ -231,6 +232,7 @@ function VendorAdminInner() {
       default_gl_account: v.default_gl_account || '',
       default_gl_name:    v.default_gl_name || '',
       forward_to:         v.forward_to || '',
+      job_cost_forward_to: v.job_cost_forward_to || '',
       vendor_id_aspire:   v.vendor_id_aspire || '',
       vendor_id_qbo:      v.vendor_id_qbo || '',
       notes:              v.notes || '',
@@ -251,6 +253,7 @@ function VendorAdminInner() {
         default_gl_account: form.default_gl_account.trim() || undefined,
         default_gl_name:    form.default_gl_name.trim() || undefined,
         forward_to:         form.forward_to.trim() || undefined,
+        job_cost_forward_to: form.job_cost_forward_to.trim() || undefined,
         vendor_id_aspire:   form.vendor_id_aspire.trim() || undefined,
         vendor_id_qbo:      form.vendor_id_qbo.trim() || undefined,
         notes:              form.notes.trim() || undefined,
@@ -550,6 +553,38 @@ function VendorAdminInner() {
                     placeholder="e.g. vesna@darios.ca"
                   />
                   <div style={S.hint}>Employee receives a confirmation email once their receipt is posted to QBO.</div>
+                </div>
+
+                {/* Forward job cost to — AP person notified when employee submits a job cost expense */}
+                <div style={S.field}>
+                  <label style={S.label}>Forward job cost to</label>
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                    {['keeland@darios.ca', 'paul@darios.ca', 'eduardo@darios.ca'].map(addr => (
+                      <button
+                        key={addr}
+                        type="button"
+                        onClick={() => setForm(f => ({ ...f, job_cost_forward_to: addr }))}
+                        style={{
+                          padding: '4px 10px', fontSize: 12, borderRadius: 6, cursor: 'pointer',
+                          fontFamily: 'inherit', fontWeight: 600,
+                          border: '1.5px solid',
+                          borderColor: form.job_cost_forward_to === addr ? '#2563eb' : '#e2e6ed',
+                          background: form.job_cost_forward_to === addr ? '#eff6ff' : '#fff',
+                          color: form.job_cost_forward_to === addr ? '#2563eb' : '#6b7280',
+                        }}
+                      >
+                        {addr.split('@')[0].charAt(0).toUpperCase() + addr.split('@')[0].slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    style={S.input}
+                    type="email"
+                    value={form.job_cost_forward_to}
+                    onChange={e => setForm(f => ({ ...f, job_cost_forward_to: e.target.value }))}
+                    placeholder="AP person who handles job cost coding"
+                  />
+                  <div style={S.hint}>When this employee submits a job cost expense, this person gets an email with the receipt to recode in QBO.</div>
                 </div>
               )}
 

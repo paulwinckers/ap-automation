@@ -924,6 +924,7 @@ class Database:
             default_gl_account=r.get("default_gl_account"),
             default_gl_name=r.get("default_gl_name"),
             forward_to=r.get("forward_to"),
+            job_cost_forward_to=r.get("job_cost_forward_to"),
             match_keyword=r.get("match_keyword"),
             notes=r.get("notes"),
             is_employee=bool(r.get("is_employee", 0)),

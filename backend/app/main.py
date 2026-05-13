@@ -213,6 +213,8 @@ async def lifespan(app: FastAPI):
         # vendor_statements diff cache — added for bulk-diff speed improvement
         ("vendor_statements", "diff_cache",     "ALTER TABLE vendor_statements ADD COLUMN diff_cache TEXT"),
         ("vendor_statements", "diff_cached_at", "ALTER TABLE vendor_statements ADD COLUMN diff_cached_at TEXT"),
+        # vendor_rules.job_cost_forward_to — AP email for employee job cost expense notifications
+        ("vendor_rules", "job_cost_forward_to", "ALTER TABLE vendor_rules ADD COLUMN job_cost_forward_to TEXT"),
     ]
     for tbl, col, sql in _COLUMN_MIGRATIONS:
         try:
