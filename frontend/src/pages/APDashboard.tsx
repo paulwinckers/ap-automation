@@ -706,7 +706,7 @@ export default function APDashboard() {
                     )}
 
                     {/* Archive button — available for all active entries */}
-                    {view === 'active' && !e.forwarded_to && (
+                    {view === 'active' && (
                       <button
                         onClick={() => archiveInvoice(e.id)}
                         disabled={archiving === e.id}
