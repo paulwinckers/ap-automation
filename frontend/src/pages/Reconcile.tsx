@@ -115,6 +115,7 @@ export default function Reconcile() {
   const [searchingVendors, setSearchingVendors] = useState(false);
   const [attachingPdf, setAttachingPdf] = useState<number | null>(null);
   const [loadingDiffs, setLoadingDiffs] = useState(false);
+  const [loadingStatements, setLoadingStatements] = useState(false);
   const fileRef    = useRef<HTMLInputElement>(null);
   const pdfRefs    = useRef<Record<number, HTMLInputElement | null>>({});
 
@@ -132,6 +133,7 @@ export default function Reconcile() {
   }
 
   async function loadStatements(period: string) {
+    setLoadingStatements(true);
     // Ensure period exists
     await fetch(`${API}/reconcile/periods/${period}`, { method: 'POST' });
     const res = await fetch(`${API}/reconcile/periods/${period}/statements`);
@@ -145,6 +147,7 @@ export default function Reconcile() {
       setDiffs({});
       return current;
     });
+    setLoadingStatements(false);
     await loadPeriods();
     const stmts = data.statements || [];
     await loadLinks(stmts);
@@ -394,8 +397,16 @@ export default function Reconcile() {
           </span>
         </div>
 
+        {/* Loading state */}
+        {loadingStatements && (
+          <div style={{ textAlign: 'center', padding: '80px 0', color: '#94a3b8' }}>
+            <div style={{ fontSize: 36, marginBottom: 16, display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</div>
+            <div style={{ fontSize: 15, fontWeight: 600, marginTop: 8 }}>Loading statements…</div>
+          </div>
+        )}
+
         {/* Empty state */}
-        {statements.length === 0 && (
+        {!loadingStatements && statements.length === 0 && (
           <div style={{ textAlign: 'center', padding: '80px 0', color: '#94a3b8' }}>
             <div style={{ fontSize: 40, marginBottom: 16 }}>📄</div>
             <div style={{ fontSize: 16, fontWeight: 600 }}>No statements uploaded yet</div>
@@ -417,7 +428,7 @@ export default function Reconcile() {
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
         {/* Column headers */}
-        {statements.length > 0 && (
+        {!loadingStatements && statements.length > 0 && (
           <div style={{ display: 'flex', gap: 12, padding: '4px 16px 6px', fontSize: 11,
             fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.04em' }}>
             <div style={{ minWidth: 180, flex: '0 0 auto' }}>Vendor</div>
@@ -430,7 +441,7 @@ export default function Reconcile() {
         )}
 
         {/* Statement cards */}
-        {statements.map(stmt => {
+        {!loadingStatements && statements.map(stmt => {
           const diffData = diffs[stmt.id];
           const diff = diffData?.data?.diff;
           const summary = diff?.summary;
