@@ -34,7 +34,6 @@ from app.api.dashboard import start_digest_scheduler, stop_digest_scheduler
 from app.api.documents import router as documents_router
 from app.api.push import router as push_router
 from app.api.site_inspections import router as site_inspections_router
-from app.api.handoff import router as handoff_router
 from app.api.property_hazards import router as property_hazards_router
 from app.api.project_checkin import (
     router as checkin_router,
@@ -225,7 +224,6 @@ app.include_router(construction_plan_router)
 app.include_router(documents_router)
 app.include_router(push_router)
 app.include_router(site_inspections_router)
-app.include_router(handoff_router)
 app.include_router(property_hazards_router)
 app.include_router(checkin_router)
 app.include_router(checkin_public_router)

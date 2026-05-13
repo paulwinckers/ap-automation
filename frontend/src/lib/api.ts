@@ -1394,39 +1394,3 @@ export interface MyProjectResult {
 export async function myProjectLookup(): Promise<MyProjectResult> {
   return request('GET', `/checkin/my-project`);
 }
-
-// ── Handoff Pack Generator ────────────────────────────────────────────────────
-
-/**
- * Download a generated Project Handoff Package as a .docx file.
- * Triggers browser Save-As dialog on success.
- */
-export async function downloadHandoffPack(opportunityNumber: number): Promise<void> {
-  const token = localStorage.getItem('ap_token');
-  const headers: Record<string, string> = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-
-  const res = await fetch(
-    `${BASE}/handoff/generate?opportunity_number=${opportunityNumber}`,
-    { method: 'GET', headers },
-  );
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error((err as { detail?: string }).detail || `HTTP ${res.status}`);
-  }
-
-  const blob = await res.blob();
-  const disposition = res.headers.get('Content-Disposition') || '';
-  const match = disposition.match(/filename="?([^"]+)"?/);
-  const filename = match?.[1] ?? `Handoff_${opportunityNumber}.docx`;
-
-  const url = URL.createObjectURL(blob);
-  const a   = document.createElement('a');
-  a.href     = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}

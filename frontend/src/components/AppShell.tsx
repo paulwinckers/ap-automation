@@ -23,7 +23,6 @@ const NAV = [
       { label: 'Safety Talks',  path: '/ops/safety-talks',       icon: '🦺' },
       { label: 'Inspections',   path: '/ops/safety-inspections', icon: '🔍' },
       { label: 'Documents',     path: '/ops/documents',           icon: '📋' },
-      { label: 'Handoff Pack',  path: '/ops/handoff',             icon: '📄' },
     ],
   },
   {

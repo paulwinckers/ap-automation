@@ -28,7 +28,6 @@ const OFFICE_GROUPS = [
       { to: '/ops/contacts',      icon: '📞', label: 'Contacts',       sub: 'Property & client lookup' },
       { to: '/ops/safety-talks',  icon: '🦺', label: 'Safety Talks',   sub: 'Toolbox talk records' },
       { to: '/keys/admin',        icon: '🔑', label: 'Key Box Admin',  sub: 'Manage keys & view log' },
-      { to: '/ops/handoff',       icon: '📄', label: 'Handoff Pack',   sub: 'Generate project handoff .docx' },
     ],
   },
   {

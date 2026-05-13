@@ -36,7 +36,6 @@ import KeysAdmin          from './pages/KeysAdmin';
 import SafetyTalksAdmin       from './pages/SafetyTalksAdmin';
 import FieldInspection        from './pages/FieldInspection';
 import SafetyInspectionsAdmin from './pages/SafetyInspectionsAdmin';
-import HandoffGenerator       from './pages/HandoffGenerator';
 import FieldCheckin           from './pages/FieldCheckin';
 import FieldProject          from './pages/FieldProject';
 import FieldProjectLookup   from './pages/FieldProjectLookup';
@@ -82,7 +81,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/keys/admin"        element={<RequireAuth><Office><KeysAdmin /></Office></RequireAuth>} />
         <Route path="/ops/documents"          element={<RequireAuth><Office><DocumentsAdmin /></Office></RequireAuth>} />
         <Route path="/ops/safety-inspections" element={<RequireAuth><Office><SafetyInspectionsAdmin /></Office></RequireAuth>} />
-        <Route path="/ops/handoff"            element={<RequireAuth><Office><HandoffGenerator /></Office></RequireAuth>} />
 
         {/* AP & Finance */}
         <Route path="/ap"        element={<RequireAuth><Office><APDashboard /></Office></RequireAuth>} />

@@ -8,7 +8,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
-import { downloadHandoffPack } from '../lib/api';
 
 const API = import.meta.env.VITE_API_URL ?? '';
 
@@ -309,8 +308,6 @@ export default function FieldProject() {
     setPreviews(urls);
     return () => urls.forEach(u => URL.revokeObjectURL(u));
   }, [photos]);
-  const [handoffLoading, setHandoffLoading] = useState(false);
-  const [handoffMsg,     setHandoffMsg]     = useState('');
   // Smart prompt selections: promptId → selected option string
   const [promptSelections, setPromptSelections] = useState<Record<string, string>>({});
   // Per-prompt additional free-form notes
@@ -910,31 +907,6 @@ export default function FieldProject() {
                 </>
               )}
 
-              <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-                {data.opp_number && (
-                  <button
-                    disabled={handoffLoading}
-                    onClick={async () => {
-                      setHandoffLoading(true);
-                      setHandoffMsg('');
-                      try {
-                        await downloadHandoffPack(Math.round(Number(data.opp_number)));
-                        setHandoffMsg('');
-                      } catch (e: any) {
-                        setHandoffMsg(e.message || 'Download failed');
-                      } finally {
-                        setHandoffLoading(false);
-                      }
-                    }}
-                    style={{ padding: '13px 16px', background: '#1e3a5f', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: 14, cursor: handoffLoading ? 'wait' : 'pointer', whiteSpace: 'nowrap', opacity: handoffLoading ? 0.6 : 1 }}
-                  >
-                    {handoffLoading ? '⏳' : '📄'} Handoff
-                  </button>
-                )}
-              </div>
-              {handoffMsg && (
-                <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>{handoffMsg}</div>
-              )}
             </>
           )}
 
