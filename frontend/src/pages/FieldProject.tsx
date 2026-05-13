@@ -26,6 +26,15 @@ interface Ticket {
   EarnedRevenue:        number | null;
 }
 
+interface HistoryPhoto {
+  id:             number;
+  file_name:      string;
+  file_extension: string;
+  file_size:      number | null;
+  uploaded_at:    string;
+  url:            string;
+}
+
 interface HistoryEntry {
   id:              number;
   lead_name:       string;
@@ -35,6 +44,7 @@ interface HistoryEntry {
   remaining_hours: number | null;
   blockers:        string | null;
   submitted_at:    string | null;
+  photos:          HistoryPhoto[];
 }
 
 interface AdvisorLogEntry {
@@ -561,7 +571,12 @@ export default function FieldProject() {
         const j = await r.json().catch(() => ({}));
         throw new Error((j as any).detail || 'Submit failed');
       }
-      setSubmitMsg('✅ Update sent to the team.');
+      const j = await r.json().catch(() => ({}));
+      const photosSaved = (j as any).photos_saved ?? 0;
+      const photoMsg = photos.length > 0
+        ? (photosSaved > 0 ? ` · ${photosSaved} photo${photosSaved > 1 ? 's' : ''} saved` : ' · ⚠️ photos failed to upload')
+        : '';
+      setSubmitMsg(`✅ Update sent to the team.${photoMsg}`);
       setApproachNotes(''); setRemainingHours(''); setBlockers(''); setPhotos([]);
       setTab('history');
       load(true);   // refresh history quietly
@@ -1005,6 +1020,25 @@ export default function FieldProject() {
                   {h.blockers && (
                     <div style={{ padding: '8px 14px', background: '#fff7ed', borderTop: '1px solid #fed7aa', fontSize: 12, color: '#c2410c' }}>
                       ⚠️ {h.blockers}
+                    </div>
+                  )}
+                  {(h.photos || []).length > 0 && (
+                    <div style={{ padding: '10px 14px', borderTop: '1px solid #f1f5f9', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {(h.photos || []).map(photo => {
+                        const isVideo = ['mp4','mov','avi','webm'].includes((photo.file_extension || '').toLowerCase());
+                        const src = `${API}${photo.url}`;
+                        return isVideo ? (
+                          <a key={photo.id} href={src} target="_blank" rel="noopener noreferrer"
+                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 72, height: 72, background: '#0f172a', borderRadius: 8, textDecoration: 'none', fontSize: 24 }}>
+                            🎥
+                          </a>
+                        ) : (
+                          <a key={photo.id} href={src} target="_blank" rel="noopener noreferrer">
+                            <img src={src} alt={photo.file_name}
+                              style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, border: '1px solid #e2e8f0', display: 'block' }} />
+                          </a>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

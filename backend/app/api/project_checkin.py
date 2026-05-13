@@ -1442,6 +1442,30 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         [opp_id],
     )
 
+    # Fetch photos for all history checkins and attach them
+    photo_map: dict[int, list] = {}
+    try:
+        checkin_ids = [r["id"] for r in history_rows if r.get("id")]
+        if checkin_ids:
+            placeholders = ",".join("?" * len(checkin_ids))
+            photo_rows = await db._q(
+                f"SELECT id, checkin_id, file_name, file_extension, file_size, uploaded_at "
+                f"FROM checkin_photos WHERE checkin_id IN ({placeholders}) ORDER BY uploaded_at",
+                checkin_ids,
+            )
+            for p in photo_rows:
+                cid = p["checkin_id"]
+                photo_map.setdefault(cid, []).append({
+                    "id":            p["id"],
+                    "file_name":     p["file_name"],
+                    "file_extension": p["file_extension"],
+                    "file_size":     p["file_size"],
+                    "uploaded_at":   p["uploaded_at"],
+                    "url":           f"/checkin/photo/{p['id']}/file",
+                })
+    except Exception as pe:
+        logger.warning(f"Could not fetch checkin photos: {pe}")
+
     # Field Advisor Q&A log for this project (most recent first)
     try:
         advisor_rows = await db._q(
@@ -1486,7 +1510,7 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         "attachments":     attachments,
         "project_summary": project_summary,
         "smart_prompts":   smart_prompts,
-        "history": [dict(r) for r in history_rows],
+        "history": [{**dict(r), "photos": photo_map.get(r["id"], [])} for r in history_rows],
         "advisor_log": [dict(r) for r in advisor_rows],
         "activities": [{
             "ActivityID":           a.get("ActivityID"),
@@ -2046,6 +2070,30 @@ async def submit_project_response(
     db:              Database         = Depends(get_db),
 ):
     """Submit a check-in response from the permanent project page (no token)."""
+    try:
+        return await _do_submit_project_response(
+            opp_id=opp_id,
+            approach_notes=approach_notes,
+            remaining_hours=remaining_hours,
+            blockers=blockers,
+            photos=photos,
+            db=db,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"submit_project_response unhandled error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _do_submit_project_response(
+    opp_id:          int,
+    approach_notes:  str,
+    remaining_hours: Optional[float],
+    blockers:        Optional[str],
+    photos:          list[UploadFile],
+    db:              Database,
+):
     if not approach_notes or not approach_notes.strip():
         raise HTTPException(status_code=422, detail="approach_notes is required")
 
@@ -2115,6 +2163,7 @@ async def submit_project_response(
 
     # Upload photos/videos to R2
     _PHOTO_MAX_BYTES = 30 * 1024 * 1024
+    _saved_photo_ids: list[int] = []
     if _r2._r2_available():
         for upload in (photos or []):
             if not upload or not upload.filename:
@@ -2141,9 +2190,12 @@ async def submit_project_response(
                        VALUES (?,?,?,?,?,?)""",
                     [checkin_id, response_id, filename, ext, r2_key, len(file_bytes)],
                 )
+                _saved_photo_ids.append(photo_row_id)
                 logger.info(f"Checkin photo #{photo_row_id} saved: {filename} ({len(file_bytes)} bytes)")
             except Exception as photo_err:
                 logger.error(f"Failed to save photo {upload.filename}: {photo_err}", exc_info=True)
+    elif photos:
+        logger.warning("R2 not configured — skipping photo upload for project response")
 
     # Notify management
     today_str   = datetime.now().strftime("%B %d, %Y")
@@ -2167,7 +2219,11 @@ async def submit_project_response(
     except Exception as e:
         logger.warning(f"Management notification failed: {e}")
 
-    return {"ok": True, "message": "Thanks — your update has been sent to the team."}
+    return {
+        "ok": True,
+        "message": "Thanks — your update has been sent to the team.",
+        "photos_saved": len(_saved_photo_ids),
+    }
 
 
 @public_router.get("/project/{opp_id}/employees")
