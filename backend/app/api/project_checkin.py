@@ -1700,7 +1700,27 @@ async def debug_job_search(name: str = "", opp_number: int = None):
             "tickets":           ticket_debug,
         })
 
-    # 3. Also run _fetch_opp_actuals to see what the batch lookup returns
+    # 3. Simulate what my_project_lookup does — fetch page 0 of tickets with the
+    #    real date+order filter and check if the expected ticket IDs are present.
+    expected_ticket_ids = {t["WorkTicketID"] for r in results for t in r["tickets"]}
+    date_cutoff_sim = (datetime.now() - timedelta(days=548)).strftime("%Y-%m-%d")
+    try:
+        sim_res = await _aspire._get("WorkTickets", {
+            "$select":  "WorkTicketID,WorkTicketStatusName,OpportunityID,OpportunityNumber,ScheduledStartDate",
+            "$filter":  f"ScheduledStartDate ge {date_cutoff_sim}",
+            "$orderby": "WorkTicketID desc",
+            "$top":     "500",
+            "$skip":    "0",
+        })
+        sim_tickets = _aspire._extract_list(sim_res)
+        sim_ids     = {t.get("WorkTicketID") for t in sim_tickets}
+        found_in_page0  = expected_ticket_ids & sim_ids
+        missing_in_page0 = expected_ticket_ids - sim_ids
+    except Exception as e:
+        sim_ids = set(); found_in_page0 = set(); missing_in_page0 = set()
+        sim_res = {"error": str(e)}
+
+    # 3b. Also run _fetch_opp_actuals to see what the batch lookup returns
     found_ids = [o["OpportunityID"] for o in opps]
     try:
         actuals = await _fetch_opp_actuals(found_ids)
@@ -1721,6 +1741,12 @@ async def debug_job_search(name: str = "", opp_number: int = None):
     return {
         "query":                name or f"opp_number={opp_number}",
         "opportunities":        results,
+        "page0_simulation": {
+            "date_cutoff":       date_cutoff_sim,
+            "tickets_returned":  len(sim_ids),
+            "found_in_page0":    list(found_in_page0),
+            "missing_in_page0":  list(missing_in_page0),
+        },
         "actuals_lookup":       actuals_debug,
         "missing_from_actuals": missing_from_actuals,
     }
