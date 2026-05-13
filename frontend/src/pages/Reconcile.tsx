@@ -147,9 +147,21 @@ export default function Reconcile() {
     await loadPeriods();
     const stmts = data.statements || [];
     await loadLinks(stmts);
-    // Auto-load diffs for all statements
-    for (const stmt of stmts) {
-      loadDiff(stmt.id);
+    // Load all diffs in a single parallel request (much faster than N serial calls)
+    if (stmts.length > 0) {
+      loadAllDiffs(period);
+    }
+  }
+
+  async function loadAllDiffs(period: string) {
+    try {
+      const res = await fetch(`${API}/reconcile/periods/${period}/diffs`);
+      if (!res.ok) return;
+      const data = await res.json();
+      // data.diffs is Record<statementId, { source, data }>
+      setDiffs(data.diffs || {});
+    } catch {
+      // silently fail — individual refresh buttons still work
     }
   }
 
@@ -197,10 +209,13 @@ export default function Reconcile() {
     setLinks(prev => ({ ...prev, [statementName]: null }));
   }
 
-  async function loadDiff(statementId: number) {
+  async function loadDiff(statementId: number, force = false) {
     setRefreshing(statementId);
     try {
-      const res = await fetch(`${API}/reconcile/statements/${statementId}/diff`);
+      const url = force
+        ? `${API}/reconcile/statements/${statementId}/diff?force=true`
+        : `${API}/reconcile/statements/${statementId}/diff`;
+      const res = await fetch(url);
       const data = await res.json();
       setDiffs(prev => ({ ...prev, [statementId]: data }));
     } finally {
@@ -526,10 +541,10 @@ export default function Reconcile() {
                         </label>
                       )}
                       {periodStatus === 'open' && (
-                        <button onClick={() => loadDiff(stmt.id)} disabled={isLoading} style={{
+                        <button onClick={() => loadDiff(stmt.id, true)} disabled={isLoading} style={{
                           padding: '3px 10px', fontSize: 11, border: '1px solid #e2e8f0',
                           borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
-                        }}>↺</button>
+                        }} title="Force refresh from QBO">↺</button>
                       )}
                       {periodStatus === 'open' && (
                         <button onClick={async () => {

@@ -210,6 +210,9 @@ async def lifespan(app: FastAPI):
     _COLUMN_MIGRATIONS = [
         # vendor_statements.pdf_r2_key — added after initial reconciliation deploy
         ("vendor_statements", "pdf_r2_key", "ALTER TABLE vendor_statements ADD COLUMN pdf_r2_key TEXT"),
+        # vendor_statements diff cache — added for bulk-diff speed improvement
+        ("vendor_statements", "diff_cache",     "ALTER TABLE vendor_statements ADD COLUMN diff_cache TEXT"),
+        ("vendor_statements", "diff_cached_at", "ALTER TABLE vendor_statements ADD COLUMN diff_cached_at TEXT"),
     ]
     for tbl, col, sql in _COLUMN_MIGRATIONS:
         try:

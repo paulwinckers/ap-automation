@@ -12,6 +12,7 @@ Endpoints:
   DELETE /reconcile/statements/{id}          — delete a statement
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -259,11 +260,133 @@ async def get_statement(statement_id: int, db: Database = Depends(get_db)):
         await db.close()
 
 
-@router.get("/statements/{statement_id}/diff")
-async def get_statement_diff(statement_id: int, db: Database = Depends(get_db)):
+_DIFF_CACHE_TTL = 15 * 60  # seconds
+
+
+def _extraction_from_stmt(stmt: dict, lines: list) -> dict:
+    return {
+        "vendor_name": stmt["vendor_name"],
+        "statement_date": stmt["statement_date"],
+        "closing_balance": stmt["closing_balance"],
+        "currency": stmt["currency"],
+        "aging": {
+            "current": stmt["aging_current"],
+            "days_1_30": stmt["aging_1_30"],
+            "days_31_60": stmt["aging_31_60"],
+            "days_61_90": stmt["aging_61_90"],
+            "over_90": stmt["aging_over_90"],
+        },
+        "lines": [dict(l) for l in lines],
+    }
+
+
+async def _get_diff_for_statement(
+    stmt: dict,
+    from_date: str,
+    to_date: str,
+    db: Database,
+    svc: ReconciliationService,
+    force: bool = False,
+) -> dict:
+    """Compute or return cached diff for one statement. Thread-safe: all state in args."""
+    stmt_id = stmt["id"]
+
+    # 1. Closed period — return frozen snapshot
+    period_rows = await db._q(
+        "SELECT status FROM reconciliation_periods WHERE id = ?", [stmt["period_id"]]
+    )
+    if period_rows and period_rows[0].get("status") == "closed" and stmt.get("qbo_snapshot"):
+        return {"source": "snapshot", "data": json.loads(stmt["qbo_snapshot"])}
+
+    # 2. Check live cache (skip if force-refresh requested)
+    if not force:
+        cached_at_str = stmt.get("diff_cached_at")
+        diff_cache_str = stmt.get("diff_cache")
+        if cached_at_str and diff_cache_str:
+            try:
+                cached_at = datetime.fromisoformat(cached_at_str)
+                age = (datetime.utcnow() - cached_at).total_seconds()
+                if age < _DIFF_CACHE_TTL:
+                    logger.info(f"Diff cache hit for stmt {stmt_id} ({age:.0f}s old)")
+                    return {"source": "cached", "data": json.loads(diff_cache_str), "cached_age_s": int(age)}
+            except Exception:
+                pass
+
+    # 3. Live QBO diff
+    link = await db.get_vendor_qbo_link(stmt["vendor_name"])
+    qbo_vendor_id = link["qbo_vendor_id"] if link else None
+    lines = await db.get_statement_lines(stmt_id)
+    extraction = _extraction_from_stmt(stmt, lines)
+
+    diff_result = await svc.reconcile(extraction, from_date, to_date, qbo_vendor_id=qbo_vendor_id)
+
+    # 4. Save to cache (best-effort — non-fatal)
+    try:
+        await db._x(
+            "UPDATE vendor_statements SET diff_cache = ?, diff_cached_at = ? WHERE id = ?",
+            [json.dumps(diff_result), datetime.utcnow().isoformat(), stmt_id],
+        )
+    except Exception as ce:
+        logger.warning(f"Could not cache diff for stmt {stmt_id}: {ce}")
+
+    return {"source": "live", "data": diff_result, "qbo_link": link}
+
+
+@router.get("/periods/{period}/diffs")
+async def get_period_diffs(period: str, force: bool = False, db: Database = Depends(get_db)):
     """
-    Returns the reconciliation diff.
-    - Open period  → live QBO query
+    Bulk diff endpoint — returns diffs for ALL statements in a period in one call.
+    QBO queries run in parallel via asyncio.gather for speed.
+    Results are cached for 15 min; pass ?force=true to bypass cache.
+    """
+    await db.connect()
+    svc = ReconciliationService()
+    try:
+        label = _period_label(period)
+        period_row = await db.get_or_create_period(period, label)
+        statements = await db.get_statements_for_period(period_row["id"])
+
+        if not statements:
+            return {"diffs": {}}
+
+        # Closed period — return all snapshots directly, no QBO needed
+        if period_row.get("status") == "closed":
+            return {
+                "diffs": {
+                    str(stmt["id"]): {"source": "snapshot", "data": json.loads(stmt["qbo_snapshot"])}
+                    for stmt in statements
+                    if stmt.get("qbo_snapshot")
+                }
+            }
+
+        from_date, to_date = _period_date_range(period)
+
+        # Run all QBO calls in parallel — the slow part
+        tasks = [
+            _get_diff_for_statement(stmt, from_date, to_date, db, svc, force=force)
+            for stmt in statements
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        diffs = {}
+        for stmt, result in zip(statements, results):
+            if isinstance(result, Exception):
+                logger.error(f"Diff failed for stmt {stmt['id']} ({stmt['vendor_name']}): {result}")
+                diffs[str(stmt["id"])] = {"source": "error", "error": str(result)}
+            else:
+                diffs[str(stmt["id"])] = result
+
+        return {"diffs": diffs}
+    finally:
+        await db.close()
+        await svc.close()
+
+
+@router.get("/statements/{statement_id}/diff")
+async def get_statement_diff(statement_id: int, force: bool = False, db: Database = Depends(get_db)):
+    """
+    Returns the reconciliation diff for one statement.
+    - Open period  → live QBO query (cached 15 min); pass ?force=true to bypass
     - Closed period → returns frozen snapshot
     """
     await db.connect()
@@ -273,47 +396,18 @@ async def get_statement_diff(statement_id: int, db: Database = Depends(get_db)):
         if not stmt:
             raise HTTPException(status_code=404, detail="Statement not found")
 
-        # Check period status
         period_rows = await db._q(
             "SELECT * FROM reconciliation_periods WHERE id = ?", [stmt["period_id"]]
         )
         period_row = period_rows[0] if period_rows else None
 
-        # Closed period — return snapshot
-        if period_row and period_row.get("status") == "closed" and stmt.get("qbo_snapshot"):
-            return {"source": "snapshot", "data": json.loads(stmt["qbo_snapshot"])}
-
-        # Open period — live QBO diff
-        lines = await db.get_statement_lines(statement_id)
-        extraction = {
-            "vendor_name": stmt["vendor_name"],
-            "statement_date": stmt["statement_date"],
-            "closing_balance": stmt["closing_balance"],
-            "currency": stmt["currency"],
-            "aging": {
-                "current": stmt["aging_current"],
-                "days_1_30": stmt["aging_1_30"],
-                "days_31_60": stmt["aging_31_60"],
-                "days_61_90": stmt["aging_61_90"],
-                "over_90": stmt["aging_over_90"],
-            },
-            "lines": [dict(l) for l in lines],
-        }
-
         if period_row:
             from_date, to_date = _period_date_range(period_row["period"])
         else:
-            # Fallback: use statement date month
             stmt_date = stmt.get("statement_date") or date.today().isoformat()
-            period = stmt_date[:7]
-            from_date, to_date = _period_date_range(period)
+            from_date, to_date = _period_date_range(stmt_date[:7])
 
-        # Check for a saved vendor QBO link — bypasses fuzzy name matching
-        link = await db.get_vendor_qbo_link(stmt["vendor_name"])
-        qbo_vendor_id = link["qbo_vendor_id"] if link else None
-
-        diff_result = await svc.reconcile(extraction, from_date, to_date, qbo_vendor_id=qbo_vendor_id)
-        return {"source": "live", "data": diff_result, "qbo_link": link}
+        return await _get_diff_for_statement(stmt, from_date, to_date, db, svc, force=force)
 
     finally:
         await db.close()
