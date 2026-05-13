@@ -1681,7 +1681,7 @@ async def get_po_work_tickets(opportunity_id: int):
     try:
         res = await _aspire._get("WorkTickets", {
             "$filter": f"OpportunityID eq {opportunity_id}",
-            "$top": "50",
+            "$top": "200",
         })
         all_tickets = _aspire._extract_list(res)
     except Exception as e:
@@ -1692,7 +1692,7 @@ async def get_po_work_tickets(opportunity_id: int):
     try:
         svc_res = await _aspire._get("OpportunityServices", {
             "$filter": f"OpportunityID eq {opportunity_id}",
-            "$top": "50",
+            "$top": "200",
         })
         for svc in _aspire._extract_list(svc_res):
             sid = svc.get("OpportunityServiceID")
@@ -1706,30 +1706,34 @@ async def get_po_work_tickets(opportunity_id: int):
     except Exception as e:
         logger.warning(f"OpportunityServices lookup failed for PO tickets (non-fatal): {e}")
 
-    current_year = str(date.today().year)
+    current_year = date.today().year
+    prior_year   = str(current_year - 1)
+    current_year  = str(current_year)
 
-    # Filter: current-year start date + no Disposal tickets
-    # Fall back to unfiltered list only if nothing passes (e.g. a project
-    # spanning years where all tickets are in a prior year).
+    # Filter out Disposal tickets; include current and prior year
+    # (projects that started last year are still active).
+    # Fall back to unfiltered if nothing passes.
     def _keep(t: dict) -> bool:
-        start = (t.get("ScheduledStartDate") or "")[:4]
-        if start and start != current_year:
-            return False
         title_check = (service_map.get(t.get("OpportunityServiceID")) or "").lower()
         if "disposal" in title_check:
+            return False
+        start = (t.get("ScheduledStartDate") or "")[:4]
+        # Include if no date (don't discard unknown), or if current/prior year
+        if start and start not in (current_year, prior_year):
             return False
         return True
 
     filtered = [t for t in all_tickets if _keep(t)]
+    working   = filtered or all_tickets  # graceful fallback if year filter empties the list
 
-    # Prefer open/scheduled tickets within the filtered set;
-    # fall back to all filtered (then all unfiltered) if none pass.
+    # Sort: open/active first, then by scheduled date descending
     open_statuses = {"scheduled", "in progress", "new", "open", "active"}
-    working = filtered or all_tickets  # graceful fallback if year filter empties the list
-    active = [
-        t for t in working
-        if (t.get("WorkTicketStatusName") or "").lower() in open_statuses
-    ] or working
+    def _sort_key(t: dict):
+        is_open = (t.get("WorkTicketStatusName") or "").lower() in open_statuses
+        date_str = t.get("ScheduledStartDate") or ""
+        return (0 if is_open else 1, date_str)
+
+    active = sorted(working, key=_sort_key)
 
     tickets_out = []
     for t in active:

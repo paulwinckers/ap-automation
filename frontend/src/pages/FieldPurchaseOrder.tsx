@@ -98,6 +98,7 @@ export default function FieldPurchaseOrder() {
   const [workTickets, setWorkTickets]     = useState<POWorkTicket[]>(initialTicket ? [initialTicket] : []);
   const [selectedTicket, setSelectedTicket] = useState<POWorkTicket | null>(initialTicket);
   const [ticketsLoading, setTicketsLoading] = useState(false);
+  const [ticketSearch, setTicketSearch]   = useState('');
   const [inventoryOnly, setInventoryOnly] = useState(false);
 
   // Vendor selection
@@ -380,7 +381,15 @@ export default function FieldPurchaseOrder() {
   );
 
   // ── Step 2: Pick work ticket ───────────────────────────────────────────────
-  if (step === 2) return (
+  if (step === 2) {
+    const filteredTickets = ticketSearch.trim()
+      ? workTickets.filter(t =>
+          `${t.WorkTicketNumber} ${t.WorkTicketTitle || ''} ${t.WorkTicketStatusName || ''}`.toLowerCase()
+            .includes(ticketSearch.toLowerCase())
+        )
+      : workTickets;
+
+    return (
     <div style={wrap}>
       {header('Select Work Ticket')}
 
@@ -393,13 +402,34 @@ export default function FieldPurchaseOrder() {
 
       {ticketsLoading && <div style={{ color: '#64748b', fontSize: 14, padding: 16 }}>Loading tickets…</div>}
 
-      {!ticketsLoading && workTickets.length === 0 && (
-        <div style={{ ...card, color: '#94a3b8' }}>
-          No open work tickets found for this job.
+      {!ticketsLoading && workTickets.length > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          <input
+            style={inp}
+            placeholder="Search by ticket #, service name or status…"
+            value={ticketSearch}
+            onChange={e => setTicketSearch(e.target.value)}
+            autoFocus
+          />
+          {ticketSearch && (
+            <div style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>
+              {filteredTickets.length} of {workTickets.length} tickets
+            </div>
+          )}
         </div>
       )}
 
-      {!ticketsLoading && workTickets.map(t => (
+      {!ticketsLoading && workTickets.length === 0 && (
+        <div style={{ ...card, color: '#94a3b8' }}>
+          No work tickets found for this job.
+        </div>
+      )}
+
+      {!ticketsLoading && filteredTickets.length === 0 && ticketSearch && (
+        <div style={{ ...card, color: '#64748b', fontSize: 13 }}>No tickets match "{ticketSearch}".</div>
+      )}
+
+      {!ticketsLoading && filteredTickets.map(t => (
         <div key={t.WorkTicketID}
           style={{
             ...row,
@@ -429,11 +459,12 @@ export default function FieldPurchaseOrder() {
           ? `Continue with #${selectedTicket.WorkTicketNumber}${selectedTicket.WorkTicketTitle ? ' — ' + selectedTicket.WorkTicketTitle : ''}`
           : 'Skip — No ticket'}
       </button>
-      <button style={ghost} onClick={() => { setStep(1); setSelectedJob(null); setWorkTickets([]); }}>
+      <button style={ghost} onClick={() => { setStep(1); setSelectedJob(null); setWorkTickets([]); setTicketSearch(''); }}>
         ← Back
       </button>
     </div>
   );
+  }
 
   // ── Step 3: Vendor picker ──────────────────────────────────────────────────
   if (step === 3) return (
