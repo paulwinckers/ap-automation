@@ -681,14 +681,6 @@ def _render_mgmt_email(
 
     {blockers_html}
 
-    <div style="margin-top:20px;background:#f8fafc;border-radius:8px;padding:14px 18px;">
-      <div style="font-weight:700;font-size:11px;color:#94a3b8;margin-bottom:6px;
-                  text-transform:uppercase;letter-spacing:.04em;">Coaching Tip That Was Sent</div>
-      <p style="margin:0;font-size:13px;color:#64748b;line-height:1.5;">
-        {(ai_tip[:400] + '...') if len(ai_tip) > 400 else ai_tip}
-      </p>
-    </div>
-
   </div>
 
   <div style="background:#f8fafc;padding:12px 28px;border-top:1px solid #e2e8f0;text-align:center;">

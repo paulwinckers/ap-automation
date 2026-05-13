@@ -550,16 +550,18 @@ export default function FieldProject() {
     }
   }, [data?.smart_prompts?.length]);
 
-  const handleSubmit = async (e: React.FormEvent, combinedNotes?: string) => {
+  const handleSubmit = async (e: React.FormEvent, combinedNotes?: string, overrideRemainingHours?: string) => {
     e.preventDefault();
     const notes = combinedNotes ?? approachNotes.trim();
     if (!notes) return;
     setSubmitting(true);
     setSubmitMsg('');
+    // Use the passed-in override (avoids stale React state when called from form submit)
+    const effectiveRemainingHours = overrideRemainingHours ?? remainingHours;
     try {
       const fd = new FormData();
       fd.append('approach_notes', notes);
-      if (remainingHours) fd.append('remaining_hours', remainingHours);
+      if (effectiveRemainingHours) fd.append('remaining_hours', effectiveRemainingHours);
       if (blockers.trim()) fd.append('blockers', blockers.trim());
       photos.forEach(f => fd.append('photos', f));
 
@@ -1111,9 +1113,9 @@ export default function FieldProject() {
               ].filter(Boolean);
               const combined = parts.join('\n\n');
               if (!combined.trim()) return;
-              // Pass total remaining hours through remainingHours field
+              // Pass totalRemStr directly — don't rely on setState (async, stale read)
               if (filledHours.length > 0) setRemainingHours(totalRemStr);
-              handleSubmit(e, combined);
+              handleSubmit(e, combined, filledHours.length > 0 ? totalRemStr : undefined);
             }}>
               <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a', marginBottom: 12 }}>
                 Site Update
