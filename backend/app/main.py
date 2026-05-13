@@ -205,6 +205,23 @@ async def lifespan(app: FastAPI):
                 logger.info(f"DB startup: {tbl} created successfully")
             except Exception as e2:
                 logger.error(f"DB startup: FAILED to create {tbl}: {e2}")
+    # Column migrations — ALTER TABLE for columns added after initial schema deploy.
+    # D1 has no IF NOT EXISTS for ALTER TABLE, so we probe first.
+    _COLUMN_MIGRATIONS = [
+        # vendor_statements.pdf_r2_key — added after initial reconciliation deploy
+        ("vendor_statements", "pdf_r2_key", "ALTER TABLE vendor_statements ADD COLUMN pdf_r2_key TEXT"),
+    ]
+    for tbl, col, sql in _COLUMN_MIGRATIONS:
+        try:
+            await _db._q(f"SELECT {col} FROM {tbl} LIMIT 1")
+            logger.info(f"DB migration: {tbl}.{col} already exists")
+        except Exception:
+            try:
+                await _db._x(sql)
+                logger.info(f"DB migration: added {tbl}.{col}")
+            except Exception as me:
+                logger.warning(f"DB migration: could not add {tbl}.{col}: {me}")
+
     await seed_vendors_if_empty(_db)
     await _db.close()
     # Start email polling on startup
