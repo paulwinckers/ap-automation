@@ -900,13 +900,12 @@ async def checkin_status(month: Optional[str] = None, db: Database = Depends(get
 @public_router.get("/my-project")
 async def my_project_lookup(db: Database = Depends(get_db)):
     """
-    Return all active construction projects (past 18 months + future),
-    grouped by property.  Sorted: active first, then recently completed.
-    Results are cached for 10 minutes to avoid repeated Aspire calls.
+    Return construction projects: active = Opp status Won + any ticket In Production.
+    Completed = Won + all tickets Complete, within last 90 days.
+    Results are cached for 10 minutes.
     """
     global _my_projects_cache, _my_projects_cache_ts
     from app.api.construction_plan import _fetch_opp_actuals
-    from datetime import timedelta as _td
 
     try:
         # ── Cache check ──────────────────────────────────────────────────────────
@@ -916,73 +915,42 @@ async def my_project_lookup(db: Database = Depends(get_db)):
                 logger.info(f"my-project: cache hit (age={age:.0f}s)")
                 return _my_projects_cache
 
-        # Fetch recent work tickets (last 18 months + future) — date filter avoids
-        # scanning the full all-time archive.
-        date_cutoff = (datetime.now() - _td(days=548)).strftime("%Y-%m-%d")
-        SELECT = (
-            "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,"
-            "OpportunityID,OpportunityNumber,ScheduledStartDate,CompleteDate,"
-            "HoursEst,HoursAct,PercentComplete"
-        )
-        PAGE       = 500
-        MAX_PAGES  = 10
-        PARA_BATCH = 4
+        SELECT = "WorkTicketID,WorkTicketStatusName,OpportunityID,OpportunityNumber,ScheduledStartDate,CompleteDate,HoursEst,HoursAct"
 
-        async def _fetch_page(page_num: int) -> list[dict]:
-            skip = page_num * PAGE
-            try:
-                res = await _aspire._get("WorkTickets", {
-                    "$select":  SELECT,
-                    "$filter":  f"ScheduledStartDate ge {date_cutoff}",
-                    "$orderby": "WorkTicketID desc",
-                    "$top":     str(PAGE),
-                    "$skip":    str(skip),
-                })
-                return _aspire._extract_list(res)
-            except Exception as e:
-                logger.warning(f"my-project page {page_num + 1} failed: {e}")
-                return []
+        # ── Fetch active tickets (In Production) ─────────────────────────────────
+        try:
+            res_active = await _aspire._get("WorkTickets", {
+                "$select":  SELECT,
+                "$filter":  "WorkTicketStatusName eq 'In Production'",
+                "$top":     "1000",
+            })
+            active_tickets = _aspire._extract_list(res_active)
+            logger.info(f"my-project: {len(active_tickets)} In Production tickets")
+        except Exception as e:
+            logger.warning(f"my-project: active ticket fetch failed: {e}")
+            active_tickets = []
 
-        all_tickets: list[dict] = []
-        found_end = False
-        for batch_start in range(0, MAX_PAGES, PARA_BATCH):
-            if found_end:
-                break
-            page_nums = range(batch_start, min(batch_start + PARA_BATCH, MAX_PAGES))
-            batches   = await asyncio.gather(*[_fetch_page(p) for p in page_nums])
-            for batch in batches:
-                if not batch:
-                    found_end = True
-                    break
-                all_tickets.extend(batch)
-                logger.info(f"my-project: fetched {len(batch)} tickets (total: {len(all_tickets)})")
-                if len(batch) < PAGE:
-                    found_end = True
-                    break
+        # ── Fetch recently completed tickets (last 90 days) ──────────────────────
+        cutoff_90 = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        try:
+            res_done = await _aspire._get("WorkTickets", {
+                "$select":  SELECT,
+                "$filter":  f"WorkTicketStatusName eq 'Complete' and CompleteDate ge {cutoff_90}",
+                "$top":     "500",
+            })
+            done_tickets = _aspire._extract_list(res_done)
+            logger.info(f"my-project: {len(done_tickets)} recently completed tickets")
+        except Exception as e:
+            logger.warning(f"my-project: completed ticket fetch failed: {e}")
+            done_tickets = []
 
-        # Status filter — drop cancelled/void; keep completed only if recent (180 days)
-        EXCLUDED_STATUSES    = {"cancelled", "canceled", "void", "voided"}
-        COMPLETE_STATUSES    = {"complete", "completed"}
-        cutoff_date = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
-
-        def _keep(t: dict) -> bool:
-            status = (t.get("WorkTicketStatusName") or "").strip().lower()
-            if status in EXCLUDED_STATUSES:
-                return False
-            if status in COMPLETE_STATUSES:
-                done = (t.get("CompleteDate") or t.get("ScheduledStartDate") or "")[:10]
-                return done >= cutoff_date
-            return True
-
-        tickets = [t for t in all_tickets if _keep(t)]
-        logger.info(f"my-project: {len(tickets)} tickets after status filter")
-
-        if not tickets:
+        all_tickets = active_tickets + done_tickets
+        if not all_tickets:
             return {"projects": []}
 
-        # Group by OpportunityNumber — one entry per job regardless of change orders
+        # ── Group by OpportunityID (use OpportunityNumber as key when available) ──
         opp_map: dict = {}
-        for t in tickets:
+        for t in all_tickets:
             oid     = t.get("OpportunityID")
             opp_num = t.get("OpportunityNumber")
             if not oid:
@@ -990,11 +958,11 @@ async def my_project_lookup(db: Database = Depends(get_db)):
             key = opp_num if opp_num is not None else float(oid)
             if key not in opp_map:
                 opp_map[key] = {
-                    "primary_oid":   oid,
-                    "hrs_est":       0.0,
-                    "hrs_act":       0.0,
-                    "ticket_count":  0,
-                    "latest_date":   "",
+                    "primary_oid":    oid,
+                    "hrs_est":        0.0,
+                    "hrs_act":        0.0,
+                    "ticket_count":   0,
+                    "latest_date":    "",
                     "active_tickets": 0,
                 }
             e = opp_map[key]
@@ -1006,32 +974,33 @@ async def my_project_lookup(db: Database = Depends(get_db)):
             d = (t.get("ScheduledStartDate") or "")[:10]
             if d > e["latest_date"]:
                 e["latest_date"] = d
-            if (t.get("WorkTicketStatusName") or "").strip().lower() not in COMPLETE_STATUSES:
+            if (t.get("WorkTicketStatusName") or "").strip().lower() == "in production":
                 e["active_tickets"] += 1
 
-        # Fetch opportunity details for all grouped jobs in parallel
+        # ── Fetch opportunity details ─────────────────────────────────────────────
         primary_ids = [e["primary_oid"] for e in opp_map.values()]
         actuals     = await _fetch_opp_actuals(primary_ids)
 
-        # Build project list — construction division only
+        # ── Build project list — construction + Won only ──────────────────────────
         projects = []
         for e in opp_map.values():
-            oid      = e["primary_oid"]
-            opp      = actuals.get(oid, {})
-            division = opp.get("DivisionName") or ""
-            if "construction" not in division.lower():
+            oid        = e["primary_oid"]
+            opp        = actuals.get(oid, {})
+            division   = (opp.get("DivisionName") or "").lower()
+            opp_status = (opp.get("OpportunityStatusName") or "").lower()
+
+            if "construction" not in division:
+                continue
+            if opp_status != "won":
                 continue
 
             all_done = e["active_tickets"] == 0
-            status   = "Complete" if all_done else (opp.get("OpportunityStatusName") or "Active")
-            opp_name = opp.get("OpportunityName") or f"Job #{oid}"
-
             projects.append({
                 "opp_id":       oid,
                 "opp_number":   opp.get("OpportunityNumber"),
-                "opp_name":     opp_name,
+                "opp_name":     opp.get("OpportunityName") or f"Job #{oid}",
                 "property":     opp.get("PropertyName") or "",
-                "status":       status,
+                "status":       "Complete" if all_done else "In Production",
                 "all_done":     all_done,
                 "hrs_est":      round(e["hrs_est"], 1),
                 "hrs_act":      round(e["hrs_act"], 1),
@@ -1041,7 +1010,7 @@ async def my_project_lookup(db: Database = Depends(get_db)):
 
         logger.info(f"my-project: returning {len(projects)} construction projects")
         projects.sort(key=lambda x: x["latest_date"], reverse=True)
-        projects.sort(key=lambda x: x["all_done"])   # active before completed
+        projects.sort(key=lambda x: x["all_done"])   # active first, completed last
 
         result = {"projects": projects}
         _my_projects_cache    = result
