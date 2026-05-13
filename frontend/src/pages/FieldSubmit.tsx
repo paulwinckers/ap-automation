@@ -319,13 +319,21 @@ export default function FieldSubmit() {
                 />
                 <div style={{fontSize:11,color:'#6b7280',marginTop:6}}>If you have a PO number it will be noted on the forwarded invoice.</div>
               </div>
-              <div style={{...S.jobres,background:'#eff6ff',borderColor:'#bfdbfe'}}>
-                <div style={{fontSize:13,color:'#1e40af',lineHeight:1.6}}>
-                  {po
-                    ? '✅ PO number will be matched in Aspire automatically.'
-                    : '📋 No PO? This invoice will be forwarded to your AP team.'}
+              {docType === 'expense' ? (
+                <div style={{...S.jobres,background:'#eff6ff',borderColor:'#bfdbfe'}}>
+                  <div style={{fontSize:13,color:'#1e40af',lineHeight:1.6}}>
+                    📋 Your receipt will be posted to QBO and <strong>your AP team will be notified</strong> to recode it to the right job.
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div style={{...S.jobres,background:'#eff6ff',borderColor:'#bfdbfe'}}>
+                  <div style={{fontSize:13,color:'#1e40af',lineHeight:1.6}}>
+                    {po
+                      ? '✅ PO number will be matched in Aspire automatically.'
+                      : '📋 No PO? This invoice will be forwarded to your AP team.'}
+                  </div>
+                </div>
+              )}
             </>}
 
             {needsDescription && (
@@ -371,9 +379,11 @@ export default function FieldSubmit() {
             <div style={S.ssub}>
               {costType==='overhead'
                 ? "Sent to AP — you'll get a confirmation email once it's posted."
-                : po
-                  ? "Submitted — matching your PO in Aspire now."
-                  : 'Forwarded to your AP team for entry into Aspire.'}
+                : docType==='expense'
+                  ? "Posted to QBO — your AP team has been notified to recode it to the right job."
+                  : po
+                    ? "Submitted — matching your PO in Aspire now."
+                    : 'Forwarded to your AP team for entry into Aspire.'}
             </div>
             {referenceId && <div style={S.ref}>{referenceId}</div>}
           </div>

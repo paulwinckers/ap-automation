@@ -53,6 +53,7 @@ async def route_invoice(
     aspire: AspireClient,
     qbo: QBOClient,
     employee_name: Optional[str] = None,
+    notify_ap: bool = False,
 ) -> RoutingOutcome:
     """
     Main entry point. Called after an invoice has been extracted.
@@ -73,7 +74,7 @@ async def route_invoice(
         logger.info(f"Using user-confirmed GL '{invoice.gl_account}' for invoice {invoice.id}")
         if invoice.doc_type == "mastercard":
             return await _route_to_qbo_purchase(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None)
-        return await _route_to_qbo(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None)
+        return await _route_to_qbo(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None, notify_ap=notify_ap)
 
     # ── Step 1: Vendor lookup ─────────────────────────────────────────────────
     vendor_rule = await db.get_vendor_rule_by_name(invoice.vendor_name)
@@ -129,7 +130,7 @@ async def route_invoice(
                 return RoutingOutcome.QUEUED
         if invoice.doc_type == "mastercard":
             return await _route_to_qbo_purchase(invoice, gl_account, db, qbo, employee_name, gl_name=gl_name)
-        return await _route_to_qbo(invoice, gl_account, db, qbo, employee_name, gl_name=gl_name)
+        return await _route_to_qbo(invoice, gl_account, db, qbo, employee_name, gl_name=gl_name, notify_ap=notify_ap)
 
     else:  # QUEUE
         # Use a meaningful reason depending on why we're queuing
@@ -443,6 +444,7 @@ async def _route_to_qbo(
     qbo: QBOClient,
     employee_name: Optional[str] = None,
     gl_name: Optional[str] = None,
+    notify_ap: bool = False,
 ) -> RoutingOutcome:
     """Post the bill to QBO against the resolved GL account."""
 
@@ -481,12 +483,74 @@ async def _route_to_qbo(
                     filename=invoice.pdf_filename,
                 )
 
+        # Notify AP when an employee tagged this as a job-cost expense
+        if notify_ap and employee_name:
+            ap_email = getattr(settings, "AP_FORWARD_EMAIL", None)
+            if ap_email:
+                await _notify_ap_employee_job_cost(invoice, employee_name, bill_id, gl_name or gl_account, qbo_amount, ap_email)
+
         return RoutingOutcome.POSTED_QBO
 
     except Exception as e:
         logger.error(f"QBO post failed for invoice {invoice.id}: {e}")
         await db.mark_error(invoice.id, str(e))
         return RoutingOutcome.ERROR
+
+
+async def _notify_ap_employee_job_cost(
+    invoice: Invoice,
+    employee_name: str,
+    bill_id: str,
+    gl_name: str,
+    qbo_amount: Optional[float],
+    ap_email: str,
+) -> None:
+    """
+    Notify the AP person when an employee submits a receipt tagged as Job Cost.
+    The expense has already been posted to QBO; AP needs to recode it to the right job.
+    """
+    try:
+        from app.services.email_intake import GraphClient
+        currency = invoice.currency or "CAD"
+        amount = f"${abs(qbo_amount or invoice.total_amount or 0):,.2f} {currency}"
+        vendor = invoice.vendor_name or "Unknown vendor"
+        po = invoice.po_number_override or invoice.po_number or ""
+        po_line = f"<p><strong>PO Number:</strong> {po}</p>" if po else ""
+
+        graph = GraphClient()
+        try:
+            await graph.send_email(
+                mailbox=settings.MS_AP_INBOX,
+                to_addresses=[ap_email],
+                subject=f"Job cost expense from {employee_name} — {vendor} {amount}",
+                body_html=f"""
+<html><body style="font-family:Arial,sans-serif;color:#1a1d23;max-width:600px">
+  <h2 style="color:#1e3a2f">Employee Job Cost Expense</h2>
+  <p>{employee_name} submitted a receipt tagged as <strong>Job Cost</strong>.
+  It has been posted to QBO and may need to be recoded to the correct job.</p>
+  <table style="border-collapse:collapse;width:100%;margin:16px 0">
+    <tr><td style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;font-weight:600;width:140px">Employee</td>
+        <td style="padding:8px;border:1px solid #e2e8f0">{employee_name}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;font-weight:600">Vendor / Merchant</td>
+        <td style="padding:8px;border:1px solid #e2e8f0">{vendor}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;font-weight:600">Amount</td>
+        <td style="padding:8px;border:1px solid #e2e8f0">{amount}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;font-weight:600">GL (current)</td>
+        <td style="padding:8px;border:1px solid #e2e8f0">{gl_name}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;font-weight:600">QBO Bill ID</td>
+        <td style="padding:8px;border:1px solid #e2e8f0">{bill_id}</td></tr>
+  </table>
+  {po_line}
+  <p style="color:#6b7280;font-size:13px">Receipt image attached. Please recode in QBO to the appropriate job if needed.</p>
+</body></html>""",
+                attachment_bytes=invoice.file_bytes,
+                attachment_filename=invoice.pdf_filename or f"expense_{invoice.id}.jpg",
+            )
+            logger.info(f"AP job-cost expense notification sent to {ap_email} for invoice {invoice.id} (employee: {employee_name})")
+        finally:
+            await graph.close()
+    except Exception as e:
+        logger.warning(f"AP job-cost notification failed for invoice {invoice.id}: {e}")
 
 
 async def _route_to_qbo_purchase(

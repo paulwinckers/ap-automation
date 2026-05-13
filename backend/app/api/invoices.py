@@ -273,7 +273,9 @@ async def upload_invoice(
         gl_account         = gl_account or None,
     )
 
-    outcome = await route_invoice(invoice, db, _aspire, _qbo, employee_name=employee_name)
+    # Notify AP when an employee expense is tagged job cost (they need to recode in QBO)
+    notify_ap = bool(is_expense and cost_type == "job")
+    outcome = await route_invoice(invoice, db, _aspire, _qbo, employee_name=employee_name, notify_ap=notify_ap)
 
     return {
         "invoice_id": invoice_id,
