@@ -1605,6 +1605,92 @@ async def activity_probe(opp_id: int):
         raise HTTPException(500, str(e))
 
 
+@public_router.get("/debug/job-search")
+async def debug_job_search(name: str):
+    """
+    Dev endpoint: search Aspire for opportunities matching a name, then fetch
+    their work tickets (no date filter) and show exactly why each ticket
+    passes or fails the my-project filters.
+    """
+    from app.api.construction_plan import _fetch_opp_actuals
+    import re as _re
+
+    # 1. Find matching opportunities by name
+    try:
+        opp_res = await _aspire._get("Opportunities", {
+            "$filter": f"contains(tolower(OpportunityName), tolower('{name}'))",
+            "$select": "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityNumber",
+            "$top":    "10",
+        })
+        opps = _aspire._extract_list(opp_res)
+    except Exception as e:
+        raise HTTPException(500, f"Opportunity search failed: {e}")
+
+    if not opps:
+        return {"message": f"No opportunities found matching '{name}'", "opportunities": []}
+
+    results = []
+    for opp in opps:
+        oid      = opp.get("OpportunityID")
+        division = opp.get("DivisionName") or ""
+        div_pass = "construction" in division.lower()
+
+        # 2. Fetch ALL tickets for this opp (no date filter)
+        try:
+            tk_res  = await _aspire._get("WorkTickets", {
+                "$filter":  f"OpportunityID eq {oid}",
+                "$select":  "WorkTicketID,WorkTicketStatusName,ScheduledStartDate,CompleteDate,HoursEst,HoursAct",
+                "$orderby": "WorkTicketID desc",
+                "$top":     "50",
+            })
+            tickets = _aspire._extract_list(tk_res)
+        except Exception as e:
+            tickets = []
+
+        EXCLUDED   = {"cancelled", "canceled", "void", "voided"}
+        COMPLETE   = {"complete", "completed"}
+        date_api   = (datetime.now() - timedelta(days=548)).strftime("%Y-%m-%d")   # 18-month API cutoff
+        date_comp  = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")   # completed retention
+
+        ticket_debug = []
+        for t in tickets:
+            status  = (t.get("WorkTicketStatusName") or "").strip().lower()
+            sched   = (t.get("ScheduledStartDate")   or "")[:10]
+            done    = (t.get("CompleteDate") or sched or "")[:10]
+
+            reasons = []
+            if not sched:
+                reasons.append("NO ScheduledStartDate → excluded by API date filter")
+            elif sched < date_api:
+                reasons.append(f"ScheduledStartDate {sched} < 18-month cutoff {date_api} → excluded by API filter")
+            if status in EXCLUDED:
+                reasons.append(f"Status '{status}' is in excluded set")
+            if status in COMPLETE and done < date_comp:
+                reasons.append(f"Complete but done={done} older than 180-day cutoff {date_comp}")
+
+            ticket_debug.append({
+                "WorkTicketID":           t.get("WorkTicketID"),
+                "status":                 status,
+                "ScheduledStartDate":     sched,
+                "CompleteDate":           (t.get("CompleteDate") or "")[:10],
+                "would_pass_all_filters": len(reasons) == 0 and div_pass,
+                "filter_failures":        reasons,
+            })
+
+        results.append({
+            "OpportunityID":     oid,
+            "OpportunityName":   opp.get("OpportunityName"),
+            "PropertyName":      opp.get("PropertyName"),
+            "DivisionName":      division,
+            "division_passes":   div_pass,
+            "OpportunityStatus": opp.get("OpportunityStatusName"),
+            "ticket_count":      len(tickets),
+            "tickets":           ticket_debug,
+        })
+
+    return {"query": name, "opportunities": results}
+
+
 @public_router.get("/project/{opp_id}/materials")
 async def get_project_materials(opp_id: int):
     """
