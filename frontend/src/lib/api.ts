@@ -200,6 +200,7 @@ export interface VendorRule {
   default_gl_name?: string;
   forward_to?: string;
   job_cost_forward_to?: string;
+  match_keyword?: string;
   vendor_id_aspire?: string;
   vendor_id_qbo?: string;
   notes?: string;

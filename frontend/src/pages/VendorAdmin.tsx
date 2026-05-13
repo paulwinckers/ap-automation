@@ -79,6 +79,7 @@ const EMPTY_FORM = {
   vendor_id_aspire: '',
   vendor_id_qbo: '',
   notes: '',
+  match_keyword: '',
   is_employee: false,
   aspire_post: false,
 };
@@ -236,6 +237,7 @@ function VendorAdminInner() {
       vendor_id_aspire:   v.vendor_id_aspire || '',
       vendor_id_qbo:      v.vendor_id_qbo || '',
       notes:              v.notes || '',
+      match_keyword:      v.match_keyword || '',
       is_employee:        v.is_employee ?? false,
       aspire_post:        v.aspire_post ?? false,
     });
@@ -257,6 +259,7 @@ function VendorAdminInner() {
         vendor_id_aspire:   form.vendor_id_aspire.trim() || undefined,
         vendor_id_qbo:      form.vendor_id_qbo.trim() || undefined,
         notes:              form.notes.trim() || undefined,
+        match_keyword:      form.match_keyword.trim() || undefined,
         is_employee:        form.is_employee,
         aspire_post:        form.aspire_post,
       };
@@ -642,6 +645,18 @@ function VendorAdminInner() {
                     placeholder="optional"
                   />
                 </div>
+              </div>
+
+              {/* Match keyword */}
+              <div style={S.field}>
+                <label style={S.label}>Match keyword</label>
+                <input
+                  style={S.input}
+                  value={form.match_keyword}
+                  onChange={e => setForm(f => ({ ...f, match_keyword: e.target.value }))}
+                  placeholder="e.g. ylands"
+                />
+                <div style={S.hint}>If the system misreads the vendor name, enter the common substring that appears in both spellings. Takes highest priority over all other matching.</div>
               </div>
 
               {/* Notes */}
