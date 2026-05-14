@@ -628,7 +628,7 @@ async def _notify_queued(invoice: Invoice, vendor_rule, reason: str, db: Optiona
         po_info = invoice.po_number_override or invoice.po_number or "none on file"
         amount  = f"${invoice.total_amount:,.2f}" if invoice.total_amount else "unknown"
         payment_type = {
-            "mastercard": "MasterCard (personal card)",
+            "mastercard": "MasterCard (company card)",
             "expense":    "Personal expense",
             "credit_memo": "Credit memo / return",
         }.get(invoice.doc_type or "", "On account (vendor invoice)")
