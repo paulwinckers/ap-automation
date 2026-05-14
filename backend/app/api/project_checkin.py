@@ -1291,7 +1291,8 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             tickets,
         )
 
-    # Project summary + scope notes + attachments — all in parallel
+    # Smart prompts + project summary + scope notes + attachments — all in parallel
+    smart_prompts:    list[dict] = []
     project_summary:  str        = ""
     scope_summary:    str        = ""
     opp_name_str = opp.get("OpportunityName") or f"Job #{opp_id}"
@@ -1342,8 +1343,9 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         return out
 
     if tickets:
-        project_summary, scope_summary, attachments = await asyncio.gather(
+        project_summary, smart_prompts, scope_summary, attachments = await asyncio.gather(
             _generate_project_summary(opp_name_str, prop_str, opp, tickets),
+            _generate_smart_prompts(opp_name_str, prop_str, tickets),
             _fetch_scope_notes(opp_id),
             _fetch_opp_attachments(),
         )
@@ -1499,6 +1501,7 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         "scope_summary":   scope_summary,
         "attachments":     attachments,
         "project_summary": project_summary,
+        "smart_prompts":   smart_prompts,
         "history": [{**dict(r), "photos": photo_map.get(r["id"], [])} for r in history_rows],
         "advisor_log": [dict(r) for r in advisor_rows],
         "activities": [{
