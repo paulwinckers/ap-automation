@@ -627,6 +627,11 @@ async def _notify_queued(invoice: Invoice, vendor_rule, reason: str, db: Optiona
 
         po_info = invoice.po_number_override or invoice.po_number or "none on file"
         amount  = f"${invoice.total_amount:,.2f}" if invoice.total_amount else "unknown"
+        payment_type = {
+            "mastercard": "MasterCard (personal card)",
+            "expense":    "Personal expense",
+            "credit_memo": "Credit memo / return",
+        }.get(invoice.doc_type or "", "On account (vendor invoice)")
         reason_label = {
             "aspire_not_configured": "Aspire not yet connected — manual entry required",
             "mixed_vendor_no_po":    "No PO number found on invoice",
@@ -652,6 +657,9 @@ async def _notify_queued(invoice: Invoice, vendor_rule, reason: str, db: Optiona
   <table style="width:100%;border-collapse:collapse;font-size:14px">
     <tr><td style="padding:8px 0;color:#6b7280;width:140px">Vendor</td>
         <td style="padding:8px 0;font-weight:600">{invoice.vendor_name or '—'}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Payment Type</td>
+        <td style="padding:8px 0;font-weight:600">{payment_type}</td></tr>
     <tr style="border-top:1px solid #f0f0f0">
         <td style="padding:8px 0;color:#6b7280">Amount</td>
         <td style="padding:8px 0;font-weight:600">{amount}</td></tr>
