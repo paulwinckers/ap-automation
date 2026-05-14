@@ -394,10 +394,11 @@ export default function FieldProject() {
   const [advisorPreview,     setAdvisorPreview]     = useState('');
   const [advisorAnswer,      setAdvisorAnswer]      = useState('');
   const [advisorLoading,     setAdvisorLoading]     = useState(false);
-  const [advisorPhotoR2Key,  setAdvisorPhotoR2Key]  = useState<string | null>(null);
-  const [advisorHasPhoto,    setAdvisorHasPhoto]    = useState(0);
-  const [advisorSaved,       setAdvisorSaved]       = useState(false);
-  const [advisorSaving,      setAdvisorSaving]      = useState(false);
+  const [advisorPhotoR2Key,   setAdvisorPhotoR2Key]   = useState<string | null>(null);
+  const [advisorHasPhoto,     setAdvisorHasPhoto]     = useState(0);
+  const [advisorSaved,        setAdvisorSaved]        = useState(false);
+  const [advisorSaving,       setAdvisorSaving]       = useState(false);
+  const [advisorPhotoDropped, setAdvisorPhotoDropped] = useState(false);
   // Snapshot of the question at the time of the ask (for saving later)
   const advisorQuestionRef = useRef('');
 
@@ -406,6 +407,7 @@ export default function FieldProject() {
     setAdvisorLoading(true);
     setAdvisorAnswer('');
     setAdvisorSaved(false);
+    setAdvisorPhotoDropped(false);
     setAdvisorPhotoR2Key(null);
     advisorQuestionRef.current = advisorQuestion.trim() || 'What do you observe in this photo and what should I know?';
     try {
@@ -427,6 +429,10 @@ export default function FieldProject() {
       setAdvisorAnswer((j as any).answer || '');
       setAdvisorPhotoR2Key((j as any).photo_r2_key ?? null);
       setAdvisorHasPhoto((j as any).has_photo ?? 0);
+      // Warn if a photo was attached but the server didn't receive it
+      if (advisorPhoto && (j as any).photo_received === false) {
+        setAdvisorPhotoDropped(true);
+      }
     } catch (e: any) {
       setAdvisorAnswer(`⚠️ ${e.message || 'Something went wrong'}`);
     } finally {
@@ -1319,6 +1325,11 @@ export default function FieldProject() {
                     style={{ width: '100%', padding: '10px', background: (!advisorLoading && (advisorQuestion.trim() || advisorPhoto)) ? '#4f46e5' : '#94a3b8', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: advisorLoading || (!advisorQuestion.trim() && !advisorPhoto) ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
                     {advisorLoading ? '🤔 Thinking…' : '✨ Ask Field Advisor'}
                   </button>
+                  {advisorPhotoDropped && (
+                    <div style={{ marginTop: 10, padding: '8px 12px', background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 8, fontSize: 12, color: '#92400e' }}>
+                      ⚠️ The photo was attached but the server didn't receive it — the answer below is text-only. Try again or use a smaller image.
+                    </div>
+                  )}
                   {advisorAnswer && (
                     <div style={{ marginTop: 12 }}>
                       <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 8, padding: '12px 14px', fontSize: 13, color: '#1e1b4b', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>

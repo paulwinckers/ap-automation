@@ -2425,8 +2425,17 @@ async def field_advisor(
         photo_ext: str = ""
         photo_mime: str = "image/jpeg"
 
+        logger.info(
+            f"Field advisor request — opp={opp_id} "
+            f"photo_field={'present' if photo else 'absent'} "
+            f"filename={getattr(photo, 'filename', None)!r} "
+            f"content_type={getattr(photo, 'content_type', None)!r}"
+        )
+
         if photo:
             raw = await photo.read()
+            size_kb = len(raw) // 1024 if raw else 0
+            logger.info(f"Field advisor: photo read — {size_kb} KB")
             # Claude vision limit: 20 MB base64-encoded; keep raw under 8 MB
             if raw and len(raw) <= 8 * 1024 * 1024:
                 photo_raw = raw
@@ -2449,14 +2458,20 @@ async def field_advisor(
                         "data":       _b64.b64encode(raw).decode("ascii"),
                     },
                 })
-                logger.info(f"Field advisor: photo included ({len(raw)//1024} KB, {photo_mime}, ext={photo_ext!r}, fname={fname!r})")
+                logger.info(f"Field advisor: image block added to Claude request ({size_kb} KB, {photo_mime})")
             elif raw:
-                logger.warning(f"Field advisor: photo too large ({len(raw)//1024} KB > 8 MB), skipping image")
+                logger.warning(f"Field advisor: photo too large ({size_kb} KB > 8192 KB), skipping")
+            else:
+                logger.warning("Field advisor: photo.read() returned empty bytes — file may not have been uploaded")
+        else:
+            logger.info("Field advisor: no photo field in request")
 
         content.append({
             "type": "text",
             "text": question.strip() or "What do you observe and what should I know?",
         })
+
+        logger.info(f"Field advisor: content blocks → {[b['type'] for b in content]}")
 
         # ── Call Claude ─────────────────────────────────────────────────────
         client   = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -2491,9 +2506,12 @@ async def field_advisor(
         # The frontend asks the crew lead "Save to project file?" and calls
         # /field-advisor/save only if they confirm.
         return {
-            "answer":       answer,
-            "photo_r2_key": photo_r2_key,
-            "has_photo":    1 if photo_raw else 0,
+            "answer":         answer,
+            "photo_r2_key":   photo_r2_key,
+            "has_photo":      1 if photo_raw else 0,
+            # Let the frontend know if the photo was actually sent to Claude
+            # (helps diagnose "photo not recognised" issues without checking logs)
+            "photo_received": photo_raw is not None,
         }
 
     except HTTPException:
