@@ -295,6 +295,34 @@ function HoursBar({ est, act }: { est: number | null; act: number | null }) {
   );
 }
 
+/** Resize + compress an image file before sending to the backend.
+ *  Keeps the longest edge ≤ maxPx and re-encodes as JPEG at the given quality.
+ *  Handles HEIC/HEIF from iOS: the browser decodes the pixel data via Image,
+ *  then Canvas re-encodes it as JPEG — so the output is always a valid JPEG. */
+async function compressPhoto(file: File, maxPx = 1600, quality = 0.85): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const scale = Math.min(1, maxPx / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth  * scale);
+      const h = Math.round(img.naturalHeight * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width  = w;
+      canvas.height = h;
+      canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        blob => (blob ? resolve(blob) : reject(new Error('Canvas toBlob returned null'))),
+        'image/jpeg',
+        quality,
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Image failed to load')); };
+    img.src = objectUrl;
+  });
+}
+
 export default function FieldProject() {
   const { oppId } = useParams<{ oppId: string }>();
 
@@ -383,7 +411,16 @@ export default function FieldProject() {
     try {
       const fd = new FormData();
       fd.append('question', advisorQuestionRef.current);
-      if (advisorPhoto) fd.append('photo', advisorPhoto);
+      if (advisorPhoto) {
+        // Compress to max 1600px / JPEG 85% — keeps large phone photos well under
+        // the 5 MB backend limit, and handles HEIC by re-encoding via Canvas.
+        try {
+          const compressed = await compressPhoto(advisorPhoto);
+          fd.append('photo', compressed, 'photo.jpg');
+        } catch {
+          fd.append('photo', advisorPhoto); // fallback: send original
+        }
+      }
       const r = await fetch(`${API}/checkin/project/${oppId}/field-advisor`, { method: 'POST', body: fd });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error((j as any).detail || 'AI request failed');

@@ -2427,8 +2427,8 @@ async def field_advisor(
 
         if photo:
             raw = await photo.read()
-            # Claude vision limit: 5 MB raw
-            if raw and len(raw) <= 5 * 1024 * 1024:
+            # Claude vision limit: 20 MB base64-encoded; keep raw under 8 MB
+            if raw and len(raw) <= 8 * 1024 * 1024:
                 photo_raw = raw
                 # Derive format from filename first, fall back to content_type
                 fname = (photo.filename or "").strip()
@@ -2451,7 +2451,7 @@ async def field_advisor(
                 })
                 logger.info(f"Field advisor: photo included ({len(raw)//1024} KB, {photo_mime}, ext={photo_ext!r}, fname={fname!r})")
             elif raw:
-                logger.warning(f"Field advisor: photo too large ({len(raw)//1024} KB), skipping image")
+                logger.warning(f"Field advisor: photo too large ({len(raw)//1024} KB > 8 MB), skipping image")
 
         content.append({
             "type": "text",
