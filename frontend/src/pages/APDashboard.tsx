@@ -671,8 +671,20 @@ export default function APDashboard() {
                           </>
                         )}
                       </>
-                    ) : e.destination === 'qbo' && e.status === 'posted' ? (
-                      <span style={{ color: '#94a3b8', fontSize: 11 }}>—</span>
+                    ) : (e.forwarded_to && e.invoice_number) || (e.destination === 'qbo' && e.status === 'posted') ? (
+                      <button
+                        onClick={() => syncQboAmount(e.id)}
+                        disabled={syncingQbo === e.id}
+                        title="Fetch actual amount from QBO"
+                        style={{
+                          padding: '1px 6px', fontSize: 10,
+                          cursor: syncingQbo === e.id ? 'wait' : 'pointer',
+                          border: '1px solid #cbd5e1', borderRadius: 4,
+                          background: '#f8fafc', color: '#64748b', fontWeight: 600,
+                        }}
+                      >
+                        {syncingQbo === e.id ? '…' : '↻ QBO'}
+                      </button>
                     ) : ''}
                   </td>
                   <td style={{ ...styles.td, textAlign: 'right', color: e.tax_amount ? '#1e293b' : '#94a3b8' }}>

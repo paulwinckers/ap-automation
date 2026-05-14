@@ -905,16 +905,16 @@ async def unarchive_invoice(invoice_id: int, db: Database = Depends(get_db)):
 @router.post("/backfill-qbo-amounts")
 async def backfill_qbo_amounts(db: Database = Depends(get_db)):
     """
-    One-time backfill: fetch TotalAmt from QBO for every posted invoice
-    that has a qbo_bill_id but no qbo_amount stored.
+    Fetch TotalAmt from QBO for every invoice missing qbo_amount:
+    - Posted invoices: look up by qbo_bill_id
+    - Forwarded invoices: search QBO by invoice_number (DocNumber)
     Safe to call multiple times — skips rows already populated.
     """
     rows = await db._q(
-        """SELECT id, qbo_bill_id, doc_type FROM invoices
-           WHERE destination = 'qbo'
-             AND status = 'posted'
-             AND qbo_bill_id IS NOT NULL
-             AND (qbo_amount IS NULL)"""
+        """SELECT id, qbo_bill_id, doc_type, forwarded_to, invoice_number FROM invoices
+           WHERE (destination = 'qbo' OR forwarded_to IS NOT NULL)
+             AND qbo_amount IS NULL
+             AND (qbo_bill_id IS NOT NULL OR invoice_number IS NOT NULL)"""
     )
     if not rows:
         return {"updated": 0, "message": "Nothing to backfill"}
@@ -922,33 +922,60 @@ async def backfill_qbo_amounts(db: Database = Depends(get_db)):
     updated = 0
     failed = 0
     for row in rows:
-        amount = await _qbo.get_transaction_amount(row["qbo_bill_id"], row["doc_type"])
-        if amount is not None:
-            await db._x(
-                "UPDATE invoices SET qbo_amount = ? WHERE id = ?",
-                [amount, row["id"]],
-            )
-            updated += 1
-        else:
-            logger.warning(f"Could not fetch QBO amount for invoice {row['id']} bill {row['qbo_bill_id']}")
-            failed += 1
+        if row.get("qbo_bill_id"):
+            # Posted directly — look up by bill ID
+            amount = await _qbo.get_transaction_amount(row["qbo_bill_id"], row["doc_type"])
+            if amount is not None:
+                await db._x("UPDATE invoices SET qbo_amount = ? WHERE id = ?", [amount, row["id"]])
+                updated += 1
+            else:
+                logger.warning(f"Could not fetch QBO amount for invoice {row['id']} bill {row['qbo_bill_id']}")
+                failed += 1
+        elif row.get("invoice_number") and row.get("forwarded_to"):
+            # Forwarded — search QBO by DocNumber
+            bill_id, amount = await _qbo.find_bill_by_doc_number(row["invoice_number"])
+            if amount is not None:
+                await db._x(
+                    "UPDATE invoices SET qbo_amount = ?, qbo_bill_id = ? WHERE id = ?",
+                    [amount, bill_id, row["id"]],
+                )
+                updated += 1
+            else:
+                failed += 1
 
     return {"updated": updated, "failed": failed, "total": len(rows)}
 
 
 @router.post("/{invoice_id}/sync-qbo-amount")
 async def sync_qbo_amount(invoice_id: int, db: Database = Depends(get_db)):
-    """Re-fetch TotalAmt from QBO for a single invoice and update qbo_amount."""
+    """
+    Re-fetch TotalAmt from QBO for a single invoice.
+    - Posted invoices: look up by qbo_bill_id
+    - Forwarded invoices with no bill ID: search by invoice_number (DocNumber)
+    """
     row = await db.get_invoice(invoice_id)
     if not row:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    if not row.get("qbo_bill_id"):
-        raise HTTPException(status_code=400, detail="Invoice has no QBO bill ID")
-    amount = await _qbo.get_transaction_amount(row["qbo_bill_id"], row.get("doc_type"))
-    if amount is None:
-        raise HTTPException(status_code=502, detail="Could not fetch amount from QBO")
-    await db._x("UPDATE invoices SET qbo_amount = ? WHERE id = ?", [amount, invoice_id])
-    return {"invoice_id": invoice_id, "qbo_amount": amount}
+
+    if row.get("qbo_bill_id"):
+        amount = await _qbo.get_transaction_amount(row["qbo_bill_id"], row.get("doc_type"))
+        if amount is None:
+            raise HTTPException(status_code=502, detail="Could not fetch amount from QBO")
+        await db._x("UPDATE invoices SET qbo_amount = ? WHERE id = ?", [amount, invoice_id])
+        return {"invoice_id": invoice_id, "qbo_amount": amount}
+
+    # Forwarded invoice — search QBO by invoice number
+    if row.get("invoice_number") and row.get("forwarded_to"):
+        bill_id, amount = await _qbo.find_bill_by_doc_number(row["invoice_number"])
+        if amount is None:
+            raise HTTPException(status_code=404, detail=f"No QBO bill found for invoice number '{row['invoice_number']}'")
+        await db._x(
+            "UPDATE invoices SET qbo_amount = ?, qbo_bill_id = ? WHERE id = ?",
+            [amount, bill_id, invoice_id],
+        )
+        return {"invoice_id": invoice_id, "qbo_amount": amount, "qbo_bill_id": bill_id}
+
+    raise HTTPException(status_code=400, detail="Invoice has no QBO bill ID and no invoice number to search by")
 
 
 @router.delete("/{invoice_id}")

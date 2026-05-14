@@ -1022,6 +1022,26 @@ class QBOClient:
                 continue
         return None
 
+    async def find_bill_by_doc_number(self, doc_number: str) -> tuple[Optional[str], Optional[float]]:
+        """
+        Search QBO for a Bill with the given DocNumber (invoice number).
+        Returns (bill_id, total_amount) or (None, None) if not found.
+        Used to sync QBO amounts for forwarded invoices that were manually entered.
+        """
+        escaped = doc_number.replace("'", "\\'").replace("&", "&amp;")
+        try:
+            result = await self._get(
+                "query",
+                {"query": f"SELECT * FROM Bill WHERE DocNumber = '{escaped}' MAXRESULTS 1"},
+            )
+            bills = result.get("QueryResponse", {}).get("Bill", [])
+            if bills:
+                bill = bills[0]
+                return bill.get("Id"), bill.get("TotalAmt")
+        except Exception as e:
+            logger.warning(f"QBO DocNumber search failed for '{doc_number}': {e}")
+        return None, None
+
     async def get_attachment_url(self, entity_id: str, doc_type: Optional[str]) -> Optional[str]:
         """
         Return the TempDownloadUri for the first attachment on a QBO transaction.
