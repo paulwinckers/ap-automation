@@ -507,8 +507,12 @@ export default function Reconcile() {
                     cursor: 'pointer', flexWrap: 'nowrap',
                   }} onClick={() => setExpandedDiff(isExpanded ? null : stmt.id)}>
 
-                    {/* Vendor name */}
-                    <div style={{ fontWeight: 600, fontSize: 14, color: '#1e293b', minWidth: 180, flex: '0 0 auto' }}>
+                    {/* Vendor name — truncate with ellipsis so long names don't push buttons off screen */}
+                    <div title={stmt.vendor_name} style={{
+                      fontWeight: 600, fontSize: 14, color: '#1e293b',
+                      minWidth: 140, maxWidth: 200, flex: '0 0 auto',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
                       {stmt.vendor_name}
                     </div>
 
@@ -535,13 +539,15 @@ export default function Reconcile() {
                     </div>
 
                     {/* Match badge */}
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: '1 1 0', minWidth: 0 }}>
                       {summary && !isLoading && (
                         <span style={{
+                          display: 'inline-block',
                           background: summary.mismatch_count > 0 || summary.missing_from_qbo > 0 ? '#fef2f2' :
                             summary.extra_in_qbo > 0 ? '#fffbeb' : '#f0fdf4',
                           color: diffSummaryColor(diffData!.data),
-                          padding: '2px 10px', borderRadius: 20, fontWeight: 700, fontSize: 11,
+                          padding: '2px 8px', borderRadius: 20, fontWeight: 700, fontSize: 11,
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%',
                         }}>
                           {summary.mismatch_count === 0 && summary.missing_from_qbo === 0 && summary.extra_in_qbo === 0
                             ? `✓ ${summary.matched_count} matched`
@@ -550,15 +556,18 @@ export default function Reconcile() {
                       )}
                     </div>
 
-                    {/* QBO link */}
-                    <div style={{ fontSize: 11, flex: '0 0 auto' }} onClick={e => e.stopPropagation()}>
+                    {/* QBO link — cap width so long vendor names don't overflow */}
+                    <div style={{ fontSize: 11, flex: '0 0 auto', maxWidth: 180 }} onClick={e => e.stopPropagation()}>
                       {links[stmt.vendor_name] ? (
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 4,
+                        <span title={links[stmt.vendor_name]!.qbo_vendor_name} style={{
+                          display: 'flex', alignItems: 'center', gap: 4,
                           background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8,
-                          padding: '2px 8px', color: '#15803d', whiteSpace: 'nowrap' }}>
-                          🔗 {links[stmt.vendor_name]!.qbo_vendor_name}
+                          padding: '2px 8px', color: '#15803d', whiteSpace: 'nowrap',
+                          overflow: 'hidden', maxWidth: 180,
+                        }}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>🔗 {links[stmt.vendor_name]!.qbo_vendor_name}</span>
                           <button onClick={() => removeLink(stmt.vendor_name)} title="Remove link"
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 0, fontSize: 11 }}>✕</button>
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 0, fontSize: 11, flexShrink: 0 }}>✕</button>
                         </span>
                       ) : (
                         <button onClick={() => { setLinkingFor(stmt.vendor_name); setVendorSearch(''); setVendorResults([]); }}
@@ -583,15 +592,16 @@ export default function Reconcile() {
                           borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
                         }} title="View PDF">📄</button>
                       )}
-                      {/* Attach / replace PDF */}
+                      {/* Attach / replace PDF — amber + text when missing, green + text when attached */}
                       {periodStatus === 'open' && (
                         <label style={{
-                          padding: '3px 10px', fontSize: 11, border: `1px solid ${stmt.pdf_r2_key ? '#e2e8f0' : '#fbbf24'}`,
-                          borderRadius: 6, background: stmt.pdf_r2_key ? '#f8fafc' : '#fffbeb',
-                          cursor: attachingPdf === stmt.id ? 'wait' : 'pointer', color: stmt.pdf_r2_key ? '#64748b' : '#d97706',
-                          whiteSpace: 'nowrap',
+                          padding: '3px 10px', fontSize: 11, whiteSpace: 'nowrap', cursor: attachingPdf === stmt.id ? 'wait' : 'pointer',
+                          borderRadius: 6, fontWeight: 600,
+                          border: stmt.pdf_r2_key ? '1px solid #86efac' : '1.5px solid #f59e0b',
+                          background: stmt.pdf_r2_key ? '#f0fdf4' : '#fffbeb',
+                          color: stmt.pdf_r2_key ? '#15803d' : '#b45309',
                         }} title={stmt.pdf_r2_key ? 'Replace PDF' : 'Attach PDF'}>
-                          {attachingPdf === stmt.id ? '…' : stmt.pdf_r2_key ? '📎' : '📎 Attach PDF'}
+                          {attachingPdf === stmt.id ? '⏳ …' : stmt.pdf_r2_key ? '📎 PDF ✓' : '📎 Attach PDF'}
                           <input
                             type="file" accept=".pdf,.png,.jpg,.jpeg"
                             style={{ display: 'none' }}
@@ -607,8 +617,8 @@ export default function Reconcile() {
                       )}
                       {periodStatus === 'open' && (
                         <button onClick={() => loadDiff(stmt.id, true)} disabled={isLoading} style={{
-                          padding: '3px 10px', fontSize: 11, border: '1px solid #e2e8f0',
-                          borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
+                          padding: '3px 9px', fontSize: 13, border: '1px solid #cbd5e1',
+                          borderRadius: 6, background: '#f1f5f9', cursor: 'pointer', color: '#475569', fontWeight: 700,
                         }} title="Force refresh from QBO">↺</button>
                       )}
                       {periodStatus === 'open' && (
@@ -622,8 +632,8 @@ export default function Reconcile() {
                           });
                           await loadStatements(activePeriod);
                         }} style={{
-                          padding: '3px 10px', fontSize: 11, border: '1px solid #e2e8f0',
-                          borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
+                          padding: '3px 9px', fontSize: 11, border: '1px solid #cbd5e1',
+                          borderRadius: 6, background: '#f1f5f9', cursor: 'pointer', color: '#475569', fontWeight: 600,
                         }} title="Move to previous month">← Prev</button>
                       )}
                       {periodStatus === 'open' && (
