@@ -2413,7 +2413,10 @@ async def field_advisor(
             "Give practical, field-ready advice a crew lead can act on today. "
             "Use short bullet points or numbered steps where helpful. "
             "If a photo is provided, describe what you observe before giving advice. "
-            "Keep responses focused and under 300 words unless the problem requires more detail."
+            "Keep responses focused and under 300 words unless the problem requires more detail.\n\n"
+            "IMPORTANT: Never ask clarifying questions. Always give your best practical answer "
+            "based on the information provided. If details are vague, state your assumptions "
+            "briefly and proceed with actionable advice."
         )
 
         # ── Build message content ───────────────────────────────────────────
