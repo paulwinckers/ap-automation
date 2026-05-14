@@ -116,6 +116,8 @@ export default function Reconcile() {
   const [attachingPdf, setAttachingPdf] = useState<number | null>(null);
   const [loadingDiffs, setLoadingDiffs] = useState(false);
   const [loadingStatements, setLoadingStatements] = useState(false);
+  const [diffsError, setDiffsError] = useState<string | null>(null);
+  const loadPeriodRef = useRef<string>('');
   const fileRef    = useRef<HTMLInputElement>(null);
   const pdfRefs    = useRef<Record<number, HTMLInputElement | null>>({});
 
@@ -133,40 +135,53 @@ export default function Reconcile() {
   }
 
   async function loadStatements(period: string) {
+    // Track which period this load is for so stale responses can be discarded
+    loadPeriodRef.current = period;
     setLoadingStatements(true);
-    // Ensure period exists
-    await fetch(`${API}/reconcile/periods/${period}`, { method: 'POST' });
-    const res = await fetch(`${API}/reconcile/periods/${period}/statements`);
-    const data = await res.json();
-    // Guard against stale responses — if the user switched periods while this
-    // request was in-flight, discard the result to prevent overwriting newer data
-    setActivePeriod(current => {
-      if (current !== period) return current;
+    setDiffsError(null);
+    try {
+      // Ensure period exists
+      await fetch(`${API}/reconcile/periods/${period}`, { method: 'POST' });
+      const res = await fetch(`${API}/reconcile/periods/${period}/statements`);
+      const data = await res.json();
+      // Guard against stale responses — if the user switched periods while this
+      // request was in-flight, discard the result to prevent overwriting newer data
+      if (loadPeriodRef.current !== period) return;
       setStatements(data.statements || []);
       setPeriodStatus(data.period?.status || 'open');
       setDiffs({});
-      return current;
-    });
-    setLoadingStatements(false);
-    await loadPeriods();
-    const stmts = data.statements || [];
-    await loadLinks(stmts);
-    // Load all diffs in a single parallel request (much faster than N serial calls)
-    if (stmts.length > 0) {
-      loadAllDiffs(period);
+      setLoadingStatements(false);
+      await loadPeriods();
+      const stmts = data.statements || [];
+      await loadLinks(stmts);
+      // Load all diffs in a single parallel request (much faster than N serial calls)
+      if (stmts.length > 0) {
+        loadAllDiffs(period);
+      }
+    } catch (err) {
+      if (loadPeriodRef.current !== period) return;
+      setLoadingStatements(false);
+      setDiffsError(`Failed to load statements: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   async function loadAllDiffs(period: string) {
     setLoadingDiffs(true);
+    setDiffsError(null);
     try {
       const res = await fetch(`${API}/reconcile/periods/${period}/diffs`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        const errText = await res.text().catch(() => res.statusText);
+        let detail = errText;
+        try { detail = JSON.parse(errText)?.detail ?? errText; } catch { /* non-JSON */ }
+        setDiffsError(`QBO data failed (${res.status}): ${String(detail).slice(0, 300)}`);
+        return;
+      }
       const data = await res.json();
       // data.diffs is Record<statementId, { source, data }>
       setDiffs(data.diffs || {});
-    } catch {
-      // silently fail — individual refresh buttons still work
+    } catch (err) {
+      setDiffsError(`QBO connection error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoadingDiffs(false);
     }
@@ -425,6 +440,26 @@ export default function Reconcile() {
             Pulling QBO data for {statements.length} vendor{statements.length !== 1 ? 's' : ''}…
           </div>
         )}
+
+        {/* Error banner — shown when diffs or statements fail to load */}
+        {diffsError && !loadingDiffs && (
+          <div style={{
+            display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 16,
+            padding: '12px 16px', background: '#fef2f2', borderRadius: 8,
+            border: '1px solid #fecaca', color: '#dc2626', fontSize: 13,
+          }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>⚠</span>
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: 2 }}>Could not load QBO data</div>
+              <div style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>{diffsError}</div>
+              <button onClick={() => { setDiffsError(null); loadAllDiffs(activePeriod); }} style={{
+                marginTop: 8, padding: '4px 12px', fontSize: 12, fontWeight: 600,
+                border: '1px solid #fca5a5', borderRadius: 6, background: '#fff',
+                cursor: 'pointer', color: '#dc2626',
+              }}>↺ Retry</button>
+            </div>
+          </div>
+        )}
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
         {/* Column headers */}
@@ -489,7 +524,9 @@ export default function Reconcile() {
 
                     {/* QBO balance */}
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b', minWidth: 100, flex: '0 0 auto' }}>
-                      {isLoading ? <span style={{ color: '#94a3b8' }}>…</span> : qboBalance !== null ? fmt(qboBalance, stmt.currency) : '—'}
+                      {isLoading ? <span style={{ color: '#94a3b8' }}>…</span>
+                        : diffData?.source === 'error' ? <span style={{ color: '#dc2626', fontSize: 11 }} title={(diffData as any).error}>⚠ QBO err</span>
+                        : qboBalance !== null ? fmt(qboBalance, stmt.currency) : '—'}
                     </div>
 
                     {/* Difference */}
