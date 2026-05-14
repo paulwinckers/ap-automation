@@ -260,7 +260,7 @@ async def get_statement(statement_id: int, db: Database = Depends(get_db)):
         await db.close()
 
 
-_DIFF_CACHE_TTL = 15 * 60  # seconds
+_DIFF_CACHE_TTL = 4 * 60 * 60  # 4 hours — QBO bill data doesn't change minute-to-minute
 
 
 def _extraction_from_stmt(stmt: dict, lines: list) -> dict:

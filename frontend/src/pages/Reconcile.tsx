@@ -96,6 +96,32 @@ function fmt(n: number | null | undefined, currency = 'CAD'): string {
   return `$${Math.abs(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
 }
 
+// ── Local diff cache (localStorage) ───────────────────────────────────────────
+// Stores the last-fetched diffs per period so the page shows data instantly
+// on revisit while fresh data loads in the background.
+// Closed periods are cached forever (snapshots never change).
+// Open periods are cached for 4 hours (matching backend D1 cache TTL).
+
+const OPEN_CACHE_TTL_MS  = 4 * 60 * 60 * 1000; // 4 hours
+const _lsKey = (period: string) => `reconcile:diffs:v1:${period}`;
+
+function readLocalDiffs(period: string, isClosed: boolean): Record<string, unknown> | null {
+  try {
+    const raw = localStorage.getItem(_lsKey(period));
+    if (!raw) return null;
+    const { diffs, ts, closed } = JSON.parse(raw) as { diffs: Record<string, unknown>; ts: number; closed?: boolean };
+    if (closed || isClosed) return diffs; // frozen periods never expire
+    if (Date.now() - ts > OPEN_CACHE_TTL_MS) return null; // stale
+    return diffs;
+  } catch { return null; }
+}
+
+function writeLocalDiffs(period: string, diffs: Record<string, unknown>, isClosed: boolean) {
+  try {
+    localStorage.setItem(_lsKey(period), JSON.stringify({ diffs, ts: Date.now(), closed: isClosed }));
+  } catch { /* storage full — silently skip */ }
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function Reconcile() {
@@ -147,8 +173,10 @@ export default function Reconcile() {
       // Guard against stale responses — if the user switched periods while this
       // request was in-flight, discard the result to prevent overwriting newer data
       if (loadPeriodRef.current !== period) return;
+      const status = data.period?.status || 'open';
+      const isClosed = status === 'closed';
       setStatements(data.statements || []);
-      setPeriodStatus(data.period?.status || 'open');
+      setPeriodStatus(status);
       setDiffs({});
       setLoadingStatements(false);
       await loadPeriods();
@@ -156,7 +184,7 @@ export default function Reconcile() {
       await loadLinks(stmts);
       // Load all diffs in a single parallel request (much faster than N serial calls)
       if (stmts.length > 0) {
-        loadAllDiffs(period);
+        loadAllDiffs(period, isClosed);
       }
     } catch (err) {
       if (loadPeriodRef.current !== period) return;
@@ -165,7 +193,15 @@ export default function Reconcile() {
     }
   }
 
-  async function loadAllDiffs(period: string) {
+  async function loadAllDiffs(period: string, isClosed = false) {
+    // ── Show cached data instantly (stale-while-revalidate) ──────────────────
+    const cached = readLocalDiffs(period, isClosed);
+    if (cached) {
+      setDiffs(cached as any);
+      // Closed periods are frozen — no need to re-fetch from the server
+      if (isClosed) return;
+    }
+
     setLoadingDiffs(true);
     setDiffsError(null);
     try {
@@ -174,14 +210,16 @@ export default function Reconcile() {
         const errText = await res.text().catch(() => res.statusText);
         let detail = errText;
         try { detail = JSON.parse(errText)?.detail ?? errText; } catch { /* non-JSON */ }
-        setDiffsError(`QBO data failed (${res.status}): ${String(detail).slice(0, 300)}`);
+        // If we showed cached data, don't overlay it with an error banner
+        if (!cached) setDiffsError(`QBO data failed (${res.status}): ${String(detail).slice(0, 300)}`);
         return;
       }
       const data = await res.json();
-      // data.diffs is Record<statementId, { source, data }>
-      setDiffs(data.diffs || {});
+      const freshDiffs = data.diffs || {};
+      setDiffs(freshDiffs);
+      writeLocalDiffs(period, freshDiffs, isClosed);
     } catch (err) {
-      setDiffsError(`QBO connection error: ${err instanceof Error ? err.message : String(err)}`);
+      if (!cached) setDiffsError(`QBO connection error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoadingDiffs(false);
     }
@@ -239,7 +277,12 @@ export default function Reconcile() {
         : `${API}/reconcile/statements/${statementId}/diff`;
       const res = await fetch(url);
       const data = await res.json();
-      setDiffs(prev => ({ ...prev, [statementId]: data }));
+      setDiffs(prev => {
+        const next = { ...prev, [statementId]: data };
+        // Persist updated diffs to localStorage so next visit is instant
+        writeLocalDiffs(activePeriod, next, periodStatus === 'closed');
+        return next;
+      });
     } finally {
       setRefreshing(null);
     }
