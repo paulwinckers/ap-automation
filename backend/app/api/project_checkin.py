@@ -517,113 +517,166 @@ def _render_checkin_email(
     checkin_url: str,
     today_str: str,
 ) -> str:
-    rows_html = ""
+    """Render the daily check-in email in a card style matching the check-in history UI."""
+
+    # ── Bucket tickets ────────────────────────────────────────────────────────
+    complete, over_budget, near_budget, normal, upcoming = [], [], [], [], []
+    hours_lines: list[str] = []
+
     for t in tickets:
         est    = float(t.get("HoursEst") or 0)
         act    = float(t.get("HoursAct") or 0)
         rem    = est - act
         pct    = (act / est * 100) if est else 0
-        status = t.get("WorkTicketStatusName") or "—"
-        sched  = (t.get("ScheduledStartDate") or "")[:10] or "—"
+        status = (t.get("WorkTicketStatusName") or "").lower()
+        name   = t.get("ServiceName") or f"#{t.get('WorkTicketNumber')}"
 
-        if "complete" in status.lower():
-            bb, bf = "#dcfce7", "#15803d"
-        elif "progress" in status.lower():
-            bb, bf = "#dbeafe", "#1d4ed8"
+        if "complete" in status:
+            complete.append(name)
+            continue
+
+        # Hours remaining line (for non-complete tickets)
+        hours_lines.append(f"{name}: {rem:.0f}h")
+
+        if rem < 0:
+            over_budget.append((name, abs(rem), act, est))
+        elif pct >= 80:
+            near_budget.append((name, rem, pct))
         else:
-            bb, bf = "#fef3c7", "#92400e"
+            normal.append((name, rem))
 
-        rem_col = "#ef4444" if rem < 0 else ("#f59e0b" if pct >= 80 else "#0f172a")
-        rows_html += f"""
-        <tr style="border-top:1px solid #f1f5f9;">
-          <td style="padding:9px 10px;font-size:12px;color:#64748b;white-space:nowrap;">
-            #{t.get('WorkTicketNumber') or t.get('WorkTicketID')}
-          </td>
-          <td style="padding:9px 10px;">
-            <span style="background:{bb};color:{bf};padding:2px 7px;border-radius:10px;
-                         font-size:10px;font-weight:700;white-space:nowrap;">{status}</span>
-          </td>
-          <td style="padding:9px 10px;font-size:12px;color:#64748b;">{sched}</td>
-          <td style="padding:9px 10px;font-size:12px;text-align:right;">{_fmt_hrs(est)}</td>
-          <td style="padding:9px 10px;font-size:12px;font-weight:700;text-align:right;">{_fmt_hrs(act)}</td>
-          <td style="padding:9px 10px;text-align:right;">
-            <span style="font-size:12px;font-weight:700;color:{rem_col};">{_fmt_hrs(rem)}</span>
-          </td>
-          <td style="padding:9px 10px;">
-            {_bar_html(pct, 70)}
-            <span style="font-size:10px;color:#64748b;margin-left:3px;">{pct:.0f}%</span>
-          </td>
-        </tr>"""
+        sched = (t.get("ScheduledStartDate") or "")[:10]
+        if sched:
+            upcoming.append((name, sched))
 
-    tip_paras = "".join(
-        f'<p style="margin:0 0 10px;font-size:14px;color:#1e293b;line-height:1.65;">{p.strip()}</p>'
-        for p in ai_tip.split("\n\n") if p.strip()
-    )
-    first_name = (lead_name or "").split()[0] or "Hi"
+    # ── Build ticket section HTML ─────────────────────────────────────────────
+    ticket_rows = ""
+
+    # Hours remaining summary line
+    if hours_lines:
+        ticket_rows += f"""
+        <div style="font-size:13px;color:#374151;padding:10px 0 14px;border-bottom:1px solid #f1f5f9;margin-bottom:12px;">
+          Hours remaining — {', '.join(hours_lines)}
+        </div>"""
+
+    # Over budget warnings (amber)
+    for name, over, act, est in over_budget:
+        ticket_rows += f"""
+        <div style="margin-bottom:10px;padding:10px 14px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:6px;">
+          <div style="font-size:13px;color:#92400e;font-weight:600;">
+            ⚠ {name} is {over:.1f}h over budget ({act:.1f}h actual vs {est:.1f}h est)
+          </div>
+        </div>"""
+
+    # Near budget warnings (orange)
+    for name, rem, pct in near_budget:
+        ticket_rows += f"""
+        <div style="margin-bottom:10px;padding:10px 14px;background:#fff7ed;border-left:3px solid #fb923c;border-radius:6px;">
+          <div style="font-size:13px;color:#9a3412;font-weight:600;">
+            ⚠ {name} is at {pct:.0f}% of budget ({rem:.1f}h remaining)
+          </div>
+        </div>"""
+
+    # Normal tickets (green)
+    for name, rem in normal:
+        ticket_rows += f"""
+        <div style="margin-bottom:8px;padding:8px 14px;background:#f0fdf4;border-left:3px solid #4ade80;border-radius:6px;">
+          <div style="font-size:13px;color:#15803d;">✅ {name} — {rem:.1f}h remaining</div>
+        </div>"""
+
+    # Complete tickets (collapsed into one line)
+    if complete:
+        ticket_rows += f"""
+        <div style="margin-bottom:8px;padding:8px 14px;background:#f8fafc;border-radius:6px;">
+          <div style="font-size:12px;color:#64748b;">✓ Complete: {', '.join(complete)}</div>
+        </div>"""
+
+    # Upcoming scheduled
+    if upcoming:
+        up_names = ", ".join(n for n, _ in upcoming[:4])
+        ticket_rows += f"""
+        <div style="margin-top:4px;margin-bottom:8px;padding:8px 14px;background:#eff6ff;border-left:3px solid #60a5fa;border-radius:6px;">
+          <div style="font-size:13px;color:#1d4ed8;">🗓 Scheduled: {up_names}</div>
+        </div>"""
+
+    if not ticket_rows:
+        ticket_rows = '<div style="font-size:13px;color:#94a3b8;padding:8px 0;">No active tickets found for this month.</div>'
+
+    # ── AI coaching tip ───────────────────────────────────────────────────────
+    tip_lines = ""
+    for para in ai_tip.split("\n\n"):
+        para = para.strip()
+        if not para:
+            continue
+        # Remove leading "1. " / "2. " numbering if present
+        import re as _re
+        clean = _re.sub(r"^\d+\.\s*", "", para)
+        tip_lines += f"""
+        <div style="margin-bottom:8px;padding:8px 14px;background:#fff;border-left:3px solid #4ade80;border-radius:6px;font-size:13px;color:#374151;line-height:1.6;">
+          💡 {clean}
+        </div>"""
+
+    first_name    = (lead_name or "").split()[0] or "Hi"
     display_title = property_name or opp_name
 
     return f"""<!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-<div style="max-width:680px;margin:24px auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.09);">
+<div style="max-width:600px;margin:24px auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.09);">
 
-  <div style="background:#14532d;padding:26px 32px;">
-    <div style="color:#86efac;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Daily Project Check-in</div>
-    <div style="color:#fff;font-size:22px;font-weight:800;margin-top:6px;">{display_title}</div>
-    <div style="color:#4ade80;font-size:13px;margin-top:3px;">{opp_name} · {today_str}</div>
+  <!-- Header -->
+  <div style="background:#14532d;padding:22px 28px;">
+    <div style="color:#86efac;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;">Daily Project Check-in</div>
+    <div style="color:#fff;font-size:20px;font-weight:800;margin-top:5px;">{display_title}</div>
+    <div style="color:#4ade80;font-size:12px;margin-top:2px;">{opp_name} · {today_str}</div>
   </div>
 
-  <div style="padding:28px 32px;">
+  <div style="padding:22px 28px;">
 
-    <p style="margin:0 0 22px;font-size:15px;color:#1e293b;line-height:1.5;">
-      Hi {first_name} 👋 — here's today's snapshot of your project.
-      Please take 2 minutes to submit your update at the bottom.
+    <!-- Greeting -->
+    <p style="margin:0 0 18px;font-size:14px;color:#374151;line-height:1.5;">
+      Hi {first_name} 👋 — here's today's snapshot. Please submit your update using the button below.
     </p>
 
-    <!-- Work tickets -->
-    <div style="margin-bottom:24px;">
-      <div style="font-weight:700;font-size:11px;color:#64748b;margin-bottom:8px;
-                  text-transform:uppercase;letter-spacing:.06em;">Work Tickets This Month</div>
-      <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
-        <thead>
-          <tr style="background:#f8fafc;">
-            <th style="padding:7px 10px;text-align:left;font-size:10px;color:#94a3b8;font-weight:700;">#</th>
-            <th style="padding:7px 10px;text-align:left;font-size:10px;color:#94a3b8;font-weight:700;">Status</th>
-            <th style="padding:7px 10px;text-align:left;font-size:10px;color:#94a3b8;font-weight:700;">Scheduled</th>
-            <th style="padding:7px 10px;text-align:right;font-size:10px;color:#94a3b8;font-weight:700;">Est</th>
-            <th style="padding:7px 10px;text-align:right;font-size:10px;color:#94a3b8;font-weight:700;">Actual</th>
-            <th style="padding:7px 10px;text-align:right;font-size:10px;color:#94a3b8;font-weight:700;">Remaining</th>
-            <th style="padding:7px 10px;font-size:10px;color:#94a3b8;font-weight:700;">Budget</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows_html or '<tr><td colspan="7" style="padding:14px;text-align:center;color:#94a3b8;font-size:12px;">No tickets found for this month</td></tr>'}
-        </tbody>
-      </table>
+    <!-- Ticket snapshot card -->
+    <div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:20px;">
+
+      <!-- Card header -->
+      <div style="background:#f8fafc;padding:10px 14px;border-bottom:1px solid #e2e8f0;">
+        <span style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;">Work Tickets</span>
+      </div>
+
+      <!-- Card body -->
+      <div style="padding:14px 14px 6px;">
+        {ticket_rows}
+      </div>
     </div>
 
-    <!-- AI tip -->
-    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:20px 24px;margin-bottom:28px;">
-      <div style="font-weight:700;font-size:12px;color:#15803d;margin-bottom:12px;
-                  text-transform:uppercase;letter-spacing:.04em;">💡 Today's Coaching Tips</div>
-      {tip_paras}
+    <!-- Coaching tips card -->
+    <div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:24px;">
+      <div style="background:#f8fafc;padding:10px 14px;border-bottom:1px solid #e2e8f0;">
+        <span style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;">Today's Tips</span>
+      </div>
+      <div style="padding:14px 14px 6px;">
+        {tip_lines}
+      </div>
     </div>
 
     <!-- CTA -->
     <div style="text-align:center;margin-bottom:8px;">
       <a href="{checkin_url}"
          style="display:inline-block;background:#16a34a;color:#fff;font-weight:800;
-                font-size:17px;padding:16px 52px;border-radius:12px;text-decoration:none;">
+                font-size:16px;padding:15px 48px;border-radius:12px;text-decoration:none;">
         Submit Your Update →
       </a>
     </div>
-    <p style="text-align:center;font-size:12px;color:#94a3b8;margin-top:10px;margin-bottom:0;">
-      Opens on your phone · Bookmark this page to check in any time
+    <p style="text-align:center;font-size:11px;color:#94a3b8;margin-top:10px;margin-bottom:0;">
+      Opens on your phone · Bookmark the page to check in any time
     </p>
 
   </div>
 
-  <div style="background:#f8fafc;padding:14px 32px;border-top:1px solid #e2e8f0;text-align:center;">
+  <div style="background:#f8fafc;padding:12px 28px;border-top:1px solid #e2e8f0;text-align:center;">
     <span style="font-size:11px;color:#94a3b8;">Darios Landscaping · Project Management Portal</span>
   </div>
 
