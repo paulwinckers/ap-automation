@@ -928,23 +928,33 @@ class QBOClient:
         # Pre-warm the token with one call first — _refresh_access_token has no
         # lock, so parallel calls would each try to rotate the refresh token and
         # Intuit would reject the 2nd and 3rd with an already-consumed token.
+        # Lower bound: 18 months before to_date.
+        # Any invoice older than that still showing as open on a current statement
+        # is a separate accounting issue — not a normal reconciliation item.
+        # This keeps the QBO query fast regardless of how long the company has been in QBO.
+        from_dt   = date.fromisoformat(to_date) - __import__('datetime').timedelta(days=548)
+        from_date_qbo = from_dt.isoformat()
+
         await self._ensure_token()
         bill_result, pay_result, credit_result = await asyncio.gather(
             self._get("query", {"query": (
                 f"SELECT * FROM Bill "
                 f"WHERE VendorRef = '{vendor_id}' "
+                f"AND TxnDate >= '{from_date_qbo}' "
                 f"AND TxnDate <= '{to_date}' "
                 f"MAXRESULTS 200"
             )}),
             self._get("query", {"query": (
                 f"SELECT * FROM BillPayment "
                 f"WHERE VendorRef = '{vendor_id}' "
+                f"AND TxnDate >= '{from_date_qbo}' "
                 f"AND TxnDate <= '{to_date}' "
                 f"MAXRESULTS 200"
             )}),
             self._get("query", {"query": (
                 f"SELECT * FROM VendorCredit "
                 f"WHERE VendorRef = '{vendor_id}' "
+                f"AND TxnDate >= '{from_date_qbo}' "
                 f"AND TxnDate <= '{to_date}' "
                 f"MAXRESULTS 200"
             )}),
