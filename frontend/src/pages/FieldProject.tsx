@@ -361,28 +361,57 @@ export default function FieldProject() {
   const [tab, setTab] = useState<'scope' | 'tickets' | 'update' | 'materials' | 'history'>('scope');
 
   // Field Advisor
-  const [advisorQuestion, setAdvisorQuestion] = useState('');
-  const [advisorPhoto,    setAdvisorPhoto]    = useState<File | null>(null);
-  const [advisorPreview,  setAdvisorPreview]  = useState('');
-  const [advisorAnswer,   setAdvisorAnswer]   = useState('');
-  const [advisorLoading,  setAdvisorLoading]  = useState(false);
+  const [advisorQuestion,    setAdvisorQuestion]    = useState('');
+  const [advisorPhoto,       setAdvisorPhoto]       = useState<File | null>(null);
+  const [advisorPreview,     setAdvisorPreview]     = useState('');
+  const [advisorAnswer,      setAdvisorAnswer]      = useState('');
+  const [advisorLoading,     setAdvisorLoading]     = useState(false);
+  const [advisorPhotoR2Key,  setAdvisorPhotoR2Key]  = useState<string | null>(null);
+  const [advisorHasPhoto,    setAdvisorHasPhoto]    = useState(0);
+  const [advisorSaved,       setAdvisorSaved]       = useState(false);
+  const [advisorSaving,      setAdvisorSaving]      = useState(false);
+  // Snapshot of the question at the time of the ask (for saving later)
+  const advisorQuestionRef = useRef('');
 
   const askAdvisor = async () => {
     if (!advisorQuestion.trim() && !advisorPhoto) return;
     setAdvisorLoading(true);
     setAdvisorAnswer('');
+    setAdvisorSaved(false);
+    setAdvisorPhotoR2Key(null);
+    advisorQuestionRef.current = advisorQuestion.trim() || 'What do you observe in this photo and what should I know?';
     try {
       const fd = new FormData();
-      fd.append('question', advisorQuestion.trim() || 'What do you observe in this photo and what should I know?');
+      fd.append('question', advisorQuestionRef.current);
       if (advisorPhoto) fd.append('photo', advisorPhoto);
       const r = await fetch(`${API}/checkin/project/${oppId}/field-advisor`, { method: 'POST', body: fd });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error((j as any).detail || 'AI request failed');
       setAdvisorAnswer((j as any).answer || '');
+      setAdvisorPhotoR2Key((j as any).photo_r2_key ?? null);
+      setAdvisorHasPhoto((j as any).has_photo ?? 0);
     } catch (e: any) {
       setAdvisorAnswer(`⚠️ ${e.message || 'Something went wrong'}`);
     } finally {
       setAdvisorLoading(false);
+    }
+  };
+
+  const saveAdvisorToFile = async () => {
+    setAdvisorSaving(true);
+    try {
+      const fd = new FormData();
+      fd.append('question',     advisorQuestionRef.current);
+      fd.append('answer',       advisorAnswer);
+      fd.append('has_photo',    String(advisorHasPhoto));
+      if (advisorPhotoR2Key) fd.append('photo_r2_key', advisorPhotoR2Key);
+      const r = await fetch(`${API}/checkin/project/${oppId}/field-advisor/save`, { method: 'POST', body: fd });
+      if (!r.ok) throw new Error('Save failed');
+      setAdvisorSaved(true);
+    } catch {
+      alert('Could not save — please try again');
+    } finally {
+      setAdvisorSaving(false);
     }
   };
 
@@ -1254,8 +1283,37 @@ export default function FieldProject() {
                     {advisorLoading ? '🤔 Thinking…' : '✨ Ask Field Advisor'}
                   </button>
                   {advisorAnswer && (
-                    <div style={{ marginTop: 12, background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 8, padding: '12px 14px', fontSize: 13, color: '#1e1b4b', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
-                      {advisorAnswer}
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 8, padding: '12px 14px', fontSize: 13, color: '#1e1b4b', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+                        {advisorAnswer}
+                      </div>
+                      {/* Save prompt — only show when answer is a real response (not an error) */}
+                      {!advisorAnswer.startsWith('⚠️') && (
+                        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {advisorSaved ? (
+                            <span style={{ fontSize: 12, color: '#16a34a', fontWeight: 600 }}>✓ Saved to project file</span>
+                          ) : (
+                            <>
+                              <span style={{ fontSize: 12, color: '#6b7280' }}>Save to project file?</span>
+                              <button
+                                type="button"
+                                onClick={saveAdvisorToFile}
+                                disabled={advisorSaving}
+                                style={{ padding: '4px 12px', fontSize: 12, fontWeight: 600, background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 6, cursor: advisorSaving ? 'wait' : 'pointer' }}
+                              >
+                                {advisorSaving ? 'Saving…' : '💾 Yes, save'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAdvisorAnswer('')}
+                                style={{ padding: '4px 10px', fontSize: 12, background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer' }}
+                              >
+                                No thanks
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

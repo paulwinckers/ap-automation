@@ -2487,26 +2487,47 @@ async def field_advisor(
             except Exception as r2_err:
                 logger.warning(f"Field advisor: R2 photo save failed (non-fatal): {r2_err}")
 
-        # ── Log Q&A to DB (best-effort) ──────────────────────────────────────
-        log_id: int | None = None
-        try:
-            log_id = await db._x(
-                """INSERT INTO field_advisor_log
-                   (opp_id, question, answer, has_photo, photo_r2_key)
-                   VALUES (?,?,?,?,?)""",
-                [opp_id, question.strip(), answer, 1 if photo_raw else 0, photo_r2_key],
-            )
-            logger.info(f"Field advisor: logged Q&A #{log_id} for opp {opp_id}")
-        except Exception as log_err:
-            logger.warning(f"Field advisor: DB log failed (non-fatal): {log_err}")
-
-        return {"answer": answer, "log_id": log_id}
+        # NOTE: We do NOT auto-save to the DB here.
+        # The frontend asks the crew lead "Save to project file?" and calls
+        # /field-advisor/save only if they confirm.
+        return {
+            "answer":       answer,
+            "photo_r2_key": photo_r2_key,
+            "has_photo":    1 if photo_raw else 0,
+        }
 
     except HTTPException:
         raise  # propagate our own HTTP errors unchanged
     except Exception as e:
         logger.error(f"Field advisor unhandled error for opp {opp_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Advisor error: {e}") from e
+
+
+@public_router.post("/project/{opp_id}/field-advisor/save")
+async def field_advisor_save(
+    opp_id:       int,
+    question:     str            = Form(...),
+    answer:       str            = Form(...),
+    has_photo:    int            = Form(default=0),
+    photo_r2_key: Optional[str] = Form(default=None),
+    db:           Database       = Depends(get_db),
+):
+    """
+    Persist a Field Advisor Q&A to the project file.
+    Called only when the crew lead explicitly confirms they want it saved.
+    """
+    try:
+        log_id = await db._x(
+            """INSERT INTO field_advisor_log
+               (opp_id, question, answer, has_photo, photo_r2_key)
+               VALUES (?,?,?,?,?)""",
+            [opp_id, question.strip(), answer.strip(), has_photo, photo_r2_key or None],
+        )
+        logger.info(f"Field advisor: crew lead saved Q&A #{log_id} for opp {opp_id}")
+        return {"saved": True, "log_id": log_id}
+    except Exception as e:
+        logger.error(f"Field advisor save failed for opp {opp_id}: {e}", exc_info=True)
+        raise HTTPException(500, f"Save failed: {e}") from e
 
 
 # ── Scheduler: fires at 06:00 Pacific daily ───────────────────────────────────
