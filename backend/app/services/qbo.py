@@ -100,6 +100,12 @@ class QBOClient:
         self._refresh_token: str = settings.QBO_REFRESH_TOKEN  # overridden by D1 on first use
         self._http = httpx.AsyncClient(timeout=30.0)
         self._token_loaded_from_d1: bool = False
+        # Lock prevents concurrent token refreshes. Without this, when N vendor
+        # diffs run in parallel via asyncio.gather they all see the token as
+        # expired at the same time, all call _refresh_access_token simultaneously,
+        # and Intuit rejects calls 2-N because the refresh token was already
+        # consumed by call 1.
+        self._token_lock = asyncio.Lock()
 
         # Cached tax code IDs looked up from QBO on first use
         self._tax_codes: Optional[dict] = None
@@ -117,14 +123,27 @@ class QBOClient:
     # ── OAuth2 token management ───────────────────────────────────────────────
 
     async def _ensure_token(self) -> str:
-        """Return a valid access token, refreshing if expired."""
+        """Return a valid access token, refreshing if expired.
+
+        Uses a lock so that when many tasks run in parallel (e.g. bulk vendor
+        reconciliation) only one refresh attempt runs at a time. The rest wait
+        and then reuse the freshly-issued token without hitting Intuit again.
+        """
         await self._load_refresh_token_from_d1()
+        # Fast path — token still valid, no lock needed
         if self._access_token and time.time() < self._token_expiry - 60:
             return self._access_token
-        return await self._refresh_access_token()
+        # Slow path — acquire lock so only one task refreshes at a time
+        async with self._token_lock:
+            # Re-check inside the lock: a previous waiter may have already refreshed
+            if self._access_token and time.time() < self._token_expiry - 60:
+                return self._access_token
+            return await self._refresh_access_token()
 
     async def _refresh_access_token(self) -> str:
-        """Exchange refresh token for a new access + refresh token pair."""
+        """Exchange refresh token for a new access + refresh token pair.
+        Must only be called while holding self._token_lock.
+        """
         logger.info("Refreshing QBO access token")
         resp = await self._http.post(
             INTUIT_TOKEN_URL,
@@ -925,9 +944,7 @@ class QBOClient:
             vendor_id = vendor["Id"]
 
         # ── Fetch bills, payments, and credits ───────────────────────────────
-        # Pre-warm the token with one call first — _refresh_access_token has no
-        # lock, so parallel calls would each try to rotate the refresh token and
-        # Intuit would reject the 2nd and 3rd with an already-consumed token.
+        # _ensure_token now uses a lock so concurrent calls across vendors are safe.
         # Lower bound: 18 months before to_date.
         # Any invoice older than that still showing as open on a current statement
         # is a separate accounting issue — not a normal reconciliation item.
