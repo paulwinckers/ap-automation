@@ -840,9 +840,9 @@ export default function FieldProject() {
                   <div style={{ fontWeight: 700, fontSize: 11, color: '#0369a1', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                     Project Scope
                   </div>
-                  <p style={{ margin: 0, fontSize: 13, color: '#0c4a6e', lineHeight: 1.7 }}>
-                    {data.scope_summary}
-                  </p>
+                  {data.scope_summary.split('\n').filter(l => l.trim()).map((line, i) => (
+                    <div key={i} style={{ fontSize: 13, color: '#0c4a6e', lineHeight: 1.6, paddingBottom: 3 }}>{line.trim()}</div>
+                  ))}
                 </div>
               ) : (
                 <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '20px 0 8px', marginBottom: 12 }}>
@@ -1259,9 +1259,9 @@ export default function FieldProject() {
                   <div style={{ fontWeight: 700, fontSize: 11, color: '#475569', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                     🗂 Project Status
                   </div>
-                  <p style={{ margin: 0, fontSize: 13, color: '#1e293b', lineHeight: 1.65 }}>
-                    {data.project_summary}
-                  </p>
+                  {data.project_summary.split('\n').filter(l => l.trim()).map((line, i) => (
+                    <div key={i} style={{ fontSize: 13, color: '#1e293b', lineHeight: 1.6, paddingBottom: 3 }}>{line.trim()}</div>
+                  ))}
                 </div>
               )}
 

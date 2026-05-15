@@ -315,11 +315,10 @@ async def _fetch_scope_notes(opp_id: int) -> str:
     prompt = (
         "You are summarizing estimator and scope notes for a construction field crew lead. "
         "Below are raw notes from the project estimator and service descriptions. "
-        "Rewrite them as a single clear paragraph (3-6 sentences) in plain English that a field lead "
-        "can read quickly. Focus on: what work is being done, any special conditions or materials, "
-        "and key things the crew needs to know. Remove any HTML, redundant formatting, and internal "
-        "business jargon. Do not use bullet points or headings — just flowing sentences.\n\n"
-        "Raw notes:\n" + raw_text + "\n\nScope summary:"
+        "Rewrite them as 3-5 bullet points in plain English. Each bullet must be under 15 words. "
+        "Focus on: what work is being done, special conditions or materials, key crew requirements. "
+        "Remove HTML, jargon, and redundant info. Start each line with '• '. No headings, no preamble.\n\n"
+        "Raw notes:\n" + raw_text + "\n\nScope bullets:"
     )
 
     try:
@@ -380,14 +379,10 @@ async def _generate_project_summary(
     )
 
     prompt = (
-        "You are a construction project manager writing a quick briefing for a field crew lead. "
-        "Write a short project summary (3-5 sentences, plain language, no bullet points) covering:\n"
-        "1. Where the project stands overall (hours used vs budget, how many tickets done)\n"
-        "2. What's currently active or next on site\n"
-        "3. Any concern worth flagging (over-budget tickets, tight schedule, etc.)\n"
-        "Be direct and practical — this is for a crew lead checking in from their phone. "
-        "Do not use headings or lists. Just flowing sentences.\n\n"
-        + context + "\n\nProject summary:"
+        "You are briefing a construction field crew lead. "
+        "Write 3-4 bullet points covering: hours used vs budget, active tickets, anything over budget or urgent. "
+        "Each bullet must be under 15 words. Start each with '• '. No preamble, no headings.\n\n"
+        + context + "\n\nStatus bullets:"
     )
 
     try:
@@ -400,17 +395,16 @@ async def _generate_project_summary(
         return msg.content[0].text.strip()
     except Exception as e:
         logger.warning(f"Project summary generation failed: {e}")
-        # Fallback: plain text summary
-        lines = []
-        lines.append(f"You've used {total_act:.1f}h of {total_est:.1f}h estimated ({pct_used:.0f}%), with ~{remaining:.1f}h remaining across {len(tickets)} tickets ({len(done_tickets)} complete).")
+        # Fallback: bullet format
+        lines = [f"• {total_act:.1f}h used of {total_est:.1f}h estimated ({pct_used:.0f}%) — ~{remaining:.1f}h remaining."]
         if active_sorted:
             next_names = [t.get("ServiceName") or f"#{t.get('WorkTicketNumber')}" for t in active_sorted[:3]]
-            lines.append(f"Active work: {', '.join(next_names)}.")
+            lines.append(f"• Active: {', '.join(next_names)}.")
         over = [t for t in tickets if float(t.get("HoursEst") or 0) > 0 and float(t.get("HoursAct") or 0) > float(t.get("HoursEst") or 0) * 1.05]
         if over:
             over_names = [t.get("ServiceName") or f"#{t.get('WorkTicketNumber')}" for t in over[:2]]
-            lines.append(f"Heads up: {', '.join(over_names)} {'is' if len(over)==1 else 'are'} over budget.")
-        return " ".join(lines)
+            lines.append(f"• ⚠ Over budget: {', '.join(over_names)}.")
+        return "\n".join(lines)
 
 
 async def _generate_smart_prompts(
