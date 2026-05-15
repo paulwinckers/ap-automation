@@ -871,14 +871,19 @@ async def _send_project_checkins(month: str) -> dict:
         )
         subject = f"📋 Daily Check-in: {property_name or opp_name} — {today_str}"
 
+        # Build CC list — exclude the lead themselves to avoid duplicate delivery
+        cc_all = [e.strip() for e in settings.CONSTRUCTION_CHECKIN_CC.split(",") if e.strip()]
+        cc_list = [e for e in cc_all if e.lower() != lead_email.lower()] or None
+
         try:
             await graph.send_email(
                 mailbox=settings.MS_AP_INBOX,
                 to_addresses=[lead_email],
                 subject=subject,
                 body_html=html,
+                cc_addresses=cc_list,
             )
-            logger.info(f"Checkin sent → {lead_email} for opp {opp_id} ({opp_name})")
+            logger.info(f"Checkin sent → {lead_email} (cc: {cc_list}) for opp {opp_id} ({opp_name})")
             sent += 1
         except Exception as e:
             logger.error(f"Checkin email failed for opp {opp_id}: {e}")

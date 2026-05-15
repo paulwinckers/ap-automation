@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     CONSTRUCTION_REPORT_TIMEZONE:   str = "America/Vancouver"  # IANA tz for 7 PM send time
     CONSTRUCTION_DASHBOARD_URL:     str = "https://darios-accounting.pages.dev/dashboards/construction"
 
+    # Construction daily check-in CC — all check-in emails are also sent to these addresses
+    CONSTRUCTION_CHECKIN_CC: str = "rodger@darios.ca,dustin@darios.ca,keeland@darios.ca,paul@darios.ca"
+
     # Issues digest
     ISSUES_DIGEST_MGMT_RECIPIENTS:  str = "paul@darios.ca"  # management summary recipients (comma-separated)
     ISSUES_DIGEST_ACTIVITIES_URL:   str = "https://darios-accounting.pages.dev/dashboards/activities"
