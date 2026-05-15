@@ -323,6 +323,32 @@ async function compressPhoto(file: File, maxPx = 1600, quality = 0.85): Promise<
   });
 }
 
+/** Compress an image File to max 1920px JPEG — returns a new File so the filename is preserved. */
+function compressImage(f: File, maxPx = 1920, quality = 0.82): Promise<File> {
+  return new Promise(resolve => {
+    if (f.type.startsWith('video/') || f.size < 1.5 * 1024 * 1024) { resolve(f); return; }
+    const img = new Image();
+    const url = URL.createObjectURL(f);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width, height } = img;
+      if (width > maxPx || height > maxPx) {
+        if (width > height) { height = Math.round(height * maxPx / width); width = maxPx; }
+        else { width = Math.round(width * maxPx / height); height = maxPx; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(blob => {
+        if (blob) resolve(new File([blob], f.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }));
+        else resolve(f);
+      }, 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(f); };
+    img.src = url;
+  });
+}
+
 export default function FieldProject() {
   const { oppId } = useParams<{ oppId: string }>();
 
@@ -332,7 +358,9 @@ export default function FieldProject() {
   const [refreshing, setRefreshing] = useState(false);
 
   // File input refs (label+hidden-input unreliable on some mobile browsers)
-  const photoInputRef        = useRef<HTMLInputElement>(null);
+  const photoCameraRef       = useRef<HTMLInputElement>(null);  // capture="environment"
+  const photoGalleryRef      = useRef<HTMLInputElement>(null);  // gallery picker
+  const photoInputRef        = useRef<HTMLInputElement>(null);  // kept for advisor use
   const advisorPhotoInputRef = useRef<HTMLInputElement>(null);
 
   // Form
@@ -350,6 +378,13 @@ export default function FieldProject() {
     setPreviews(urls);
     return () => urls.forEach(u => URL.revokeObjectURL(u));
   }, [photos]);
+
+  /** Add files to the photos list, compressing images (videos pass through unchanged). */
+  const handlePhotos = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const processed = await Promise.all(Array.from(files).map(f => compressImage(f)));
+    setPhotos(prev => [...prev, ...processed]);
+  };
   // Smart prompt selections: promptId → selected option string
   const [promptSelections, setPromptSelections] = useState<Record<string, string>>({});
   // Per-prompt additional free-form notes
@@ -469,7 +504,11 @@ export default function FieldProject() {
   // ── Change Order modal ─────────────────────────────────────────────────────
   const [coOpen,        setCoOpen]        = useState(false);
   const [coName,        setCoName]        = useState('');
-  const [coScope,       setCoScope]       = useState('');
+  const [coDesc,        setCoDesc]        = useState('');   // Description of Work (required)
+  const [coReason,      setCoReason]      = useState('');   // Reason / Trigger
+  const [coMaterials,   setCoMaterials]   = useState('');   // Materials Required
+  const [coLabour,      setCoLabour]      = useState('');   // Labour Estimate
+  const [coNotes,       setCoNotes]       = useState('');   // Additional Notes
   const [coAssignee,    setCoAssignee]    = useState('');
   const [coFiles,       setCoFiles]       = useState<FileList | null>(null);
   const [coSubmitting,  setCoSubmitting]  = useState(false);
@@ -491,15 +530,32 @@ export default function FieldProject() {
     }
   };
 
+  /** Compile structured CO sections into a single formatted scope string */
+  const compileCOScope = () => {
+    const parts: string[] = [];
+    if (coDesc.trim())      parts.push(`DESCRIPTION OF WORK:\n${coDesc.trim()}`);
+    if (coReason.trim())    parts.push(`REASON FOR CHANGE:\n${coReason.trim()}`);
+    if (coMaterials.trim()) parts.push(`MATERIALS REQUIRED:\n${coMaterials.trim()}`);
+    if (coLabour.trim())    parts.push(`LABOUR ESTIMATE:\n${coLabour.trim()}`);
+    if (coNotes.trim())     parts.push(`ADDITIONAL NOTES:\n${coNotes.trim()}`);
+    return parts.join('\n\n');
+  };
+
+  const resetCOForm = () => {
+    setCoDesc(''); setCoReason(''); setCoMaterials('');
+    setCoLabour(''); setCoNotes('');
+    setCoAssignee(''); setCoFiles(null);
+  };
+
   const submitCO = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!coName.trim() || !coScope.trim()) return;
+    if (!coName.trim() || !coDesc.trim()) return;
     setCoSubmitting(true);
     setCoMsg('');
     try {
       const fd = new FormData();
       fd.append('submitter_name', coName.trim());
-      fd.append('scope', coScope.trim());
+      fd.append('scope', compileCOScope());
       // coAssignee stores the ContactID — send it directly as assigned_to_id
       if (coAssignee) {
         fd.append('assigned_to_id', coAssignee);
@@ -513,7 +569,7 @@ export default function FieldProject() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.detail || 'Submit failed');
       setCoMsg('✅ Change Order Request created in Aspire.');
-      setCoScope(''); setCoAssignee(''); setCoFiles(null);
+      resetCOForm();
       setTimeout(() => { setCoOpen(false); setCoMsg(''); }, 2500);
     } catch (err: any) {
       setCoMsg(`❌ ${err.message || 'Something went wrong'}`);
@@ -1441,6 +1497,8 @@ export default function FieldProject() {
               {/* Photo / video upload */}
               <div style={{ marginBottom: 22 }}>
                 <label style={LABEL}>Photos / Videos (optional)</label>
+
+                {/* Thumbnails */}
                 {previews.length > 0 && (
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                     {previews.map((src, i) => (
@@ -1456,22 +1514,32 @@ export default function FieldProject() {
                     ))}
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={() => photoInputRef.current?.click()}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: '#f8fafc', border: '1.5px dashed #cbd5e1', borderRadius: 10, padding: '11px 14px', fontSize: 13, color: '#475569', width: '100%', textAlign: 'left', fontFamily: 'inherit' }}
-                >
-                  <span style={{ fontSize: 20 }}>📷</span>
-                  <span>Take or choose photos/videos</span>
-                </button>
-                <input
-                  ref={photoInputRef}
-                  type="file"
-                  accept="image/*,video/*"
-                  multiple
-                  onChange={e => { setPhotos(prev => [...prev, ...Array.from(e.target.files ?? [])]); e.target.value = ''; }}
-                  style={{ display: 'none' }}
-                />
+
+                {/* Two-button row: Camera + Gallery */}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => photoCameraRef.current?.click()}
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: 'pointer', background: '#f8fafc', border: '1.5px dashed #cbd5e1', borderRadius: 10, padding: '11px 10px', fontSize: 13, color: '#475569', fontFamily: 'inherit' }}
+                  >
+                    <span style={{ fontSize: 18 }}>📷</span>
+                    <span>Camera</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => photoGalleryRef.current?.click()}
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: 'pointer', background: '#f8fafc', border: '1.5px dashed #cbd5e1', borderRadius: 10, padding: '11px 10px', fontSize: 13, color: '#475569', fontFamily: 'inherit' }}
+                  >
+                    <span style={{ fontSize: 18 }}>🖼</span>
+                    <span>Gallery</span>
+                  </button>
+                </div>
+
+                {/* Hidden inputs */}
+                <input ref={photoCameraRef}  type="file" accept="image/*,video/*" capture="environment" multiple
+                  onChange={e => { handlePhotos(e.target.files); e.target.value = ''; }} style={{ display: 'none' }} />
+                <input ref={photoGalleryRef} type="file" accept="image/*,video/*" multiple
+                  onChange={e => { handlePhotos(e.target.files); e.target.value = ''; }} style={{ display: 'none' }} />
               </div>
 
               {submitMsg && (
@@ -1684,7 +1752,7 @@ export default function FieldProject() {
                 <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a' }}>Change Order Request</div>
                 <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{data?.property_name || data?.opportunity_name}</div>
               </div>
-              <button onClick={() => { setCoOpen(false); setCoMsg(''); }} style={{ background: 'none', border: 'none', fontSize: 22, color: '#9ca3af', cursor: 'pointer', lineHeight: 1, padding: 4 }}>×</button>
+              <button onClick={() => { setCoOpen(false); setCoMsg(''); resetCOForm(); }} style={{ background: 'none', border: 'none', fontSize: 22, color: '#9ca3af', cursor: 'pointer', lineHeight: 1, padding: 4 }}>×</button>
             </div>
 
             <form onSubmit={submitCO} style={{ padding: '16px 20px 0' }}>
@@ -1709,18 +1777,82 @@ export default function FieldProject() {
                 )}
               </div>
 
-              {/* Scope of work */}
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 5 }}>Scope of Change *</label>
-                <textarea
-                  required
-                  placeholder="Describe the change order scope, reason, and any cost/time impact…"
-                  value={coScope}
-                  onChange={e => setCoScope(e.target.value)}
-                  rows={5}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1.5px solid #e2e6ed', borderRadius: 8, fontSize: 14, fontFamily: 'inherit', color: '#1a1d23', resize: 'vertical' }}
-                />
+              {/* ── Structured scope sections ───────────────────────────── */}
+              <div style={{ marginBottom: 6, padding: '10px 14px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', marginBottom: 10, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Scope of Change</div>
+
+                {/* Description of Work */}
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>
+                    Description of Work <span style={{ color: '#dc2626' }}>*</span>
+                  </label>
+                  <textarea
+                    required
+                    placeholder="What work needs to be done?"
+                    value={coDesc}
+                    onChange={e => setCoDesc(e.target.value)}
+                    rows={3}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '9px 11px', border: '1.5px solid #e2e6ed', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', color: '#1a1d23', resize: 'vertical', background: '#fff' }}
+                  />
+                </div>
+
+                {/* Reason / Trigger */}
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>
+                    Reason / Trigger <span style={{ fontSize: 11, fontWeight: 400, color: '#9ca3af' }}>(optional)</span>
+                  </label>
+                  <textarea
+                    placeholder="e.g. unforeseen condition, client request, design change…"
+                    value={coReason}
+                    onChange={e => setCoReason(e.target.value)}
+                    rows={2}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '9px 11px', border: '1.5px solid #e2e6ed', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', color: '#1a1d23', resize: 'vertical', background: '#fff' }}
+                  />
+                </div>
+
+                {/* Materials Required */}
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>
+                    Materials Required <span style={{ fontSize: 11, fontWeight: 400, color: '#9ca3af' }}>(optional)</span>
+                  </label>
+                  <textarea
+                    placeholder="List specific materials needed…"
+                    value={coMaterials}
+                    onChange={e => setCoMaterials(e.target.value)}
+                    rows={2}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '9px 11px', border: '1.5px solid #e2e6ed', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', color: '#1a1d23', resize: 'vertical', background: '#fff' }}
+                  />
+                </div>
+
+                {/* Labour Estimate */}
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>
+                    Labour Estimate <span style={{ fontSize: 11, fontWeight: 400, color: '#9ca3af' }}>(optional)</span>
+                  </label>
+                  <textarea
+                    placeholder="e.g. 4 hrs – 2 crew, or foreman estimate…"
+                    value={coLabour}
+                    onChange={e => setCoLabour(e.target.value)}
+                    rows={2}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '9px 11px', border: '1.5px solid #e2e6ed', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', color: '#1a1d23', resize: 'vertical', background: '#fff' }}
+                  />
+                </div>
+
+                {/* Additional Notes */}
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>
+                    Additional Notes <span style={{ fontSize: 11, fontWeight: 400, color: '#9ca3af' }}>(optional)</span>
+                  </label>
+                  <textarea
+                    placeholder="Any other context or comments…"
+                    value={coNotes}
+                    onChange={e => setCoNotes(e.target.value)}
+                    rows={2}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '9px 11px', border: '1.5px solid #e2e6ed', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', color: '#1a1d23', resize: 'vertical', background: '#fff' }}
+                  />
+                </div>
               </div>
+              {/* ── End structured scope ────────────────────────────────── */}
 
               {/* Assign to */}
               <div style={{ marginBottom: 14 }}>
@@ -1768,7 +1900,7 @@ export default function FieldProject() {
               {/* Submit */}
               <button
                 type="submit"
-                disabled={coSubmitting || !coName.trim() || !coScope.trim()}
+                disabled={coSubmitting || !coName.trim() || !coDesc.trim()}
                 style={{ width: '100%', padding: '13px', background: coSubmitting ? '#9ca3af' : '#1e3a2f', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: coSubmitting ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}
               >
                 {coSubmitting ? 'Submitting…' : 'Submit Change Order Request'}

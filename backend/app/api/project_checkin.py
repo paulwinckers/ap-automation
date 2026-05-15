@@ -162,13 +162,12 @@ async def _generate_ai_tip(
         context += "Note: The project is approaching its hour budget limit.\n"
 
     prompt = (
-        "You are a supportive construction project coach at a landscaping company. "
-        "A field lead is about to fill in their daily project check-in. "
-        "Based on the data below, write exactly 3 short coaching tips to help them "
-        "finish on time and on budget. Be warm, practical, and specific. "
-        "Each tip should be 1-2 sentences. Number them 1, 2, 3. "
-        "Do not use bullet points. Never be alarming — stay encouraging and action-focused.\n\n"
-        + context + "\nCoaching tips:"
+        "You are a construction project coach at a landscaping company. "
+        "A field crew lead is about to fill in their daily check-in. "
+        "Based on the data below, write exactly 3 bullet points — one action per bullet. "
+        "Each bullet must be under 12 words. Start each with '• '. "
+        "Be direct and practical. No fluff, no preamble, no numbering.\n\n"
+        + context + "\nTips:"
     )
 
     try:
@@ -183,12 +182,9 @@ async def _generate_ai_tip(
         logger.warning(f"AI tip generation failed: {e}")
         rem_str = f"{remaining:.0f}" if total_est else "unknown"
         return (
-            f"1. You have roughly {rem_str} hours estimated remaining — "
-            "take a moment today to walk the site and confirm that feels right.\n\n"
-            "2. If anything has changed since the last update, flag it early — "
-            "the team can adjust much more easily when they hear about it right away.\n\n"
-            "3. Keep your work ticket statuses current as you complete tasks; "
-            "it makes the whole team's planning more accurate."
+            f"• ~{rem_str}h remaining — walk the site and confirm it's accurate.\n"
+            "• Flag any changes early so the team can adjust quickly.\n"
+            "• Keep ticket statuses current as tasks are completed."
         )
 
 
@@ -603,17 +599,19 @@ def _render_checkin_email(
         ticket_rows = '<div style="font-size:13px;color:#94a3b8;padding:8px 0;">No active tickets found for this month.</div>'
 
     # ── AI coaching tip ───────────────────────────────────────────────────────
+    import re as _re
     tip_lines = ""
-    for para in ai_tip.split("\n\n"):
-        para = para.strip()
-        if not para:
+    for line in ai_tip.splitlines():
+        line = line.strip()
+        if not line:
             continue
-        # Remove leading "1. " / "2. " numbering if present
-        import re as _re
-        clean = _re.sub(r"^\d+\.\s*", "", para)
+        # Strip leading bullet chars / numbering
+        clean = _re.sub(r"^[•\-\*]\s*", "", _re.sub(r"^\d+\.\s*", "", line))
+        if not clean:
+            continue
         tip_lines += f"""
-        <div style="margin-bottom:8px;padding:8px 14px;background:#fff;border-left:3px solid #4ade80;border-radius:6px;font-size:13px;color:#374151;line-height:1.6;">
-          💡 {clean}
+        <div style="margin-bottom:6px;padding:7px 12px 7px 10px;background:#fff;border-left:3px solid #4ade80;border-radius:6px;font-size:13px;color:#374151;line-height:1.5;">
+          • {clean}
         </div>"""
 
     first_name    = (lead_name or "").split()[0] or "Hi"
@@ -1176,18 +1174,24 @@ async def submit_checkin_response(
     photo_ids: list[int] = []
     if _r2._r2_available():
         for upload in (photos or []):
-            if not upload or not upload.filename:
+            if not upload:
                 continue
             try:
                 file_bytes = await upload.read()
                 if not file_bytes or len(file_bytes) > _PHOTO_MAX_BYTES:
-                    logger.warning(f"Skipping photo {upload.filename}: empty or too large ({len(file_bytes) if file_bytes else 0} bytes)")
+                    logger.warning(f"Skipping photo: empty or too large ({len(file_bytes) if file_bytes else 0} bytes)")
                     continue
-                filename = upload.filename
-                ext      = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-                safe     = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
-                r2_key   = f"checkin-photos/{c['id']}/{uuid.uuid4().hex[:8]}_{safe}"
-                ct       = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+                # Derive filename — mobile browsers sometimes send an empty filename
+                ct_header = (upload.content_type or "").lower()
+                if upload.filename:
+                    filename = upload.filename
+                    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                else:
+                    ext = ct_header.split("/")[-1].replace("jpeg", "jpg") if "/" in ct_header else "jpg"
+                    filename = f"photo_{uuid.uuid4().hex[:8]}.{ext}"
+                safe   = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
+                r2_key = f"checkin-photos/{c['id']}/{uuid.uuid4().hex[:8]}_{safe}"
+                ct     = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
                 def _up(key=r2_key, body=file_bytes, content_type=ct):
                     _r2._make_client().put_object(
                         Bucket=settings.R2_BUCKET_NAME,
@@ -1203,7 +1207,7 @@ async def submit_checkin_response(
                 photo_ids.append(photo_row_id)
                 logger.info(f"Checkin photo #{photo_row_id} saved: {filename} ({len(file_bytes)} bytes)")
             except Exception as photo_err:
-                logger.error(f"Failed to save photo {upload.filename}: {photo_err}", exc_info=True)
+                logger.error(f"Failed to save photo: {photo_err}", exc_info=True)
 
     # Notify management
     today_str   = datetime.now().strftime("%B %d, %Y")
@@ -2216,18 +2220,24 @@ async def _do_submit_project_response(
     _saved_photo_ids: list[int] = []
     if _r2._r2_available():
         for upload in (photos or []):
-            if not upload or not upload.filename:
+            if not upload:
                 continue
             try:
                 file_bytes = await upload.read()
                 if not file_bytes or len(file_bytes) > _PHOTO_MAX_BYTES:
-                    logger.warning(f"Skipping photo {upload.filename}: empty or too large ({len(file_bytes) if file_bytes else 0} bytes)")
+                    logger.warning(f"Skipping photo: empty or too large ({len(file_bytes) if file_bytes else 0} bytes)")
                     continue
-                filename = upload.filename
-                ext      = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-                safe     = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
-                r2_key   = f"checkin-photos/{checkin_id}/{uuid.uuid4().hex[:8]}_{safe}"
-                ct       = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+                # Derive filename — mobile browsers sometimes send an empty filename
+                ct_header = (upload.content_type or "").lower()
+                if upload.filename:
+                    filename = upload.filename
+                    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                else:
+                    ext = ct_header.split("/")[-1].replace("jpeg", "jpg") if "/" in ct_header else "jpg"
+                    filename = f"photo_{uuid.uuid4().hex[:8]}.{ext}"
+                safe   = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
+                r2_key = f"checkin-photos/{checkin_id}/{uuid.uuid4().hex[:8]}_{safe}"
+                ct     = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
                 def _up(key=r2_key, body=file_bytes, content_type=ct):
                     _r2._make_client().put_object(
                         Bucket=settings.R2_BUCKET_NAME,
@@ -2243,7 +2253,7 @@ async def _do_submit_project_response(
                 _saved_photo_ids.append(photo_row_id)
                 logger.info(f"Checkin photo #{photo_row_id} saved: {filename} ({len(file_bytes)} bytes)")
             except Exception as photo_err:
-                logger.error(f"Failed to save photo {upload.filename}: {photo_err}", exc_info=True)
+                logger.error(f"Failed to save photo: {photo_err}", exc_info=True)
     elif photos:
         logger.warning("R2 not configured — skipping photo upload for project response")
 
