@@ -1473,7 +1473,30 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
     except Exception as e:
         logger.warning(f"Activities fetch failed for opp {opp_id}: {e}")
 
-    # Parse comments from each activity's Notes HTML (no extra API calls needed)
+    # Aspire strips the Notes field when filtering by OpportunityID — re-fetch
+    # individual records for any activity that came back with empty Notes so we
+    # can parse the embedded comment history HTML.
+    async def _refetch_notes(activity_id: int) -> str:
+        try:
+            r = await _aspire._get("Activities", {
+                "$filter": f"ActivityID eq {activity_id}",
+                "$select": "ActivityID,Notes",
+                "$top":    "1",
+            })
+            rows = _aspire._extract_list(r)
+            return rows[0].get("Notes") or "" if rows else ""
+        except Exception as e:
+            logger.debug(f"Re-fetch Notes for activity {activity_id} failed: {e}")
+            return ""
+
+    # Only re-fetch activities with empty Notes (avoids extra calls for normal activities)
+    missing = [a for a in activities if not (a.get("Notes") or "").strip()]
+    if missing:
+        refetched = await asyncio.gather(*[_refetch_notes(a["ActivityID"]) for a in missing])
+        for a, notes in zip(missing, refetched):
+            a["Notes"] = notes
+
+    # Parse comments from each activity's Notes HTML
     for a in activities:
         a["_comments"] = _parse_comments_from_notes(a.get("Notes") or "")
 
