@@ -235,14 +235,11 @@ async def lifespan(app: FastAPI):
     start_construction_scheduler()
     # Start issues digest nightly scheduler (fires 7 PM Pacific)
     start_digest_scheduler()
-    # Start project check-in scheduler (fires 6 AM Pacific)
-    start_checkin_scheduler()
     yield
     # Stop on shutdown
     await email_intake.stop()
     stop_construction_scheduler()
     stop_digest_scheduler()
-    stop_checkin_scheduler()
 
 
 app = FastAPI(
