@@ -1198,11 +1198,13 @@ async def submit_checkin_response(
             except Exception as photo_err:
                 logger.error(f"Failed to save photo: {photo_err}", exc_info=True)
 
-    # Notify the full construction team when a check-in is submitted
+    # Notify the full construction team + the lead when a check-in is submitted
     today_str    = datetime.now().strftime("%B %d, %Y")
-    notify_emails = [e.strip() for e in settings.CONSTRUCTION_CHECKIN_CC.split(",") if e.strip()]
-    if not notify_emails:
-        notify_emails = [e.strip() for e in settings.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if e.strip()]
+    cc_list      = [e.strip() for e in settings.CONSTRUCTION_CHECKIN_CC.split(",") if e.strip()]
+    if not cc_list:
+        cc_list  = [e.strip() for e in settings.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if e.strip()]
+    lead_email   = c.get("lead_email") or ""
+    notify_emails = list({lead_email, *cc_list} - {""})  # deduplicate, drop blanks
     html = _render_mgmt_email(
         opp_name        = c["opportunity_name"] or "",
         property_name   = c["property_name"] or "",
@@ -2157,6 +2159,7 @@ async def _do_submit_project_response(
         opp_name   = rows[0]["opportunity_name"] or f"Job #{opp_id}"
         prop_name  = rows[0]["property_name"] or ""
         lead_name  = rows[0]["lead_name"] or "Lead"
+        lead_email = rows[0]["lead_email"] or ""
         ai_tip     = rows[0]["ai_tip"] or ""
     else:
         # No email sent today — create a stub record so history is preserved
@@ -2167,11 +2170,13 @@ async def _do_submit_project_response(
         prop_name = opp.get("PropertyName") or ""
         tickets   = await _fetch_project_tickets(opp_id, month)
 
-        # Lead name from tickets
+        # Lead name + email from tickets / lead directory
         lead_name = next(
             ((t.get("CrewLeaderName") or "").strip() for t in tickets if t.get("CrewLeaderName")),
             "Lead",
         )
+        lead_rows  = await db._q("SELECT email FROM construction_leads WHERE lower(aspire_name) = ?", [lead_name.lower()])
+        lead_email = lead_rows[0]["email"] if lead_rows else ""
         ai_tip    = ""
         token     = secrets.token_urlsafe(32)
         expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
@@ -2248,11 +2253,12 @@ async def _do_submit_project_response(
     elif photos:
         logger.warning("R2 not configured — skipping photo upload for project response")
 
-    # Notify the full construction team when a check-in is submitted
+    # Notify the full construction team + the lead when a check-in is submitted
     today_str    = datetime.now().strftime("%B %d, %Y")
-    notify_emails = [e.strip() for e in settings.CONSTRUCTION_CHECKIN_CC.split(",") if e.strip()]
-    if not notify_emails:
-        notify_emails = [e.strip() for e in settings.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if e.strip()]
+    cc_list      = [e.strip() for e in settings.CONSTRUCTION_CHECKIN_CC.split(",") if e.strip()]
+    if not cc_list:
+        cc_list  = [e.strip() for e in settings.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if e.strip()]
+    notify_emails = list({lead_email, *cc_list} - {""})  # deduplicate, drop blanks
     html = _render_mgmt_email(
         opp_name=opp_name, property_name=prop_name, lead_name=lead_name,
         response_notes=approach_notes.strip(),
