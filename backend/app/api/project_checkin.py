@@ -863,19 +863,14 @@ async def _send_project_checkins(month: str) -> dict:
         )
         subject = f"📋 Daily Check-in: {property_name or opp_name} — {today_str}"
 
-        # Build CC list — exclude the lead themselves to avoid duplicate delivery
-        cc_all = [e.strip() for e in settings.CONSTRUCTION_CHECKIN_CC.split(",") if e.strip()]
-        cc_list = [e for e in cc_all if e.lower() != lead_email.lower()] or None
-
         try:
             await graph.send_email(
                 mailbox=settings.MS_AP_INBOX,
                 to_addresses=[lead_email],
                 subject=subject,
                 body_html=html,
-                cc_addresses=cc_list,
             )
-            logger.info(f"Checkin sent → {lead_email} (cc: {cc_list}) for opp {opp_id} ({opp_name})")
+            logger.info(f"Checkin prompt sent → {lead_email} for opp {opp_id} ({opp_name})")
             sent += 1
         except Exception as e:
             logger.error(f"Checkin email failed for opp {opp_id}: {e}")
@@ -1203,9 +1198,11 @@ async def submit_checkin_response(
             except Exception as photo_err:
                 logger.error(f"Failed to save photo: {photo_err}", exc_info=True)
 
-    # Notify management
-    today_str   = datetime.now().strftime("%B %d, %Y")
-    mgmt_emails = [e.strip() for e in settings.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if e.strip()]
+    # Notify the full construction team when a check-in is submitted
+    today_str    = datetime.now().strftime("%B %d, %Y")
+    notify_emails = [e.strip() for e in settings.CONSTRUCTION_CHECKIN_CC.split(",") if e.strip()]
+    if not notify_emails:
+        notify_emails = [e.strip() for e in settings.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if e.strip()]
     html = _render_mgmt_email(
         opp_name        = c["opportunity_name"] or "",
         property_name   = c["property_name"] or "",
@@ -1220,7 +1217,7 @@ async def submit_checkin_response(
         graph = GraphClient()
         await graph.send_email(
             mailbox=settings.MS_AP_INBOX,
-            to_addresses=mgmt_emails,
+            to_addresses=notify_emails,
             subject=f"✅ Project Update: {c['lead_name']} — {c['property_name'] or c['opportunity_name']}",
             body_html=html,
         )
@@ -2251,9 +2248,11 @@ async def _do_submit_project_response(
     elif photos:
         logger.warning("R2 not configured — skipping photo upload for project response")
 
-    # Notify management
-    today_str   = datetime.now().strftime("%B %d, %Y")
-    mgmt_emails = [e.strip() for e in settings.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if e.strip()]
+    # Notify the full construction team when a check-in is submitted
+    today_str    = datetime.now().strftime("%B %d, %Y")
+    notify_emails = [e.strip() for e in settings.CONSTRUCTION_CHECKIN_CC.split(",") if e.strip()]
+    if not notify_emails:
+        notify_emails = [e.strip() for e in settings.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if e.strip()]
     html = _render_mgmt_email(
         opp_name=opp_name, property_name=prop_name, lead_name=lead_name,
         response_notes=approach_notes.strip(),
@@ -2266,7 +2265,7 @@ async def _do_submit_project_response(
         graph = GraphClient()
         await graph.send_email(
             mailbox=settings.MS_AP_INBOX,
-            to_addresses=mgmt_emails,
+            to_addresses=notify_emails,
             subject=f"✅ Project Update: {lead_name} — {prop_name or opp_name}",
             body_html=html,
         )
