@@ -267,7 +267,8 @@ def _parse_comments_from_notes(notes_html: str) -> list[dict]:
 async def maintenance_lookup():
     """
     List active maintenance contracts from Aspire.
-    Filters Won opportunities in non-construction divisions.
+    Fetches Opportunities directly (not via tickets) so none are missed.
+    Filters: DivisionName contains 'maintenance', StatusName = Won, Type = Contract.
     Cached for 10 minutes.
     """
     global _lookup_cache, _lookup_cache_ts
@@ -279,120 +280,102 @@ async def maintenance_lookup():
             return _lookup_cache
 
     try:
-        from datetime import datetime, timedelta
-
-        date_cutoff = (datetime.now() - timedelta(days=548)).strftime("%Y-%m-%d")  # ~18 months
-        all_tickets: list[dict] = []
-        for skip in range(0, 2000, 500):
+        # ── Step 1: fetch ALL Won opportunities, paginated ────────────────────
+        # Filter server-side by status; filter by division in Python (OData
+        # contains() not reliably supported by Aspire).
+        all_opps: list[dict] = []
+        for skip in range(0, 5000, 500):
             try:
-                res = await _aspire._get("WorkTickets", {
-                    "$select":  "WorkTicketID,WorkTicketStatusName,OpportunityID,ScheduledStartDate,CompleteDate,HoursEst,HoursAct",
-                    "$filter":  f"ScheduledStartDate ge {date_cutoff}",
-                    "$orderby": "WorkTicketID desc",
+                res = await _aspire._get("Opportunities", {
+                    "$filter":  "OpportunityStatusName eq 'Won'",
+                    "$select":  "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityType,OpportunityTypeName",
+                    "$orderby": "OpportunityID desc",
                     "$top":     "500",
                     "$skip":    str(skip),
                 })
                 batch = _aspire._extract_list(res)
                 if not batch:
                     break
-                all_tickets.extend(batch)
+                all_opps.extend(batch)
+                logger.info(f"Maintenance lookup: fetched {len(batch)} opps (total {len(all_opps)})")
                 if len(batch) < 500:
                     break
             except Exception as e:
-                logger.warning(f"Maintenance lookup: ticket page skip={skip} failed: {e}")
+                logger.warning(f"Maintenance opp page skip={skip} failed: {e}")
                 break
 
-        ACTIVE_STATUSES   = {"in production", "in queue", "scheduled", "open"}
-        COMPLETE_STATUSES = {"complete", "completed"}
-        cutoff_90 = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        logger.info(f"Maintenance lookup: {len(all_opps)} Won opps total")
 
-        opp_map: dict = {}
-        for t in all_tickets:
-            oid = t.get("OpportunityID")
-            if not oid:
-                continue
-            status = (t.get("WorkTicketStatusName") or "").strip().lower()
-            if status not in ACTIVE_STATUSES and status not in COMPLETE_STATUSES:
-                continue
-            if status in COMPLETE_STATUSES:
-                done = (t.get("CompleteDate") or t.get("ScheduledStartDate") or "")[:10]
-                if done < cutoff_90:
-                    continue
-            if oid not in opp_map:
-                opp_map[oid] = {
-                    "hrs_est":        0.0,
-                    "hrs_act":        0.0,
-                    "ticket_count":   0,
-                    "active_tickets": 0,
-                    "latest_date":    "",
-                }
-            e = opp_map[oid]
-            e["hrs_est"]      += float(t.get("HoursEst") or 0)
-            e["hrs_act"]      += float(t.get("HoursAct") or 0)
-            e["ticket_count"] += 1
-            d = (t.get("ScheduledStartDate") or "")[:10]
-            if d > e["latest_date"]:
-                e["latest_date"] = d
-            if status in ACTIVE_STATUSES:
-                e["active_tickets"] += 1
+        # ── Step 2: Python-side filter ────────────────────────────────────────
+        maintenance_opps = []
+        for opp in all_opps:
+            division = (opp.get("DivisionName") or "").strip().lower()
+            opp_type = (opp.get("OpportunityType") or opp.get("OpportunityTypeName") or "").strip().lower()
 
-        if not opp_map:
+            if "maintenance" not in division:
+                continue
+            # If OpportunityType field exists, must be Contract; if field is absent/empty, allow it
+            if opp_type and "contract" not in opp_type:
+                continue
+            maintenance_opps.append(opp)
+
+        logger.info(f"Maintenance lookup: {len(maintenance_opps)} after division+type filter")
+
+        if not maintenance_opps:
             result = {"contracts": []}
             _lookup_cache    = result
             _lookup_cache_ts = _time.time()
             return result
 
-        # Batch-fetch opp details — include OpportunityType to filter for Contract type
-        opp_ids     = list(opp_map.keys())
-        opp_details: dict = {}
-        BATCH = 20
-        for i in range(0, len(opp_ids), BATCH):
-            chunk     = opp_ids[i:i+BATCH]
-            or_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
+        # ── Step 3: fetch ticket summaries for each opp in parallel ───────────
+        async def _ticket_summary(opp_id: int) -> dict:
+            """Return hrs_est, hrs_act, ticket_count, active_tickets, latest_date."""
+            summary = {"hrs_est": 0.0, "hrs_act": 0.0, "ticket_count": 0, "active_tickets": 0, "latest_date": ""}
+            ACTIVE    = {"in production", "in queue", "scheduled", "open"}
+            COMPLETE  = {"complete", "completed"}
             try:
-                res = await _aspire._get("Opportunities", {
-                    "$filter": or_filter,
-                    "$top":    str(BATCH),
-                    "$select": "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityType,OpportunityTypeName",
+                res = await _aspire._get("WorkTickets", {
+                    "$filter":  f"OpportunityID eq {opp_id}",
+                    "$select":  "WorkTicketID,WorkTicketStatusName,ScheduledStartDate,HoursEst,HoursAct",
+                    "$top":     "200",
                 })
-                for opp in _aspire._extract_list(res):
-                    oid = opp.get("OpportunityID")
-                    if oid:
-                        opp_details[oid] = opp
+                for t in _aspire._extract_list(res):
+                    status = (t.get("WorkTicketStatusName") or "").strip().lower()
+                    summary["hrs_est"] += float(t.get("HoursEst") or 0)
+                    summary["hrs_act"] += float(t.get("HoursAct") or 0)
+                    summary["ticket_count"] += 1
+                    d = (t.get("ScheduledStartDate") or "")[:10]
+                    if d > summary["latest_date"]:
+                        summary["latest_date"] = d
+                    if status in ACTIVE:
+                        summary["active_tickets"] += 1
             except Exception as e:
-                logger.warning(f"Maintenance opp batch fetch failed: {e}")
+                logger.debug(f"Ticket summary for opp {opp_id}: {e}")
+            return summary
 
+        # Fetch all ticket summaries in parallel (cap concurrency at 20 at a time)
+        opp_ids   = [o["OpportunityID"] for o in maintenance_opps]
+        summaries: list[dict] = []
+        CHUNK = 20
+        for i in range(0, len(opp_ids), CHUNK):
+            chunk_results = await asyncio.gather(*[_ticket_summary(oid) for oid in opp_ids[i:i+CHUNK]])
+            summaries.extend(chunk_results)
+
+        # ── Step 4: build contract list ───────────────────────────────────────
         contracts = []
-        for oid, e in opp_map.items():
-            opp        = opp_details.get(oid, {})
-            if not opp:
-                continue
-            division   = (opp.get("DivisionName") or "").strip().lower()
-            opp_status = (opp.get("OpportunityStatusName") or "").strip().lower()
-            opp_type   = (opp.get("OpportunityType") or opp.get("OpportunityTypeName") or "").strip().lower()
-
-            # Must be a maintenance division (Commercial Maintenance, Residential Maintenance, etc.)
-            if "maintenance" not in division:
-                continue
-            # Must be Won
-            if opp_status != "won":
-                continue
-            # Must be Contract type (not a work order or estimate)
-            if opp_type and "contract" not in opp_type:
-                continue
-
-            all_done = e["active_tickets"] == 0
+        for opp, summary in zip(maintenance_opps, summaries):
+            all_done = summary["active_tickets"] == 0
             contracts.append({
-                "opp_id":       oid,
-                "opp_name":     opp.get("OpportunityName") or f"Contract #{oid}",
+                "opp_id":       opp["OpportunityID"],
+                "opp_name":     opp.get("OpportunityName") or f"Contract #{opp['OpportunityID']}",
                 "property":     opp.get("PropertyName") or "",
                 "division":     opp.get("DivisionName") or "",
-                "status":       opp.get("OpportunityStatusName") or ("Complete" if all_done else "Active"),
+                "status":       "Won",
                 "all_done":     all_done,
-                "hrs_est":      round(e["hrs_est"], 1),
-                "hrs_act":      round(e["hrs_act"], 1),
-                "ticket_count": e["ticket_count"],
-                "latest_date":  e["latest_date"],
+                "hrs_est":      round(summary["hrs_est"], 1),
+                "hrs_act":      round(summary["hrs_act"], 1),
+                "ticket_count": summary["ticket_count"],
+                "latest_date":  summary["latest_date"],
             })
 
         contracts.sort(key=lambda x: x["latest_date"], reverse=True)
