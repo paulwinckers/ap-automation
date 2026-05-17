@@ -438,6 +438,16 @@ async def maintenance_lookup():
     return {"contracts": [], "loading": True}
 
 
+@router.get("/debug/opp-statuses")
+async def debug_opp_statuses():
+    """Return all OpportunityStatus records so we can see stage values."""
+    try:
+        res = await _aspire._get("OpportunityStatus", {"$top": "100"})
+        return {"statuses": _aspire._extract_list(res)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/debug/opp-fields/{opp_id}")
 async def debug_opp_fields(opp_id: int):
     """Return ALL fields on a single opportunity so we can find status/production flags."""
