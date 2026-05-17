@@ -293,7 +293,7 @@ async def _build_lookup_cache() -> None:
         yr_start = f"{year}-01-01"
         yr_end   = f"{year}-12-31"
 
-        SELECT = "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityType,StartDate,EndDate"
+        SELECT = "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityType,StartDate,EndDate,JobStatusName,EstimatedLaborHours,ActualLaborHours,PercentComplete,CompleteDate"
         DIV_FILTER = (
             "(DivisionName eq 'Commercial Maintenance' or DivisionName eq 'Residential Maintenance')"
             " and OpportunityStatusName eq 'Won'"
@@ -337,56 +337,28 @@ async def _build_lookup_cache() -> None:
             _lookup_cache_ts = _time.time()
             return
 
-        # ── Step 3: ticket summaries ──────────────────────────────────────────
-        async def _ticket_summary(opp_id: int) -> dict:
-            summary = {"hrs_est": 0.0, "hrs_act": 0.0, "ticket_count": 0, "active_tickets": 0, "latest_date": ""}
-            COMPLETE = {"complete", "completed"}
-            try:
-                res = await _aspire._get("WorkTickets", {
-                    "$filter": f"OpportunityID eq {opp_id}",
-                    "$select": "WorkTicketID,WorkTicketStatusName,ScheduledStartDate,HoursEst,HoursAct",
-                    "$top":    "200",
-                })
-                for t in _aspire._extract_list(res):
-                    status = (t.get("WorkTicketStatusName") or "").strip().lower()
-                    summary["hrs_est"] += float(t.get("HoursEst") or 0)
-                    summary["hrs_act"] += float(t.get("HoursAct") or 0)
-                    summary["ticket_count"] += 1
-                    d = (t.get("ScheduledStartDate") or "")[:10]
-                    if d > summary["latest_date"]:
-                        summary["latest_date"] = d
-                    if status not in COMPLETE:
-                        summary["active_tickets"] += 1
-            except Exception as e:
-                logger.warning(f"Ticket summary failed for opp {opp_id}: {e}")
-            return summary
-
-        opp_ids: list[int] = [o["OpportunityID"] for o in maintenance_opps]
-        summaries: list[dict] = []
-        CHUNK = 10
-        for i in range(0, len(opp_ids), CHUNK):
-            results = await asyncio.gather(*[_ticket_summary(oid) for oid in opp_ids[i:i+CHUNK]])
-            summaries.extend(results)
-            if i + CHUNK < len(opp_ids):
-                await asyncio.sleep(0.05)
-
-        # ── Step 4: assemble ──────────────────────────────────────────────────
+        # ── Step 3: assemble using opp fields directly (no ticket fetch needed) ─
+        # JobStatusName tells us "In Production" vs "Complete" without tickets.
+        # EstimatedLaborHours / ActualLaborHours give us budget progress.
+        ACTIVE_JOB_STATUSES = {"in production", "open", "scheduled", "in queue"}
         contracts = []
-        for opp, summary in zip(maintenance_opps, summaries):
-            raw_type = (opp.get("OpportunityType") or "").strip().lower()
+        for opp in maintenance_opps:
+            raw_type   = (opp.get("OpportunityType") or "").strip().lower()
             is_work_order = "work order" in raw_type or "workorder" in raw_type
+            job_status = (opp.get("JobStatusName") or "").strip().lower()
+            all_done   = job_status not in ACTIVE_JOB_STATUSES and job_status != ""
             contracts.append({
                 "opp_id":       opp["OpportunityID"],
                 "opp_name":     opp.get("OpportunityName") or f"Contract #{opp['OpportunityID']}",
                 "property":     opp.get("PropertyName") or "",
                 "division":     opp.get("DivisionName") or "",
-                "status":       "Won",
+                "status":       opp.get("JobStatusName") or "Won",
                 "opp_type":     "work_order" if is_work_order else "contract",
-                "all_done":     summary["active_tickets"] == 0,
-                "hrs_est":      round(summary["hrs_est"], 1),
-                "hrs_act":      round(summary["hrs_act"], 1),
-                "ticket_count": summary["ticket_count"],
-                "latest_date":  summary["latest_date"],
+                "all_done":     all_done,
+                "hrs_est":      round(float(opp.get("EstimatedLaborHours") or 0), 1),
+                "hrs_act":      round(float(opp.get("ActualLaborHours") or 0), 1),
+                "ticket_count": 0,   # not fetched at lookup — open contract for details
+                "latest_date":  (opp.get("EndDate") or "")[:10],
             })
 
         contracts.sort(key=lambda x: x["latest_date"], reverse=True)
