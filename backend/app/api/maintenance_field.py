@@ -287,7 +287,7 @@ async def maintenance_lookup():
         for skip in range(0, 10000, 500):
             try:
                 res = await _aspire._get("Opportunities", {
-                    "$select":  "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityType,OpportunityTypeName",
+                    "$select":  "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName",
                     "$orderby": "OpportunityID desc",
                     "$top":     "500",
                     "$skip":    str(skip),
@@ -310,14 +310,10 @@ async def maintenance_lookup():
         for opp in all_opps:
             division   = (opp.get("DivisionName") or "").strip().lower()
             opp_status = (opp.get("OpportunityStatusName") or "").strip().lower()
-            opp_type   = (opp.get("OpportunityType") or opp.get("OpportunityTypeName") or "").strip().lower()
 
             if "maintenance" not in division:
                 continue
             if opp_status != "won":
-                continue
-            # If type field is present, must be Contract; if absent/empty allow it
-            if opp_type and "contract" not in opp_type:
                 continue
             maintenance_opps.append(opp)
 
