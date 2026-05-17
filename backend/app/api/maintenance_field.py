@@ -378,16 +378,17 @@ async def maintenance_lookup():
                 logger.warning(f"Ticket summary FAILED for opp {opp_id}: {e}", exc_info=True)
             return summary
 
-        # Fetch ticket summaries in small parallel chunks with a pause between
-        # batches to avoid Aspire rate limiting on large contract lists.
+        # Fetch ticket summaries in parallel chunks.
+        # chunk=10 + 50ms sleep keeps total time under 20s for 272 contracts
+        # while still being gentle enough to avoid Aspire rate limiting.
         opp_ids   = [o["OpportunityID"] for o in maintenance_opps]
         summaries: list[dict] = []
-        CHUNK = 5  # conservative — Aspire throttles under heavy parallel load
+        CHUNK = 10
         for i in range(0, len(opp_ids), CHUNK):
             chunk_results = await asyncio.gather(*[_ticket_summary(oid) for oid in opp_ids[i:i+CHUNK]])
             summaries.extend(chunk_results)
             if i + CHUNK < len(opp_ids):
-                await asyncio.sleep(0.3)  # 300ms pause between batches
+                await asyncio.sleep(0.05)  # 50ms pause between batches
 
         # ── Step 4: build contract list ───────────────────────────────────────
         contracts = []
