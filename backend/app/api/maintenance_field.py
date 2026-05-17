@@ -372,12 +372,10 @@ async def maintenance_lookup():
             division   = (opp.get("DivisionName") or "").strip().lower()
             opp_status = (opp.get("OpportunityStatusName") or "").strip().lower()
 
-            # Skip construction and lost/cancelled
+            # Skip construction division and clearly dead statuses
             if any(ex in division for ex in EXCLUDE_DIVISIONS):
                 continue
-            if opp_status in {"lost", "cancelled", "canceled", "void"}:
-                continue
-            if opp_status != "won":
+            if opp_status in {"lost", "cancelled", "canceled", "void", "rejected"}:
                 continue
 
             all_done = e["active_tickets"] == 0
@@ -386,7 +384,7 @@ async def maintenance_lookup():
                 "opp_name":     opp.get("OpportunityName") or f"Contract #{oid}",
                 "property":     opp.get("PropertyName") or "",
                 "division":     opp.get("DivisionName") or "",
-                "status":       "Complete" if all_done else "Active",
+                "status":       opp.get("OpportunityStatusName") or ("Complete" if all_done else "Active"),
                 "all_done":     all_done,
                 "hrs_est":      round(e["hrs_est"], 1),
                 "hrs_act":      round(e["hrs_act"], 1),
@@ -408,6 +406,68 @@ async def maintenance_lookup():
     except Exception as e:
         logger.error(f"Maintenance lookup error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to load contracts: {e}") from e
+
+
+@router.get("/debug/divisions")
+async def debug_divisions():
+    """
+    Dev endpoint: shows what DivisionName and OpportunityStatusName values
+    exist in Aspire for all non-construction opps that had recent tickets.
+    Use this to tune the lookup filter.
+    """
+    from datetime import datetime, timedelta
+    date_cutoff = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+    try:
+        res = await _aspire._get("WorkTickets", {
+            "$select":  "WorkTicketID,OpportunityID,WorkTicketStatusName,ScheduledStartDate",
+            "$filter":  f"ScheduledStartDate ge {date_cutoff}",
+            "$orderby": "WorkTicketID desc",
+            "$top":     "500",
+        })
+        tickets = _aspire._extract_list(res)
+    except Exception as e:
+        raise HTTPException(500, f"Ticket fetch failed: {e}")
+
+    opp_ids = list({t.get("OpportunityID") for t in tickets if t.get("OpportunityID")})[:60]
+    opp_details: dict = {}
+    BATCH = 20
+    for i in range(0, len(opp_ids), BATCH):
+        chunk = opp_ids[i:i+BATCH]
+        try:
+            res = await _aspire._get("Opportunities", {
+                "$filter": " or ".join(f"OpportunityID eq {oid}" for oid in chunk),
+                "$top":    str(BATCH),
+                "$select": "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName",
+            })
+            for opp in _aspire._extract_list(res):
+                oid = opp.get("OpportunityID")
+                if oid:
+                    opp_details[oid] = opp
+        except Exception as e:
+            logger.warning(f"debug_divisions batch failed: {e}")
+
+    # Tally unique division+status combos
+    combos: dict = {}
+    for opp in opp_details.values():
+        div    = opp.get("DivisionName") or "(none)"
+        status = opp.get("OpportunityStatusName") or "(none)"
+        key    = f"{div} | {status}"
+        combos[key] = combos.get(key, 0) + 1
+
+    return {
+        "total_opps_sampled": len(opp_details),
+        "division_status_combos": dict(sorted(combos.items(), key=lambda x: -x[1])),
+        "sample_opps": [
+            {
+                "opp_id":   o.get("OpportunityID"),
+                "name":     o.get("OpportunityName"),
+                "property": o.get("PropertyName"),
+                "division": o.get("DivisionName"),
+                "status":   o.get("OpportunityStatusName"),
+            }
+            for o in list(opp_details.values())[:20]
+        ],
+    }
 
 
 # ── Main page data endpoint ───────────────────────────────────────────────────
