@@ -281,7 +281,7 @@ async def maintenance_lookup():
     try:
         from datetime import datetime, timedelta
 
-        date_cutoff = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        date_cutoff = (datetime.now() - timedelta(days=548)).strftime("%Y-%m-%d")  # ~18 months
         all_tickets: list[dict] = []
         for skip in range(0, 2000, 500):
             try:
@@ -342,7 +342,7 @@ async def maintenance_lookup():
             _lookup_cache_ts = _time.time()
             return result
 
-        # Batch-fetch opp details
+        # Batch-fetch opp details — include OpportunityType to filter for Contract type
         opp_ids     = list(opp_map.keys())
         opp_details: dict = {}
         BATCH = 20
@@ -353,7 +353,7 @@ async def maintenance_lookup():
                 res = await _aspire._get("Opportunities", {
                     "$filter": or_filter,
                     "$top":    str(BATCH),
-                    "$select": "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,ContractType,ContractTypeName",
+                    "$select": "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityType,OpportunityTypeName",
                 })
                 for opp in _aspire._extract_list(res):
                     oid = opp.get("OpportunityID")
@@ -362,8 +362,6 @@ async def maintenance_lookup():
             except Exception as e:
                 logger.warning(f"Maintenance opp batch fetch failed: {e}")
 
-        EXCLUDE_DIVISIONS = {"construction"}
-
         contracts = []
         for oid, e in opp_map.items():
             opp        = opp_details.get(oid, {})
@@ -371,11 +369,16 @@ async def maintenance_lookup():
                 continue
             division   = (opp.get("DivisionName") or "").strip().lower()
             opp_status = (opp.get("OpportunityStatusName") or "").strip().lower()
+            opp_type   = (opp.get("OpportunityType") or opp.get("OpportunityTypeName") or "").strip().lower()
 
-            # Skip construction division and clearly dead statuses
-            if any(ex in division for ex in EXCLUDE_DIVISIONS):
+            # Must be a maintenance division (Commercial Maintenance, Residential Maintenance, etc.)
+            if "maintenance" not in division:
                 continue
-            if opp_status in {"lost", "cancelled", "canceled", "void", "rejected"}:
+            # Must be Won
+            if opp_status != "won":
+                continue
+            # Must be Contract type (not a work order or estimate)
+            if opp_type and "contract" not in opp_type:
                 continue
 
             all_done = e["active_tickets"] == 0
@@ -416,7 +419,7 @@ async def debug_divisions():
     Use this to tune the lookup filter.
     """
     from datetime import datetime, timedelta
-    date_cutoff = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+    date_cutoff = (datetime.now() - timedelta(days=548)).strftime("%Y-%m-%d")
     try:
         res = await _aspire._get("WorkTickets", {
             "$select":  "WorkTicketID,OpportunityID,WorkTicketStatusName,ScheduledStartDate",
