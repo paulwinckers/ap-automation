@@ -362,7 +362,9 @@ async def maintenance_lookup():
                     "$select":  "WorkTicketID,WorkTicketStatusName,ScheduledStartDate,HoursEst,HoursAct",
                     "$top":     "200",
                 })
-                for t in _aspire._extract_list(res):
+                rows = _aspire._extract_list(res)
+                logger.info(f"Ticket summary opp {opp_id}: {len(rows)} tickets")
+                for t in rows:
                     status = (t.get("WorkTicketStatusName") or "").strip().lower()
                     summary["hrs_est"] += float(t.get("HoursEst") or 0)
                     summary["hrs_act"] += float(t.get("HoursAct") or 0)
@@ -370,10 +372,10 @@ async def maintenance_lookup():
                     d = (t.get("ScheduledStartDate") or "")[:10]
                     if d > summary["latest_date"]:
                         summary["latest_date"] = d
-                    if status not in COMPLETE:  # anything not done = active
+                    if status not in COMPLETE:
                         summary["active_tickets"] += 1
             except Exception as e:
-                logger.debug(f"Ticket summary for opp {opp_id}: {e}")
+                logger.warning(f"Ticket summary FAILED for opp {opp_id}: {e}", exc_info=True)
             return summary
 
         # Fetch all ticket summaries in parallel (cap concurrency at 20 at a time)
@@ -418,6 +420,27 @@ async def maintenance_lookup():
     except Exception as e:
         logger.error(f"Maintenance lookup error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to load contracts: {e}") from e
+
+
+@router.get("/debug/tickets/{opp_id}")
+async def debug_tickets(opp_id: int):
+    """Test: fetch ticket summary for one opp and return raw results."""
+    try:
+        res = await _aspire._get("WorkTickets", {
+            "$filter":  f"OpportunityID eq {opp_id}",
+            "$select":  "WorkTicketID,WorkTicketStatusName,ScheduledStartDate,HoursEst,HoursAct",
+            "$top":     "200",
+        })
+        rows = _aspire._extract_list(res)
+        return {
+            "opp_id":       opp_id,
+            "ticket_count": len(rows),
+            "raw_response_type": str(type(res)),
+            "tickets": rows[:10],
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 
 @router.get("/debug/divisions")
