@@ -30,9 +30,10 @@ router = APIRouter(prefix="/field/maintenance", tags=["maintenance-field"])
 _aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)
 _db     = Database()
 
-# ── Simple in-memory lookup cache (10 min TTL) ────────────────────────────────
+# ── Lookup cache ─────────────────────────────────────────────────────────────
 _lookup_cache:    dict | None = None
 _lookup_cache_ts: float       = 0.0
+_cache_building:  bool        = False   # prevent concurrent rebuilds
 _LOOKUP_TTL = 8 * 60 * 60  # 8 hours — matches a workday
 
 
@@ -265,41 +266,32 @@ def _parse_comments_from_notes(notes_html: str) -> list[dict]:
 
 @router.post("/cache/clear")
 async def clear_lookup_cache():
-    """Force the lookup cache to expire so the next /lookup rebuilds from Aspire."""
-    global _lookup_cache, _lookup_cache_ts
+    """Force the lookup cache to expire and trigger an immediate background rebuild."""
+    global _lookup_cache, _lookup_cache_ts, _cache_building
     _lookup_cache    = None
     _lookup_cache_ts = 0.0
-    return {"cleared": True}
+    _cache_building  = False
+    asyncio.create_task(_build_lookup_cache())
+    return {"cleared": True, "rebuilding": True}
 
 
 # ── Lookup endpoint ───────────────────────────────────────────────────────────
 
-@router.get("/lookup")
-async def maintenance_lookup():
+async def _build_lookup_cache() -> None:
     """
-    List active maintenance contracts from Aspire.
-    Fetches Opportunities directly (not via tickets) so none are missed.
-    Filters: DivisionName contains 'maintenance', StatusName = Won, Type = Contract.
-    Cached for 10 minutes.
+    Build the full maintenance lookup cache in the background.
+    Fetches all maintenance opps then enriches each with ticket summaries.
+    Runs as a background task so the HTTP request returns immediately.
     """
-    global _lookup_cache, _lookup_cache_ts
-
-    if _lookup_cache is not None:
-        age = _time.time() - _lookup_cache_ts
-        if age < _LOOKUP_TTL:
-            logger.info(f"Maintenance lookup: cache hit (age={age:.0f}s)")
-            return _lookup_cache
-
+    global _lookup_cache, _lookup_cache_ts, _cache_building
+    if _cache_building:
+        return
+    _cache_building = True
     try:
-        # ── Step 1: fetch maintenance opps directly using server-side $filter ──
-        # Filter by division name + Won status + Contract type on the server so
-        # we don't have to paginate through every opportunity in the system.
-        # Use $pageNumber (1-based) instead of $skip — Aspire docs list both but
-        # $pageNumber is the reliable paginator for the Opportunities endpoint.
         from datetime import datetime
-        year      = datetime.now().year
-        yr_start  = f"{year}-01-01"
-        yr_end    = f"{year}-12-31"
+        year     = datetime.now().year
+        yr_start = f"{year}-01-01"
+        yr_end   = f"{year}-12-31"
 
         SELECT = "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityType,StartDate,EndDate"
         DIV_FILTER = (
@@ -309,8 +301,9 @@ async def maintenance_lookup():
             f" or (EndDate ge {yr_start} and EndDate le {yr_end}))"
         )
 
+        # ── Step 1: fetch opps ────────────────────────────────────────────────
         all_opps: list[dict] = []
-        for page in range(1, 21):   # up to 20 pages × 500 = 10 000 results
+        for page in range(1, 21):
             try:
                 res = await _aspire._get("Opportunities", {
                     "$select":     SELECT,
@@ -320,7 +313,7 @@ async def maintenance_lookup():
                     "$pageNumber": str(page),
                 })
                 batch = _aspire._extract_list(res)
-                logger.info(f"Maintenance lookup page {page}: {len(batch)} opps")
+                logger.info(f"Maintenance cache build page {page}: {len(batch)} opps")
                 if not batch:
                     break
                 all_opps.extend(batch)
@@ -330,41 +323,31 @@ async def maintenance_lookup():
                 logger.warning(f"Maintenance opp page {page} failed: {e}")
                 break
 
-        logger.info(f"Maintenance lookup: {len(all_opps)} opps from server filter")
-
-        # ── Step 2: Python-side type filter (Contract + Work Order) ─────────────
-        # Include Contract types (maintenance agreements) and Work Order types.
-        # If the field is absent or empty we still include the opp.
+        # ── Step 2: type filter ───────────────────────────────────────────────
         ALLOWED_TYPES = {"contract", "work order", "workorder"}
-        maintenance_opps = []
-        for opp in all_opps:
-            opp_type = (opp.get("OpportunityType") or "").strip().lower()
-            if opp_type and not any(t in opp_type for t in ALLOWED_TYPES):
-                continue
-            maintenance_opps.append(opp)
-
-        logger.info(f"Maintenance lookup: {len(maintenance_opps)} after division+type filter")
+        maintenance_opps = [
+            o for o in all_opps
+            if not (opp_type := (o.get("OpportunityType") or "").strip().lower())
+            or any(t in opp_type for t in ALLOWED_TYPES)
+        ]
+        logger.info(f"Maintenance cache build: {len(maintenance_opps)} opps after type filter")
 
         if not maintenance_opps:
-            result = {"contracts": []}
-            _lookup_cache    = result
+            _lookup_cache    = {"contracts": []}
             _lookup_cache_ts = _time.time()
-            return result
+            return
 
-        # ── Step 3: fetch ticket summaries for each opp in parallel ───────────
+        # ── Step 3: ticket summaries ──────────────────────────────────────────
         async def _ticket_summary(opp_id: int) -> dict:
-            """Return hrs_est, hrs_act, ticket_count, active_tickets, latest_date."""
             summary = {"hrs_est": 0.0, "hrs_act": 0.0, "ticket_count": 0, "active_tickets": 0, "latest_date": ""}
-            COMPLETE  = {"complete", "completed"}
+            COMPLETE = {"complete", "completed"}
             try:
                 res = await _aspire._get("WorkTickets", {
-                    "$filter":  f"OpportunityID eq {opp_id}",
-                    "$select":  "WorkTicketID,WorkTicketStatusName,ScheduledStartDate,HoursEst,HoursAct",
-                    "$top":     "200",
+                    "$filter": f"OpportunityID eq {opp_id}",
+                    "$select": "WorkTicketID,WorkTicketStatusName,ScheduledStartDate,HoursEst,HoursAct",
+                    "$top":    "200",
                 })
-                rows = _aspire._extract_list(res)
-                logger.info(f"Ticket summary opp {opp_id}: {len(rows)} tickets")
-                for t in rows:
+                for t in _aspire._extract_list(res):
                     status = (t.get("WorkTicketStatusName") or "").strip().lower()
                     summary["hrs_est"] += float(t.get("HoursEst") or 0)
                     summary["hrs_act"] += float(t.get("HoursAct") or 0)
@@ -374,26 +357,22 @@ async def maintenance_lookup():
                         summary["latest_date"] = d
                     if status not in COMPLETE:
                         summary["active_tickets"] += 1
-            except BaseException as e:
-                logger.warning(f"Ticket summary FAILED for opp {opp_id}: {e}", exc_info=True)
+            except Exception as e:
+                logger.warning(f"Ticket summary failed for opp {opp_id}: {e}")
             return summary
 
-        # Fetch ticket summaries in parallel chunks.
-        # chunk=10 + 50ms sleep keeps total time under 20s for 272 contracts
-        # while still being gentle enough to avoid Aspire rate limiting.
-        opp_ids   = [o["OpportunityID"] for o in maintenance_opps]
+        opp_ids: list[int] = [o["OpportunityID"] for o in maintenance_opps]
         summaries: list[dict] = []
         CHUNK = 10
         for i in range(0, len(opp_ids), CHUNK):
-            chunk_results = await asyncio.gather(*[_ticket_summary(oid) for oid in opp_ids[i:i+CHUNK]])
-            summaries.extend(chunk_results)
+            results = await asyncio.gather(*[_ticket_summary(oid) for oid in opp_ids[i:i+CHUNK]])
+            summaries.extend(results)
             if i + CHUNK < len(opp_ids):
-                await asyncio.sleep(0.05)  # 50ms pause between batches
+                await asyncio.sleep(0.05)
 
-        # ── Step 4: build contract list ───────────────────────────────────────
+        # ── Step 4: assemble ──────────────────────────────────────────────────
         contracts = []
         for opp, summary in zip(maintenance_opps, summaries):
-            all_done = summary["active_tickets"] == 0
             raw_type = (opp.get("OpportunityType") or "").strip().lower()
             is_work_order = "work order" in raw_type or "workorder" in raw_type
             contracts.append({
@@ -403,7 +382,7 @@ async def maintenance_lookup():
                 "division":     opp.get("DivisionName") or "",
                 "status":       "Won",
                 "opp_type":     "work_order" if is_work_order else "contract",
-                "all_done":     all_done,
+                "all_done":     summary["active_tickets"] == 0,
                 "hrs_est":      round(summary["hrs_est"], 1),
                 "hrs_act":      round(summary["hrs_act"], 1),
                 "ticket_count": summary["ticket_count"],
@@ -413,17 +392,50 @@ async def maintenance_lookup():
         contracts.sort(key=lambda x: x["latest_date"], reverse=True)
         contracts.sort(key=lambda x: x["all_done"])  # active first
 
-        result = {"contracts": contracts}
-        _lookup_cache    = result
+        _lookup_cache    = {"contracts": contracts}
         _lookup_cache_ts = _time.time()
-        logger.info(f"Maintenance lookup: returning {len(contracts)} contracts")
-        return result
+        logger.info(f"Maintenance cache build complete: {len(contracts)} contracts")
 
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Maintenance lookup error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to load contracts: {e}") from e
+        logger.error(f"Maintenance cache build failed: {e}", exc_info=True)
+    finally:
+        _cache_building = False
+
+
+@router.get("/lookup")
+async def maintenance_lookup():
+    """
+    Return cached maintenance contracts. If cache is stale, kicks off a
+    background rebuild and returns whatever is cached (even if empty/stale)
+    so the HTTP request never times out.
+    """
+    global _lookup_cache, _lookup_cache_ts, _cache_building
+
+    age = _time.time() - _lookup_cache_ts
+    cache_valid = _lookup_cache is not None and age < _LOOKUP_TTL
+
+    if cache_valid:
+        logger.info(f"Maintenance lookup: cache hit (age={age:.0f}s)")
+        return _lookup_cache
+
+    # Stale or empty — start background rebuild if not already running
+    if not _cache_building:
+        logger.info("Maintenance lookup: cache stale, starting background build")
+        asyncio.create_task(_build_lookup_cache())
+
+    # Return whatever we have (may be empty on very first load)
+    if _lookup_cache is not None:
+        logger.info("Maintenance lookup: returning stale cache while rebuilding")
+        return _lookup_cache
+
+    # Truly first load — wait briefly for the build to produce opps
+    logger.info("Maintenance lookup: first load, waiting up to 15s for initial data")
+    for _ in range(30):           # 30 × 0.5s = 15s max wait
+        await asyncio.sleep(0.5)
+        if _lookup_cache is not None:
+            return _lookup_cache
+
+    return {"contracts": [], "loading": True}
 
 
 @router.get("/debug/tickets/{opp_id}")
