@@ -343,7 +343,6 @@ async def maintenance_lookup():
         async def _ticket_summary(opp_id: int) -> dict:
             """Return hrs_est, hrs_act, ticket_count, active_tickets, latest_date."""
             summary = {"hrs_est": 0.0, "hrs_act": 0.0, "ticket_count": 0, "active_tickets": 0, "latest_date": ""}
-            ACTIVE    = {"in production", "in queue", "scheduled", "open"}
             COMPLETE  = {"complete", "completed"}
             try:
                 res = await _aspire._get("WorkTickets", {
@@ -359,7 +358,7 @@ async def maintenance_lookup():
                     d = (t.get("ScheduledStartDate") or "")[:10]
                     if d > summary["latest_date"]:
                         summary["latest_date"] = d
-                    if status in ACTIVE:
+                    if status not in COMPLETE:  # anything not done = active
                         summary["active_tickets"] += 1
             except Exception as e:
                 logger.debug(f"Ticket summary for opp {opp_id}: {e}")
