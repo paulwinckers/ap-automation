@@ -39,6 +39,8 @@ import SafetyInspectionsAdmin from './pages/SafetyInspectionsAdmin';
 import FieldCheckin           from './pages/FieldCheckin';
 import FieldProject          from './pages/FieldProject';
 import FieldProjectLookup   from './pages/FieldProjectLookup';
+import FieldMaintenance      from './pages/FieldMaintenance';
+import FieldMaintenanceLookup from './pages/FieldMaintenanceLookup';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -72,6 +74,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/field/checkin/:token"     element={<FieldCheckin />} />
         <Route path="/field/project"            element={<FieldProjectLookup />} />
         <Route path="/field/project/:oppId"     element={<FieldProject />} />
+        <Route path="/field/maintenance"        element={<FieldMaintenanceLookup />} />
+        <Route path="/field/maintenance/:oppId" element={<FieldMaintenance />} />
 
         {/* Field Ops — login required */}
         <Route path="/ops/crew-schedule" element={<RequireAuth><Office><CrewSchedule /></Office></RequireAuth>} />
