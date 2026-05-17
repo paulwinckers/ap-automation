@@ -12,6 +12,7 @@ const FIELD_LINKS = [
   { to: '/field',                  icon: '🧾', label: 'Submit Receipt',   sub: 'Invoices, MC & expenses' },
   { to: '/field/work-ticket',      icon: '✅', label: 'Schedule',         sub: 'View routes & complete tickets' },
   { to: '/field/project',          icon: '🏗️', label: 'Construction Projects', sub: 'Hours, updates & check-ins' },
+  { to: '/field/maintenance',      icon: '🌿', label: 'Maintenance',           sub: 'Contracts & service history' },
   { to: '/field/purchase-order',   icon: '🛒', label: 'Purchase Order',   sub: 'Create a PO for materials' },
   { to: '/field/opportunity',      icon: '➕', label: 'New Opportunity',   sub: 'Create a job in Aspire' },
   { to: '/field/safety',           icon: '🦺', label: 'Safety Talk',       sub: 'Record a toolbox talk' },
