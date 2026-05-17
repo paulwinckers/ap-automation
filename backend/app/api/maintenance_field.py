@@ -280,14 +280,13 @@ async def maintenance_lookup():
             return _lookup_cache
 
     try:
-        # ── Step 1: fetch ALL Won opportunities, paginated ────────────────────
-        # Filter server-side by status; filter by division in Python (OData
-        # contains() not reliably supported by Aspire).
+        # ── Step 1: fetch ALL opportunities, paginated, filter in Python ─────
+        # Aspire OData does not support filtering by OpportunityStatusName
+        # directly — fetch all and filter in Python (same pattern construction uses).
         all_opps: list[dict] = []
-        for skip in range(0, 5000, 500):
+        for skip in range(0, 10000, 500):
             try:
                 res = await _aspire._get("Opportunities", {
-                    "$filter":  "OpportunityStatusName eq 'Won'",
                     "$select":  "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityType,OpportunityTypeName",
                     "$orderby": "OpportunityID desc",
                     "$top":     "500",
@@ -304,17 +303,20 @@ async def maintenance_lookup():
                 logger.warning(f"Maintenance opp page skip={skip} failed: {e}")
                 break
 
-        logger.info(f"Maintenance lookup: {len(all_opps)} Won opps total")
+        logger.info(f"Maintenance lookup: {len(all_opps)} total opps fetched")
 
         # ── Step 2: Python-side filter ────────────────────────────────────────
         maintenance_opps = []
         for opp in all_opps:
-            division = (opp.get("DivisionName") or "").strip().lower()
-            opp_type = (opp.get("OpportunityType") or opp.get("OpportunityTypeName") or "").strip().lower()
+            division   = (opp.get("DivisionName") or "").strip().lower()
+            opp_status = (opp.get("OpportunityStatusName") or "").strip().lower()
+            opp_type   = (opp.get("OpportunityType") or opp.get("OpportunityTypeName") or "").strip().lower()
 
             if "maintenance" not in division:
                 continue
-            # If OpportunityType field exists, must be Contract; if field is absent/empty, allow it
+            if opp_status != "won":
+                continue
+            # If type field is present, must be Contract; if absent/empty allow it
             if opp_type and "contract" not in opp_type:
                 continue
             maintenance_opps.append(opp)
