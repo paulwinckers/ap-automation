@@ -280,40 +280,47 @@ async def maintenance_lookup():
             return _lookup_cache
 
     try:
-        # ── Step 1: fetch ALL opportunities, paginated, filter in Python ─────
-        # Aspire OData does not support filtering by OpportunityStatusName
-        # directly — fetch all and filter in Python (same pattern construction uses).
+        # ── Step 1: fetch maintenance opps directly using server-side $filter ──
+        # Filter by division name + Won status + Contract type on the server so
+        # we don't have to paginate through every opportunity in the system.
+        # Use $pageNumber (1-based) instead of $skip — Aspire docs list both but
+        # $pageNumber is the reliable paginator for the Opportunities endpoint.
+        SELECT = "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityType"
+        DIV_FILTER = (
+            "(DivisionName eq 'Commercial Maintenance' or DivisionName eq 'Residential Maintenance')"
+            " and OpportunityStatusName eq 'Won'"
+        )
+
         all_opps: list[dict] = []
-        for skip in range(0, 10000, 500):
+        for page in range(1, 21):   # up to 20 pages × 500 = 10 000 results
             try:
                 res = await _aspire._get("Opportunities", {
-                    "$select":  "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName",
-                    "$orderby": "OpportunityID desc",
-                    "$top":     "500",
-                    "$skip":    str(skip),
+                    "$select":     SELECT,
+                    "$filter":     DIV_FILTER,
+                    "$orderby":    "OpportunityID desc",
+                    "$limit":      "500",
+                    "$pageNumber": str(page),
                 })
                 batch = _aspire._extract_list(res)
+                logger.info(f"Maintenance lookup page {page}: {len(batch)} opps")
                 if not batch:
                     break
                 all_opps.extend(batch)
-                logger.info(f"Maintenance lookup: fetched {len(batch)} opps (total {len(all_opps)})")
                 if len(batch) < 500:
                     break
             except Exception as e:
-                logger.warning(f"Maintenance opp page skip={skip} failed: {e}")
+                logger.warning(f"Maintenance opp page {page} failed: {e}")
                 break
 
-        logger.info(f"Maintenance lookup: {len(all_opps)} total opps fetched")
+        logger.info(f"Maintenance lookup: {len(all_opps)} opps from server filter")
 
-        # ── Step 2: Python-side filter ────────────────────────────────────────
+        # ── Step 2: Python-side type filter (Contract only) ───────────────────
+        # OpportunityType = 'Contract' matches the Aspire UI filter; if the field
+        # is absent or empty we still include the opp (not all records have it).
         maintenance_opps = []
         for opp in all_opps:
-            division   = (opp.get("DivisionName") or "").strip().lower()
-            opp_status = (opp.get("OpportunityStatusName") or "").strip().lower()
-
-            if "maintenance" not in division:
-                continue
-            if opp_status != "won":
+            opp_type = (opp.get("OpportunityType") or "").strip().lower()
+            if opp_type and "contract" not in opp_type:
                 continue
             maintenance_opps.append(opp)
 
