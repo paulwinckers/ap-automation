@@ -33,7 +33,7 @@ _db     = Database()
 # ── Simple in-memory lookup cache (10 min TTL) ────────────────────────────────
 _lookup_cache:    dict | None = None
 _lookup_cache_ts: float       = 0.0
-_LOOKUP_TTL = 10 * 60
+_LOOKUP_TTL = 8 * 60 * 60  # 8 hours — matches a workday
 
 
 async def get_db() -> Database:
