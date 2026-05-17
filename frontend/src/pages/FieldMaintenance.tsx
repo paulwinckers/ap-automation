@@ -306,11 +306,18 @@ function ActivityCard({ activity }: { activity: Activity }) {
             {activity.ActivityCategoryName ? ` · ${activity.ActivityCategoryName}` : ''}
           </div>
         </div>
-        {activity.Status && (
-          <span style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', background: '#f3f4f6', borderRadius: 20, padding: '2px 7px', marginLeft: 8, flexShrink: 0 }}>
-            {activity.Status}
-          </span>
-        )}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, marginLeft: 8, flexShrink: 0 }}>
+          {activity.ActivityType && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#1d4ed8', background: '#eff6ff', borderRadius: 20, padding: '2px 7px', whiteSpace: 'nowrap' }}>
+              {activity.ActivityType}
+            </span>
+          )}
+          {activity.Status && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', background: '#f3f4f6', borderRadius: 20, padding: '2px 7px', whiteSpace: 'nowrap' }}>
+              {activity.Status}
+            </span>
+          )}
+        </div>
       </div>
 
       {hasComments && (
