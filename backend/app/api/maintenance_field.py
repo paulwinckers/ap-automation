@@ -261,6 +261,17 @@ def _parse_comments_from_notes(notes_html: str) -> list[dict]:
     return comments
 
 
+# ── Cache management ─────────────────────────────────────────────────────────
+
+@router.post("/cache/clear")
+async def clear_lookup_cache():
+    """Force the lookup cache to expire so the next /lookup rebuilds from Aspire."""
+    global _lookup_cache, _lookup_cache_ts
+    _lookup_cache    = None
+    _lookup_cache_ts = 0.0
+    return {"cleared": True}
+
+
 # ── Lookup endpoint ───────────────────────────────────────────────────────────
 
 @router.get("/lookup")
