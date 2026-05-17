@@ -285,10 +285,17 @@ async def maintenance_lookup():
         # we don't have to paginate through every opportunity in the system.
         # Use $pageNumber (1-based) instead of $skip — Aspire docs list both but
         # $pageNumber is the reliable paginator for the Opportunities endpoint.
-        SELECT = "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityType"
+        from datetime import datetime
+        now       = datetime.now()
+        date_from = f"{now.year - 1}-12-01"   # Dec 1 last year
+        date_to   = f"{now.year + 1}-12-31"   # Dec 31 next year
+
+        SELECT = "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityType,StartDate"
         DIV_FILTER = (
             "(DivisionName eq 'Commercial Maintenance' or DivisionName eq 'Residential Maintenance')"
             " and OpportunityStatusName eq 'Won'"
+            f" and StartDate ge {date_from}"
+            f" and StartDate le {date_to}"
         )
 
         all_opps: list[dict] = []
