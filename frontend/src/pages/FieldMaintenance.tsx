@@ -70,20 +70,29 @@ interface AdvisorLogEntry {
   asked_at:     string;
 }
 
+interface ConstructionProject {
+  opp_id: number;
+  name:   string;
+  status: string;
+  start:  string;
+  end:    string;
+}
+
 interface PageData {
-  opportunity_id:    number;
-  opportunity_name:  string;
-  property_name:     string;
-  division:          string;
-  status:            string;
-  hrs_est:           number | null;
-  hrs_act:           number | null;
-  ai_summary:        string;
-  services:          Service[];
-  completed_tickets: Ticket[];
-  upcoming_tickets:  Ticket[];
-  activities:        Activity[];
-  advisor_log:       AdvisorLogEntry[];
+  opportunity_id:        number;
+  opportunity_name:      string;
+  property_name:         string;
+  division:              string;
+  status:                string;
+  hrs_est:               number | null;
+  hrs_act:               number | null;
+  ai_summary:            string;
+  services:              Service[];
+  completed_tickets:     Ticket[];
+  upcoming_tickets:      Ticket[];
+  activities:            Activity[];
+  advisor_log:           AdvisorLogEntry[];
+  construction_projects: ConstructionProject[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -663,18 +672,52 @@ export default function FieldMaintenance() {
             groups.get(key)!.push(t);
           }
 
+          const projects = data.construction_projects || [];
+
           return (
             <div>
-              {groups.size === 0 ? (
+              {groups.size === 0 && projects.length === 0 && (
                 <div style={S.empty}>No upcoming tickets — all work is complete.</div>
-              ) : (
-                Array.from(groups.entries()).map(([svcName, grpTickets]) => (
-                  <CollapsibleGroup key={svcName} label={svcName} count={grpTickets.length} icon="📅">
-                    {grpTickets.map(t => (
-                      <TicketCard key={t.WorkTicketID} ticket={t} showNotes={false} />
-                    ))}
-                  </CollapsibleGroup>
-                ))
+              )}
+
+              {groups.size > 0 && Array.from(groups.entries()).map(([svcName, grpTickets]) => (
+                <CollapsibleGroup key={svcName} label={svcName} count={grpTickets.length} icon="📅">
+                  {grpTickets.map(t => (
+                    <TicketCard key={t.WorkTicketID} ticket={t} showNotes={false} />
+                  ))}
+                </CollapsibleGroup>
+              ))}
+
+              {projects.length > 0 && (
+                <div style={{ marginTop: groups.size > 0 ? 8 : 0 }}>
+                  <div style={S.groupLabel}>🏗️ Construction Projects at this Property</div>
+                  {projects.map(p => (
+                    <a
+                      key={p.opp_id}
+                      href={`/field/project/${p.opp_id}`}
+                      style={{ textDecoration: 'none' }}
+                    >
+                      <div style={{
+                        background: '#fff', border: '1px solid #e2e6ed', borderRadius: 10,
+                        padding: '12px 14px', marginBottom: 8,
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>{p.name}</div>
+                          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                            {p.start && p.end ? `${fmtDate(p.start)} → ${fmtDate(p.end)}` : p.start ? `Starts ${fmtDate(p.start)}` : 'Construction'}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, background: '#fef3c7', color: '#92400e', borderRadius: 20, padding: '2px 8px' }}>
+                            {p.status}
+                          </span>
+                          <span style={{ color: '#9ca3af', fontSize: 16 }}>›</span>
+                        </div>
+                      </div>
+                    </a>
+                  ))}
+                </div>
               )}
             </div>
           );

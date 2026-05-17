@@ -498,6 +498,26 @@ async def get_maintenance_page(opp_id: int, db: Database = Depends(get_db)):
             logger.info(f"OpportunityServices for {opp_id}: {e}")
             return []
 
+    async def _fetch_construction_projects(property_name: str) -> list[dict]:
+        """Fetch active Won construction opps at the same property."""
+        if not property_name:
+            return []
+        try:
+            safe = property_name.replace("'", "''")
+            res = await _aspire._get("Opportunities", {
+                "$filter": (
+                    f"PropertyName eq '{safe}'"
+                    " and DivisionName eq 'Construction'"
+                    " and OpportunityStatusName eq 'Won'"
+                ),
+                "$select": "OpportunityID,OpportunityName,PropertyName,OpportunityStatusName,StartDate,EndDate",
+                "$top":    "20",
+            })
+            return _aspire._extract_list(res)
+        except Exception as e:
+            logger.info(f"Construction projects fetch for {property_name}: {e}")
+            return []
+
     opp, tickets, services = await asyncio.gather(
         _fetch_opp(opp_id),
         _fetch_tickets(opp_id),
@@ -508,6 +528,10 @@ async def get_maintenance_page(opp_id: int, db: Database = Depends(get_db)):
 
     completed_tickets = [t for t in tickets if (t.get("WorkTicketStatusName") or "").lower() in COMPLETE]
     upcoming_tickets  = [t for t in tickets if (t.get("WorkTicketStatusName") or "").lower() not in COMPLETE]
+
+    # Fetch construction projects for this property in parallel
+    property_name = opp.get("PropertyName") or ""
+    construction_projects = await _fetch_construction_projects(property_name)
 
     # Fetch visit notes for completed tickets in parallel (cap at 30)
     async def _safe_visit_notes(tid: int) -> tuple[int, list[dict]]:
@@ -675,6 +699,16 @@ async def get_maintenance_page(opp_id: int, db: Database = Depends(get_db)):
             for a in activities
         ],
         "advisor_log": [dict(r) for r in advisor_rows],
+        "construction_projects": [
+            {
+                "opp_id":   p.get("OpportunityID"),
+                "name":     p.get("OpportunityName") or "",
+                "status":   p.get("OpportunityStatusName") or "",
+                "start":    (p.get("StartDate") or "")[:10],
+                "end":      (p.get("EndDate") or "")[:10],
+            }
+            for p in construction_projects
+        ],
     }
 
 
