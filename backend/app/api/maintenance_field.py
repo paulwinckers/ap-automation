@@ -438,6 +438,22 @@ async def maintenance_lookup():
     return {"contracts": [], "loading": True}
 
 
+@router.get("/debug/opp-fields/{opp_id}")
+async def debug_opp_fields(opp_id: int):
+    """Return ALL fields on a single opportunity so we can find status/production flags."""
+    try:
+        res = await _aspire._get("Opportunities", {
+            "$filter": f"OpportunityID eq {opp_id}",
+            "$top":    "1",
+        })
+        rows = _aspire._extract_list(res)
+        if not rows:
+            return {"error": "not found"}
+        return {"opp_id": opp_id, "fields": rows[0]}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/debug/tickets/{opp_id}")
 async def debug_tickets(opp_id: int):
     """Test: fetch ticket summary for one opp and return raw results."""
