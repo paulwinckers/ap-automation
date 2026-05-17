@@ -321,13 +321,14 @@ async def maintenance_lookup():
 
         logger.info(f"Maintenance lookup: {len(all_opps)} opps from server filter")
 
-        # ── Step 2: Python-side type filter (Contract only) ───────────────────
-        # OpportunityType = 'Contract' matches the Aspire UI filter; if the field
-        # is absent or empty we still include the opp (not all records have it).
+        # ── Step 2: Python-side type filter (Contract + Work Order) ─────────────
+        # Include Contract types (maintenance agreements) and Work Order types.
+        # If the field is absent or empty we still include the opp.
+        ALLOWED_TYPES = {"contract", "work order", "workorder"}
         maintenance_opps = []
         for opp in all_opps:
             opp_type = (opp.get("OpportunityType") or "").strip().lower()
-            if opp_type and "contract" not in opp_type:
+            if opp_type and not any(t in opp_type for t in ALLOWED_TYPES):
                 continue
             maintenance_opps.append(opp)
 
@@ -376,12 +377,15 @@ async def maintenance_lookup():
         contracts = []
         for opp, summary in zip(maintenance_opps, summaries):
             all_done = summary["active_tickets"] == 0
+            raw_type = (opp.get("OpportunityType") or "").strip().lower()
+            is_work_order = "work order" in raw_type or "workorder" in raw_type
             contracts.append({
                 "opp_id":       opp["OpportunityID"],
                 "opp_name":     opp.get("OpportunityName") or f"Contract #{opp['OpportunityID']}",
                 "property":     opp.get("PropertyName") or "",
                 "division":     opp.get("DivisionName") or "",
                 "status":       "Won",
+                "opp_type":     "work_order" if is_work_order else "contract",
                 "all_done":     all_done,
                 "hrs_est":      round(summary["hrs_est"], 1),
                 "hrs_act":      round(summary["hrs_act"], 1),

@@ -127,6 +127,29 @@ function compressImage(f: File, maxPx = 1920, quality = 0.82): Promise<File> {
   });
 }
 
+/** Strip script/style tags and on* handlers, leave everything else intact. */
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/\s+on\w+="[^"]*"/gi, '')
+    .replace(/\s+on\w+='[^']*'/gi, '');
+}
+
+/** Render a note field that may be plain text or Aspire HTML. */
+function NoteBody({ text }: { text: string }) {
+  const isHtml = /<[a-z][\s\S]*>/i.test(text);
+  if (isHtml) {
+    return (
+      <div
+        style={{ fontSize: 13, color: '#374151', lineHeight: 1.5 }}
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(text) }}
+      />
+    );
+  }
+  return <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.5 }}>{text}</div>;
+}
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function HoursBar({ est, act, color = '#0369a1' }: { est: number | null; act: number | null; color?: string }) {
@@ -215,14 +238,43 @@ function TicketCard({ ticket, showNotes }: { ticket: Ticket; showNotes: boolean 
                   <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 3 }}>
                     {vn.created_by} · {fmtDateTime(vn.created_at) || fmtDate(vn.scheduled_date)}
                   </div>
-                  <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.5, background: '#f8fafc', borderRadius: 8, padding: '8px 10px' }}>
-                    {vn.note}
+                  <div style={{ background: '#f8fafc', borderRadius: 8, padding: '8px 10px' }}>
+                    <NoteBody text={vn.note} />
                   </div>
                 </div>
               ))}
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+function CollapsibleGroup({ label, count, icon, children }: { label: string; count: number; icon: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          background: '#fff', border: '1px solid #e2e6ed', borderRadius: open ? '10px 10px 0 0' : 10,
+          padding: '11px 14px', cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#374151' }}>
+          {icon} {label}
+        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, background: '#f3f4f6', color: '#6b7280', borderRadius: 20, padding: '2px 8px' }}>{count}</span>
+          <span style={{ fontSize: 13, color: '#9ca3af' }}>{open ? '▲' : '▼'}</span>
+        </div>
+      </button>
+      {open && (
+        <div style={{ border: '1px solid #e2e6ed', borderTop: 'none', borderRadius: '0 0 10px 10px', padding: '10px 10px 4px', background: '#fafafa' }}>
+          {children}
+        </div>
       )}
     </div>
   );
@@ -267,8 +319,8 @@ function ActivityCard({ activity }: { activity: Activity }) {
                   <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 2 }}>
                     {c.CreatedByUserName} · {fmtDate(c.CreatedDate)}
                   </div>
-                  <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.5, background: '#f8fafc', borderRadius: 8, padding: '8px 10px' }}>
-                    {c.Comment}
+                  <div style={{ background: '#f8fafc', borderRadius: 8, padding: '8px 10px' }}>
+                    <NoteBody text={c.Comment} />
                   </div>
                 </div>
               ))}
@@ -494,25 +546,48 @@ export default function FieldMaintenance() {
             )}
 
             {/* Services */}
-            {data.services.length > 0 && (
-              <div style={S.section}>
-                <div style={S.sectionTitle}>🌿 Services Included</div>
-                {data.services.map((svc, i) => (
-                  <div key={i} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: i < data.services.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>{svc.name}</div>
-                    <div style={{ display: 'flex', gap: 12, marginTop: 3, fontSize: 12, color: '#6b7280', flexWrap: 'wrap' }}>
-                      {svc.frequency && <span>🔄 {svc.frequency}</span>}
-                      {svc.price && <span>💰 ${Number(svc.price).toLocaleString('en-CA', { minimumFractionDigits: 2 })}</span>}
-                    </div>
-                    {svc.notes && (
-                      <div style={{ marginTop: 4, fontSize: 12, color: '#374151', background: '#f8fafc', borderRadius: 6, padding: '6px 8px' }}>
-                        {svc.notes}
+            {data.services.length > 0 && (() => {
+              // Ticket counts per service (excluding disposal)
+              const svcCounts = new Map<string, { done: number; total: number }>();
+              for (const t of [...data.completed_tickets, ...data.upcoming_tickets]) {
+                if ((t.ServiceName || '').toLowerCase().includes('disposal')) continue;
+                const key = t.ServiceName || '';
+                if (!svcCounts.has(key)) svcCounts.set(key, { done: 0, total: 0 });
+                const e = svcCounts.get(key)!;
+                e.total++;
+                if ((t.WorkTicketStatusName || '').toLowerCase().includes('complete')) e.done++;
+              }
+              return (
+                <div style={S.section}>
+                  <div style={S.sectionTitle}>🌿 Services Included</div>
+                  {data.services.map((svc, i) => {
+                    const c = svcCounts.get(svc.name);
+                    const allDone = c && c.total > 0 && c.done === c.total;
+                    return (
+                      <div key={i} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: i < data.services.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: '#111827', flex: 1 }}>{svc.name}</div>
+                          {c && c.total > 0 && (
+                            <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: allDone ? '#f0fdf4' : '#eff6ff', color: allDone ? '#15803d' : '#1d4ed8', flexShrink: 0 }}>
+                              {c.done}/{c.total}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: 12, marginTop: 3, fontSize: 12, color: '#6b7280', flexWrap: 'wrap' }}>
+                          {svc.frequency && <span>🔄 {svc.frequency}</span>}
+                          {svc.price && <span>💰 ${Number(svc.price).toLocaleString('en-CA', { minimumFractionDigits: 2 })}</span>}
+                        </div>
+                        {svc.notes && (
+                          <div style={{ marginTop: 4, fontSize: 12, color: '#374151', background: '#f8fafc', borderRadius: 6, padding: '6px 8px' }}>
+                            {svc.notes}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {/* Quick stats */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
@@ -529,47 +604,81 @@ export default function FieldMaintenance() {
         )}
 
         {/* ── HISTORY TAB ── */}
-        {tab === 'history' && (
-          <div>
-            {data.completed_tickets.length === 0 && data.activities.length === 0 && (
-              <div style={S.empty}>No completed tickets or activities yet.</div>
-            )}
+        {tab === 'history' && (() => {
+          const doneTickets = data.completed_tickets.filter(
+            t => !(t.ServiceName || '').toLowerCase().includes('disposal')
+          );
+          // Group by service name
+          const groups = new Map<string, Ticket[]>();
+          for (const t of doneTickets) {
+            const key = t.ServiceName || '(No Service)';
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(t);
+          }
+          const hasTickets = groups.size > 0;
+          const filteredActivities = data.activities.filter(a => {
+            const type = (a.ActivityType || '').toLowerCase();
+            const subj = (a.Subject || '').toLowerCase();
+            return !type.includes('time adjustment') && !subj.includes('time adjustment');
+          });
+          const hasActivities = filteredActivities.length > 0;
 
-            {data.completed_tickets.length > 0 && (
-              <>
-                <div style={S.groupLabel}>✅ Completed Work Tickets ({data.completed_tickets.length})</div>
-                {data.completed_tickets.map(t => (
-                  <TicketCard key={t.WorkTicketID} ticket={t} showNotes={true} />
-                ))}
-              </>
-            )}
+          return (
+            <div>
+              {!hasTickets && !hasActivities && (
+                <div style={S.empty}>No completed tickets or activities yet.</div>
+              )}
 
-            {data.activities.length > 0 && (
-              <>
-                <div style={{ ...S.groupLabel, marginTop: 16 }}>🗓 Activities & Notes ({data.activities.length})</div>
-                {data.activities.map(a => (
-                  <ActivityCard key={a.ActivityID} activity={a} />
-                ))}
-              </>
-            )}
-          </div>
-        )}
+              {hasTickets && Array.from(groups.entries()).map(([svcName, grpTickets]) => (
+                <CollapsibleGroup key={svcName} label={svcName} count={grpTickets.length} icon="✅">
+                  {grpTickets.map(t => (
+                    <TicketCard key={t.WorkTicketID} ticket={t} showNotes={true} />
+                  ))}
+                </CollapsibleGroup>
+              ))}
+
+              {hasActivities && (
+                <div style={{ marginTop: hasTickets ? 4 : 0 }}>
+                  <CollapsibleGroup label="Activities & Notes" count={filteredActivities.length} icon="🗓">
+                    {filteredActivities.map(a => (
+                      <ActivityCard key={a.ActivityID} activity={a} />
+                    ))}
+                  </CollapsibleGroup>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── UPCOMING TAB ── */}
-        {tab === 'upcoming' && (
-          <div>
-            {data.upcoming_tickets.length === 0 ? (
-              <div style={S.empty}>No upcoming tickets — all work is complete.</div>
-            ) : (
-              <>
-                <div style={S.groupLabel}>📅 Upcoming / Active Tickets ({data.upcoming_tickets.length})</div>
-                {data.upcoming_tickets.map(t => (
-                  <TicketCard key={t.WorkTicketID} ticket={t} showNotes={false} />
-                ))}
-              </>
-            )}
-          </div>
-        )}
+        {tab === 'upcoming' && (() => {
+          const upcomingTickets = data.upcoming_tickets.filter(
+            t => !(t.ServiceName || '').toLowerCase().includes('disposal')
+          );
+          // Group by service name
+          const groups = new Map<string, Ticket[]>();
+          for (const t of upcomingTickets) {
+            const key = t.ServiceName || '(No Service)';
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(t);
+          }
+
+          return (
+            <div>
+              {groups.size === 0 ? (
+                <div style={S.empty}>No upcoming tickets — all work is complete.</div>
+              ) : (
+                Array.from(groups.entries()).map(([svcName, grpTickets]) => (
+                  <CollapsibleGroup key={svcName} label={svcName} count={grpTickets.length} icon="📅">
+                    {grpTickets.map(t => (
+                      <TicketCard key={t.WorkTicketID} ticket={t} showNotes={false} />
+                    ))}
+                  </CollapsibleGroup>
+                ))
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── FIELD ADVISOR TAB ── */}
         {tab === 'advisor' && (

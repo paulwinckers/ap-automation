@@ -17,6 +17,7 @@ interface Contract {
   property:     string;
   division:     string;
   status:       string;
+  opp_type:     string;   // 'contract' | 'work_order'
   all_done:     boolean;
   hrs_est:      number;
   hrs_act:      number;
@@ -81,7 +82,7 @@ function HoursBar({ est, act }: { est: number; act: number }) {
   );
 }
 
-function PropertyCard({ group, onSelect }: { group: PropertyGroup; onSelect: (opp_id: number) => void }) {
+function PropertyCard({ group, onSelect }: { group: PropertyGroup; onSelect: (c: Contract) => void }) {
   const multi = group.contracts.length > 1;
   const isDone = group.all_done;
   const badgeBg   = isDone ? '#f3f4f6' : '#dbeafe';
@@ -114,15 +115,21 @@ function PropertyCard({ group, onSelect }: { group: PropertyGroup; onSelect: (op
         <div style={{ marginTop: 10, borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
           {group.contracts.map(c => {
             const cDone = c.all_done;
+            const isWO  = c.opp_type === 'work_order';
             return (
-              <div key={c.opp_id} style={S.subRow} onClick={() => onSelect(c.opp_id)}>
+              <div key={c.opp_id} style={S.subRow} onClick={() => onSelect(c)}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{c.opp_name}</div>
                   <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>
                     {c.hrs_act.toFixed(1)}h / {c.hrs_est.toFixed(1)}h est · {c.ticket_count} ticket{c.ticket_count !== 1 ? 's' : ''}
                   </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  {isWO && (
+                    <span style={{ fontSize: 10, fontWeight: 700, background: '#fef3c7', color: '#92400e', borderRadius: 20, padding: '2px 7px' }}>
+                      Work Order
+                    </span>
+                  )}
                   <span style={{ ...S.badge, background: cDone ? '#f3f4f6' : '#dbeafe', color: cDone ? '#6b7280' : '#1d4ed8', fontSize: 10 }}>
                     <span style={{ width: 5, height: 5, borderRadius: '50%', background: cDone ? '#9ca3af' : '#2563eb', display: 'inline-block', marginRight: 4 }} />
                     {cDone ? 'Done' : 'Active'}
@@ -134,8 +141,15 @@ function PropertyCard({ group, onSelect }: { group: PropertyGroup; onSelect: (op
           })}
         </div>
       ) : (
-        <div style={S.tapHint} onClick={() => onSelect(group.contracts[0].opp_id)}>
-          Tap to open →
+        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {group.contracts[0].opp_type === 'work_order' && (
+            <span style={{ fontSize: 11, fontWeight: 700, background: '#fef3c7', color: '#92400e', borderRadius: 20, padding: '3px 9px' }}>
+              🔧 Work Order
+            </span>
+          )}
+          <div style={{ ...S.tapHint, marginTop: 0, marginLeft: 'auto' }} onClick={() => onSelect(group.contracts[0])}>
+            Tap to open →
+          </div>
         </div>
       )}
     </div>
@@ -235,7 +249,9 @@ export default function FieldMaintenanceLookup() {
         )}
 
         {activeGroups.map(g => (
-          <PropertyCard key={g.key} group={g} onSelect={id => navigate(`/field/maintenance/${id}`)} />
+          <PropertyCard key={g.key} group={g} onSelect={c =>
+            navigate(c.opp_type === 'work_order' ? `/field/project/${c.opp_id}` : `/field/maintenance/${c.opp_id}`)
+          } />
         ))}
 
         {!loading && completedGroups.length > 0 && (
@@ -244,7 +260,9 @@ export default function FieldMaintenanceLookup() {
           </button>
         )}
         {showCompleted && completedGroups.map(g => (
-          <PropertyCard key={g.key} group={g} onSelect={id => navigate(`/field/maintenance/${id}`)} />
+          <PropertyCard key={g.key} group={g} onSelect={c =>
+            navigate(c.opp_type === 'work_order' ? `/field/project/${c.opp_id}` : `/field/maintenance/${c.opp_id}`)
+          } />
         ))}
 
       </div>
