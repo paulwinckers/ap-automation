@@ -560,6 +560,36 @@ async def get_maintenance_page(opp_id: int, db: Database = Depends(get_db)):
     for a in activities:
         a["_comments"] = _parse_comments_from_notes(a.get("Notes") or "")
 
+    # Deduplicate activities — Aspire creates a new record per comment update on
+    # the same issue, so group by Subject and keep the most recent, merging all
+    # unique comments across duplicates into one card.
+    seen: dict[str, dict] = {}
+    for a in activities:
+        key = (a.get("Subject") or "").strip() or str(a.get("ActivityID"))
+        if key not in seen:
+            seen[key] = a
+        else:
+            existing = seen[key]
+            # Keep the entry with the latest CreatedDate as the primary
+            if (a.get("CreatedDate") or "") > (existing.get("CreatedDate") or ""):
+                # Merge existing comments into the newer record
+                a["_comments"] = a["_comments"] + existing["_comments"]
+                seen[key] = a
+            else:
+                # Merge new comments into the existing record
+                existing["_comments"] = existing["_comments"] + a["_comments"]
+    # Deduplicate the merged comments themselves (same text + author)
+    for a in seen.values():
+        unique_comments: list[dict] = []
+        seen_cmts: set[tuple] = set()
+        for c in a["_comments"]:
+            ck = (c.get("Comment") or "").strip(), (c.get("CreatedByUserName") or "")
+            if ck not in seen_cmts:
+                seen_cmts.add(ck)
+                unique_comments.append(c)
+        a["_comments"] = unique_comments
+    activities = list(seen.values())
+
     # AI summary (parallel with above would be better but summary depends on tickets)
     ai_summary = await _generate_maintenance_summary(opp, tickets, services)
 
