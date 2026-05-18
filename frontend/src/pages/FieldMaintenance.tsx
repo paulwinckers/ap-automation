@@ -836,6 +836,16 @@ export default function FieldMaintenance() {
                     Dismiss
                   </button>
                 </div>
+                {saveStatus === 'idle' && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: '#6b7280', textAlign: 'center' }}>
+                    💬 Saving will notify the ops manager via WhatsApp
+                  </div>
+                )}
+                {saveStatus === 'saved' && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: '#16a34a', textAlign: 'center' }}>
+                    ✓ Ops manager notified via WhatsApp
+                  </div>
+                )}
               </div>
             )}
 
