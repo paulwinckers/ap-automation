@@ -112,6 +112,10 @@ export default function FieldConversations({ oppId, contextType, propertyName }:
   const [newPreview, setNewPreview] = useState<string | null>(null);
   const [creating,   setCreating]   = useState(false);
 
+  // Who to notify
+  const [notifiableUsers, setNotifiableUsers] = useState<{id: number; name: string}[]>([]);
+  const [selectedNotify,  setSelectedNotify]  = useState<Set<number>>(new Set());
+
   // Thread view
   const [activeConv,    setActiveConv]    = useState<Conversation | null>(null);
   const [messages,      setMessages]      = useState<Message[]>([]);
@@ -126,6 +130,20 @@ export default function FieldConversations({ oppId, contextType, propertyName }:
   const cameraRef  = useRef<HTMLInputElement>(null);
   const msgCamRef  = useRef<HTMLInputElement>(null);
   const bottomRef  = useRef<HTMLDivElement>(null);
+
+  // Load notifiable users when new-conversation form opens
+  useEffect(() => {
+    if (view === 'new' && notifiableUsers.length === 0) {
+      fetch(`${API}/field/conversations/notifiable-users`)
+        .then(r => r.json())
+        .then(d => {
+          const users = d.users || [];
+          setNotifiableUsers(users);
+          setSelectedNotify(new Set(users.map((u: {id: number}) => u.id)));
+        })
+        .catch(() => {});
+    }
+  }, [view]);
 
   // Load conversation list
   useEffect(() => {
@@ -204,6 +222,7 @@ export default function FieldConversations({ oppId, contextType, propertyName }:
       if (crewName.trim()) form.append('crew_name', crewName.trim());
       if (crewWhatsApp.trim()) form.append('crew_whatsapp', crewWhatsApp.trim());
       form.append('property_name', propertyName);
+      form.append('tagged_user_ids', Array.from(selectedNotify).join(','));
       if (newPhoto) form.append('photo', newPhoto);
 
       const res = await fetch(`${API}/field/conversations/${oppId}`, { method: 'POST', body: form });
@@ -444,6 +463,40 @@ export default function FieldConversations({ oppId, contextType, propertyName }:
           <div style={{ display: 'flex', gap: 8, marginTop: 10, marginBottom: 14 }}>
             <button onClick={() => cameraRef.current?.click()} style={S.photoBtn}>📷 Photo</button>
           </div>
+
+          {/* Notify section */}
+          {notifiableUsers.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ ...S.label, marginBottom: 8 }}>
+                Notify
+                <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 4, color: '#9ca3af' }}>— who should see this issue?</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {notifiableUsers.map(u => {
+                  const checked = selectedNotify.has(u.id);
+                  return (
+                    <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setSelectedNotify(prev => {
+                            const next = new Set(prev);
+                            if (checked) next.delete(u.id); else next.add(u.id);
+                            return next;
+                          });
+                        }}
+                        style={{ width: 18, height: 18, accentColor: '#0f4c75', cursor: 'pointer' }}
+                      />
+                      <span style={{ fontSize: 14, color: '#374151', fontWeight: checked ? 600 : 400 }}>
+                        📱 {u.name}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div style={{ display: 'flex', gap: 8 }}>
             <button

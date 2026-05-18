@@ -153,14 +153,21 @@ def _notify_watchers(
         _twilio_send(body, w["whatsapp"])
 
 
-async def _auto_add_watchers(db: Database, conv_id: int) -> list[dict]:
+async def _auto_add_watchers(
+    db: Database,
+    conv_id: int,
+    user_id_filter: list[int] | None = None,
+) -> list[dict]:
     """
-    Query all active users with phones and insert them as watchers.
+    Insert active users with phones as watchers.
+    If user_id_filter is provided, only those IDs are added.
     Returns the inserted list so callers can notify without a second query.
     """
     managers = await db._q(
         "SELECT id, name, phone FROM users WHERE active = 1 AND phone IS NOT NULL AND phone != ''",
     )
+    if user_id_filter is not None:
+        managers = [m for m in managers if m["id"] in user_id_filter]
     result = []
     for m in managers:
         wa = _format_whatsapp_number(m["phone"])
@@ -225,6 +232,15 @@ async def _ask_ai(title: str, tag: Optional[str], messages: list[dict]) -> str:
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+@router.get("/notifiable-users")
+async def notifiable_users(db: Database = Depends(get_db)):
+    """Public — return active users with phones so field crew can pick who to notify."""
+    rows = await db._q(
+        "SELECT id, name FROM users WHERE active = 1 AND phone IS NOT NULL AND phone != '' ORDER BY name",
+    )
+    return {"users": rows or []}
+
+
 @router.get("/all/dashboard")
 async def all_conversations_dashboard(
     status:       str = "open",
@@ -280,17 +296,18 @@ async def list_conversations(
 
 @router.post("/{opp_id}")
 async def create_conversation(
-    opp_id:         int,
-    title:          str                  = Form(...),
-    context_type:   str                  = Form(default="maintenance"),
-    tag:            Optional[str]        = Form(default=None),
-    first_message:  str                  = Form(...),
-    crew_name:      Optional[str]        = Form(default=None),
-    crew_whatsapp:  Optional[str]        = Form(default=None),
-    property_name:  Optional[str]        = Form(default=None),
-    use_ai:         int                  = Form(default=0),
-    photo:          Optional[UploadFile] = File(default=None),
-    db:             Database             = Depends(get_db),
+    opp_id:           int,
+    title:            str                  = Form(...),
+    context_type:     str                  = Form(default="maintenance"),
+    tag:              Optional[str]        = Form(default=None),
+    first_message:    str                  = Form(...),
+    crew_name:        Optional[str]        = Form(default=None),
+    crew_whatsapp:    Optional[str]        = Form(default=None),
+    property_name:    Optional[str]        = Form(default=None),
+    use_ai:           int                  = Form(default=0),
+    tagged_user_ids:  str                  = Form(default=""),  # comma-separated user IDs
+    photo:            Optional[UploadFile] = File(default=None),
+    db:               Database             = Depends(get_db),
 ):
     """Create a new conversation thread with an initial crew message."""
     tag = tag if tag in VALID_TAGS else None
@@ -338,18 +355,27 @@ async def create_conversation(
             [ai_response[:120], conv_id],
         )
 
-    # 5. Auto-add all managers with phones as watchers, then notify them
+    # 5. Add tagged managers as watchers, then notify them
     prop_name = prop  # already resolved above
-    watchers  = await _auto_add_watchers(db, conv_id)
+
+    # Parse selected user IDs from form (empty = add all)
+    selected_ids: list[int] | None = None
+    if tagged_user_ids.strip():
+        try:
+            selected_ids = [int(x) for x in tagged_user_ids.split(",") if x.strip()]
+        except ValueError:
+            selected_ids = None
+
+    watchers = await _auto_add_watchers(db, conv_id, user_id_filter=selected_ids)
     if watchers:
         asyncio.get_event_loop().run_in_executor(
             None, _notify_watchers,
             watchers, opp_id, context_type, prop_name,
             title.strip(), crew_name or "", first_message.strip(), True, tag,
         )
-    else:
-        # Fallback: no DB watchers yet — use TWILIO_WHATSAPP_TO env var so
-        # notifications still fire until users have phone numbers added
+    elif selected_ids is None:
+        # Fallback only when no selection was made AND no DB watchers exist yet
+        # (i.e. users haven't added phone numbers yet) — use TWILIO_WHATSAPP_TO env var
         raw_to = (
             settings.TWILIO_WHATSAPP_TO_CONSTRUCTION
             if context_type == "construction" and settings.TWILIO_WHATSAPP_TO_CONSTRUCTION
