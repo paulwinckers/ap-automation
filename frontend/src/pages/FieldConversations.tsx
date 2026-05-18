@@ -80,8 +80,9 @@ interface Props {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function FieldConversations({ oppId, contextType, propertyName }: Props) {
-  const [crewName, setCrewName] = useState<string>(() => localStorage.getItem('fieldCrewName') || '');
-  const [view, setView]         = useState<'list' | 'new' | 'thread'>('list');
+  const [crewName,      setCrewName]      = useState<string>(() => localStorage.getItem('fieldCrewName') || '');
+  const [crewWhatsApp,  setCrewWhatsApp]  = useState<string>(() => localStorage.getItem('fieldCrewPhone') || '');
+  const [view, setView]                   = useState<'list' | 'new' | 'thread'>('list');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loadingList, setLoadingList]     = useState(true);
   const [showResolved, setShowResolved]   = useState(false);
@@ -133,6 +134,11 @@ export default function FieldConversations({ oppId, contextType, propertyName }:
     localStorage.setItem('fieldCrewName', v);
   }
 
+  function handleCrewPhoneChange(v: string) {
+    setCrewWhatsApp(v);
+    localStorage.setItem('fieldCrewPhone', v);
+  }
+
   function handleNewPhotoChange(file: File | null) {
     setNewPhoto(file);
     if (file) {
@@ -179,6 +185,7 @@ export default function FieldConversations({ oppId, contextType, propertyName }:
       form.append('use_ai', useAi ? '1' : '0');
       if (newTag) form.append('tag', newTag);
       if (crewName.trim()) form.append('crew_name', crewName.trim());
+      if (crewWhatsApp.trim()) form.append('crew_whatsapp', crewWhatsApp.trim());
       form.append('property_name', propertyName);
       if (newPhoto) form.append('photo', newPhoto);
 
@@ -282,13 +289,24 @@ export default function FieldConversations({ oppId, contextType, propertyName }:
 
     return (
       <div>
-        {/* Crew name */}
+        {/* Crew name + phone */}
         <div style={S.section}>
           <div style={S.label}>Your name</div>
           <input
             value={crewName}
             onChange={e => handleCrewNameChange(e.target.value)}
             placeholder="e.g. Mike S."
+            style={{ ...S.input, marginBottom: 10 }}
+          />
+          <div style={S.label}>
+            WhatsApp number
+            <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 4, color: '#9ca3af' }}>— get notified when manager replies</span>
+          </div>
+          <input
+            type="tel"
+            value={crewWhatsApp}
+            onChange={e => handleCrewPhoneChange(e.target.value)}
+            placeholder="e.g. 604-555-1234"
             style={S.input}
           />
         </div>
@@ -343,6 +361,17 @@ export default function FieldConversations({ oppId, contextType, propertyName }:
             value={crewName}
             onChange={e => handleCrewNameChange(e.target.value)}
             placeholder="e.g. Mike S."
+            style={{ ...S.input, marginBottom: 10 }}
+          />
+          <div style={S.label}>
+            WhatsApp number
+            <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 4, color: '#9ca3af' }}>— optional, for reply notifications</span>
+          </div>
+          <input
+            type="tel"
+            value={crewWhatsApp}
+            onChange={e => handleCrewPhoneChange(e.target.value)}
+            placeholder="e.g. 604-555-1234"
             style={{ ...S.input, marginBottom: 12 }}
           />
 

@@ -3,7 +3,7 @@
  * Route: /ops/issues
  *
  * Shows all field conversations (maintenance + construction) in one place.
- * Filter by status, type, and tag. Tap to open in the field portal.
+ * Filter by status, type, and tag. Expand a card to view the thread and reply.
  */
 
 import { useEffect, useState } from 'react';
@@ -32,11 +32,21 @@ interface Conversation {
   tag:           string | null;
   status:        string;
   created_by:    string | null;
+  crew_whatsapp: string | null;
   message_count: number;
   last_message:  string | null;
   created_at:    string;
   updated_at:    string | null;
   resolved_at:   string | null;
+}
+
+interface Message {
+  id:           number;
+  role:         string;
+  crew_name:    string | null;
+  content:      string;
+  has_photo:    number;
+  created_at:   string;
 }
 
 function fmtTime(dt: string | null) {
@@ -71,6 +81,225 @@ function ContextBadge({ type }: { type: string }) {
   );
 }
 
+function MessageBubble({ msg }: { msg: Message }) {
+  const role = msg.role;
+  const isManager = role === 'manager';
+  const isAi      = role === 'ai';
+  const isCrew    = role === 'crew';
+
+  const bg     = isManager ? '#fef3c7' : isAi ? '#eff6ff' : '#f0fdf4';
+  const border  = isManager ? '#fde68a' : isAi ? '#bfdbfe' : '#bbf7d0';
+  const nameColor = isManager ? '#92400e' : isAi ? '#1d4ed8' : '#15803d';
+  const label  = isManager ? `👔 ${msg.crew_name || 'Manager'}` : isAi ? '🤖 Field Advisor' : (msg.crew_name || 'Crew');
+  const align  = isManager || isAi ? 'flex-start' : 'flex-end';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: align, marginBottom: 8 }}>
+      <div style={{ maxWidth: '80%', background: bg, border: `1px solid ${border}`, borderRadius: 10, padding: '8px 12px' }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: nameColor, marginBottom: 3 }}>{label}</div>
+        <div style={{ fontSize: 13, color: '#1e293b', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+        {msg.has_photo ? <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 3 }}>📷 photo</div> : null}
+      </div>
+      <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>{fmtTime(msg.created_at)}</div>
+    </div>
+  );
+}
+
+// ── Conversation card with inline thread ──────────────────────────────────────
+function ConversationCard({
+  conv,
+  managerName,
+  onResolved,
+}: {
+  conv: Conversation;
+  managerName: string;
+  onResolved: (id: number) => void;
+}) {
+  const [expanded,     setExpanded]     = useState(false);
+  const [messages,     setMessages]     = useState<Message[]>([]);
+  const [loadingMsgs,  setLoadingMsgs]  = useState(false);
+  const [replyText,    setReplyText]    = useState('');
+  const [sending,      setSending]      = useState(false);
+  const [resolving,    setResolving]    = useState(false);
+  const [localStatus,  setLocalStatus]  = useState(conv.status);
+
+  const isOpen = localStatus === 'open';
+
+  async function loadThread() {
+    if (messages.length > 0) { setExpanded(v => !v); return; }
+    setExpanded(true);
+    setLoadingMsgs(true);
+    try {
+      const r = await fetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}`);
+      const d = await r.json();
+      setMessages(d.messages || []);
+    } catch {}
+    finally { setLoadingMsgs(false); }
+  }
+
+  async function sendReply() {
+    if (!replyText.trim()) return;
+    setSending(true);
+    try {
+      const form = new FormData();
+      form.append('content', replyText.trim());
+      form.append('sender_role', 'manager');
+      form.append('manager_name', managerName || 'Manager');
+      const res = await fetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}/messages`, {
+        method: 'POST', body: form,
+      });
+      if (!res.ok) throw new Error('Failed');
+      setMessages(prev => [...prev, {
+        id: Date.now(), role: 'manager',
+        crew_name: managerName || 'Manager',
+        content: replyText.trim(), has_photo: 0,
+        created_at: new Date().toISOString(),
+      }]);
+      setReplyText('');
+    } catch {
+      alert('Could not send reply. Try again.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function toggleResolved() {
+    setResolving(true);
+    const endpoint = isOpen ? 'resolve' : 'reopen';
+    try {
+      await fetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}/${endpoint}`, { method: 'PATCH' });
+      const next = isOpen ? 'resolved' : 'open';
+      setLocalStatus(next);
+      if (next === 'resolved') onResolved(conv.id);
+    } catch {}
+    finally { setResolving(false); }
+  }
+
+  return (
+    <div style={{
+      background: '#fff', border: '1px solid #e2e6ed', borderRadius: 12,
+      borderLeft: `4px solid ${isOpen ? '#16a34a' : '#d1d5db'}`,
+      opacity: isOpen ? 1 : 0.8,
+    }}>
+      {/* Card header */}
+      <div style={{ padding: '14px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: 700, fontSize: 15, color: '#111827' }}>
+                {conv.property_name || `Opp #${conv.opp_id}`}
+              </span>
+              <ContextBadge type={conv.context_type} />
+              <TagBadge tag={conv.tag} />
+              {!isOpen && (
+                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#f3f4f6', color: '#6b7280' }}>
+                  ✓ Resolved
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginBottom: 4 }}>{conv.title}</div>
+            {conv.last_message && (
+              <div style={{ fontSize: 13, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 500 }}>
+                {conv.last_message}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 12, color: '#9ca3af', flexWrap: 'wrap' }}>
+              {conv.created_by && <span>👤 {conv.created_by}</span>}
+              {conv.crew_whatsapp && <span>📱 {conv.crew_whatsapp}</span>}
+              <span>💬 {conv.message_count} message{conv.message_count !== 1 ? 's' : ''}</span>
+              <span>🕐 {fmtTime(conv.updated_at || conv.created_at)}</span>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
+            <button
+              onClick={loadThread}
+              style={{
+                padding: '6px 14px', background: isOpen ? '#0f4c75' : '#f3f4f6',
+                color: isOpen ? '#fff' : '#6b7280',
+                border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+              }}
+            >
+              {expanded ? '▲ Hide thread' : '▼ View & Reply'}
+            </button>
+            <button
+              onClick={toggleResolved}
+              disabled={resolving}
+              style={{
+                padding: '5px 14px',
+                background: isOpen ? '#f0fdf4' : '#fff',
+                color: isOpen ? '#15803d' : '#6b7280',
+                border: `1px solid ${isOpen ? '#86efac' : '#e2e6ed'}`,
+                borderRadius: 8, fontSize: 11, fontWeight: 700,
+                cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+              }}
+            >
+              {isOpen ? '✓ Resolve' : '↺ Reopen'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Thread panel */}
+      {expanded && (
+        <div style={{ borderTop: '1px solid #e2e6ed', padding: '14px 16px', background: '#fafafa', borderRadius: '0 0 12px 12px' }}>
+          {loadingMsgs && <div style={{ textAlign: 'center', padding: '12px 0', color: '#9ca3af', fontSize: 13 }}>Loading thread…</div>}
+
+          {messages.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              {messages.map((m, i) => <MessageBubble key={m.id || i} msg={m} />)}
+            </div>
+          )}
+
+          {isOpen && (
+            <div style={{ background: '#fff', border: '1px solid #e2e6ed', borderRadius: 10, padding: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                Reply as {managerName || 'Manager'}
+                {conv.crew_whatsapp && <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 6, color: '#9ca3af' }}>— crew will be notified by WhatsApp</span>}
+              </div>
+              <textarea
+                value={replyText}
+                onChange={e => setReplyText(e.target.value)}
+                placeholder="Type your reply…"
+                rows={3}
+                style={{
+                  width: '100%', boxSizing: 'border-box', padding: '9px 12px',
+                  border: '1.5px solid #d1d5db', borderRadius: 8,
+                  fontSize: 14, color: '#1a1d23', background: '#fff',
+                  fontFamily: 'inherit', resize: 'vertical', outline: 'none', marginBottom: 8,
+                }}
+              />
+              <button
+                onClick={sendReply}
+                disabled={sending || !replyText.trim()}
+                style={{
+                  padding: '9px 20px',
+                  background: sending || !replyText.trim() ? '#e5e7eb' : '#0f4c75',
+                  color: sending || !replyText.trim() ? '#9ca3af' : '#fff',
+                  border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                  cursor: sending || !replyText.trim() ? 'default' : 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                {sending ? 'Sending…' : 'Send Reply'}
+              </button>
+            </div>
+          )}
+
+          {!isOpen && (
+            <div style={{ textAlign: 'center', fontSize: 12, color: '#9ca3af', padding: '8px 0' }}>
+              Conversation resolved — reopen to reply.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export default function IssuesDashboard() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading]             = useState(true);
@@ -78,6 +307,7 @@ export default function IssuesDashboard() {
   const [ctxType, setCtxType]             = useState('all');
   const [tag,     setTag]                 = useState('all');
   const [search,  setSearch]              = useState('');
+  const [managerName, setManagerName]     = useState<string>(() => localStorage.getItem('managerName') || '');
 
   useEffect(() => {
     setLoading(true);
@@ -88,6 +318,18 @@ export default function IssuesDashboard() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [status, ctxType, tag]);
+
+  function handleManagerNameChange(v: string) {
+    setManagerName(v);
+    localStorage.setItem('managerName', v);
+  }
+
+  // When a conversation is resolved via the card, hide it if we're in 'open' view
+  function handleResolved(id: number) {
+    if (status === 'open') {
+      setConversations(prev => prev.filter(c => c.id !== id));
+    }
+  }
 
   const q = search.trim().toLowerCase();
   const filtered = q
@@ -102,13 +344,6 @@ export default function IssuesDashboard() {
   const open     = filtered.filter(c => c.status === 'open').length;
   const resolved = filtered.filter(c => c.status !== 'open').length;
 
-  function deepLink(c: Conversation) {
-    if (c.context_type === 'construction') {
-      return `https://darios-ap.pages.dev/field/project/${c.opp_id}`;
-    }
-    return `https://darios-ap.pages.dev/field/maintenance/${c.opp_id}`;
-  }
-
   return (
     <div style={{ padding: '24px 24px 48px', maxWidth: 900, margin: '0 auto', fontFamily: "'DM Sans', sans-serif" }}>
 
@@ -117,18 +352,35 @@ export default function IssuesDashboard() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
           <a href="/" style={{ color: '#6b7280', fontSize: 13, textDecoration: 'none' }}>← Home</a>
         </div>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#111827' }}>💬 Field Issues</h1>
-        <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: 14 }}>
-          All crew conversations across maintenance and construction
-        </p>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#111827' }}>💬 Field Issues</h1>
+            <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: 14 }}>
+              All crew conversations across maintenance and construction
+            </p>
+          </div>
+          {/* Manager name for replies */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}>Replying as:</span>
+            <input
+              value={managerName}
+              onChange={e => handleManagerNameChange(e.target.value)}
+              placeholder="Your name"
+              style={{
+                padding: '6px 10px', border: '1.5px solid #e2e6ed', borderRadius: 8,
+                fontSize: 13, color: '#1a1d23', fontFamily: 'inherit', outline: 'none', width: 140,
+              }}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Stats row */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
         {[
-          { label: 'Open', value: open, color: '#16a34a', bg: '#f0fdf4' },
-          { label: 'Resolved', value: resolved, color: '#6b7280', bg: '#f9fafb' },
-          { label: 'Total', value: filtered.length, color: '#0369a1', bg: '#eff6ff' },
+          { label: 'Open',     value: open,            color: '#16a34a', bg: '#f0fdf4' },
+          { label: 'Resolved', value: resolved,         color: '#6b7280', bg: '#f9fafb' },
+          { label: 'Total',    value: filtered.length,  color: '#0369a1', bg: '#eff6ff' },
         ].map(s => (
           <div key={s.label} style={{ flex: 1, background: s.bg, borderRadius: 10, padding: '12px 16px', textAlign: 'center' }}>
             <div style={{ fontSize: 22, fontWeight: 800, color: s.color }}>{s.value}</div>
@@ -139,7 +391,6 @@ export default function IssuesDashboard() {
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-        {/* Status */}
         <div style={{ display: 'flex', background: '#f3f4f6', borderRadius: 8, padding: 3, gap: 2 }}>
           {['open', 'resolved', 'all'].map(s => (
             <button key={s} onClick={() => setStatus(s)} style={{
@@ -152,7 +403,6 @@ export default function IssuesDashboard() {
           ))}
         </div>
 
-        {/* Context type */}
         <div style={{ display: 'flex', background: '#f3f4f6', borderRadius: 8, padding: 3, gap: 2 }}>
           {[['all', 'All types'], ['maintenance', '🌿 Maintenance'], ['construction', '🏗️ Construction']].map(([v, l]) => (
             <button key={v} onClick={() => setCtxType(v)} style={{
@@ -165,7 +415,6 @@ export default function IssuesDashboard() {
           ))}
         </div>
 
-        {/* Tag */}
         <select
           value={tag}
           onChange={e => setTag(e.target.value)}
@@ -202,68 +451,14 @@ export default function IssuesDashboard() {
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {filtered.map(c => {
-          const isOpen = c.status === 'open';
-          const ts = c.updated_at || c.created_at;
-          return (
-            <div key={c.id} style={{
-              background: '#fff', border: '1px solid #e2e6ed', borderRadius: 12,
-              padding: '14px 16px', opacity: isOpen ? 1 : 0.8,
-              borderLeft: `4px solid ${isOpen ? '#16a34a' : '#d1d5db'}`,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {/* Property + type */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 700, fontSize: 15, color: '#111827' }}>
-                      {c.property_name || `Opp #${c.opp_id}`}
-                    </span>
-                    <ContextBadge type={c.context_type} />
-                    <TagBadge tag={c.tag} />
-                    {!isOpen && (
-                      <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#f3f4f6', color: '#6b7280' }}>
-                        ✓ Resolved
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Title */}
-                  <div style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginBottom: 4 }}>{c.title}</div>
-
-                  {/* Last message preview */}
-                  {c.last_message && (
-                    <div style={{ fontSize: 13, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 500 }}>
-                      {c.last_message}
-                    </div>
-                  )}
-
-                  {/* Meta */}
-                  <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 12, color: '#9ca3af', flexWrap: 'wrap' }}>
-                    {c.created_by && <span>👤 {c.created_by}</span>}
-                    <span>💬 {c.message_count} message{c.message_count !== 1 ? 's' : ''}</span>
-                    <span>🕐 {fmtTime(ts)}</span>
-                  </div>
-                </div>
-
-                {/* Open link */}
-                <a
-                  href={deepLink(c)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    flexShrink: 0, padding: '7px 14px',
-                    background: isOpen ? '#0f4c75' : '#f3f4f6',
-                    color: isOpen ? '#fff' : '#6b7280',
-                    borderRadius: 8, fontSize: 12, fontWeight: 700,
-                    textDecoration: 'none', whiteSpace: 'nowrap',
-                  }}
-                >
-                  Open →
-                </a>
-              </div>
-            </div>
-          );
-        })}
+        {filtered.map(c => (
+          <ConversationCard
+            key={c.id}
+            conv={c}
+            managerName={managerName}
+            onResolved={handleResolved}
+          />
+        ))}
       </div>
     </div>
   );

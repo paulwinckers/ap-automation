@@ -63,6 +63,60 @@ def _whatsapp_recipients(context_type: str) -> list[str]:
     return [t.strip() for t in raw.split(",") if t.strip()]
 
 
+def _format_whatsapp_number(raw: str) -> str:
+    """Normalise a phone number to whatsapp:+1XXXXXXXXXX format."""
+    raw = raw.strip()
+    if raw.startswith("whatsapp:"):
+        return raw
+    digits = "".join(c for c in raw if c.isdigit())
+    if len(digits) == 10:          # bare Canadian/US number
+        digits = "1" + digits
+    return f"whatsapp:+{digits}"
+
+
+def _notify_crew_whatsapp(
+    crew_whatsapp: str,
+    opp_id: int,
+    context_type: str,
+    property_name: str,
+    title: str,
+    reply_content: str,
+    sender_name: str,
+) -> None:
+    """Send a WhatsApp reply notification back to the crew lead."""
+    sid   = settings.TWILIO_ACCOUNT_SID
+    token = settings.TWILIO_AUTH_TOKEN
+    frm   = settings.TWILIO_WHATSAPP_FROM
+
+    if not (sid and token and frm and crew_whatsapp and crew_whatsapp.strip()):
+        return
+
+    wa_to = _format_whatsapp_number(crew_whatsapp)
+    deep_link = (
+        f"https://darios-ap.pages.dev/field/project/{opp_id}"
+        if context_type == "construction"
+        else f"https://darios-ap.pages.dev/field/maintenance/{opp_id}"
+    )
+    preview = reply_content.strip()[:150] + ("…" if len(reply_content.strip()) > 150 else "")
+
+    body = (
+        f"💬 *Reply on your issue*\n"
+        f"Property: {property_name}\n"
+        f"Topic: {title}\n"
+        f"From: {sender_name}\n\n"
+        f"{preview}\n\n"
+        f"🔗 View thread: {deep_link}"
+    )
+
+    try:
+        from twilio.rest import Client as TwilioClient
+        client = TwilioClient(sid, token)
+        client.messages.create(body=body, from_=frm, to=wa_to)
+        logger.info(f"Crew WhatsApp reply notification sent to {wa_to}")
+    except Exception as e:
+        logger.warning(f"Crew WhatsApp notification failed ({wa_to}): {e}")
+
+
 def _send_whatsapp_conversation(
     context_type: str,
     opp_id: int,
@@ -210,27 +264,30 @@ async def list_conversations(
 
 @router.post("/{opp_id}")
 async def create_conversation(
-    opp_id:        int,
-    title:         str                  = Form(...),
-    context_type:  str                  = Form(default="maintenance"),
-    tag:           Optional[str]        = Form(default=None),
-    first_message: str                  = Form(...),
-    crew_name:     Optional[str]        = Form(default=None),
-    property_name: Optional[str]        = Form(default=None),
-    use_ai:        int                  = Form(default=0),
-    photo:         Optional[UploadFile] = File(default=None),
-    db:            Database             = Depends(get_db),
+    opp_id:         int,
+    title:          str                  = Form(...),
+    context_type:   str                  = Form(default="maintenance"),
+    tag:            Optional[str]        = Form(default=None),
+    first_message:  str                  = Form(...),
+    crew_name:      Optional[str]        = Form(default=None),
+    crew_whatsapp:  Optional[str]        = Form(default=None),
+    property_name:  Optional[str]        = Form(default=None),
+    use_ai:         int                  = Form(default=0),
+    photo:          Optional[UploadFile] = File(default=None),
+    db:             Database             = Depends(get_db),
 ):
     """Create a new conversation thread with an initial crew message."""
     tag = tag if tag in VALID_TAGS else None
+    wa  = crew_whatsapp.strip() if crew_whatsapp and crew_whatsapp.strip() else None
 
     # 1. Create conversation record
     prop = (property_name or f"Opp #{opp_id}").strip()
     conv_id = await db._x(
         """INSERT INTO field_conversations
-             (opp_id, context_type, title, tag, created_by, message_count, last_message, property_name, updated_at)
-           VALUES (?, ?, ?, ?, ?, 1, ?, ?, datetime('now'))""",
-        [opp_id, context_type, title.strip(), tag, crew_name, first_message.strip()[:120], prop],
+             (opp_id, context_type, title, tag, created_by, crew_whatsapp,
+              message_count, last_message, property_name, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, datetime('now'))""",
+        [opp_id, context_type, title.strip(), tag, crew_name, wa, first_message.strip()[:120], prop],
     )
 
     # 2. Upload photo if provided
@@ -298,15 +355,17 @@ async def get_conversation(
 
 @router.post("/{opp_id}/{conv_id}/messages")
 async def add_message(
-    opp_id:    int,
-    conv_id:   int,
-    content:   str                  = Form(...),
-    crew_name: Optional[str]        = Form(default=None),
-    use_ai:    int                  = Form(default=0),
-    photo:     Optional[UploadFile] = File(default=None),
-    db:        Database             = Depends(get_db),
+    opp_id:       int,
+    conv_id:      int,
+    content:      str                  = Form(...),
+    crew_name:    Optional[str]        = Form(default=None),
+    sender_role:  str                  = Form(default="crew"),   # 'crew' | 'manager'
+    manager_name: Optional[str]        = Form(default=None),
+    use_ai:       int                  = Form(default=0),
+    photo:        Optional[UploadFile] = File(default=None),
+    db:           Database             = Depends(get_db),
 ):
-    """Add a crew message to an existing conversation, optionally with AI reply."""
+    """Add a message to an existing conversation, optionally with AI reply."""
     rows = await db._q(
         "SELECT * FROM field_conversations WHERE id = ? AND opp_id = ?",
         [conv_id, opp_id],
@@ -318,12 +377,16 @@ async def add_message(
     # Upload photo
     photo_r2_key, has_photo = await _upload_photo(photo, opp_id, conv_id)
 
-    # Save crew message
+    # Determine role and display name
+    role         = "manager" if sender_role == "manager" else "crew"
+    display_name = (manager_name or "Manager").strip() if role == "manager" else (crew_name or "")
+
+    # Save message
     await db._x(
         """INSERT INTO field_conversation_messages
              (conversation_id, role, crew_name, content, has_photo, photo_r2_key)
-           VALUES (?, 'crew', ?, ?, ?, ?)""",
-        [conv_id, crew_name, content.strip(), has_photo, photo_r2_key],
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        [conv_id, role, display_name, content.strip(), has_photo, photo_r2_key],
     )
     await db._x(
         """UPDATE field_conversations
@@ -331,6 +394,16 @@ async def add_message(
            WHERE id = ?""",
         [content.strip()[:120], conv_id],
     )
+
+    # Notify crew via WhatsApp when manager replies
+    crew_wa = conv.get("crew_whatsapp") or ""
+    prop    = conv.get("property_name") or f"Opp #{opp_id}"
+    ctx     = conv.get("context_type") or "maintenance"
+    if role == "manager" and crew_wa:
+        asyncio.get_event_loop().run_in_executor(
+            None, _notify_crew_whatsapp,
+            crew_wa, opp_id, ctx, prop, conv["title"], content.strip(), display_name,
+        )
 
     ai_response = None
     if use_ai:
@@ -342,7 +415,7 @@ async def add_message(
         )
         messages: list[dict] = []
         for row in history_rows:
-            claude_role = "assistant" if row["role"] == "ai" else "user"
+            claude_role = "assistant" if row["role"] in ("ai", "manager") else "user"
             # Claude requires alternating roles — merge consecutive same-role messages
             if messages and messages[-1]["role"] == claude_role:
                 messages[-1]["content"] += "\n\n" + row["content"]
@@ -366,6 +439,13 @@ async def add_message(
                WHERE id = ?""",
             [ai_response[:120], conv_id],
         )
+
+        # Notify crew when AI responds (they asked for it)
+        if crew_wa:
+            asyncio.get_event_loop().run_in_executor(
+                None, _notify_crew_whatsapp,
+                crew_wa, opp_id, ctx, prop, conv["title"], ai_response, "Field Advisor (AI)",
+            )
 
     return {"saved": True, "ai_response": ai_response}
 
