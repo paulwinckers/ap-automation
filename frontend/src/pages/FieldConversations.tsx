@@ -76,13 +76,14 @@ function TagBadge({ tag }: { tag: string | null }) {
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 interface Props {
-  oppId:        number;
-  contextType:  'maintenance' | 'construction';
-  propertyName: string;
+  oppId:          number;
+  contextType:    'maintenance' | 'construction';
+  propertyName:   string;
+  initialConvId?: number;   // deep-link: auto-open this conversation on mount
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function FieldConversations({ oppId, contextType, propertyName }: Props) {
+export default function FieldConversations({ oppId, contextType, propertyName, initialConvId }: Props) {
   const [crewName, setCrewName] = useState<string>(() => {
     // If logged in, pre-fill from account; otherwise use remembered field value
     try {
@@ -156,6 +157,22 @@ export default function FieldConversations({ oppId, contextType, propertyName }:
         .finally(() => setLoadingList(false));
     }
   }, [oppId, contextType, view]);
+
+  // Deep-link: auto-open a specific conversation on first mount
+  useEffect(() => {
+    if (!initialConvId) return;
+    setLoadingThread(true);
+    setView('thread');
+    fetch(`${API}/field/conversations/${oppId}/${initialConvId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.conversation) setActiveConv(d.conversation);
+        setMessages(d.messages || []);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingThread(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialConvId]);
 
   // Scroll to bottom when messages change
   useEffect(() => {

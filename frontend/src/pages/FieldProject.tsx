@@ -353,6 +353,11 @@ function compressImage(f: File, maxPx = 1920, quality = 0.82): Promise<File> {
 export default function FieldProject() {
   const { oppId } = useParams<{ oppId: string }>();
 
+  // Read URL params for deep-link support (?tab=conversations&conv=123)
+  const _urlParams   = new URLSearchParams(window.location.search);
+  const _urlTab      = _urlParams.get('tab');
+  const urlConvId    = _urlParams.get('conv') ? Number(_urlParams.get('conv')) : undefined;
+
   const [data,       setData]       = useState<ProjectData | null>(null);
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState('');
@@ -422,7 +427,11 @@ export default function FieldProject() {
   }
 
   // Tab: 'scope' | 'tickets' | 'update' | 'materials' | 'history' | 'conversations'
-  const [tab, setTab] = useState<'scope' | 'tickets' | 'update' | 'materials' | 'history' | 'conversations'>('scope');
+  type ProjectTab = 'scope' | 'tickets' | 'update' | 'materials' | 'history' | 'conversations';
+  const validTabs: ProjectTab[] = ['scope', 'tickets', 'update', 'materials', 'history', 'conversations'];
+  const [tab, setTab] = useState<ProjectTab>(
+    _urlTab && validTabs.includes(_urlTab as ProjectTab) ? (_urlTab as ProjectTab) : 'scope'
+  );
 
   // Field Advisor
   const [advisorQuestion,    setAdvisorQuestion]    = useState('');
@@ -1743,6 +1752,7 @@ export default function FieldProject() {
               oppId={data.opportunity_id}
               contextType="construction"
               propertyName={data.property_name || data.opportunity_name}
+              initialConvId={urlConvId}
             />
           )}
 

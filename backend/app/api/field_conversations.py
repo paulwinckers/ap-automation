@@ -81,10 +81,15 @@ def _twilio_send(body: str, to: str) -> None:
         logger.warning(f"WhatsApp failed → {to}: {e}")
 
 
-def _deep_link(context_type: str, opp_id: int) -> str:
-    if context_type == "construction":
-        return f"https://darios-ap.pages.dev/field/project/{opp_id}"
-    return f"https://darios-ap.pages.dev/field/maintenance/{opp_id}"
+def _deep_link(context_type: str, opp_id: int, conv_id: int | None = None) -> str:
+    base = (
+        f"https://darios-ap.pages.dev/field/project/{opp_id}"
+        if context_type == "construction"
+        else f"https://darios-ap.pages.dev/field/maintenance/{opp_id}"
+    )
+    if conv_id:
+        return f"{base}?tab=conversations&conv={conv_id}"
+    return base
 
 
 def _notify_crew_whatsapp(
@@ -95,6 +100,7 @@ def _notify_crew_whatsapp(
     title: str,
     reply_content: str,
     sender_name: str,
+    conv_id: int | None = None,
 ) -> None:
     """Notify the crew lead that a manager or AI has replied."""
     wa_to = _format_whatsapp_number(crew_whatsapp)
@@ -105,7 +111,7 @@ def _notify_crew_whatsapp(
         f"Topic: {title}\n"
         f"From: {sender_name}\n\n"
         f"{preview}\n\n"
-        f"🔗 View thread: {_deep_link(context_type, opp_id)}"
+        f"🔗 View thread: {_deep_link(context_type, opp_id, conv_id)}"
     )
     _twilio_send(body, wa_to)
 
@@ -120,6 +126,7 @@ def _notify_watchers(
     message_preview: str,
     is_new: bool = False,
     tag: Optional[str] = None,
+    conv_id: int | None = None,
 ) -> None:
     """Notify all watchers — used for new conversations and crew follow-ups."""
     if not watchers:
@@ -128,7 +135,7 @@ def _notify_watchers(
     tag_label  = f"  [{tag}]" if tag else ""
     crew_label = (crew_name or "Crew").strip() or "Crew"
     preview    = message_preview.strip()[:150] + ("…" if len(message_preview.strip()) > 150 else "")
-    link       = _deep_link(context_type, opp_id)
+    link       = _deep_link(context_type, opp_id, conv_id)
 
     if is_new:
         body = (
@@ -371,7 +378,7 @@ async def create_conversation(
         asyncio.get_event_loop().run_in_executor(
             None, _notify_watchers,
             watchers, opp_id, context_type, prop_name,
-            title.strip(), crew_name or "", first_message.strip(), True, tag,
+            title.strip(), crew_name or "", first_message.strip(), True, tag, conv_id,
         )
     elif selected_ids is None:
         # Fallback only when no selection was made AND no DB watchers exist yet
@@ -390,7 +397,7 @@ async def create_conversation(
             asyncio.get_event_loop().run_in_executor(
                 None, _notify_watchers,
                 fallback, opp_id, context_type, prop_name,
-                title.strip(), crew_name or "", first_message.strip(), True, tag,
+                title.strip(), crew_name or "", first_message.strip(), True, tag, conv_id,
             )
 
     return {"conv_id": conv_id, "ai_response": ai_response}
@@ -485,7 +492,7 @@ async def add_message(
         # Manager replied → notify crew
         asyncio.get_event_loop().run_in_executor(
             None, _notify_crew_whatsapp,
-            crew_wa, opp_id, ctx, prop, conv["title"], content.strip(), display_name,
+            crew_wa, opp_id, ctx, prop, conv["title"], content.strip(), display_name, conv_id,
         )
     elif role == "crew":
         # Crew follow-up → notify all watchers
@@ -497,7 +504,7 @@ async def add_message(
             asyncio.get_event_loop().run_in_executor(
                 None, _notify_watchers,
                 list(watchers), opp_id, ctx, prop,
-                conv["title"], display_name, content.strip(), False, None,
+                conv["title"], display_name, content.strip(), False, None, conv_id,
             )
 
     ai_response = None
@@ -539,7 +546,7 @@ async def add_message(
         if crew_wa:
             asyncio.get_event_loop().run_in_executor(
                 None, _notify_crew_whatsapp,
-                crew_wa, opp_id, ctx, prop, conv["title"], ai_response, "Field Advisor (AI)",
+                crew_wa, opp_id, ctx, prop, conv["title"], ai_response, "Field Advisor (AI)", conv_id,
             )
 
     return {"saved": True, "ai_response": ai_response}

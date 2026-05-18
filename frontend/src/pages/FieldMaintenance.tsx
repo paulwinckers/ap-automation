@@ -386,10 +386,15 @@ export default function FieldMaintenance() {
   const { oppId } = useParams<{ oppId: string }>();
   const opp_id = Number(oppId);
 
+  // Read URL params for deep-link support (?tab=conversations&conv=123)
+  const params       = new URLSearchParams(window.location.search);
+  const urlTab       = params.get('tab') as Tab | null;
+  const urlConvId    = params.get('conv') ? Number(params.get('conv')) : undefined;
+
   const [data, setData]     = useState<PageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState<string | null>(null);
-  const [tab, setTab]       = useState<Tab>('summary');
+  const [tab, setTab]       = useState<Tab>(urlTab && ['summary','history','upcoming','advisor','conversations'].includes(urlTab) ? urlTab : 'summary');
 
   // Field Advisor state
   const [question, setQuestion]         = useState('');
@@ -914,6 +919,7 @@ export default function FieldMaintenance() {
             oppId={opp_id}
             contextType="maintenance"
             propertyName={data.property_name || data.opportunity_name}
+            initialConvId={urlConvId}
           />
         )}
 
