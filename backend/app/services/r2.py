@@ -28,6 +28,9 @@ def _make_client():
         region_name="auto",
     )
 
+# Public alias used by field_conversations and other modules
+s3_client = _make_client
+
 
 def _r2_available() -> bool:
     return bool(settings.R2_ACCESS_KEY_ID and settings.R2_SECRET_ACCESS_KEY)
