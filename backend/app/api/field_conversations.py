@@ -350,7 +350,22 @@ async def get_conversation(
            WHERE conversation_id = ? ORDER BY created_at ASC""",
         [conv_id],
     )
-    return {"conversation": rows[0], "messages": msgs or []}
+
+    # Attach presigned photo URLs for messages that have photos
+    enriched = []
+    for m in (msgs or []):
+        msg = dict(m)
+        key = msg.get("photo_r2_key")
+        if key:
+            try:
+                msg["photo_url"] = await _r2.get_presigned_url(key, expires_in=3600)
+            except Exception:
+                msg["photo_url"] = None
+        else:
+            msg["photo_url"] = None
+        enriched.append(msg)
+
+    return {"conversation": rows[0], "messages": enriched}
 
 
 @router.post("/{opp_id}/{conv_id}/messages")
