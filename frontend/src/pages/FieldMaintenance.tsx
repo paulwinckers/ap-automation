@@ -196,17 +196,38 @@ function BulletText({ text }: { text: string }) {
   );
 }
 
-function TicketCard({ ticket, showNotes }: { ticket: Ticket; showNotes: boolean }) {
-  const [open, setOpen] = useState(false);
+function TicketCard({ ticket, showNotes, oppId }: { ticket: Ticket; showNotes: boolean; oppId: number }) {
+  const [open, setOpen]           = useState(false);
+  const [notes, setNotes]         = useState<VisitNote[]>(ticket.visit_notes || []);
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [notesLoaded, setNotesLoaded]   = useState(ticket.visit_notes && ticket.visit_notes.length > 0);
+
   const est = ticket.HoursEst ?? 0;
   const act = ticket.HoursAct ?? 0;
   const over = est > 0 && act > est;
   const status = (ticket.WorkTicketStatusName || '').toLowerCase();
   const isComplete = status.includes('complete');
-  const hasNotes = ticket.visit_notes && ticket.visit_notes.length > 0;
 
   const badgeBg   = isComplete ? '#f0fdf4' : '#eff6ff';
   const badgeText = isComplete ? '#15803d' : '#1d4ed8';
+
+  async function loadNotes() {
+    if (notesLoaded) { setOpen(v => !v); return; }
+    setLoadingNotes(true);
+    try {
+      const res = await fetch(`${API}/field/maintenance/${oppId}/tickets/${ticket.WorkTicketID}/notes`);
+      const d = await res.json();
+      setNotes(d.notes || []);
+      setNotesLoaded(true);
+      setOpen(true);
+    } catch {
+      setNotes([]);
+      setNotesLoaded(true);
+      setOpen(true);
+    } finally {
+      setLoadingNotes(false);
+    }
+  }
 
   return (
     <div style={S.ticketCard}>
@@ -233,17 +254,25 @@ function TicketCard({ ticket, showNotes }: { ticket: Ticket; showNotes: boolean 
 
       <HoursBar est={ticket.HoursEst} act={ticket.HoursAct} />
 
-      {showNotes && hasNotes && (
+      {showNotes && isComplete && (
         <>
           <button
-            onClick={() => setOpen(v => !v)}
-            style={{ marginTop: 8, background: 'none', border: 'none', padding: 0, fontSize: 12, color: '#0369a1', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+            onClick={loadNotes}
+            disabled={loadingNotes}
+            style={{ marginTop: 8, background: 'none', border: 'none', padding: 0, fontSize: 12, color: loadingNotes ? '#9ca3af' : '#0369a1', cursor: loadingNotes ? 'default' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
           >
-            {open ? '▲ Hide visit notes' : `▼ ${ticket.visit_notes.length} visit note${ticket.visit_notes.length !== 1 ? 's' : ''}`}
+            {loadingNotes
+              ? 'Loading notes…'
+              : notesLoaded
+                ? (notes.length === 0
+                  ? '— No visit notes'
+                  : (open ? `▲ Hide visit notes` : `▼ ${notes.length} visit note${notes.length !== 1 ? 's' : ''}`))
+                : '▼ Load visit notes'
+            }
           </button>
-          {open && (
+          {open && notes.length > 0 && (
             <div style={{ marginTop: 8, borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
-              {ticket.visit_notes.map((vn, i) => (
+              {notes.map((vn, i) => (
                 <div key={i} style={{ marginBottom: 10 }}>
                   <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 3 }}>
                     {vn.created_by} · {fmtDateTime(vn.created_at) || fmtDate(vn.scheduled_date)}
@@ -653,7 +682,7 @@ export default function FieldMaintenance() {
               {hasTickets && Array.from(groups.entries()).map(([svcName, grpTickets]) => (
                 <CollapsibleGroup key={svcName} label={svcName} count={grpTickets.length} icon="✅">
                   {grpTickets.map(t => (
-                    <TicketCard key={t.WorkTicketID} ticket={t} showNotes={true} />
+                    <TicketCard key={t.WorkTicketID} ticket={t} showNotes={true} oppId={opp_id} />
                   ))}
                 </CollapsibleGroup>
               ))}
@@ -695,7 +724,7 @@ export default function FieldMaintenance() {
               {groups.size > 0 && Array.from(groups.entries()).map(([svcName, grpTickets]) => (
                 <CollapsibleGroup key={svcName} label={svcName} count={grpTickets.length} icon="📅">
                   {grpTickets.map(t => (
-                    <TicketCard key={t.WorkTicketID} ticket={t} showNotes={false} />
+                    <TicketCard key={t.WorkTicketID} ticket={t} showNotes={false} oppId={opp_id} />
                   ))}
                 </CollapsibleGroup>
               ))}

@@ -583,6 +583,23 @@ async def debug_divisions():
 
 # ── Main page data endpoint ───────────────────────────────────────────────────
 
+@router.get("/{opp_id}/tickets/{ticket_id}/notes")
+async def get_ticket_notes(opp_id: int, ticket_id: int):
+    """Fetch visit notes for a single work ticket on demand (used when notes weren't pre-loaded)."""
+    notes = await _fetch_visit_notes(ticket_id)
+    return {
+        "notes": [
+            {
+                "note":           vn.get("Note") or "",
+                "created_at":     (vn.get("CreatedDateTime") or "")[:16],
+                "created_by":     vn.get("CreatedByUserName") or "",
+                "scheduled_date": (vn.get("ScheduledDate") or "")[:10],
+            }
+            for vn in notes
+        ]
+    }
+
+
 @router.post("/{opp_id}/cache/clear")
 async def clear_contract_cache(opp_id: int):
     """Drop the in-memory page cache for one contract (call after saving advisor/conversations)."""
