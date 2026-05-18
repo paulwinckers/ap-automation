@@ -307,7 +307,9 @@ export default function IssuesDashboard() {
   const [ctxType, setCtxType]             = useState('all');
   const [tag,     setTag]                 = useState('all');
   const [search,  setSearch]              = useState('');
-  const [managerName, setManagerName]     = useState<string>(() => localStorage.getItem('managerName') || '');
+
+  // Use the logged-in user's name (set by auth on login)
+  const managerName = localStorage.getItem('user_name') || 'Manager';
 
   useEffect(() => {
     setLoading(true);
@@ -318,11 +320,6 @@ export default function IssuesDashboard() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [status, ctxType, tag]);
-
-  function handleManagerNameChange(v: string) {
-    setManagerName(v);
-    localStorage.setItem('managerName', v);
-  }
 
   // When a conversation is resolved via the card, hide it if we're in 'open' view
   function handleResolved(id: number) {
@@ -359,18 +356,11 @@ export default function IssuesDashboard() {
               All crew conversations across maintenance and construction
             </p>
           </div>
-          {/* Manager name for replies */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}>Replying as:</span>
-            <input
-              value={managerName}
-              onChange={e => handleManagerNameChange(e.target.value)}
-              placeholder="Your name"
-              style={{
-                padding: '6px 10px', border: '1.5px solid #e2e6ed', borderRadius: 8,
-                fontSize: 13, color: '#1a1d23', fontFamily: 'inherit', outline: 'none', width: 140,
-              }}
-            />
+          {/* Shows logged-in user name */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#f3f4f6', borderRadius: 8, padding: '6px 12px' }}>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>Replying as</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{managerName}</span>
+            <a href="/users" style={{ fontSize: 11, color: '#9ca3af', textDecoration: 'none', marginLeft: 4 }}>✎</a>
           </div>
         </div>
       </div>
