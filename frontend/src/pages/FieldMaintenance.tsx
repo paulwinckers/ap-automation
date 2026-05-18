@@ -372,6 +372,8 @@ export default function FieldMaintenance() {
   const [pendingHasPhoto, setPendingHasPhoto] = useState(0);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [advisorLog, setAdvisorLog]     = useState<AdvisorLogEntry[]>([]);
+  // Crew name — persisted to localStorage so crew don't have to re-enter each time
+  const [crewName, setCrewName] = useState<string>(() => localStorage.getItem('fieldCrewName') || '');
 
   const cameraRef  = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
@@ -432,6 +434,8 @@ export default function FieldMaintenance() {
       form.append('answer', answer);
       form.append('has_photo', String(pendingHasPhoto));
       if (pendingR2Key) form.append('photo_r2_key', pendingR2Key);
+      if (crewName.trim()) form.append('crew_name', crewName.trim());
+      form.append('property_name', data?.property_name || data?.opportunity_name || `Opp #${opp_id}`);
 
       const res = await fetch(`${API}/field/maintenance/${opp_id}/field-advisor/save`, {
         method: 'POST',
@@ -739,6 +743,20 @@ export default function FieldMaintenance() {
               <p style={{ fontSize: 13, color: '#6b7280', marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
                 Describe your question or site issue. Optionally attach a photo for visual advice.
               </p>
+
+              {/* Crew name — persisted locally */}
+              <input
+                type="text"
+                value={crewName}
+                onChange={e => { setCrewName(e.target.value); localStorage.setItem('fieldCrewName', e.target.value); }}
+                placeholder="Your name (e.g. Mike S.)"
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  padding: '9px 12px', border: '1.5px solid #d1d5db', borderRadius: 8,
+                  fontSize: 14, color: '#1a1d23', background: '#fff',
+                  fontFamily: 'inherit', outline: 'none', marginBottom: 8,
+                }}
+              />
 
               <textarea
                 value={question}

@@ -849,14 +849,56 @@ async def maintenance_field_advisor(
         raise HTTPException(500, f"Advisor error: {e}") from e
 
 
+def _send_whatsapp_notification(
+    opp_id: int,
+    property_name: str,
+    crew_name: str,
+    question: str,
+) -> None:
+    """Fire-and-forget Twilio WhatsApp message to configured recipients."""
+    sid   = settings.TWILIO_ACCOUNT_SID
+    token = settings.TWILIO_AUTH_TOKEN
+    frm   = settings.TWILIO_WHATSAPP_FROM
+    to_list = [t.strip() for t in settings.TWILIO_WHATSAPP_TO.split(",") if t.strip()]
+
+    if not (sid and token and frm and to_list):
+        logger.info("Twilio not configured — skipping WhatsApp notification.")
+        return
+
+    try:
+        from twilio.rest import Client as TwilioClient  # lazy import
+        client = TwilioClient(sid, token)
+
+        crew_label = crew_name.strip() if crew_name.strip() else "Unknown"
+        q_preview  = question.strip()[:200] + ("…" if len(question.strip()) > 200 else "")
+        deep_link  = f"https://darios-accounting.pages.dev/field/maintenance/{opp_id}"
+
+        body = (
+            f"🌿 *Field Advisor Q&A Saved*\n"
+            f"Property: {property_name}\n"
+            f"Crew: {crew_label}\n\n"
+            f"Q: {q_preview}\n\n"
+            f"🔗 {deep_link}"
+        )
+
+        for to in to_list:
+            client.messages.create(body=body, from_=frm, to=to)
+            logger.info(f"WhatsApp notification sent to {to} for opp {opp_id}")
+
+    except Exception as e:
+        logger.warning(f"WhatsApp notification failed for opp {opp_id}: {e}")
+
+
 @router.post("/{opp_id}/field-advisor/save")
 async def maintenance_advisor_save(
-    opp_id:       int,
-    question:     str            = Form(...),
-    answer:       str            = Form(...),
-    has_photo:    int            = Form(default=0),
-    photo_r2_key: Optional[str] = Form(default=None),
-    db:           Database       = Depends(get_db),
+    opp_id:        int,
+    question:      str            = Form(...),
+    answer:        str            = Form(...),
+    has_photo:     int            = Form(default=0),
+    photo_r2_key:  Optional[str] = Form(default=None),
+    crew_name:     Optional[str] = Form(default=None),
+    property_name: Optional[str] = Form(default=None),
+    db:            Database       = Depends(get_db),
 ):
     """Persist a Field Advisor Q&A (called only when crew lead confirms save)."""
     try:
@@ -866,6 +908,16 @@ async def maintenance_advisor_save(
                VALUES (?,?,?,?,?)""",
             [opp_id, question.strip(), answer.strip(), has_photo, photo_r2_key or None],
         )
+
+        # Fire WhatsApp notification (non-blocking — runs in thread pool)
+        prop = property_name or f"Opp #{opp_id}"
+        crew = crew_name or ""
+        asyncio.get_event_loop().run_in_executor(
+            None,
+            _send_whatsapp_notification,
+            opp_id, prop, crew, question.strip(),
+        )
+
         return {"saved": True, "log_id": log_id}
     except Exception as e:
         logger.error(f"Maintenance advisor save failed for opp {opp_id}: {e}", exc_info=True)

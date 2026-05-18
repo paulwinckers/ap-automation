@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     ISSUES_DIGEST_MGMT_RECIPIENTS:  str = "paul@darios.ca"  # management summary recipients (comma-separated)
     ISSUES_DIGEST_ACTIVITIES_URL:   str = "https://darios-accounting.pages.dev/dashboards/activities"
 
+    # Twilio WhatsApp notifications
+    TWILIO_ACCOUNT_SID:   str = ""   # AC...
+    TWILIO_AUTH_TOKEN:    str = ""
+    TWILIO_WHATSAPP_FROM: str = ""   # e.g. whatsapp:+14155238886
+    TWILIO_WHATSAPP_TO:   str = ""   # comma-separated e.g. whatsapp:+16041234567,whatsapp:+16049876543
+
     # Web push (VAPID) — generate with scripts/generate_vapid_keys.py, then set in Railway
     VAPID_PRIVATE_KEY: str = ""   # base64url raw EC private key (32 bytes)
     VAPID_PUBLIC_KEY:  str = ""   # base64url uncompressed EC public key (65 bytes, starts 0x04)
