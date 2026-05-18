@@ -49,13 +49,16 @@ interface Message {
   content:         string;
   has_photo:       number;
   photo_r2_key:    string | null;
+  photo_url?:      string | null;
   created_at:      string;
 }
 
 function fmtTime(dt: string) {
   if (!dt) return '';
   try {
-    return new Date(dt + (dt.includes('T') ? '' : 'T00:00:00Z')).toLocaleString('en-CA', {
+    // SQLite returns "2026-05-18 15:21:00" — replace space with T and add Z
+    const iso = dt.includes('T') ? dt : dt.replace(' ', 'T') + 'Z';
+    return new Date(iso).toLocaleString('en-CA', {
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
   } catch { return dt; }
@@ -523,7 +526,14 @@ export default function FieldConversations({ oppId, contextType, propertyName }:
                 <div style={{ fontSize: 13, color: '#1e293b', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
                   {msg.content}
                 </div>
-                {msg.has_photo ? <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>📷 photo attached</div> : null}
+                {msg.photo_url ? (
+                  <a href={msg.photo_url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', marginTop: 6 }}>
+                    <img src={msg.photo_url} alt="Attached photo" style={{ maxWidth: '100%', maxHeight: 260, borderRadius: 8, display: 'block' }} />
+                    <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>📷 tap to open full size</div>
+                  </a>
+                ) : msg.has_photo ? (
+                  <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>📷 photo attached</div>
+                ) : null}
               </div>
               <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, paddingLeft: 4, paddingRight: 4 }}>
                 {fmtTime(msg.created_at)}

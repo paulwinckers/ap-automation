@@ -61,7 +61,8 @@ interface Message {
 function fmtTime(dt: string | null) {
   if (!dt) return '';
   try {
-    return new Date(dt.includes('T') ? dt : dt + 'Z').toLocaleString('en-CA', {
+    const iso = dt.includes('T') ? dt : dt.replace(' ', 'T') + 'Z';
+    return new Date(iso).toLocaleString('en-CA', {
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
   } catch { return dt; }
