@@ -347,6 +347,25 @@ async def create_conversation(
             watchers, opp_id, context_type, prop_name,
             title.strip(), crew_name or "", first_message.strip(), True, tag,
         )
+    else:
+        # Fallback: no DB watchers yet — use TWILIO_WHATSAPP_TO env var so
+        # notifications still fire until users have phone numbers added
+        raw_to = (
+            settings.TWILIO_WHATSAPP_TO_CONSTRUCTION
+            if context_type == "construction" and settings.TWILIO_WHATSAPP_TO_CONSTRUCTION
+            else settings.TWILIO_WHATSAPP_TO
+        )
+        fallback = [
+            {"name": "Manager", "whatsapp": t.strip()}
+            for t in raw_to.split(",") if t.strip()
+        ]
+        if fallback:
+            logger.info("No DB watchers — falling back to TWILIO_WHATSAPP_TO env var")
+            asyncio.get_event_loop().run_in_executor(
+                None, _notify_watchers,
+                fallback, opp_id, context_type, prop_name,
+                title.strip(), crew_name or "", first_message.strip(), True, tag,
+            )
 
     return {"conv_id": conv_id, "ai_response": ai_response}
 
