@@ -535,6 +535,8 @@ CREATE TABLE IF NOT EXISTS field_conversations (
     resolved_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_field_conv_opp ON field_conversations(opp_id, context_type, status);
+ALTER TABLE field_conversations ADD COLUMN property_name TEXT;
+ALTER TABLE field_conversations ADD COLUMN updated_at TEXT;
 
 CREATE TABLE IF NOT EXISTS field_conversation_messages (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

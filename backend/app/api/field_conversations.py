@@ -155,6 +155,42 @@ async def _ask_ai(title: str, tag: Optional[str], messages: list[dict]) -> str:
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+@router.get("/all/dashboard")
+async def all_conversations_dashboard(
+    status:       str = "open",
+    context_type: str = "",
+    tag:          str = "",
+    db:           Database = Depends(get_db),
+):
+    """Return all conversations for the ops manager dashboard."""
+    conditions = []
+    params: list = []
+
+    if status and status != "all":
+        conditions.append("status = ?")
+        params.append(status)
+
+    if context_type and context_type != "all":
+        conditions.append("context_type = ?")
+        params.append(context_type)
+
+    if tag and tag != "all":
+        conditions.append("tag = ?")
+        params.append(tag)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    rows = await db._q(
+        f"""SELECT * FROM field_conversations
+           {where}
+           ORDER BY
+             CASE WHEN status = 'open' THEN 0 ELSE 1 END,
+             COALESCE(updated_at, created_at) DESC""",
+        params,
+    )
+    return {"conversations": rows or []}
+
+
 @router.get("/{opp_id}")
 async def list_conversations(
     opp_id:       int,
@@ -189,11 +225,12 @@ async def create_conversation(
     tag = tag if tag in VALID_TAGS else None
 
     # 1. Create conversation record
+    prop = (property_name or f"Opp #{opp_id}").strip()
     conv_id = await db._x(
         """INSERT INTO field_conversations
-             (opp_id, context_type, title, tag, created_by, message_count, last_message)
-           VALUES (?, ?, ?, ?, ?, 1, ?)""",
-        [opp_id, context_type, title.strip(), tag, crew_name, first_message.strip()[:120]],
+             (opp_id, context_type, title, tag, created_by, message_count, last_message, property_name, updated_at)
+           VALUES (?, ?, ?, ?, ?, 1, ?, ?, datetime('now'))""",
+        [opp_id, context_type, title.strip(), tag, crew_name, first_message.strip()[:120], prop],
     )
 
     # 2. Upload photo if provided
@@ -223,7 +260,7 @@ async def create_conversation(
         )
         await db._x(
             """UPDATE field_conversations
-               SET message_count = message_count + 1, last_message = ?
+               SET message_count = message_count + 1, last_message = ?, updated_at = datetime('now')
                WHERE id = ?""",
             [ai_response[:120], conv_id],
         )
@@ -290,7 +327,7 @@ async def add_message(
     )
     await db._x(
         """UPDATE field_conversations
-           SET message_count = message_count + 1, last_message = ?
+           SET message_count = message_count + 1, last_message = ?, updated_at = datetime('now')
            WHERE id = ?""",
         [content.strip()[:120], conv_id],
     )
@@ -325,7 +362,7 @@ async def add_message(
         )
         await db._x(
             """UPDATE field_conversations
-               SET message_count = message_count + 1, last_message = ?
+               SET message_count = message_count + 1, last_message = ?, updated_at = datetime('now')
                WHERE id = ?""",
             [ai_response[:120], conv_id],
         )

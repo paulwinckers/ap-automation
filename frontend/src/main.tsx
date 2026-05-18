@@ -41,6 +41,7 @@ import FieldProject          from './pages/FieldProject';
 import FieldProjectLookup   from './pages/FieldProjectLookup';
 import FieldMaintenance      from './pages/FieldMaintenance';
 import FieldMaintenanceLookup from './pages/FieldMaintenanceLookup';
+import IssuesDashboard        from './pages/IssuesDashboard';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -78,6 +79,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/field/maintenance/:oppId" element={<FieldMaintenance />} />
 
         {/* Field Ops — login required */}
+        <Route path="/ops/issues"        element={<RequireAuth><Office><IssuesDashboard /></Office></RequireAuth>} />
         <Route path="/ops/crew-schedule" element={<RequireAuth><Office><CrewSchedule /></Office></RequireAuth>} />
         <Route path="/ops/safety-talks"  element={<RequireAuth><Office><SafetyTalksAdmin /></Office></RequireAuth>} />
         <Route path="/ops/time-tracking" element={<TimeTracking />} />
