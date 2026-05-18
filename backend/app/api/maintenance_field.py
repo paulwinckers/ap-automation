@@ -36,11 +36,56 @@ _lookup_cache_ts: float       = 0.0
 _cache_building:  bool        = False   # prevent concurrent rebuilds
 _LOOKUP_TTL = 8 * 60 * 60  # 8 hours — matches a workday
 
+# ── Per-contract page cache ───────────────────────────────────────────────────
+_contract_cache: dict[int, tuple[dict, float]] = {}
+_CONTRACT_TTL = 60 * 60  # 1 hour
+
 
 async def get_db() -> Database:
     if _db._db is None:
         await _db.connect()
     return _db
+
+
+# ── D1-backed cache helpers ───────────────────────────────────────────────────
+
+async def _load_lookup_from_db() -> dict | None:
+    """Try to load the lookup cache from D1 (survives Railway restarts)."""
+    import json
+    try:
+        if _db._db is None:
+            await _db.connect()
+        rows = await _db._q(
+            "SELECT data FROM cache_entries WHERE key = 'maintenance_lookup' AND expires_at > datetime('now')"
+        )
+        if rows:
+            logger.info("Maintenance lookup: loaded from D1 cache")
+            return json.loads(rows[0]["data"])
+    except Exception as exc:
+        logger.warning(f"D1 cache load failed: {exc}")
+    return None
+
+
+async def _save_lookup_to_db(data: dict) -> None:
+    """Persist the lookup cache to D1 with a 12-hour TTL."""
+    import json
+    from datetime import datetime, timedelta, timezone
+    try:
+        if _db._db is None:
+            await _db.connect()
+        expires = (datetime.now(timezone.utc) + timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S")
+        await _db._x(
+            "INSERT OR REPLACE INTO cache_entries (key, data, expires_at, updated_at) VALUES (?, ?, ?, datetime('now'))",
+            ["maintenance_lookup", json.dumps(data), expires],
+        )
+        logger.info("Maintenance lookup: saved to D1 cache")
+    except Exception as exc:
+        logger.warning(f"D1 cache save failed: {exc}")
+
+
+def _invalidate_contract(opp_id: int) -> None:
+    """Drop a single contract from the in-memory page cache."""
+    _contract_cache.pop(opp_id, None)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -265,12 +310,18 @@ def _parse_comments_from_notes(notes_html: str) -> list[dict]:
 # ── Cache management ─────────────────────────────────────────────────────────
 
 @router.post("/cache/clear")
-async def clear_lookup_cache():
-    """Force the lookup cache to expire and trigger an immediate background rebuild."""
+async def clear_lookup_cache(db: Database = Depends(get_db)):
+    """Force all caches to expire and trigger an immediate background rebuild."""
     global _lookup_cache, _lookup_cache_ts, _cache_building
     _lookup_cache    = None
     _lookup_cache_ts = 0.0
     _cache_building  = False
+    _contract_cache.clear()
+    # Drop D1 entry so it won't be served while rebuilding
+    try:
+        await db._x("DELETE FROM cache_entries WHERE key = 'maintenance_lookup'")
+    except Exception:
+        pass
     asyncio.create_task(_build_lookup_cache())
     return {"cleared": True, "rebuilding": True}
 
@@ -364,9 +415,13 @@ async def _build_lookup_cache() -> None:
         contracts.sort(key=lambda x: x["latest_date"], reverse=True)
         contracts.sort(key=lambda x: x["all_done"])  # active first
 
-        _lookup_cache    = {"contracts": contracts}
+        payload = {"contracts": contracts}
+        _lookup_cache    = payload
         _lookup_cache_ts = _time.time()
         logger.info(f"Maintenance cache build complete: {len(contracts)} contracts")
+
+        # Persist to D1 so it survives Railway restarts
+        await _save_lookup_to_db(payload)
 
     except Exception as e:
         logger.error(f"Maintenance cache build failed: {e}", exc_info=True)
@@ -395,14 +450,21 @@ async def maintenance_lookup():
         logger.info("Maintenance lookup: cache stale, starting background build")
         asyncio.create_task(_build_lookup_cache())
 
-    # Return whatever we have (may be empty on very first load)
+    # Return whatever we have (may be stale but not empty)
     if _lookup_cache is not None:
         logger.info("Maintenance lookup: returning stale cache while rebuilding")
         return _lookup_cache
 
-    # Truly first load — wait briefly for the build to produce opps
-    logger.info("Maintenance lookup: first load, waiting up to 15s for initial data")
-    for _ in range(30):           # 30 × 0.5s = 15s max wait
+    # Try D1 before blocking the request (handles Railway cold-starts instantly)
+    db_data = await _load_lookup_from_db()
+    if db_data:
+        _lookup_cache    = db_data
+        _lookup_cache_ts = _time.time()
+        return _lookup_cache
+
+    # Truly first-ever load — wait briefly for the background build
+    logger.info("Maintenance lookup: first load, waiting up to 10s for initial data")
+    for _ in range(20):           # 20 × 0.5s = 10s max wait
         await asyncio.sleep(0.5)
         if _lookup_cache is not None:
             return _lookup_cache
@@ -521,9 +583,31 @@ async def debug_divisions():
 
 # ── Main page data endpoint ───────────────────────────────────────────────────
 
+@router.post("/{opp_id}/cache/clear")
+async def clear_contract_cache(opp_id: int):
+    """Drop the in-memory page cache for one contract (call after saving advisor/conversations)."""
+    _invalidate_contract(opp_id)
+    return {"cleared": True, "opp_id": opp_id}
+
+
 @router.get("/{opp_id}")
 async def get_maintenance_page(opp_id: int, db: Database = Depends(get_db)):
     """Full maintenance contract page: opp, tickets, visit notes, activities, AI summary."""
+    # ── Per-contract cache ────────────────────────────────────────────────────
+    if opp_id in _contract_cache:
+        cached_data, cached_ts = _contract_cache[opp_id]
+        if _time.time() - cached_ts < _CONTRACT_TTL:
+            logger.info(f"Maintenance contract cache hit: opp {opp_id} (age={int(_time.time()-cached_ts)}s)")
+            # Always fetch fresh advisor log and conversations from D1 (they update frequently)
+            try:
+                advisor_rows = await db._q(
+                    "SELECT id, question, answer, has_photo, photo_r2_key, asked_at FROM field_advisor_log WHERE opp_id = ? ORDER BY asked_at DESC LIMIT 50",
+                    [opp_id],
+                )
+                cached_data = {**cached_data, "advisor_log": [dict(r) for r in advisor_rows]}
+            except Exception:
+                pass
+            return cached_data
     async def _fetch_services() -> list[dict]:
         try:
             res = await _aspire._get("OpportunityServices", {
@@ -577,7 +661,8 @@ async def get_maintenance_page(opp_id: int, db: Database = Depends(get_db)):
 
     visit_notes_map: dict[int, list[dict]] = {}
     if completed_tickets:
-        completed_ids = [t["WorkTicketID"] for t in completed_tickets if t.get("WorkTicketID")][:30]
+        # Cap at 10 most-recent — each is a separate Aspire API call
+        completed_ids = [t["WorkTicketID"] for t in completed_tickets if t.get("WorkTicketID")][:10]
         results = await asyncio.gather(*[_safe_visit_notes(tid) for tid in completed_ids])
         for tid, notes in results:
             if notes:
@@ -612,7 +697,9 @@ async def get_maintenance_page(opp_id: int, db: Database = Depends(get_db)):
         except Exception:
             return ""
 
-    missing = [a for a in activities if not (a.get("Notes") or "").strip()]
+    # Aspire strips Notes on OppID filter — re-fetch individually, but cap at 8
+    # to avoid a long tail of API calls (activities are deduped/merged anyway)
+    missing = [a for a in activities if not (a.get("Notes") or "").strip()][:8]
     if missing:
         refetched = await asyncio.gather(*[_refetch_notes(a["ActivityID"]) for a in missing])
         for a, notes in zip(missing, refetched):
@@ -693,7 +780,7 @@ async def get_maintenance_page(opp_id: int, db: Database = Depends(get_db)):
             ]
         return out
 
-    return {
+    result = {
         "opportunity_id":    opp_id,
         "opportunity_name":  opp.get("OpportunityName") or f"Contract #{opp_id}",
         "property_name":     opp.get("PropertyName") or "",
@@ -747,6 +834,11 @@ async def get_maintenance_page(opp_id: int, db: Database = Depends(get_db)):
             for p in construction_projects
         ],
     }
+
+    # Store in per-contract cache (advisor_log excluded — fetched fresh on cache hits)
+    _contract_cache[opp_id] = (result, _time.time())
+    logger.info(f"Maintenance contract cached: opp {opp_id}")
+    return result
 
 
 # ── Field Advisor ─────────────────────────────────────────────────────────────

@@ -549,3 +549,14 @@ CREATE TABLE IF NOT EXISTS field_conversation_messages (
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_field_conv_msg ON field_conversation_messages(conversation_id, created_at);
+
+-- ── General-purpose cache store ───────────────────────────────────────────────
+-- Persists expensive Aspire API responses across Railway restarts.
+-- TTL enforced via expires_at; entries replaced with INSERT OR REPLACE.
+
+CREATE TABLE IF NOT EXISTS cache_entries (
+    key        TEXT PRIMARY KEY,
+    data       TEXT    NOT NULL,         -- JSON blob
+    expires_at TEXT    NOT NULL,         -- ISO datetime (UTC)
+    updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
