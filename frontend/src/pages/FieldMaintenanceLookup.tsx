@@ -161,16 +161,46 @@ export default function FieldMaintenanceLookup() {
 
   const [contracts, setContracts]         = useState<Contract[]>([]);
   const [loading, setLoading]             = useState(true);
+  const [rebuilding, setRebuilding]       = useState(false);
   const [error, setError]                 = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
   const [filterText, setFilterText]       = useState('');
 
   useEffect(() => {
-    fetch(`${API}/field/maintenance/lookup`)
-      .then(r => r.json())
-      .then(d => setContracts(d.contracts || []))
-      .catch(e => setError((e as Error).message || 'Could not reach the server.'))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+
+    async function poll() {
+      try {
+        const r = await fetch(`${API}/field/maintenance/lookup`);
+        const d = await r.json();
+        if (cancelled) return;
+
+        if (d.contracts && d.contracts.length > 0) {
+          // Got real data
+          setContracts(d.contracts);
+          setRebuilding(false);
+          setLoading(false);
+        } else if (d.loading) {
+          // Backend is still building — show building state and retry in 3s
+          setRebuilding(true);
+          setLoading(false);
+          setTimeout(() => { if (!cancelled) poll(); }, 3000);
+        } else {
+          // Genuinely empty
+          setContracts([]);
+          setRebuilding(false);
+          setLoading(false);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError((e as Error).message || 'Could not reach the server.');
+          setLoading(false);
+        }
+      }
+    }
+
+    poll();
+    return () => { cancelled = true; };
   }, []);
 
   const q = filterText.trim().toLowerCase();
@@ -207,6 +237,16 @@ export default function FieldMaintenanceLookup() {
 
         {loading && <div style={S.loadingMsg}>Loading contracts…</div>}
 
+        {rebuilding && !loading && (
+          <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '14px 16px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 20 }}>⏳</span>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 14, color: '#92400e' }}>Building contract list…</div>
+              <div style={{ fontSize: 12, color: '#b45309', marginTop: 2 }}>Loading from Aspire, usually takes 10–15 seconds. Checking again automatically.</div>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 10, padding: '12px 14px', fontSize: 13, color: '#dc2626', marginBottom: 12 }}>
             {error}
@@ -238,7 +278,7 @@ export default function FieldMaintenanceLookup() {
           </div>
         )}
 
-        {!loading && !error && active.length === 0 && completed.length === 0 && (
+        {!loading && !rebuilding && !error && active.length === 0 && completed.length === 0 && (
           <div style={S.emptyState}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>{q ? '🔍' : '🌿'}</div>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>{q ? 'No matches' : 'No contracts found'}</div>
