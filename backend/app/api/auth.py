@@ -105,6 +105,10 @@ class EmergencyReset(BaseModel):
     password: str
     name:     str = "Admin"
 
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password:     str
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -263,6 +267,24 @@ async def emergency_reset(body: EmergencyReset, db: Database = Depends(get_db)):
 
     token = _make_token(uid, body.email.lower(), "admin")
     return {"access_token": token, "token_type": "bearer", "name": body.name, "role": "admin"}
+
+
+@router.post("/change-password")
+async def change_password(
+    body: ChangePassword,
+    user: dict = Depends(_get_current_user),
+    db:   Database = Depends(get_db),
+):
+    """Let any logged-in user change their own password."""
+    rows = await db._q("SELECT * FROM users WHERE id = ?", [user["id"]])
+    if not rows or not _verify_pw(body.current_password, rows[0]["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    pw_hash = _hash_pw(body.new_password)
+    await db._x("UPDATE users SET password_hash = ? WHERE id = ?", [pw_hash, user["id"]])
+    logger.info(f"Password changed for {user['email']}")
+    return {"changed": True}
 
 
 @router.post("/users/{user_id}/reset-password")
