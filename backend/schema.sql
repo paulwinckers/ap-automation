@@ -517,3 +517,33 @@ CREATE TABLE IF NOT EXISTS field_advisor_log (
     asked_at     TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_advisor_log_opp ON field_advisor_log(opp_id, asked_at);
+
+-- ── Field Conversations ───────────────────────────────────────────────────────
+-- Threaded crew issue logs for maintenance contracts and construction projects.
+
+CREATE TABLE IF NOT EXISTS field_conversations (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    opp_id        INTEGER NOT NULL,
+    context_type  TEXT    NOT NULL DEFAULT 'maintenance',
+    title         TEXT    NOT NULL,
+    tag           TEXT,
+    status        TEXT    NOT NULL DEFAULT 'open',
+    created_by    TEXT,
+    message_count INTEGER NOT NULL DEFAULT 0,
+    last_message  TEXT,
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    resolved_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_field_conv_opp ON field_conversations(opp_id, context_type, status);
+
+CREATE TABLE IF NOT EXISTS field_conversation_messages (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL,
+    role            TEXT    NOT NULL DEFAULT 'crew',
+    crew_name       TEXT,
+    content         TEXT    NOT NULL,
+    has_photo       INTEGER NOT NULL DEFAULT 0,
+    photo_r2_key    TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_field_conv_msg ON field_conversation_messages(conversation_id, created_at);

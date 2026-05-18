@@ -10,6 +10,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import FieldConversations from './FieldConversations';
 
 const API = import.meta.env.VITE_API_URL ?? '';
 
@@ -350,7 +351,7 @@ function ActivityCard({ activity }: { activity: Activity }) {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-type Tab = 'summary' | 'history' | 'upcoming' | 'advisor';
+type Tab = 'summary' | 'history' | 'upcoming' | 'advisor' | 'conversations';
 
 export default function FieldMaintenance() {
   const { oppId } = useParams<{ oppId: string }>();
@@ -536,7 +537,7 @@ export default function FieldMaintenance() {
 
       {/* Tab bar */}
       <div style={S.tabBar}>
-        {(['summary', 'history', 'upcoming', 'advisor'] as Tab[]).map(t => (
+        {(['summary', 'history', 'upcoming', 'advisor', 'conversations'] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -547,7 +548,7 @@ export default function FieldMaintenance() {
               fontWeight:  tab === t ? 700 : 400,
             }}
           >
-            {t === 'summary' ? 'Summary' : t === 'history' ? 'History' : t === 'upcoming' ? 'Upcoming' : '🤖 Advisor'}
+            {t === 'summary' ? 'Summary' : t === 'history' ? 'History' : t === 'upcoming' ? 'Upcoming' : t === 'advisor' ? '🤖 Advisor' : '💬 Issues'}
           </button>
         ))}
       </div>
@@ -876,6 +877,15 @@ export default function FieldMaintenance() {
               </div>
             )}
           </div>
+        )}
+
+        {/* ── CONVERSATIONS TAB ── */}
+        {tab === 'conversations' && data && (
+          <FieldConversations
+            oppId={opp_id}
+            contextType="maintenance"
+            propertyName={data.property_name || data.opportunity_name}
+          />
         )}
 
       </div>

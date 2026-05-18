@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import FieldConversations from './FieldConversations';
 
 
 const API = import.meta.env.VITE_API_URL ?? '';
@@ -420,8 +421,8 @@ export default function FieldProject() {
     return ageMs < 24 * 60 * 60 * 1000;
   }
 
-  // Tab: 'scope' | 'tickets' | 'update' | 'materials' | 'history'
-  const [tab, setTab] = useState<'scope' | 'tickets' | 'update' | 'materials' | 'history'>('scope');
+  // Tab: 'scope' | 'tickets' | 'update' | 'materials' | 'history' | 'conversations'
+  const [tab, setTab] = useState<'scope' | 'tickets' | 'update' | 'materials' | 'history' | 'conversations'>('scope');
 
   // Field Advisor
   const [advisorQuestion,    setAdvisorQuestion]    = useState('');
@@ -803,11 +804,12 @@ export default function FieldProject() {
         {/* Tabs */}
         <div style={{ display: 'flex', borderBottom: '1px solid #f1f5f9', overflowX: 'auto' }}>
           {([
-            { key: 'scope',     label: '📐 Scope' },
-            { key: 'tickets',   label: `📋 Tickets (${data.tickets.length})` },
-            { key: 'update',    label: '✏️ Update' },
-            { key: 'materials', label: '📦 Materials' },
-            { key: 'history',   label: `📝 History (${(data.activities || []).filter(a => (a.ActivityType || '').toLowerCase() !== 'email').length + responded + (data.advisor_log || []).length})` },
+            { key: 'scope',         label: '📐 Scope' },
+            { key: 'tickets',       label: `📋 Tickets (${data.tickets.length})` },
+            { key: 'update',        label: '✏️ Update' },
+            { key: 'materials',     label: '📦 Materials' },
+            { key: 'history',       label: `📝 History (${(data.activities || []).filter(a => (a.ActivityType || '').toLowerCase() !== 'email').length + responded + (data.advisor_log || []).length})` },
+            { key: 'conversations', label: '💬 Issues' },
           ] as const).map(({ key, label }) => (
             <button
               key={key}
@@ -1733,6 +1735,15 @@ export default function FieldProject() {
                 </>
               )}
             </>
+          )}
+
+          {/* ── Conversations tab ──────────────────────────────────────────── */}
+          {tab === 'conversations' && data && (
+            <FieldConversations
+              oppId={data.opportunity_id}
+              contextType="construction"
+              propertyName={data.property_name || data.opportunity_name}
+            />
           )}
 
         </div>
