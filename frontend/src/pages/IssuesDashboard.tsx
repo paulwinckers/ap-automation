@@ -436,8 +436,11 @@ export default function IssuesDashboard() {
   const [search,  setSearch]              = useState('');
   const [availableUsers, setAvailableUsers] = useState<{ id: number; name: string; phone: string | null }[]>([]);
 
-  // Use the logged-in user's name (set by auth on login)
-  const managerName = localStorage.getItem('user_name') || 'Manager';
+  // Use the logged-in user's name from ap_user JSON (set at login)
+  const managerName = (() => {
+    try { return JSON.parse(localStorage.getItem('ap_user') || '{}').name || localStorage.getItem('user_name') || 'Manager'; }
+    catch { return localStorage.getItem('user_name') || 'Manager'; }
+  })();
 
   // Load users with phones for the watcher add dropdown
   useEffect(() => {

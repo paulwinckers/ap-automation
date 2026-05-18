@@ -36,7 +36,7 @@ async function request<T>(
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-export interface AuthUser { id: number; email: string; name: string; role: string; }
+export interface AuthUser { id: number; email: string; name: string; role: string; phone?: string | null; }
 
 export async function login(email: string, password: string): Promise<AuthUser> {
   const form = new URLSearchParams({ username: email, password });
@@ -48,7 +48,10 @@ export async function login(email: string, password: string): Promise<AuthUser> 
   if (!res.ok) throw new Error('Invalid email or password');
   const data = await res.json();
   localStorage.setItem('ap_token', data.access_token);
-  localStorage.setItem('ap_user', JSON.stringify({ name: data.name, email: data.email, role: data.role }));
+  localStorage.setItem('ap_user', JSON.stringify({ name: data.name, email: data.email, role: data.role, phone: data.phone ?? null }));
+  if (data.phone) localStorage.setItem('user_phone', data.phone);
+  else localStorage.removeItem('user_phone');
+  localStorage.setItem('user_name', data.name);
   return data;
 }
 

@@ -80,8 +80,22 @@ interface Props {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function FieldConversations({ oppId, contextType, propertyName }: Props) {
-  const [crewName,      setCrewName]      = useState<string>(() => localStorage.getItem('fieldCrewName') || '');
-  const [crewWhatsApp,  setCrewWhatsApp]  = useState<string>(() => localStorage.getItem('fieldCrewPhone') || '');
+  const [crewName, setCrewName] = useState<string>(() => {
+    // If logged in, pre-fill from account; otherwise use remembered field value
+    try {
+      const u = JSON.parse(localStorage.getItem('ap_user') || '{}');
+      if (u.name) return u.name;
+    } catch {}
+    return localStorage.getItem('fieldCrewName') || '';
+  });
+  const [crewWhatsApp, setCrewWhatsApp] = useState<string>(() => {
+    // If logged in and have a phone on account, pre-fill from there
+    try {
+      const u = JSON.parse(localStorage.getItem('ap_user') || '{}');
+      if (u.phone) return u.phone;
+    } catch {}
+    return localStorage.getItem('fieldCrewPhone') || '';
+  });
   const [view, setView]                   = useState<'list' | 'new' | 'thread'>('list');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loadingList, setLoadingList]     = useState(true);
