@@ -88,9 +88,9 @@ def _send_whatsapp_conversation(
         tag_label  = f"  [{tag}]" if tag else ""
         crew_label = crew_name.strip() if crew_name and crew_name.strip() else "Unknown"
         deep_link  = (
-            f"https://darios-accounting.pages.dev/field/project/{opp_id}"
+            f"https://darios-ap.pages.dev/field/project/{opp_id}"
             if context_type == "construction"
-            else f"https://darios-accounting.pages.dev/field/maintenance/{opp_id}"
+            else f"https://darios-ap.pages.dev/field/maintenance/{opp_id}"
         )
 
         body = (

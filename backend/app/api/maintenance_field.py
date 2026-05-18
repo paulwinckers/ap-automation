@@ -871,7 +871,7 @@ def _send_whatsapp_notification(
 
         crew_label = crew_name.strip() if crew_name.strip() else "Unknown"
         q_preview  = question.strip()[:200] + ("…" if len(question.strip()) > 200 else "")
-        deep_link  = f"https://darios-accounting.pages.dev/field/maintenance/{opp_id}"
+        deep_link  = f"https://darios-ap.pages.dev/field/maintenance/{opp_id}"
 
         body = (
             f"🌿 *Field Advisor Q&A Saved*\n"
