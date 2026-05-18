@@ -90,11 +90,13 @@ class UserCreate(BaseModel):
     name:     str
     password: str
     role:     str = "staff"
+    phone:    Optional[str] = None
 
 class UserUpdate(BaseModel):
     name:   Optional[str] = None
     role:   Optional[str] = None
     active: Optional[bool] = None
+    phone:  Optional[str] = None
 
 class PasswordReset(BaseModel):
     password: str
@@ -184,7 +186,7 @@ async def list_users(
     db: Database = Depends(get_db),
 ):
     """List all users (admin only)."""
-    rows = await db._q("SELECT id, email, name, role, active, created_at, last_login FROM users ORDER BY name")
+    rows = await db._q("SELECT id, email, name, phone, role, active, created_at, last_login FROM users ORDER BY name")
     return {"users": rows}
 
 
@@ -204,11 +206,11 @@ async def create_user(
 
     pw_hash = _hash_pw(body.password)
     uid = await db._x(
-        "INSERT INTO users (email, name, password_hash, role) VALUES (?, ?, ?, ?)",
-        [body.email.lower(), body.name, pw_hash, body.role],
+        "INSERT INTO users (email, name, password_hash, role, phone) VALUES (?, ?, ?, ?, ?)",
+        [body.email.lower(), body.name, pw_hash, body.role, body.phone or None],
     )
     logger.info(f"User created: {body.email} (role={body.role})")
-    return {"id": uid, "email": body.email, "name": body.name, "role": body.role}
+    return {"id": uid, "email": body.email, "name": body.name, "role": body.role, "phone": body.phone}
 
 
 @router.put("/users/{user_id}")
@@ -227,15 +229,16 @@ async def update_user(
     new_name   = body.name   if body.name   is not None else u["name"]
     new_role   = body.role   if body.role   is not None else u["role"]
     new_active = int(body.active) if body.active is not None else u["active"]
+    new_phone  = body.phone  if body.phone  is not None else u.get("phone")
 
     if new_role not in ("admin", "staff"):
         raise HTTPException(status_code=400, detail="Role must be admin or staff")
 
     await db._x(
-        "UPDATE users SET name = ?, role = ?, active = ? WHERE id = ?",
-        [new_name, new_role, new_active, user_id],
+        "UPDATE users SET name = ?, role = ?, active = ?, phone = ? WHERE id = ?",
+        [new_name, new_role, new_active, new_phone or None, user_id],
     )
-    return {"id": user_id, "name": new_name, "role": new_role, "active": bool(new_active)}
+    return {"id": user_id, "name": new_name, "role": new_role, "active": bool(new_active), "phone": new_phone}
 
 
 @router.post("/emergency-reset")

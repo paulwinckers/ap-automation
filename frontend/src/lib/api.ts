@@ -742,6 +742,7 @@ export interface UserRecord {
   id: number;
   email: string;
   name: string;
+  phone: string | null;
   role: 'admin' | 'staff';
   active: boolean | number;
   created_at: string;
@@ -754,19 +755,23 @@ export async function listUsers(): Promise<UserRecord[]> {
 }
 
 export async function createUser(data: {
-  email: string; name: string; password: string; role: string;
+  email: string; name: string; password: string; role: string; phone?: string;
 }): Promise<UserRecord> {
   return request('POST', '/auth/users', data);
 }
 
 export async function updateUser(id: number, data: {
-  name?: string; role?: string; active?: boolean;
+  name?: string; role?: string; active?: boolean; phone?: string | null;
 }): Promise<UserRecord> {
   return request('PUT', `/auth/users/${id}`, data);
 }
 
 export async function resetUserPassword(id: number, password: string): Promise<void> {
   await request('POST', `/auth/users/${id}/reset-password`, { password });
+}
+
+export async function changeMyPassword(currentPassword: string, newPassword: string): Promise<void> {
+  await request('POST', '/auth/change-password', { current_password: currentPassword, new_password: newPassword });
 }
 
 // ── Crew Schedule ─────────────────────────────────────────────────────────────

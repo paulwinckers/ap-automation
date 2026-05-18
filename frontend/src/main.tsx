@@ -42,6 +42,7 @@ import FieldProjectLookup   from './pages/FieldProjectLookup';
 import FieldMaintenance      from './pages/FieldMaintenance';
 import FieldMaintenanceLookup from './pages/FieldMaintenanceLookup';
 import IssuesDashboard        from './pages/IssuesDashboard';
+import EmergencyReset         from './pages/EmergencyReset';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -57,8 +58,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/"    element={<Landing />} />
 
         {/* Auth */}
-        <Route path="/login" element={<Login />} />
-        <Route path="/setup" element={<Setup />} />
+        <Route path="/login"           element={<Login />} />
+        <Route path="/setup"           element={<Setup />} />
+        <Route path="/emergency-reset" element={<EmergencyReset />} />
 
         {/* Field crew — no shell, phone-optimised, no login required */}
         <Route path="/field"             element={<FieldSubmit />} />

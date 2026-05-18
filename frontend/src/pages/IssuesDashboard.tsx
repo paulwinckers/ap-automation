@@ -40,12 +40,21 @@ interface Conversation {
   resolved_at:   string | null;
 }
 
+interface Watcher {
+  id:         number;
+  user_id:    number | null;
+  name:       string;
+  whatsapp:   string;
+  added_at:   string;
+}
+
 interface Message {
   id:           number;
   role:         string;
   crew_name:    string | null;
   content:      string;
   has_photo:    number;
+  photo_url:    string | null;
   created_at:   string;
 }
 
@@ -98,7 +107,22 @@ function MessageBubble({ msg }: { msg: Message }) {
       <div style={{ maxWidth: '80%', background: bg, border: `1px solid ${border}`, borderRadius: 10, padding: '8px 12px' }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: nameColor, marginBottom: 3 }}>{label}</div>
         <div style={{ fontSize: 13, color: '#1e293b', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{msg.content}</div>
-        {msg.has_photo ? <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 3 }}>📷 photo</div> : null}
+        {msg.photo_url ? (
+          <a href={msg.photo_url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', marginTop: 8 }}>
+            <img
+              src={msg.photo_url}
+              alt="Attached photo"
+              style={{
+                maxWidth: '100%', maxHeight: 300,
+                borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)',
+                display: 'block', cursor: 'zoom-in',
+              }}
+            />
+            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>📷 tap to open full size</div>
+          </a>
+        ) : msg.has_photo ? (
+          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 3 }}>📷 photo</div>
+        ) : null}
       </div>
       <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>{fmtTime(msg.created_at)}</div>
     </div>
@@ -109,21 +133,31 @@ function MessageBubble({ msg }: { msg: Message }) {
 function ConversationCard({
   conv,
   managerName,
+  availableUsers,
   onResolved,
 }: {
   conv: Conversation;
   managerName: string;
+  availableUsers: { id: number; name: string; phone: string | null }[];
   onResolved: (id: number) => void;
 }) {
   const [expanded,     setExpanded]     = useState(false);
   const [messages,     setMessages]     = useState<Message[]>([]);
+  const [watchers,     setWatchers]     = useState<Watcher[]>([]);
   const [loadingMsgs,  setLoadingMsgs]  = useState(false);
   const [replyText,    setReplyText]    = useState('');
   const [sending,      setSending]      = useState(false);
   const [resolving,    setResolving]    = useState(false);
   const [localStatus,  setLocalStatus]  = useState(conv.status);
+  const [addingWatcher,setAddingWatcher]= useState(false);
+  const [selectedUser, setSelectedUser] = useState('');
 
   const isOpen = localStatus === 'open';
+
+  // Users with phones who aren't already watching
+  const watchableUsers = availableUsers.filter(
+    u => u.phone && !watchers.some(w => w.user_id === u.id)
+  );
 
   async function loadThread() {
     if (messages.length > 0) { setExpanded(v => !v); return; }
@@ -133,8 +167,32 @@ function ConversationCard({
       const r = await fetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}`);
       const d = await r.json();
       setMessages(d.messages || []);
+      setWatchers(d.watchers || []);
     } catch {}
     finally { setLoadingMsgs(false); }
+  }
+
+  async function addWatcher() {
+    if (!selectedUser) return;
+    const user = availableUsers.find(u => u.id === Number(selectedUser));
+    if (!user || !user.phone) return;
+    setAddingWatcher(true);
+    try {
+      const form = new FormData();
+      form.append('user_id', String(user.id));
+      form.append('name', user.name);
+      form.append('whatsapp', user.phone);
+      const r = await fetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}/watchers`, { method: 'POST', body: form });
+      const d = await r.json();
+      setWatchers(prev => [...prev, d]);
+      setSelectedUser('');
+    } catch {}
+    finally { setAddingWatcher(false); }
+  }
+
+  async function removeWatcher(watcherId: number) {
+    await fetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}/watchers/${watcherId}`, { method: 'DELETE' });
+    setWatchers(prev => prev.filter(w => w.id !== watcherId));
   }
 
   async function sendReply() {
@@ -153,6 +211,7 @@ function ConversationCard({
         id: Date.now(), role: 'manager',
         crew_name: managerName || 'Manager',
         content: replyText.trim(), has_photo: 0,
+        photo_url: null,
         created_at: new Date().toISOString(),
       }]);
       setReplyText('');
@@ -186,9 +245,6 @@ function ConversationCard({
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: 700, fontSize: 15, color: '#111827' }}>
-                {conv.property_name || `Opp #${conv.opp_id}`}
-              </span>
               <ContextBadge type={conv.context_type} />
               <TagBadge tag={conv.tag} />
               {!isOpen && (
@@ -196,6 +252,25 @@ function ConversationCard({
                   ✓ Resolved
                 </span>
               )}
+            </div>
+            {/* Property name + contract link */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+              <span style={{ fontWeight: 800, fontSize: 15, color: '#111827' }}>
+                {conv.property_name || `Opp #${conv.opp_id}`}
+              </span>
+              <a
+                href={`/field/${conv.context_type === 'construction' ? 'project' : 'maintenance'}/${conv.opp_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  fontSize: 11, fontWeight: 600, color: '#2563eb',
+                  textDecoration: 'none', padding: '1px 7px',
+                  border: '1px solid #bfdbfe', borderRadius: 6,
+                  background: '#eff6ff', whiteSpace: 'nowrap',
+                }}
+              >
+                View Contract ↗
+              </a>
             </div>
             <div style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginBottom: 4 }}>{conv.title}</div>
             {conv.last_message && (
@@ -253,6 +328,58 @@ function ConversationCard({
             </div>
           )}
 
+          {/* Watchers section */}
+          <div style={{ marginBottom: 12, padding: '8px 12px', background: '#f8fafc', borderRadius: 10, border: '1px solid #e2e6ed' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '.05em' }}>
+              👁️ Watching ({watchers.length})
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: watchableUsers.length > 0 ? 8 : 0 }}>
+              {watchers.length === 0 && (
+                <span style={{ fontSize: 12, color: '#9ca3af' }}>Nobody watching — add managers below</span>
+              )}
+              {watchers.map(w => (
+                <span key={w.id} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  background: '#dbeafe', color: '#1d4ed8', fontSize: 12, fontWeight: 600,
+                  padding: '3px 8px', borderRadius: 20,
+                }}>
+                  📱 {w.name}
+                  <button
+                    onClick={() => removeWatcher(w.id)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#93c5fd', fontSize: 13, lineHeight: 1, padding: 0 }}
+                    title="Remove"
+                  >×</button>
+                </span>
+              ))}
+            </div>
+            {watchableUsers.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <select
+                  value={selectedUser}
+                  onChange={e => setSelectedUser(e.target.value)}
+                  style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 12, color: '#374151', background: '#fff' }}
+                >
+                  <option value="">+ Add watcher…</option>
+                  {watchableUsers.map(u => (
+                    <option key={u.id} value={u.id}>{u.name} ({u.phone})</option>
+                  ))}
+                </select>
+                <button
+                  onClick={addWatcher}
+                  disabled={!selectedUser || addingWatcher}
+                  style={{
+                    padding: '5px 12px', borderRadius: 6, border: 'none', fontSize: 12, fontWeight: 700,
+                    background: !selectedUser || addingWatcher ? '#e5e7eb' : '#2563eb',
+                    color: !selectedUser || addingWatcher ? '#9ca3af' : '#fff',
+                    cursor: !selectedUser || addingWatcher ? 'default' : 'pointer',
+                  }}
+                >
+                  Add
+                </button>
+              </div>
+            )}
+          </div>
+
           {isOpen && (
             <div style={{ background: '#fff', border: '1px solid #e2e6ed', borderRadius: 10, padding: 12 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.05em' }}>
@@ -307,9 +434,22 @@ export default function IssuesDashboard() {
   const [ctxType, setCtxType]             = useState('all');
   const [tag,     setTag]                 = useState('all');
   const [search,  setSearch]              = useState('');
+  const [availableUsers, setAvailableUsers] = useState<{ id: number; name: string; phone: string | null }[]>([]);
 
   // Use the logged-in user's name (set by auth on login)
   const managerName = localStorage.getItem('user_name') || 'Manager';
+
+  // Load users with phones for the watcher add dropdown
+  useEffect(() => {
+    const token = localStorage.getItem('ap_token') || localStorage.getItem('auth_token');
+    if (!token) return;
+    fetch(`${API}/auth/users`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => setAvailableUsers(
+        (d.users || []).filter((u: { active: number | boolean; phone: string | null }) => u.active && u.phone)
+      ))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -446,6 +586,7 @@ export default function IssuesDashboard() {
             key={c.id}
             conv={c}
             managerName={managerName}
+            availableUsers={availableUsers}
             onResolved={handleResolved}
           />
         ))}

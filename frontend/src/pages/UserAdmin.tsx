@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import {
-  listUsers, createUser, updateUser, resetUserPassword,
+  listUsers, createUser, updateUser, resetUserPassword, changeMyPassword,
   UserRecord,
 } from '../lib/api';
 
@@ -51,14 +51,16 @@ export default function UserAdmin() {
   const [newEmail, setNewEmail] = useState('');
   const [newPass,  setNewPass]  = useState('');
   const [newRole,  setNewRole]  = useState<'staff' | 'admin'>('staff');
+  const [newPhone, setNewPhone] = useState('');
   const [adding,   setAdding]   = useState(false);
   const [addErr,   setAddErr]   = useState('');
 
   // Edit inline
-  const [editId,   setEditId]   = useState<number | null>(null);
-  const [editName, setEditName] = useState('');
-  const [editRole, setEditRole] = useState<'staff' | 'admin'>('staff');
-  const [saving,   setSaving]   = useState(false);
+  const [editId,    setEditId]    = useState<number | null>(null);
+  const [editName,  setEditName]  = useState('');
+  const [editRole,  setEditRole]  = useState<'staff' | 'admin'>('staff');
+  const [editPhone, setEditPhone] = useState('');
+  const [saving,    setSaving]    = useState(false);
 
   // Reset password
   const [resetId,   setResetId]   = useState<number | null>(null);
@@ -83,8 +85,8 @@ export default function UserAdmin() {
     if (newPass.length < 8) { setAddErr('Password must be at least 8 characters.'); return; }
     setAddErr(''); setAdding(true);
     try {
-      await createUser({ email: newEmail.trim(), name: newName.trim(), password: newPass, role: newRole });
-      setNewName(''); setNewEmail(''); setNewPass(''); setNewRole('staff');
+      await createUser({ email: newEmail.trim(), name: newName.trim(), password: newPass, role: newRole, phone: newPhone.trim() || undefined });
+      setNewName(''); setNewEmail(''); setNewPass(''); setNewRole('staff'); setNewPhone('');
       setShowAdd(false);
       await load();
     } catch (e) {
@@ -97,7 +99,7 @@ export default function UserAdmin() {
   async function handleSaveEdit(userId: number) {
     setSaving(true);
     try {
-      await updateUser(userId, { name: editName, role: editRole });
+      await updateUser(userId, { name: editName, role: editRole, phone: editPhone.trim() || null });
       setEditId(null);
       await load();
     } catch (e) {
@@ -136,7 +138,35 @@ export default function UserAdmin() {
     setEditId(user.id);
     setEditName(user.name);
     setEditRole(user.role);
+    setEditPhone(user.phone || '');
     setResetId(null);
+  }
+
+  // Change my own password
+  const [showChangePw,  setShowChangePw]  = useState(false);
+  const [curPw,         setCurPw]         = useState('');
+  const [newPw,         setNewPw]         = useState('');
+  const [confirmPw,     setConfirmPw]     = useState('');
+  const [changingPw,    setChangingPw]    = useState(false);
+  const [changePwMsg,   setChangePwMsg]   = useState('');
+  const [changePwErr,   setChangePwErr]   = useState('');
+
+  async function handleChangePw(e: React.FormEvent) {
+    e.preventDefault();
+    setChangePwErr(''); setChangePwMsg('');
+    if (newPw !== confirmPw) { setChangePwErr('New passwords do not match.'); return; }
+    if (newPw.length < 8)   { setChangePwErr('Password must be at least 8 characters.'); return; }
+    setChangingPw(true);
+    try {
+      await changeMyPassword(curPw, newPw);
+      setChangePwMsg('Password changed successfully.');
+      setCurPw(''); setNewPw(''); setConfirmPw('');
+      setTimeout(() => { setShowChangePw(false); setChangePwMsg(''); }, 2000);
+    } catch (e) {
+      setChangePwErr((e as Error).message || 'Failed to change password.');
+    } finally {
+      setChangingPw(false);
+    }
   }
 
   const activeUsers   = users.filter(u => Boolean(u.active));
@@ -193,6 +223,10 @@ export default function UserAdmin() {
                 <input style={INPUT} type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} required placeholder="jane@darios.ca" />
               </label>
               <label>
+                <div style={{ color: '#94a3b8', fontSize: 11, fontWeight: 700, marginBottom: 5 }}>PHONE / WHATSAPP</div>
+                <input style={INPUT} type="tel" value={newPhone} onChange={e => setNewPhone(e.target.value)} placeholder="604-555-1234" />
+              </label>
+              <label>
                 <div style={{ color: '#94a3b8', fontSize: 11, fontWeight: 700, marginBottom: 5 }}>PASSWORD</div>
                 <input style={INPUT} type="password" value={newPass} onChange={e => setNewPass(e.target.value)} required placeholder="Min 8 characters" />
               </label>
@@ -226,6 +260,7 @@ export default function UserAdmin() {
             editId={editId}
             editName={editName}
             editRole={editRole}
+            editPhone={editPhone}
             saving={saving}
             resetId={resetId}
             resetPass={resetPass}
@@ -234,6 +269,7 @@ export default function UserAdmin() {
             onStartEdit={startEdit}
             onEditName={setEditName}
             onEditRole={setEditRole}
+            onEditPhone={setEditPhone}
             onSaveEdit={handleSaveEdit}
             onCancelEdit={() => setEditId(null)}
             onToggleActive={handleToggleActive}
@@ -251,6 +287,7 @@ export default function UserAdmin() {
               editId={editId}
               editName={editName}
               editRole={editRole}
+              editPhone={editPhone}
               saving={saving}
               resetId={resetId}
               resetPass={resetPass}
@@ -259,6 +296,7 @@ export default function UserAdmin() {
               onStartEdit={startEdit}
               onEditName={setEditName}
               onEditRole={setEditRole}
+              onEditPhone={setEditPhone}
               onSaveEdit={handleSaveEdit}
               onCancelEdit={() => setEditId(null)}
               onToggleActive={handleToggleActive}
@@ -270,6 +308,46 @@ export default function UserAdmin() {
           )}
         </>
       )}
+
+      {/* ── Change my password ─────────────────────────────────────────────── */}
+      <div style={CARD}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: showChangePw ? 16 : 0 }}>
+          <div>
+            <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 15 }}>🔑 Change My Password</div>
+            {!showChangePw && <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>Update your own login password</div>}
+          </div>
+          <button onClick={() => { setShowChangePw(v => !v); setChangePwErr(''); setChangePwMsg(''); }}
+            style={{ ...BTN('#334155'), fontSize: 12 }}>
+            {showChangePw ? 'Cancel' : 'Change Password'}
+          </button>
+        </div>
+
+        {showChangePw && (
+          <form onSubmit={handleChangePw} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {[
+              { label: 'Current password', value: curPw,     set: setCurPw,     placeholder: 'Your current password' },
+              { label: 'New password',     value: newPw,     set: setNewPw,     placeholder: 'Min 8 characters' },
+              { label: 'Confirm new',      value: confirmPw, set: setConfirmPw, placeholder: 'Repeat new password' },
+            ].map(f => (
+              <div key={f.label}>
+                <label style={{ display: 'block', color: '#94a3b8', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>{f.label}</label>
+                <input
+                  type="password" value={f.value} required
+                  onChange={e => f.set(e.target.value)}
+                  placeholder={f.placeholder}
+                  style={INPUT}
+                />
+              </div>
+            ))}
+            {changePwErr && <div style={{ color: '#f87171', fontSize: 13 }}>{changePwErr}</div>}
+            {changePwMsg && <div style={{ color: '#4ade80', fontSize: 13 }}>{changePwMsg}</div>}
+            <button type="submit" disabled={changingPw} style={{ ...BTN('#1d4ed8', changingPw), alignSelf: 'flex-start', padding: '8px 20px' }}>
+              {changingPw ? 'Saving…' : 'Save New Password'}
+            </button>
+          </form>
+        )}
+      </div>
+
     </div>
   );
 }
@@ -283,6 +361,7 @@ interface UserTableProps {
   editId: number | null;
   editName: string;
   editRole: 'staff' | 'admin';
+  editPhone: string;
   saving: boolean;
   resetId: number | null;
   resetPass: string;
@@ -291,6 +370,7 @@ interface UserTableProps {
   onStartEdit: (u: UserRecord) => void;
   onEditName: (v: string) => void;
   onEditRole: (v: 'staff' | 'admin') => void;
+  onEditPhone: (v: string) => void;
   onSaveEdit: (id: number) => void;
   onCancelEdit: () => void;
   onToggleActive: (u: UserRecord) => void;
@@ -302,9 +382,9 @@ interface UserTableProps {
 
 function UserTable({
   users, title, dimmed = false,
-  editId, editName, editRole, saving,
+  editId, editName, editRole, editPhone, saving,
   resetId, resetPass, resetting, resetErr,
-  onStartEdit, onEditName, onEditRole, onSaveEdit, onCancelEdit,
+  onStartEdit, onEditName, onEditRole, onEditPhone, onSaveEdit, onCancelEdit,
   onToggleActive, onStartReset, onResetPass, onResetPassChange, onCancelReset,
 }: UserTableProps) {
   if (!users.length) return null;
@@ -326,10 +406,13 @@ function UserTable({
               padding: '12px 0',
               borderTop: i === 0 ? 'none' : '1px solid #1e293b',
             }}>
-              {/* Name + email */}
+              {/* Name + email + phone */}
               <div>
                 <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 14 }}>{user.name}</div>
                 <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>{user.email}</div>
+                {user.phone && (
+                  <div style={{ color: '#475569', fontSize: 12, marginTop: 1 }}>📱 {user.phone}</div>
+                )}
               </div>
 
               {/* Last login */}
@@ -362,10 +445,14 @@ function UserTable({
                 borderRadius: 10, padding: 16, marginBottom: 12,
               }}>
                 <div style={{ color: '#94a3b8', fontSize: 12, fontWeight: 700, marginBottom: 12 }}>EDIT USER</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 160px', gap: 12, marginBottom: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 160px', gap: 12, marginBottom: 12 }}>
                   <label>
                     <div style={{ color: '#64748b', fontSize: 11, marginBottom: 4 }}>Name</div>
                     <input style={INPUT} value={editName} onChange={e => onEditName(e.target.value)} />
+                  </label>
+                  <label>
+                    <div style={{ color: '#64748b', fontSize: 11, marginBottom: 4 }}>Phone / WhatsApp</div>
+                    <input style={INPUT} type="tel" value={editPhone} onChange={e => onEditPhone(e.target.value)} placeholder="604-555-1234" />
                   </label>
                   <label>
                     <div style={{ color: '#64748b', fontSize: 11, marginBottom: 4 }}>Role</div>
