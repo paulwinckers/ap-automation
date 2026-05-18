@@ -53,15 +53,7 @@ async def get_db() -> Database:
     return _db
 
 
-# ── WhatsApp helper ───────────────────────────────────────────────────────────
-
-def _whatsapp_recipients(context_type: str) -> list[str]:
-    if context_type == "construction":
-        raw = settings.TWILIO_WHATSAPP_TO_CONSTRUCTION or settings.TWILIO_WHATSAPP_TO
-    else:
-        raw = settings.TWILIO_WHATSAPP_TO
-    return [t.strip() for t in raw.split(",") if t.strip()]
-
+# ── WhatsApp helpers ──────────────────────────────────────────────────────────
 
 def _format_whatsapp_number(raw: str) -> str:
     """Normalise a phone number to whatsapp:+1XXXXXXXXXX format."""
@@ -74,6 +66,27 @@ def _format_whatsapp_number(raw: str) -> str:
     return f"whatsapp:+{digits}"
 
 
+def _twilio_send(body: str, to: str) -> None:
+    """Fire a single WhatsApp message via Twilio (call from executor)."""
+    sid   = settings.TWILIO_ACCOUNT_SID
+    token = settings.TWILIO_AUTH_TOKEN
+    frm   = settings.TWILIO_WHATSAPP_FROM
+    if not (sid and token and frm and to and to.strip()):
+        return
+    try:
+        from twilio.rest import Client as TwilioClient
+        TwilioClient(sid, token).messages.create(body=body, from_=frm, to=to)
+        logger.info(f"WhatsApp sent → {to}")
+    except Exception as e:
+        logger.warning(f"WhatsApp failed → {to}: {e}")
+
+
+def _deep_link(context_type: str, opp_id: int) -> str:
+    if context_type == "construction":
+        return f"https://darios-ap.pages.dev/field/project/{opp_id}"
+    return f"https://darios-ap.pages.dev/field/maintenance/{opp_id}"
+
+
 def _notify_crew_whatsapp(
     crew_whatsapp: str,
     opp_id: int,
@@ -83,82 +96,85 @@ def _notify_crew_whatsapp(
     reply_content: str,
     sender_name: str,
 ) -> None:
-    """Send a WhatsApp reply notification back to the crew lead."""
-    sid   = settings.TWILIO_ACCOUNT_SID
-    token = settings.TWILIO_AUTH_TOKEN
-    frm   = settings.TWILIO_WHATSAPP_FROM
-
-    if not (sid and token and frm and crew_whatsapp and crew_whatsapp.strip()):
-        return
-
+    """Notify the crew lead that a manager or AI has replied."""
     wa_to = _format_whatsapp_number(crew_whatsapp)
-    deep_link = (
-        f"https://darios-ap.pages.dev/field/project/{opp_id}"
-        if context_type == "construction"
-        else f"https://darios-ap.pages.dev/field/maintenance/{opp_id}"
-    )
     preview = reply_content.strip()[:150] + ("…" if len(reply_content.strip()) > 150 else "")
-
     body = (
         f"💬 *Reply on your issue*\n"
         f"Property: {property_name}\n"
         f"Topic: {title}\n"
         f"From: {sender_name}\n\n"
         f"{preview}\n\n"
-        f"🔗 View thread: {deep_link}"
+        f"🔗 View thread: {_deep_link(context_type, opp_id)}"
     )
-
-    try:
-        from twilio.rest import Client as TwilioClient
-        client = TwilioClient(sid, token)
-        client.messages.create(body=body, from_=frm, to=wa_to)
-        logger.info(f"Crew WhatsApp reply notification sent to {wa_to}")
-    except Exception as e:
-        logger.warning(f"Crew WhatsApp notification failed ({wa_to}): {e}")
+    _twilio_send(body, wa_to)
 
 
-def _send_whatsapp_conversation(
-    context_type: str,
+def _notify_watchers(
+    watchers: list[dict],
     opp_id: int,
+    context_type: str,
     property_name: str,
-    crew_name: str,
     title: str,
-    tag: Optional[str],
+    crew_name: str,
+    message_preview: str,
+    is_new: bool = False,
+    tag: Optional[str] = None,
 ) -> None:
-    sid     = settings.TWILIO_ACCOUNT_SID
-    token   = settings.TWILIO_AUTH_TOKEN
-    frm     = settings.TWILIO_WHATSAPP_FROM
-    to_list = _whatsapp_recipients(context_type)
-
-    if not (sid and token and frm and to_list):
-        logger.info("Twilio not configured — skipping conversation WhatsApp.")
+    """Notify all watchers — used for new conversations and crew follow-ups."""
+    if not watchers:
         return
+    ctx_label  = "🏗️ Construction" if context_type == "construction" else "🌿 Maintenance"
+    tag_label  = f"  [{tag}]" if tag else ""
+    crew_label = (crew_name or "Crew").strip() or "Crew"
+    preview    = message_preview.strip()[:150] + ("…" if len(message_preview.strip()) > 150 else "")
+    link       = _deep_link(context_type, opp_id)
 
-    try:
-        from twilio.rest import Client as TwilioClient
-        client = TwilioClient(sid, token)
-
-        ctx_label  = "🏗️ Construction" if context_type == "construction" else "🌿 Maintenance"
-        tag_label  = f"  [{tag}]" if tag else ""
-        crew_label = crew_name.strip() if crew_name and crew_name.strip() else "Unknown"
-        deep_link  = (
-            f"https://darios-ap.pages.dev/field/project/{opp_id}"
-            if context_type == "construction"
-            else f"https://darios-ap.pages.dev/field/maintenance/{opp_id}"
-        )
-
+    if is_new:
         body = (
-            f"{ctx_label} *New Conversation Started*\n"
+            f"{ctx_label} *New Issue Filed*\n"
             f"Property: {property_name}\n"
             f"Crew: {crew_label}\n"
             f"Topic: {title}{tag_label}\n\n"
-            f"🔗 {deep_link}"
+            f"{preview}\n\n"
+            f"🔗 {link}"
         )
-        for to in to_list:
-            client.messages.create(body=body, from_=frm, to=to)
-            logger.info(f"WhatsApp sent to {to} (new conversation, opp {opp_id})")
-    except Exception as e:
-        logger.warning(f"WhatsApp conversation notification failed: {e}")
+    else:
+        body = (
+            f"💬 *Crew follow-up*\n"
+            f"Property: {property_name}\n"
+            f"Topic: {title}\n"
+            f"From: {crew_label}\n\n"
+            f"{preview}\n\n"
+            f"🔗 {link}"
+        )
+
+    for w in watchers:
+        _twilio_send(body, w["whatsapp"])
+
+
+async def _auto_add_watchers(db: Database, conv_id: int) -> list[dict]:
+    """
+    Query all active users with phones and insert them as watchers.
+    Returns the inserted list so callers can notify without a second query.
+    """
+    managers = await db._q(
+        "SELECT id, name, phone FROM users WHERE active = 1 AND phone IS NOT NULL AND phone != ''",
+    )
+    result = []
+    for m in managers:
+        wa = _format_whatsapp_number(m["phone"])
+        try:
+            await db._x(
+                """INSERT OR IGNORE INTO conversation_watchers
+                     (conversation_id, user_id, name, whatsapp)
+                   VALUES (?, ?, ?, ?)""",
+                [conv_id, m["id"], m["name"], wa],
+            )
+            result.append({"user_id": m["id"], "name": m["name"], "whatsapp": wa})
+        except Exception:
+            pass
+    return result
 
 
 # ── Photo upload helper ───────────────────────────────────────────────────────
@@ -322,13 +338,15 @@ async def create_conversation(
             [ai_response[:120], conv_id],
         )
 
-    # 5. WhatsApp notification (non-blocking)
-    prop = property_name or f"Opp #{opp_id}"
-    crew = crew_name or ""
-    asyncio.get_event_loop().run_in_executor(
-        None, _send_whatsapp_conversation,
-        context_type, opp_id, prop, crew, title.strip(), tag,
-    )
+    # 5. Auto-add all managers with phones as watchers, then notify them
+    prop_name = prop  # already resolved above
+    watchers  = await _auto_add_watchers(db, conv_id)
+    if watchers:
+        asyncio.get_event_loop().run_in_executor(
+            None, _notify_watchers,
+            watchers, opp_id, context_type, prop_name,
+            title.strip(), crew_name or "", first_message.strip(), True, tag,
+        )
 
     return {"conv_id": conv_id, "ai_response": ai_response}
 
@@ -365,7 +383,11 @@ async def get_conversation(
             msg["photo_url"] = None
         enriched.append(msg)
 
-    return {"conversation": rows[0], "messages": enriched}
+    watchers = await db._q(
+        "SELECT id, user_id, name, whatsapp, added_at FROM conversation_watchers WHERE conversation_id = ? ORDER BY name",
+        [conv_id],
+    )
+    return {"conversation": rows[0], "messages": enriched, "watchers": watchers or []}
 
 
 @router.post("/{opp_id}/{conv_id}/messages")
@@ -410,15 +432,28 @@ async def add_message(
         [content.strip()[:120], conv_id],
     )
 
-    # Notify crew via WhatsApp when manager replies
     crew_wa = conv.get("crew_whatsapp") or ""
     prop    = conv.get("property_name") or f"Opp #{opp_id}"
     ctx     = conv.get("context_type") or "maintenance"
+
     if role == "manager" and crew_wa:
+        # Manager replied → notify crew
         asyncio.get_event_loop().run_in_executor(
             None, _notify_crew_whatsapp,
             crew_wa, opp_id, ctx, prop, conv["title"], content.strip(), display_name,
         )
+    elif role == "crew":
+        # Crew follow-up → notify all watchers
+        watchers = await db._q(
+            "SELECT name, whatsapp FROM conversation_watchers WHERE conversation_id = ?",
+            [conv_id],
+        )
+        if watchers:
+            asyncio.get_event_loop().run_in_executor(
+                None, _notify_watchers,
+                list(watchers), opp_id, ctx, prop,
+                conv["title"], display_name, content.strip(), False, None,
+            )
 
     ai_response = None
     if use_ai:
@@ -493,3 +528,54 @@ async def reopen_conversation(
         [conv_id, opp_id],
     )
     return {"reopened": True}
+
+
+# ── Watcher management ────────────────────────────────────────────────────────
+
+@router.get("/{opp_id}/{conv_id}/watchers")
+async def list_watchers(
+    opp_id:  int,
+    conv_id: int,
+    db:      Database = Depends(get_db),
+):
+    rows = await db._q(
+        "SELECT id, user_id, name, whatsapp, added_at FROM conversation_watchers WHERE conversation_id = ? ORDER BY name",
+        [conv_id],
+    )
+    return {"watchers": rows or []}
+
+
+@router.post("/{opp_id}/{conv_id}/watchers")
+async def add_watcher(
+    opp_id:   int,
+    conv_id:  int,
+    user_id:  Optional[int] = Form(default=None),
+    name:     str           = Form(...),
+    whatsapp: str           = Form(...),
+    db:       Database      = Depends(get_db),
+):
+    wa = _format_whatsapp_number(whatsapp)
+    try:
+        wid = await db._x(
+            """INSERT OR IGNORE INTO conversation_watchers
+                 (conversation_id, user_id, name, whatsapp)
+               VALUES (?, ?, ?, ?)""",
+            [conv_id, user_id, name.strip(), wa],
+        )
+    except Exception as exc:
+        raise HTTPException(409, f"Already watching: {exc}") from exc
+    return {"id": wid, "user_id": user_id, "name": name.strip(), "whatsapp": wa}
+
+
+@router.delete("/{opp_id}/{conv_id}/watchers/{watcher_id}")
+async def remove_watcher(
+    opp_id:     int,
+    conv_id:    int,
+    watcher_id: int,
+    db:         Database = Depends(get_db),
+):
+    await db._x(
+        "DELETE FROM conversation_watchers WHERE id = ? AND conversation_id = ?",
+        [watcher_id, conv_id],
+    )
+    return {"removed": True}

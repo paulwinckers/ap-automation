@@ -538,6 +538,7 @@ CREATE INDEX IF NOT EXISTS idx_field_conv_opp ON field_conversations(opp_id, con
 ALTER TABLE field_conversations ADD COLUMN property_name TEXT;
 ALTER TABLE field_conversations ADD COLUMN updated_at TEXT;
 ALTER TABLE field_conversations ADD COLUMN crew_whatsapp TEXT;
+ALTER TABLE users ADD COLUMN phone TEXT;
 
 CREATE TABLE IF NOT EXISTS field_conversation_messages (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -550,6 +551,18 @@ CREATE TABLE IF NOT EXISTS field_conversation_messages (
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_field_conv_msg ON field_conversation_messages(conversation_id, created_at);
+
+-- Who is watching a conversation (auto-added from users table, managers can adjust)
+CREATE TABLE IF NOT EXISTS conversation_watchers (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL,
+    user_id         INTEGER,           -- NULL if manually added (non-user)
+    name            TEXT    NOT NULL,
+    whatsapp        TEXT    NOT NULL,
+    added_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(conversation_id, whatsapp)
+);
+CREATE INDEX IF NOT EXISTS idx_conv_watchers ON conversation_watchers(conversation_id);
 
 -- ── General-purpose cache store ───────────────────────────────────────────────
 -- Persists expensive Aspire API responses across Railway restarts.
