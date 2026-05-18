@@ -10,6 +10,7 @@ PUT  /auth/users/{id}   — update user name/role/active (admin only)
 POST /auth/users/{id}/reset-password  — set new password (admin only)
 """
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -97,6 +98,12 @@ class UserUpdate(BaseModel):
 
 class PasswordReset(BaseModel):
     password: str
+
+class EmergencyReset(BaseModel):
+    pin:      str
+    email:    str
+    password: str
+    name:     str = "Admin"
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -225,6 +232,37 @@ async def update_user(
         [new_name, new_role, new_active, user_id],
     )
     return {"id": user_id, "name": new_name, "role": new_role, "active": bool(new_active)}
+
+
+@router.post("/emergency-reset")
+async def emergency_reset(body: EmergencyReset, db: Database = Depends(get_db)):
+    """
+    Emergency admin password reset — protected by ADMIN_RESET_PIN env var.
+    Use this when locked out and no admin token is available.
+    Creates user if not found, or updates password if found.
+    """
+    pin = os.environ.get("ADMIN_RESET_PIN", "")
+    if not pin or body.pin != pin:
+        raise HTTPException(status_code=403, detail="Invalid PIN")
+
+    pw_hash = _hash_pw(body.password)
+    rows = await db._q("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", [body.email])
+    if rows:
+        await db._x(
+            "UPDATE users SET password_hash = ?, active = 1, role = 'admin' WHERE id = ?",
+            [pw_hash, rows[0]["id"]],
+        )
+        uid = rows[0]["id"]
+        logger.warning(f"Emergency password reset for {body.email}")
+    else:
+        uid = await db._x(
+            "INSERT INTO users (email, name, password_hash, role) VALUES (?, ?, ?, 'admin')",
+            [body.email.lower(), body.name, pw_hash],
+        )
+        logger.warning(f"Emergency admin created: {body.email}")
+
+    token = _make_token(uid, body.email.lower(), "admin")
+    return {"access_token": token, "token_type": "bearer", "name": body.name, "role": "admin"}
 
 
 @router.post("/users/{user_id}/reset-password")
