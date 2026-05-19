@@ -537,7 +537,15 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
   }
 
   // ── Render: THREAD ─────────────────────────────────────────────────────────
-  const conv = activeConv!;
+  // Guard: activeConv may be null while deep-link fetch is in flight
+  if (!activeConv) {
+    return (
+      <div style={{ textAlign: 'center', padding: '40px 0', color: '#6b7280', fontSize: 14 }}>
+        Loading conversation…
+      </div>
+    );
+  }
+  const conv = activeConv;
   const isResolved = conv.status === 'resolved';
 
   return (
