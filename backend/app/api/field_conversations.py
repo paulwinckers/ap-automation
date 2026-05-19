@@ -218,28 +218,38 @@ async def _upload_photo(photo: UploadFile, opp_id: int, conv_id: int) -> tuple[s
 
 # ── AI helper ─────────────────────────────────────────────────────────────────
 
-_VISION_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+_VISION_TYPES  = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+_MAX_IMG_BYTES = 4 * 1024 * 1024   # 4 MB — stay under Anthropic's 5 MB vision limit
 
 
 async def _build_content(text: str, photo_r2_key: Optional[str] = None):
     """Return a plain string or a multimodal content list for the Anthropic API."""
     if not photo_r2_key:
         return text or ""
+    try:
+        img_bytes = await _r2.get_file_bytes(photo_r2_key)
+        if not img_bytes:
+            logger.info(f"R2 returned no bytes for {photo_r2_key} — text-only AI call")
+            return text or ""
 
-    img_bytes = await _r2.get_file_bytes(photo_r2_key)
-    if not img_bytes:
+        if len(img_bytes) > _MAX_IMG_BYTES:
+            logger.warning(f"Photo {photo_r2_key} too large ({len(img_bytes)} bytes) — text-only AI call")
+            return text or ""
+
+        ext        = (photo_r2_key.rsplit(".", 1)[-1] if "." in photo_r2_key else "jpg").lower()
+        media_type = _MIME_OVERRIDE.get(ext, "image/jpeg")
+        if media_type not in _VISION_TYPES:
+            logger.info(f"Photo type {media_type} not supported for vision — text-only AI call")
+            return text or ""
+
+        b64    = base64.standard_b64encode(img_bytes).decode()
+        blocks: list = [{"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}}]
+        blocks.append({"type": "text", "text": text or "(see attached photo)"})
+        logger.info(f"Vision block built for {photo_r2_key} ({len(img_bytes)} bytes, {media_type})")
+        return blocks
+    except Exception as exc:
+        logger.warning(f"_build_content failed for {photo_r2_key}: {exc} — text-only AI call")
         return text or ""
-
-    ext        = (photo_r2_key.rsplit(".", 1)[-1] if "." in photo_r2_key else "jpg").lower()
-    media_type = _MIME_OVERRIDE.get(ext, "image/jpeg")
-    if media_type not in _VISION_TYPES:
-        return text or ""  # unsupported for vision — fall back to text only
-
-    b64    = base64.standard_b64encode(img_bytes).decode()
-    blocks = [{"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}}]
-    if text:
-        blocks.append({"type": "text", "text": text})
-    return blocks
 
 
 def _merge_content(a, b):
@@ -259,6 +269,9 @@ async def _ask_ai(title: str, tag: Optional[str], messages: list[dict]) -> str:
         if tag:
             system += f"\nCategory: {tag}"
 
+        has_vision = any(isinstance(m.get("content"), list) for m in messages)
+        logger.info(f"AI call: {len(messages)} message(s), vision={has_vision}")
+
         resp = await client.messages.create(
             model="claude-opus-4-5",
             max_tokens=1024,
@@ -267,7 +280,7 @@ async def _ask_ai(title: str, tag: Optional[str], messages: list[dict]) -> str:
         )
         return resp.content[0].text
     except Exception as e:
-        logger.error(f"Field conversations AI call failed: {e}")
+        logger.error(f"Field conversations AI call failed: {type(e).__name__}: {e}")
         return "Sorry, I couldn't reach the AI advisor right now. Please try again."
 
 
