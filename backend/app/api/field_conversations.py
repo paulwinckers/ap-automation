@@ -12,6 +12,7 @@ Routes:
   PATCH /field/conversations/{opp_id}/{conv_id}/resolve  — mark resolved
 """
 import asyncio
+import base64
 import logging
 import uuid
 from typing import Optional
@@ -217,6 +218,39 @@ async def _upload_photo(photo: UploadFile, opp_id: int, conv_id: int) -> tuple[s
 
 # ── AI helper ─────────────────────────────────────────────────────────────────
 
+_VISION_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+
+async def _build_content(text: str, photo_r2_key: Optional[str] = None):
+    """Return a plain string or a multimodal content list for the Anthropic API."""
+    if not photo_r2_key:
+        return text or ""
+
+    img_bytes = await _r2.get_file_bytes(photo_r2_key)
+    if not img_bytes:
+        return text or ""
+
+    ext        = (photo_r2_key.rsplit(".", 1)[-1] if "." in photo_r2_key else "jpg").lower()
+    media_type = _MIME_OVERRIDE.get(ext, "image/jpeg")
+    if media_type not in _VISION_TYPES:
+        return text or ""  # unsupported for vision — fall back to text only
+
+    b64    = base64.standard_b64encode(img_bytes).decode()
+    blocks = [{"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}}]
+    if text:
+        blocks.append({"type": "text", "text": text})
+    return blocks
+
+
+def _merge_content(a, b):
+    """Merge two consecutive same-role content values (string or list)."""
+    def _to_list(c):
+        return c if isinstance(c, list) else [{"type": "text", "text": c}]
+    if isinstance(a, str) and isinstance(b, str):
+        return a + "\n\n" + b
+    return _to_list(a) + _to_list(b)
+
+
 async def _ask_ai(title: str, tag: Optional[str], messages: list[dict]) -> str:
     """Call Claude with conversation history. Returns AI text."""
     try:
@@ -344,10 +378,11 @@ async def create_conversation(
     # 4. Optionally get AI response
     ai_response = None
     if use_ai:
+        first_content = await _build_content(first_message.strip(), photo_r2_key)
         ai_response = await _ask_ai(
             title=title,
             tag=tag,
-            messages=[{"role": "user", "content": first_message.strip()}],
+            messages=[{"role": "user", "content": first_content}],
         )
         await db._x(
             """INSERT INTO field_conversation_messages
@@ -509,20 +544,21 @@ async def add_message(
 
     ai_response = None
     if use_ai:
-        # Build message history for Claude
+        # Build message history for Claude (including photos as vision blocks)
         history_rows = await db._q(
-            """SELECT role, content FROM field_conversation_messages
+            """SELECT role, content, photo_r2_key FROM field_conversation_messages
                WHERE conversation_id = ? ORDER BY created_at ASC""",
             [conv_id],
         )
         messages: list[dict] = []
         for row in history_rows:
             claude_role = "assistant" if row["role"] in ("ai", "manager") else "user"
+            content = await _build_content(row["content"], row.get("photo_r2_key"))
             # Claude requires alternating roles — merge consecutive same-role messages
             if messages and messages[-1]["role"] == claude_role:
-                messages[-1]["content"] += "\n\n" + row["content"]
+                messages[-1]["content"] = _merge_content(messages[-1]["content"], content)
             else:
-                messages.append({"role": claude_role, "content": row["content"]})
+                messages.append({"role": claude_role, "content": content})
 
         ai_response = await _ask_ai(
             title=conv["title"],
