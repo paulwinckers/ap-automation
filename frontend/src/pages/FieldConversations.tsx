@@ -164,12 +164,15 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
     setLoadingThread(true);
     setView('thread');
     fetch(`${API}/field/conversations/${oppId}/${initialConvId}`)
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(d => {
         if (d.conversation) setActiveConv(d.conversation);
         setMessages(d.messages || []);
       })
-      .catch(() => {})
+      .catch(() => {
+        // Fetch failed — fall back to list so user isn't stuck on a blank screen
+        setView('list');
+      })
       .finally(() => setLoadingThread(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialConvId]);
