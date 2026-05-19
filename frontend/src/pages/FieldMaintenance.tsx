@@ -582,7 +582,7 @@ export default function FieldMaintenance() {
               fontWeight:  tab === t ? 700 : 400,
             }}
           >
-            {t === 'summary' ? 'Summary' : t === 'history' ? 'History' : t === 'upcoming' ? 'Upcoming' : t === 'advisor' ? '🤖 Advisor' : '💬 Issues'}
+            {t === 'summary' ? 'Summary' : t === 'history' ? 'History' : t === 'upcoming' ? 'Upcoming' : t === 'advisor' ? '🤖 Advisor' : '💬 Chat'}
           </button>
         ))}
       </div>

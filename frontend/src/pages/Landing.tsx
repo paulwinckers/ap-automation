@@ -25,7 +25,7 @@ const OFFICE_GROUPS = [
   {
     label: 'Field Ops',
     items: [
-      { to: '/ops/issues',        icon: '💬', label: 'Field Issues',   sub: 'All crew conversations' },
+      { to: '/ops/issues',        icon: '💬', label: 'Field Chat',     sub: 'All crew conversations' },
       { to: '/ops/crew-schedule', icon: '👥', label: 'Crew Schedule',  sub: 'Assign staff to routes' },
       { to: '/ops/contacts',      icon: '📞', label: 'Contacts',       sub: 'Property & client lookup' },
       { to: '/ops/safety-talks',  icon: '🦺', label: 'Safety Talks',   sub: 'Toolbox talk records' },

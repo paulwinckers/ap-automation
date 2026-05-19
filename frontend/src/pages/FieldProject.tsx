@@ -818,7 +818,7 @@ export default function FieldProject() {
             { key: 'update',        label: '✏️ Update' },
             { key: 'materials',     label: '📦 Materials' },
             { key: 'history',       label: `📝 History (${(data.activities || []).filter(a => (a.ActivityType || '').toLowerCase() !== 'email').length + responded + (data.advisor_log || []).length})` },
-            { key: 'conversations', label: '💬 Issues' },
+            { key: 'conversations', label: '💬 Chat' },
           ] as const).map(({ key, label }) => (
             <button
               key={key}

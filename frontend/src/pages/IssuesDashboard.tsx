@@ -495,7 +495,7 @@ export default function IssuesDashboard() {
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#111827' }}>💬 Field Issues</h1>
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#111827' }}>💬 Field Chat</h1>
             <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: 14 }}>
               All crew conversations across maintenance and construction
             </p>
