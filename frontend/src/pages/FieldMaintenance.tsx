@@ -9,7 +9,7 @@
  *   Field Advisor — AI Q&A with optional photo
  */
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import FieldConversations from './FieldConversations';
 
 const API = import.meta.env.VITE_API_URL ?? '';
@@ -387,9 +387,9 @@ export default function FieldMaintenance() {
   const opp_id = Number(oppId);
 
   // Read URL params for deep-link support (?tab=conversations&conv=123)
-  const params       = new URLSearchParams(window.location.search);
-  const urlTab       = params.get('tab') as Tab | null;
-  const urlConvId    = params.get('conv') ? Number(params.get('conv')) : undefined;
+  const [searchParams] = useSearchParams();
+  const urlTab    = searchParams.get('tab') as Tab | null;
+  const urlConvId = searchParams.get('conv') ? Number(searchParams.get('conv')) : undefined;
 
   const [data, setData]     = useState<PageData | null>(null);
   const [loading, setLoading] = useState(true);

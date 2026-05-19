@@ -6,7 +6,7 @@
  * check-in history, and a form to submit an update at any time.
  */
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import FieldConversations from './FieldConversations';
 
 
@@ -354,9 +354,9 @@ export default function FieldProject() {
   const { oppId } = useParams<{ oppId: string }>();
 
   // Read URL params for deep-link support (?tab=conversations&conv=123)
-  const _urlParams   = new URLSearchParams(window.location.search);
-  const _urlTab      = _urlParams.get('tab');
-  const urlConvId    = _urlParams.get('conv') ? Number(_urlParams.get('conv')) : undefined;
+  const [searchParams] = useSearchParams();
+  const _urlTab   = searchParams.get('tab');
+  const urlConvId = searchParams.get('conv') ? Number(searchParams.get('conv')) : undefined;
 
   const [data,       setData]       = useState<ProjectData | null>(null);
   const [loading,    setLoading]    = useState(true);
