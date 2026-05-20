@@ -74,7 +74,10 @@ async def get_property_opportunities(property_id: int = Query(...)):
     aspire = AspireClient()
     try:
         result = await aspire._get("Opportunities", {
-            "$filter": f"PropertyID eq {property_id}",
+            "$filter": (
+                f"PropertyID eq {property_id}"
+                " and (OpportunityStatusName eq 'Won' or OpportunityStatusName eq 'In Production')"
+            ),
             "$select": (
                 "OpportunityID,OpportunityName,PropertyName,"
                 "OpportunityStatusName,WonDollars,StartDate,EndDate"
