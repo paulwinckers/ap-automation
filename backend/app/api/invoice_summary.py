@@ -32,11 +32,34 @@ def _compute_hours(start: Optional[str], end: Optional[str]) -> float:
 
 @router.get("/search")
 async def search_properties(q: str = Query(..., min_length=2)):
-    """Search Aspire properties by name for the report setup typeahead."""
+    """Search Aspire Properties endpoint directly by PropertyName."""
     aspire = AspireClient()
     try:
-        results = await aspire.search_all_opportunities_field(q, limit=20)
+        escaped = q.replace("'", "''")
+
+        # Primary: search the Properties endpoint directly
+        try:
+            prop_result = await aspire._get("Properties", {
+                "$filter": f"contains(PropertyName, '{escaped}')",
+                "$select": "PropertyID,PropertyName",
+                "$top": "25",
+            })
+            props = aspire._extract_list(prop_result)
+            if props:
+                return {
+                    "results": [
+                        {"PropertyID": p.get("PropertyID"), "PropertyName": p.get("PropertyName")}
+                        for p in props
+                        if p.get("PropertyID") and p.get("PropertyName")
+                    ]
+                }
+        except Exception as e:
+            logger.warning(f"Properties search failed, falling back to Opportunities: {e}")
+
+        # Fallback: search via Opportunities (deduplicated by PropertyID)
+        results = await aspire.search_all_opportunities_field(q, limit=25)
         return {"results": results}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
