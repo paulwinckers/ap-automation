@@ -183,13 +183,15 @@ async def get_report(
                 continue
             sid = int(sid)
             name = (
-                svc.get("ServiceName")
+                svc.get("DisplayName")
+                or svc.get("ServiceName")
                 or svc.get("ServiceNameAbr")
-                or svc.get("DisplayName")
                 or f"Service {sid}"
             )
             est_h = float(
-                svc.get("EstimatedLaborHours")
+                svc.get("ExtendedHours")       # confirmed field name
+                or svc.get("PerHours")
+                or svc.get("EstimatedLaborHours")
                 or svc.get("BudgetedLaborHours")
                 or svc.get("EstimatedHours")
                 or svc.get("BudgetHours")
@@ -219,13 +221,15 @@ async def get_report(
             ticket_map[tid] = {
                 "service_id": t.get("OpportunityServiceID"),
                 "actual_hours": float(
-                    t.get("ActualLaborHours")
+                    t.get("HoursAct")           # confirmed field name
+                    or t.get("ActualLaborHours")
                     or t.get("ActualHours")
                     or t.get("TotalActualHours")
                     or 0
                 ),
                 "estimated_hours": float(
-                    t.get("EstimatedLaborHours")
+                    t.get("HoursEst")           # confirmed field name
+                    or t.get("EstimatedLaborHours")
                     or t.get("EstimatedHours")
                     or t.get("BudgetedLaborHours")
                     or t.get("BudgetHours")
