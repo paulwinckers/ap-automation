@@ -677,7 +677,7 @@ async def debug_issue(ticket_id: int = Query(...)):
 
 @router.get("/feed")
 async def get_invoice_feed(
-    limit: int      = Query(100, le=500),
+    limit: int      = Query(500, le=5000),
     db:    Database = Depends(get_db),
 ):
     """
@@ -691,7 +691,7 @@ async def get_invoice_feed(
 
 @router.get("/archived")
 async def get_archived_feed(
-    limit: int      = Query(200, le=500),
+    limit: int      = Query(500, le=5000),
     db:    Database = Depends(get_db),
 ):
     """Archived invoices — hidden from the main feed."""
@@ -712,7 +712,7 @@ async def get_audit_log(
 async def list_invoices(
     status:      Optional[str] = Query(None),
     destination: Optional[str] = Query(None),
-    limit:       int           = Query(50, le=1000),
+    limit:       int           = Query(500, le=5000),
     offset:      int           = Query(0),
     db:          Database      = Depends(get_db),
 ):

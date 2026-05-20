@@ -129,13 +129,13 @@ export default function APDashboard() {
       // so we don't get truncated by the 100-row feed limit.
       let feedUrl: string;
       if (view === 'archived') {
-        feedUrl = `${API}/invoices/archived?limit=200`;
+        feedUrl = `${API}/invoices/archived?limit=2000`;
       } else if (filter === 'qbo') {
-        feedUrl = `${API}/invoices/?destination=qbo&limit=500`;
+        feedUrl = `${API}/invoices/?destination=qbo&limit=2000`;
       } else if (filter === 'aspire') {
-        feedUrl = `${API}/invoices/?destination=aspire&limit=500`;
+        feedUrl = `${API}/invoices/?destination=aspire&limit=2000`;
       } else {
-        feedUrl = `${API}/invoices/feed?limit=100`;
+        feedUrl = `${API}/invoices/feed?limit=500`;
       }
 
       const [feedRes, countRes] = await Promise.all([
