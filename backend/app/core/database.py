@@ -424,6 +424,8 @@ class Database:
         destination: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
     ) -> list[dict]:
         conditions, params = [], []
         if status:
@@ -432,6 +434,12 @@ class Database:
         if destination:
             conditions.append("destination = ?")
             params.append(destination)
+        if since:
+            conditions.append("received_at >= ?")
+            params.append(since)
+        if until:
+            conditions.append("received_at < ?")
+            params.append(until)
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params += [limit, offset]
         return await self._q(
@@ -547,12 +555,25 @@ class Database:
             [po_number, json.dumps(aspire_data)],
         )
 
-    async def get_invoice_feed(self, limit: int = 100) -> list[dict]:
+    async def get_invoice_feed(
+        self,
+        limit: int = 100,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+    ) -> list[dict]:
         """Return recent active (non-archived) invoices for the AP live feed.
         Action-required items (queued/error/pending) always sort to the top so
         they are never pushed off the page by newer posted records."""
+        extra, params = [], []
+        if since:
+            extra.append("AND i.received_at >= ?")
+            params.append(since)
+        if until:
+            extra.append("AND i.received_at < ?")
+            params.append(until)
+        params.append(limit)
         return await self._q(
-            """SELECT i.id, i.status, i.destination, i.vendor_name,
+            f"""SELECT i.id, i.status, i.destination, i.vendor_name,
                       i.invoice_number, i.total_amount, i.tax_amount, i.subtotal,
                       i.gl_account, i.gl_name, i.qbo_amount,
                       i.qbo_bill_id, i.aspire_receipt_id,
@@ -564,17 +585,31 @@ class Database:
                LEFT JOIN po_cache pc
                  ON pc.po_number = COALESCE(i.po_number_override, i.po_number)
                WHERE (i.archived IS NULL OR i.archived = 0)
+               {' '.join(extra)}
                ORDER BY
                  CASE WHEN i.status IN ('queued', 'error', 'pending') THEN 0 ELSE 1 END,
                  i.received_at DESC
                LIMIT ?""",
-            [limit],
+            params,
         )
 
-    async def get_archived_feed(self, limit: int = 200) -> list[dict]:
+    async def get_archived_feed(
+        self,
+        limit: int = 200,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+    ) -> list[dict]:
         """Return archived invoices, newest first."""
+        extra, params = [], []
+        if since:
+            extra.append("AND i.received_at >= ?")
+            params.append(since)
+        if until:
+            extra.append("AND i.received_at < ?")
+            params.append(until)
+        params.append(limit)
         return await self._q(
-            """SELECT i.id, i.status, i.destination, i.vendor_name,
+            f"""SELECT i.id, i.status, i.destination, i.vendor_name,
                       i.invoice_number, i.total_amount, i.tax_amount, i.subtotal,
                       i.gl_account, i.gl_name, i.qbo_amount,
                       i.qbo_bill_id, i.aspire_receipt_id,
@@ -586,9 +621,10 @@ class Database:
                LEFT JOIN po_cache pc
                  ON pc.po_number = COALESCE(i.po_number_override, i.po_number)
                WHERE i.archived = 1
+               {' '.join(extra)}
                ORDER BY i.received_at DESC
                LIMIT ?""",
-            [limit],
+            params,
         )
 
     async def archive_unknown_invoices(self) -> int:

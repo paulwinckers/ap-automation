@@ -677,25 +677,29 @@ async def debug_issue(ticket_id: int = Query(...)):
 
 @router.get("/feed")
 async def get_invoice_feed(
-    limit: int      = Query(500, le=5000),
-    db:    Database = Depends(get_db),
+    limit: int           = Query(500, le=5000),
+    since: Optional[str] = Query(None, description="ISO date lower bound, e.g. 2026-05-01"),
+    until: Optional[str] = Query(None, description="ISO date upper bound (exclusive), e.g. 2026-06-01"),
+    db:    Database      = Depends(get_db),
 ):
     """
     Live activity feed for the AP dashboard.
     Returns recent active (non-archived) invoices.
     Designed to be polled every 10 seconds.
     """
-    entries = await db.get_invoice_feed(limit=limit)
+    entries = await db.get_invoice_feed(limit=limit, since=since, until=until)
     return {"entries": entries}
 
 
 @router.get("/archived")
 async def get_archived_feed(
-    limit: int      = Query(500, le=5000),
-    db:    Database = Depends(get_db),
+    limit: int           = Query(500, le=5000),
+    since: Optional[str] = Query(None),
+    until: Optional[str] = Query(None),
+    db:    Database      = Depends(get_db),
 ):
     """Archived invoices — hidden from the main feed."""
-    entries = await db.get_archived_feed(limit=limit)
+    entries = await db.get_archived_feed(limit=limit, since=since, until=until)
     return {"entries": entries}
 
 
@@ -714,10 +718,13 @@ async def list_invoices(
     destination: Optional[str] = Query(None),
     limit:       int           = Query(500, le=5000),
     offset:      int           = Query(0),
+    since:       Optional[str] = Query(None),
+    until:       Optional[str] = Query(None),
     db:          Database      = Depends(get_db),
 ):
     invoices = await db.list_invoices(
-        status=status, destination=destination, limit=limit, offset=offset
+        status=status, destination=destination, limit=limit, offset=offset,
+        since=since, until=until,
     )
     return {"invoices": invoices, "count": len(invoices)}
 

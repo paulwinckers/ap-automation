@@ -4,7 +4,7 @@
  * Route: /ap
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 const API = import.meta.env.VITE_API_URL ?? 'https://ap-automation-production.up.railway.app';
 
@@ -65,6 +65,26 @@ function forwardedLabel(email: string): string {
   return email.split('@')[0];
 }
 
+// ── Month helpers ─────────────────────────────────────────────────────────────
+
+function monthBounds(year: number, month: number): { since: string; until: string } {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const since = `${year}-${pad(month + 1)}-01`;
+  const nextM  = month === 11 ? 0 : month + 1;
+  const nextY  = month === 11 ? year + 1 : year;
+  const until  = `${nextY}-${pad(nextM + 1)}-01`;
+  return { since, until };
+}
+
+function formatMonthLabel(year: number, month: number): string {
+  return new Date(year, month, 1).toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
+}
+
+function isCurrentMonth(year: number, month: number): boolean {
+  const now = new Date();
+  return year === now.getFullYear() && month === now.getMonth();
+}
+
 function statusBadge(entry: FeedEntry) {
   if (entry.status === 'posted') {
     const dest = entry.destination === 'aspire' ? 'Aspire' : 'QBO';
@@ -104,6 +124,7 @@ function statusBadge(entry: FeedEntry) {
 }
 
 export default function APDashboard() {
+  const _now = new Date();
   const [entries, setEntries]         = useState<FeedEntry[]>([]);
   const [counts, setCounts]           = useState<Counts | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
@@ -118,24 +139,32 @@ export default function APDashboard() {
   const [view, setView]               = useState<'active' | 'archived'>('active');
   const [search, setSearch]           = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const statusFilterRef = useRef<string>('all');   // always holds current filter for the interval
+  const [selYear,  setSelYear]  = useState(_now.getFullYear());
+  const [selMonth, setSelMonth] = useState(_now.getMonth());   // 0-indexed
+
+  // refs so the polling interval always sees current values without re-registering
+  const statusFilterRef = useRef<string>('all');
+  const selYearRef      = useRef(_now.getFullYear());
+  const selMonthRef     = useRef(_now.getMonth());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // accept an explicit filter so callers can bypass stale closure
-  async function refresh(activeFilter?: string) {
+  // accept explicit overrides so callers can bypass stale closure
+  async function refresh(activeFilter?: string, overrideYear?: number, overrideMonth?: number) {
     const filter = activeFilter ?? statusFilterRef.current;
+    const year   = overrideYear  ?? selYearRef.current;
+    const month  = overrideMonth ?? selMonthRef.current;
+    const { since, until } = monthBounds(year, month);
+    const dateParams = `&since=${since}&until=${until}`;
     try {
-      // For destination filters (qbo / aspire) fetch all records via /invoices/
-      // so we don't get truncated by the 100-row feed limit.
       let feedUrl: string;
       if (view === 'archived') {
-        feedUrl = `${API}/invoices/archived?limit=2000`;
+        feedUrl = `${API}/invoices/archived?limit=2000${dateParams}`;
       } else if (filter === 'qbo') {
-        feedUrl = `${API}/invoices/?destination=qbo&limit=2000`;
+        feedUrl = `${API}/invoices/?destination=qbo&limit=2000${dateParams}`;
       } else if (filter === 'aspire') {
-        feedUrl = `${API}/invoices/?destination=aspire&limit=2000`;
+        feedUrl = `${API}/invoices/?destination=aspire&limit=2000${dateParams}`;
       } else {
-        feedUrl = `${API}/invoices/feed?limit=500`;
+        feedUrl = `${API}/invoices/feed?limit=500${dateParams}`;
       }
 
       const [feedRes, countRes] = await Promise.all([
@@ -271,6 +300,31 @@ export default function APDashboard() {
     }
   }
 
+  function goPrevMonth() {
+    const newM = selMonth === 0 ? 11 : selMonth - 1;
+    const newY = selMonth === 0 ? selYear - 1 : selYear;
+    selMonthRef.current = newM;
+    selYearRef.current  = newY;
+    setSelMonth(newM);
+    setSelYear(newY);
+    setEntries([]);
+    setLoading(true);
+    refresh(undefined, newY, newM);
+  }
+
+  function goNextMonth() {
+    if (isCurrentMonth(selYear, selMonth)) return;
+    const newM = selMonth === 11 ? 0 : selMonth + 1;
+    const newY = selMonth === 11 ? selYear + 1 : selYear;
+    selMonthRef.current = newM;
+    selYearRef.current  = newY;
+    setSelMonth(newM);
+    setSelYear(newY);
+    setEntries([]);
+    setLoading(true);
+    refresh(undefined, newY, newM);
+  }
+
   // Re-fetch when view changes
   useEffect(() => {
     setLoading(true);
@@ -286,7 +340,7 @@ export default function APDashboard() {
 
   function toggleStatFilter(value: string) {
     const next = statusFilter === value ? 'all' : value;
-    statusFilterRef.current = next;   // update ref so the interval sees it immediately
+    statusFilterRef.current = next;
     setStatusFilter(next);
     setEntries([]);
     refresh(next);
@@ -419,7 +473,9 @@ export default function APDashboard() {
       <div style={styles.header}>
         <div>
           <div style={styles.headerTitle}>Dario's AP Dashboard</div>
-          <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>Live activity feed</div>
+          <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
+            {isCurrentMonth(selYear, selMonth) ? 'Live activity feed' : `Viewing ${formatMonthLabel(selYear, selMonth)}`}
+          </div>
         </div>
         <div style={styles.refreshIndicator}>
           <span style={{
@@ -504,6 +560,37 @@ export default function APDashboard() {
           </button>
         </div>
 
+        {/* Month navigator */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 4,
+          border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff',
+          padding: '3px 6px',
+        }}>
+          <button
+            onClick={goPrevMonth}
+            title="Previous month"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: '#64748b', fontSize: 16, lineHeight: 1, padding: '0 4px',
+              fontWeight: 700,
+            }}
+          >‹</button>
+          <span style={{ fontSize: 13, fontWeight: 600, color: '#1e293b', minWidth: 110, textAlign: 'center' }}>
+            {formatMonthLabel(selYear, selMonth)}
+          </span>
+          <button
+            onClick={goNextMonth}
+            disabled={isCurrentMonth(selYear, selMonth)}
+            title={isCurrentMonth(selYear, selMonth) ? 'Already on current month' : 'Next month'}
+            style={{
+              background: 'none', border: 'none',
+              cursor: isCurrentMonth(selYear, selMonth) ? 'default' : 'pointer',
+              color: isCurrentMonth(selYear, selMonth) ? '#cbd5e1' : '#64748b',
+              fontSize: 16, lineHeight: 1, padding: '0 4px', fontWeight: 700,
+            }}
+          >›</button>
+        </div>
+
         {/* Search box */}
         <input
           type="text"
@@ -578,7 +665,12 @@ export default function APDashboard() {
           <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>Loading feed…</div>
         ) : filteredEntries.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
-            {view === 'archived' ? 'No archived invoices.' : search || statusFilter !== 'all' ? 'No results match your filter.' : 'No invoices yet.'}
+            {view === 'archived'
+            ? `No archived invoices for ${formatMonthLabel(selYear, selMonth)}.`
+            : search || statusFilter !== 'all'
+              ? 'No results match your filter.'
+              : `No invoices for ${formatMonthLabel(selYear, selMonth)}.`
+          }
           </div>
         ) : (
           <table style={styles.table}>
