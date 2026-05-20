@@ -40,6 +40,7 @@ const NAV = [
     section: 'Accounting',
     items: [
       { label: 'AP & Dashboards', href: ACCOUNTING_URL, icon: '💳' },
+      { label: 'Invoice Summary', path: '/ap/invoice-summary', icon: '📋' },
     ],
   },
 ];

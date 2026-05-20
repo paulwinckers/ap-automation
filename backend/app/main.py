@@ -43,6 +43,7 @@ from app.api.project_checkin import (
 )
 from app.api.maintenance_field import router as maintenance_field_router
 from app.api.field_conversations import router as field_conversations_router
+from app.api.invoice_summary import router as invoice_summary_router
 from app.core.config import settings
 from app.core.database import Database
 from app.services.qbo import qbo_auth_router
@@ -300,3 +301,4 @@ app.include_router(checkin_router)
 app.include_router(checkin_public_router)
 app.include_router(maintenance_field_router)
 app.include_router(field_conversations_router)
+app.include_router(invoice_summary_router)

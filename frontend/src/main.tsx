@@ -43,6 +43,7 @@ import FieldMaintenance      from './pages/FieldMaintenance';
 import FieldMaintenanceLookup from './pages/FieldMaintenanceLookup';
 import IssuesDashboard        from './pages/IssuesDashboard';
 import EmergencyReset         from './pages/EmergencyReset';
+import InvoiceSummaryReport   from './pages/InvoiceSummaryReport';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -91,6 +92,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/ops/safety-inspections" element={<RequireAuth><Office><SafetyInspectionsAdmin /></Office></RequireAuth>} />
 
         {/* AP & Finance */}
+        <Route path="/ap/invoice-summary" element={<RequireAuth><Office><InvoiceSummaryReport /></Office></RequireAuth>} />
         <Route path="/ap"        element={<RequireAuth><Office><APDashboard /></Office></RequireAuth>} />
         <Route path="/vendors"   element={<RequireAuth><Office><VendorAdmin /></Office></RequireAuth>} />
         <Route path="/reconcile" element={<RequireAuth><Office><Reconcile /></Office></RequireAuth>} />

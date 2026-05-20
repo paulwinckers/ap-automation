@@ -36,6 +36,7 @@ const OFFICE_GROUPS = [
     label: 'Accounting & Dashboards',
     items: [
       { to: '/ap',          icon: '💳', label: 'Invoices',       sub: 'AP inbox & invoice processing' },
+      { to: '/ap/invoice-summary', icon: '📋', label: 'Invoice Summary', sub: 'Weekly progress report by service category' },
       { to: '/vendors',     icon: '🏢', label: 'Vendors',        sub: 'Vendor rules & settings' },
       { to: '/reconcile',   icon: '🔄', label: 'Reconciliation', sub: 'Statement vs QBO reconcile' },
       { to: '/dashboards',  icon: '📊', label: 'Dashboards',     sub: 'Sales, ops & construction views' },
