@@ -158,12 +158,9 @@ async def get_report(
             }
 
         # ── 3. Work tickets ───────────────────────────────────────────────────
+        # No $select — some field names vary by Aspire version; fetch all and pick what exists
         ticket_result = await aspire._get("WorkTickets", {
             "$filter": f"OpportunityID eq {opp_id}",
-            "$select": (
-                "WorkTicketID,OpportunityID,OpportunityServiceID,"
-                "ActualLaborHours,EstimatedLaborHours,WorkTicketStatusName"
-            ),
             "$top": "200",
         })
         tickets = aspire._extract_list(ticket_result)
@@ -176,9 +173,20 @@ async def get_report(
             tid = int(tid)
             ticket_ids.append(tid)
             ticket_map[tid] = {
-                "service_id":      t.get("OpportunityServiceID"),
-                "actual_hours":    float(t.get("ActualLaborHours") or 0),
-                "estimated_hours": float(t.get("EstimatedLaborHours") or 0),
+                "service_id": t.get("OpportunityServiceID"),
+                "actual_hours": float(
+                    t.get("ActualLaborHours")
+                    or t.get("ActualHours")
+                    or t.get("TotalActualHours")
+                    or 0
+                ),
+                "estimated_hours": float(
+                    t.get("EstimatedLaborHours")
+                    or t.get("EstimatedHours")
+                    or t.get("BudgetedLaborHours")
+                    or t.get("BudgetHours")
+                    or 0
+                ),
             }
 
         # ── 4. WorkTicketTimes — fetch all, filter by date in Python ──────────
