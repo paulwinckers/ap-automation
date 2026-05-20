@@ -66,6 +66,47 @@ async def search_properties(q: str = Query(..., min_length=2)):
         await aspire.close()
 
 
+# ── Debug: raw Aspire fields for an opportunity ──────────────────────────────
+
+@router.get("/debug")
+async def debug_opportunity(opp_id: int = Query(...)):
+    """Return raw first records from OpportunityServices and WorkTickets so field names can be confirmed."""
+    aspire = AspireClient()
+    try:
+        svc_result = await aspire._get("OpportunityServices", {
+            "$filter": f"OpportunityID eq {opp_id}",
+            "$top": "2",
+        })
+        svcs = aspire._extract_list(svc_result)
+
+        ticket_result = await aspire._get("WorkTickets", {
+            "$filter": f"OpportunityID eq {opp_id}",
+            "$top": "2",
+        })
+        tickets = aspire._extract_list(ticket_result)
+
+        # If we have a ticket, fetch a WorkTicketTime for it
+        times = []
+        if tickets:
+            tid = tickets[0].get("WorkTicketID")
+            if tid:
+                times_result = await aspire._get("WorkTicketTimes", {
+                    "$filter": f"WorkTicketID eq {tid}",
+                    "$top": "2",
+                })
+                times = aspire._extract_list(times_result)
+
+        return {
+            "opportunity_services_sample": svcs[:1],
+            "work_tickets_sample": tickets[:1],
+            "work_ticket_times_sample": times[:1],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await aspire.close()
+
+
 # ── Opportunities for a property ──────────────────────────────────────────────
 
 @router.get("/property-opps")
