@@ -66,6 +66,33 @@ async def search_properties(q: str = Query(..., min_length=2)):
         await aspire.close()
 
 
+# ── Contracts listing ────────────────────────────────────────────────────────
+
+@router.get("/contracts")
+async def list_contracts():
+    """All Won and In Production opportunities — lightweight, no ticket data."""
+    aspire = AspireClient()
+    try:
+        result = await aspire._get("Opportunities", {
+            "$filter": (
+                "OpportunityStatusName eq 'Won'"
+                " or OpportunityStatusName eq 'In Production'"
+            ),
+            "$select": (
+                "OpportunityID,OpportunityName,PropertyName,PropertyID,"
+                "OpportunityStatusName,WonDollars,StartDate,EndDate"
+            ),
+            "$top": "300",
+            "$orderby": "PropertyName asc",
+        })
+        contracts = aspire._extract_list(result)
+        return {"contracts": contracts}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await aspire.close()
+
+
 # ── Debug: raw Aspire fields for an opportunity ──────────────────────────────
 
 @router.get("/debug")
