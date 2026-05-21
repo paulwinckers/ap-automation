@@ -73,14 +73,16 @@ async def route_invoice(
     if invoice.gl_account:
         logger.info(f"Using user-confirmed GL '{invoice.gl_account}' for invoice {invoice.id}")
         if invoice.doc_type == "mastercard":
-            return await _route_to_qbo_purchase(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None)
+            return await _route_to_qbo_purchase(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None, payment_account=settings.MASTERCARD_GL)
+        if invoice.doc_type == "debit_card":
+            return await _route_to_qbo_purchase(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None, payment_account=settings.DEBIT_CARD_GL)
         return await _route_to_qbo(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None, notify_ap=notify_ap)
 
     # ── Step 1: Vendor lookup ─────────────────────────────────────────────────
     vendor_rule = await db.get_vendor_rule_by_name(invoice.vendor_name)
 
     if vendor_rule is None:
-        # MasterCard receipts with unknown vendors get posted to a fallback GL
+        # MasterCard / debit card receipts with unknown vendors get posted to a fallback GL
         # rather than going to the exception queue — AP can recode later.
         if invoice.doc_type == "mastercard":
             logger.info(
@@ -88,7 +90,17 @@ async def route_invoice(
                 f"posting to fallback GL {MASTERCARD_FALLBACK_GL}"
             )
             return await _route_to_qbo_purchase(
-                invoice, MASTERCARD_FALLBACK_GL, db, qbo, employee_name
+                invoice, MASTERCARD_FALLBACK_GL, db, qbo, employee_name,
+                payment_account=settings.MASTERCARD_GL,
+            )
+        if invoice.doc_type == "debit_card":
+            logger.info(
+                f"Unknown debit vendor '{invoice.vendor_name}' — "
+                f"posting to fallback GL {MASTERCARD_FALLBACK_GL}"
+            )
+            return await _route_to_qbo_purchase(
+                invoice, MASTERCARD_FALLBACK_GL, db, qbo, employee_name,
+                payment_account=settings.DEBIT_CARD_GL,
             )
         logger.warning(f"Unknown vendor '{invoice.vendor_name}' — queuing for review")
         await _queue(invoice, db, reason="vendor_unknown")
@@ -109,7 +121,7 @@ async def route_invoice(
         getattr(vendor_rule, "aspire_post", False)
         and _aspire_configured()
         and not effective_po
-        and invoice.doc_type not in ("mastercard", "expense")
+        and invoice.doc_type not in ("mastercard", "debit_card", "expense")
     ):
         return await _route_to_aspire_unmatched(invoice, db, aspire, vendor_rule=vendor_rule)
 
@@ -120,16 +132,18 @@ async def route_invoice(
         gl_account = vendor_rule.default_gl_account
         gl_name    = vendor_rule.default_gl_name
         if not gl_account:
-            if invoice.doc_type == "mastercard":
+            if invoice.doc_type in ("mastercard", "debit_card"):
                 gl_account = MASTERCARD_FALLBACK_GL
                 gl_name    = "General Overhead"
-                logger.info(f"No GL for MC vendor '{invoice.vendor_name}' — using fallback {gl_account}")
+                logger.info(f"No GL for {invoice.doc_type} vendor '{invoice.vendor_name}' — using fallback {gl_account}")
             else:
                 logger.warning(f"No GL account for vendor '{invoice.vendor_name}' — queuing")
                 await _queue(invoice, db, reason="no_gl_account")
                 return RoutingOutcome.QUEUED
         if invoice.doc_type == "mastercard":
-            return await _route_to_qbo_purchase(invoice, gl_account, db, qbo, employee_name, gl_name=gl_name)
+            return await _route_to_qbo_purchase(invoice, gl_account, db, qbo, employee_name, gl_name=gl_name, payment_account=settings.MASTERCARD_GL)
+        if invoice.doc_type == "debit_card":
+            return await _route_to_qbo_purchase(invoice, gl_account, db, qbo, employee_name, gl_name=gl_name, payment_account=settings.DEBIT_CARD_GL)
         return await _route_to_qbo(invoice, gl_account, db, qbo, employee_name, gl_name=gl_name, notify_ap=notify_ap)
 
     else:  # QUEUE
@@ -563,13 +577,15 @@ async def _route_to_qbo_purchase(
     qbo: QBOClient,
     employee_name: Optional[str] = None,
     gl_name: Optional[str] = None,
+    payment_account: Optional[str] = None,
 ) -> RoutingOutcome:
-    """Post a MasterCard receipt to QBO as a Purchase (CreditCardCharge)."""
+    """Post a MasterCard or debit card receipt to QBO as a Purchase (CreditCardCharge)."""
     gl_name = await _resolve_gl_name(gl_account, gl_name, qbo)
     try:
         purchase_id, qbo_amount = await qbo.post_purchase(
             invoice,
             gl_account,
+            payment_account=payment_account,
             employee_name=employee_name,
             file_bytes=invoice.file_bytes,
             filename=invoice.pdf_filename,
@@ -628,8 +644,9 @@ async def _notify_queued(invoice: Invoice, vendor_rule, reason: str, db: Optiona
         po_info = invoice.po_number_override or invoice.po_number or "none on file"
         amount  = f"${invoice.total_amount:,.2f}" if invoice.total_amount else "unknown"
         payment_type = {
-            "mastercard": "MasterCard (company card)",
-            "expense":    "Personal expense",
+            "mastercard":  "MasterCard (company card)",
+            "debit_card":  "Company Debit Card",
+            "expense":     "Personal expense",
             "credit_memo": "Credit memo / return",
         }.get(invoice.doc_type or "", "On account (vendor invoice)")
         reason_label = {

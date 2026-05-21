@@ -20,7 +20,7 @@ import {
   type QuickExtractResult,
 } from '../lib/api';
 
-type DocType = 'vendor' | 'mastercard' | 'expense' | null;
+type DocType = 'vendor' | 'mastercard' | 'debit_card' | 'expense' | null;
 type CostType = 'job' | 'overhead';
 type Step = 1 | 2 | 3 | 4 | 5;
 
@@ -46,7 +46,7 @@ export default function FieldSubmit() {
   const fileRef    = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
-  const needsDescription = costType === 'overhead' || docType === 'mastercard';
+  const needsDescription = costType === 'overhead' || docType === 'mastercard' || docType === 'debit_card';
 
   useEffect(() => {
     // Vendor-rules employees — used for personal expense reimbursements
@@ -61,7 +61,7 @@ export default function FieldSubmit() {
   }, []);
 
   const canProceed = () => {
-    if (step === 1) return !!docType && ((docType !== 'expense' && docType !== 'mastercard') || !!employee);
+    if (step === 1) return !!docType && ((docType !== 'expense' && docType !== 'mastercard' && docType !== 'debit_card') || !!employee);
     if (step === 2) return !!file;
     if (step === 3) {
       if (costType === 'job') return true;
@@ -142,7 +142,7 @@ export default function FieldSubmit() {
       const res = await uploadInvoice(
         file, docType!, costType,
         costType === 'job' ? po : undefined,
-        (docType === 'expense' || docType === 'mastercard') ? employee : undefined,
+        (docType === 'expense' || docType === 'mastercard' || docType === 'debit_card') ? employee : undefined,
         description || undefined,
         gl?.account,
         isReturn,
@@ -226,9 +226,10 @@ export default function FieldSubmit() {
 
             <div style={S.docgrid}>
               {([
-                {t:'vendor',    icon:'🧾', label:'On Account',  sub:'Supplier / vendor'},
-                {t:'mastercard',icon:'💳', label:'MC Receipt',  sub:'Company card'},
-                {t:'expense',   icon:'🧑', label:'My Expense',  sub:'Personal card / cash'},
+                {t:'vendor',     icon:'🧾', label:'On Account',   sub:'Supplier / vendor'},
+                {t:'mastercard', icon:'💳', label:'MC Receipt',   sub:'Company MasterCard'},
+                {t:'debit_card', icon:'🏦', label:'Debit Card',   sub:'Company debit card'},
+                {t:'expense',    icon:'🧑', label:'My Expense',   sub:'Personal card / cash'},
               ] as {t:DocType,icon:string,label:string,sub:string}[]).map(o => (
                 <button key={o.t} style={{...S.dt,...(docType===o.t?S.dtsel:{})}} onClick={()=>setDocType(o.t)}>
                   <span style={{fontSize:28,display:'block',marginBottom:6}}>{o.icon}</span>
@@ -238,9 +239,9 @@ export default function FieldSubmit() {
               ))}
             </div>
           </div>
-          {(docType === 'expense' || docType === 'mastercard') && (
+          {(docType === 'expense' || docType === 'mastercard' || docType === 'debit_card') && (
             <div style={S.card}>
-              <div style={S.ctitle}>{docType === 'mastercard' ? 'Who made this purchase?' : 'Your name'}</div>
+              <div style={S.ctitle}>{docType === 'expense' ? 'Your name' : 'Who made this purchase?'}</div>
               {employee ? (
                 <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 0'}}>
                   <span style={{fontSize:15,fontWeight:600,color:'#1a1d23'}}>{employee}</span>
@@ -252,7 +253,7 @@ export default function FieldSubmit() {
               ) : (
                 <select style={S.sel} value={employee} onChange={e=>{ setEmployee(e.target.value); if (e.target.value) localStorage.setItem('field_employee', e.target.value); }}>
                   <option value="">Select your name...</option>
-                  {(docType === 'mastercard'
+                  {(docType === 'mastercard' || docType === 'debit_card'
                     ? (aspireEmployees.length > 0 ? aspireEmployees : employees)
                     : employees
                   ).map(e=><option key={e}>{e}</option>)}
@@ -359,9 +360,9 @@ export default function FieldSubmit() {
             {previewUrl && <img src={previewUrl} alt="Receipt" style={{...S.preview,marginBottom:12}}/>}
             <RR label="Type" value={
               (isReturn ? 'Return / Refund — ' : '') +
-              ({vendor:'On Account',mastercard:'MasterCard',expense:'Employee Expense'}[docType!]||'—')
+              ({vendor:'On Account',mastercard:'MasterCard',debit_card:'Company Debit Card',expense:'Employee Expense'}[docType!]||'—')
             }/>
-            {(docType==='expense'||docType==='mastercard')&&employee && <RR label={docType==='mastercard'?'Purchased by':'Employee'} value={employee}/>}
+            {(docType==='expense'||docType==='mastercard'||docType==='debit_card')&&employee && <RR label={docType==='expense'?'Employee':'Purchased by'} value={employee}/>}
             <RR label="Document" value={file?.name||'—'} color="#059669"/>
             <RR label="Coding" value={costType==='overhead'?'Overhead':'Job cost'} color={costType==='overhead'?'#d97706':'#059669'}/>
             {costType==='job' && po && <RR label="PO Number" value={po}/>}

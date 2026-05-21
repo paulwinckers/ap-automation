@@ -696,7 +696,9 @@ class QBOClient:
             "CurrencyRef": {"value": invoice.currency or "CAD"},
             "TxnDate": _to_qbo_date(invoice.invoice_date),
             "PrivateNote": (
-                f"Auto-posted by AP Automation | MasterCard receipt{employee_note} | "
+                f"Auto-posted by AP Automation | "
+                f"{'Company Debit Card' if getattr(invoice, 'doc_type', None) == 'debit_card' else 'MasterCard'} receipt"
+                f"{employee_note} | "
                 f"Source: {invoice.intake_source or 'upload'} | "
                 f"PDF: {invoice.pdf_filename or 'n/a'}"
             ),
@@ -1034,7 +1036,7 @@ class QBOClient:
         """
         if doc_type == "credit_memo":
             candidates = [("vendorcredit", "VendorCredit"), ("bill", "Bill"), ("purchase", "Purchase")]
-        elif doc_type == "mastercard":
+        elif doc_type in ("mastercard", "debit_card"):
             candidates = [("purchase", "Purchase"), ("bill", "Bill"), ("vendorcredit", "VendorCredit")]
         else:
             candidates = [("bill", "Bill"), ("vendorcredit", "VendorCredit"), ("purchase", "Purchase")]
@@ -1077,7 +1079,7 @@ class QBOClient:
         """
         if doc_type == "credit_memo":
             entity_type = "VendorCredit"
-        elif doc_type in ("mastercard", "mc_purchase"):
+        elif doc_type in ("mastercard", "debit_card", "mc_purchase"):
             entity_type = "Purchase"
         else:
             entity_type = "Bill"
