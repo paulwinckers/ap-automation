@@ -68,20 +68,22 @@ def _variance_cell(variance) -> str:
 
 async def _build_report_data(branch_name: str | None = None) -> list[dict]:
     """
-    Fetch work tickets with actual hours that are not yet complete.
-    Optionally filter to a specific branch (e.g. "Construction").
+    Fetch work tickets scheduled for today in the configured timezone,
+    optionally filtered to a specific branch (e.g. "Construction").
     Returns list of tickets enriched with OpportunityName + PropertyName.
     """
-    # 1. Fetch active work tickets — no $select (causes 400).
-    #    Filter by status in OData (no $select = safe), sort newest first.
+    tz = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    today_str = datetime.now(tz).strftime("%Y-%m-%d")
+
+    # 1. Fetch work tickets scheduled for today — no $select (causes 400).
     try:
         res = await _aspire._get("WorkTickets", {
-            "$filter": "WorkTicketStatusName eq 'Scheduled'",
+            "$filter": f"WorkTicketStatusName eq 'Scheduled' and Date(ScheduledStartDate) eq {today_str}",
             "$orderby": "WorkTicketID desc",
             "$top": "500",
         })
         all_tickets = _aspire._extract_list(res)
-        logger.info(f"Construction report: {len(all_tickets)} Scheduled tickets fetched")
+        logger.info(f"Construction report: {len(all_tickets)} tickets scheduled for {today_str}")
         if all_tickets:
             sample = all_tickets[0]
             logger.info(f"Sample ticket ALL fields: {dict(sample)}")
@@ -194,7 +196,7 @@ async def _build_report_data(branch_name: str | None = None) -> list[dict]:
 
 def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Construction", extra_html: str = "") -> str:
     if not tickets:
-        body = '<p style="padding:32px;text-align:center;color:#64748b;">No active work tickets found.</p>'
+        body = '<p style="padding:32px;text-align:center;color:#64748b;">No work tickets scheduled for today.</p>'
         jobs_html = body
     else:
         # Group by property name so all opportunities (estimate + POs) for the
@@ -343,7 +345,7 @@ def _render_html(tickets: list[dict], generated_at: str, branch_name: str = "Con
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <div>
           <div style="color:#fff;font-size:20px;font-weight:700;">🏗️ {branch_name} · Work Ticket Status</div>
-          <div style="color:#64748b;font-size:13px;margin-top:4px;">Active tickets with labour posted · not yet complete</div>
+          <div style="color:#64748b;font-size:13px;margin-top:4px;">Work tickets scheduled for today · {branch_name} division</div>
         </div>
         <div style="text-align:right;">
           <div style="color:#94a3b8;font-size:12px;">Generated</div>
