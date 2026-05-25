@@ -131,11 +131,9 @@ export default function Reconcile() {
   const [periods, setPeriods]           = useState<Period[]>([]);
   const [activePeriod, setActivePeriod] = useState<string>(currentPeriod());
   const [statements, setStatements]     = useState<Statement[]>([]);
-  const [periodStatus, setPeriodStatus] = useState<'open' | 'closed'>('open');
   const [diffs, setDiffs]               = useState<Record<number, { source: string; data: DiffResult } | null>>({});
   const [uploading, setUploading]       = useState(false);
   const [refreshing, setRefreshing]     = useState<number | null>(null);
-  const [closing, setClosing]           = useState(false);
   const [expandedDiff, setExpandedDiff] = useState<number | null>(null);
   const [links, setLinks]               = useState<Record<string, QboLink | null>>({});
   const [linkingFor, setLinkingFor]     = useState<string | null>(null); // statement_name being linked
@@ -177,10 +175,7 @@ export default function Reconcile() {
       // Guard against stale responses — if the user switched periods while this
       // request was in-flight, discard the result to prevent overwriting newer data
       if (loadPeriodRef.current !== period) return;
-      const status = data.period?.status || 'open';
-      const isClosed = status === 'closed';
       setStatements(data.statements || []);
-      setPeriodStatus(status);
       setDiffs({});
       setLoadingStatements(false);
       await loadPeriods();
@@ -188,7 +183,7 @@ export default function Reconcile() {
       await loadLinks(stmts);
       // Load all diffs in a single parallel request (much faster than N serial calls)
       if (stmts.length > 0) {
-        loadAllDiffs(period, isClosed);
+        loadAllDiffs(period);
       }
     } catch (err) {
       if (loadPeriodRef.current !== period) return;
@@ -197,14 +192,10 @@ export default function Reconcile() {
     }
   }
 
-  async function loadAllDiffs(period: string, isClosed = false) {
+  async function loadAllDiffs(period: string) {
     // ── Show cached data instantly (stale-while-revalidate) ──────────────────
-    const cached = readLocalDiffs(period, isClosed);
-    if (cached) {
-      setDiffs(cached as any);
-      // Closed periods are frozen — no need to re-fetch from the server
-      if (isClosed) return;
-    }
+    const cached = readLocalDiffs(period, false);
+    if (cached) setDiffs(cached as any);
 
     setLoadingDiffs(true);
     setDiffsError(null);
@@ -221,7 +212,7 @@ export default function Reconcile() {
       const data = await res.json();
       const freshDiffs = data.diffs || {};
       setDiffs(freshDiffs);
-      writeLocalDiffs(period, freshDiffs, isClosed);
+      writeLocalDiffs(period, freshDiffs, false);
     } catch (err) {
       if (!cached) setDiffsError(`QBO connection error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -284,7 +275,7 @@ export default function Reconcile() {
       setDiffs(prev => {
         const next = { ...prev, [statementId]: data };
         // Persist updated diffs to localStorage so next visit is instant
-        writeLocalDiffs(activePeriod, next, periodStatus === 'closed');
+        writeLocalDiffs(activePeriod, next, false);
         return next;
       });
     } finally {
@@ -316,21 +307,6 @@ export default function Reconcile() {
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';
-    }
-  }
-
-  async function handleClosePeriod() {
-    if (!confirm(`Close ${activePeriod} and freeze all QBO snapshots? This cannot be undone.`)) return;
-    setClosing(true);
-    try {
-      const res = await fetch(`${API}/reconcile/periods/${activePeriod}/close`, { method: 'POST' });
-      if (!res.ok) {
-        alert('Close failed — check Railway logs');
-        return;
-      }
-      await loadStatements(activePeriod);
-    } finally {
-      setClosing(false);
     }
   }
 
@@ -404,15 +380,13 @@ export default function Reconcile() {
 
         {/* Period tabs */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 24, flexWrap: 'wrap', alignItems: 'center' }}>
-          {/* Generate last 6 months as period options */}
           {Array.from({ length: 6 }, (_, i) => {
             const d = new Date();
-            d.setDate(1); // prevent month overflow (e.g. Mar 30 - 1 month = Mar 2)
+            d.setDate(1);
             d.setMonth(d.getMonth() - i);
             const p = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
             const found = periods.find(x => x.period === p);
             const label = found?.label || d.toLocaleString('default', { month: 'long', year: 'numeric' });
-            const isClosed = found?.status === 'closed';
             return (
               <button
                 key={p}
@@ -424,7 +398,7 @@ export default function Reconcile() {
                   color: activePeriod === p ? '#fff' : '#64748b',
                 }}
               >
-                {label}{isClosed ? ' 🔒' : ''}
+                {label}
               </button>
             );
           })}
@@ -432,48 +406,23 @@ export default function Reconcile() {
 
         {/* Toolbar */}
         <div style={{ display: 'flex', gap: 12, marginBottom: 24, alignItems: 'center', flexWrap: 'wrap' }}>
-          {periodStatus === 'open' && (
-            <>
-              <label style={{
-                padding: '8px 18px', background: '#1e3a2f', color: '#fff',
-                borderRadius: 8, cursor: uploading ? 'wait' : 'pointer',
-                fontSize: 14, fontWeight: 600, opacity: uploading ? 0.7 : 1,
-              }}>
-                {uploading ? 'Uploading…' : '⬆ Upload Statement'}
-                <input ref={fileRef} type="file" accept=".pdf,.png,.jpg,.jpeg" style={{ display: 'none' }} onChange={handleUpload} disabled={uploading} />
-              </label>
-
-              {statements.length > 0 && (
-                <button
-                  onClick={handleClosePeriod}
-                  disabled={closing}
-                  style={{
-                    padding: '8px 18px', background: '#fff', color: '#dc2626',
-                    border: '1.5px solid #dc2626', borderRadius: 8,
-                    cursor: closing ? 'wait' : 'pointer', fontSize: 14, fontWeight: 600,
-                  }}
-                >
-                  {closing ? 'Closing…' : '🔒 Close Month'}
-                </button>
-              )}
-            </>
-          )}
-
-          {periodStatus === 'closed' && (
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <span style={{ fontSize: 13, color: '#16a34a', fontWeight: 600 }}>🔒 Period closed — view is frozen</span>
-              <button
-                onClick={() => window.print()}
-                style={{
-                  padding: '8px 18px', background: '#fff', border: '1.5px solid #1e3a2f',
-                  color: '#1e3a2f', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 600,
-                }}
-              >
-                🖨 Print / Export PDF
-              </button>
-            </div>
-          )}
-
+          <label style={{
+            padding: '8px 18px', background: '#1e3a2f', color: '#fff',
+            borderRadius: 8, cursor: uploading ? 'wait' : 'pointer',
+            fontSize: 14, fontWeight: 600, opacity: uploading ? 0.7 : 1,
+          }}>
+            {uploading ? 'Uploading…' : '⬆ Upload Statement'}
+            <input ref={fileRef} type="file" accept=".pdf,.png,.jpg,.jpeg" style={{ display: 'none' }} onChange={handleUpload} disabled={uploading} />
+          </label>
+          <button
+            onClick={() => window.print()}
+            style={{
+              padding: '8px 18px', background: '#fff', border: '1.5px solid #1e3a2f',
+              color: '#1e3a2f', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 600,
+            }}
+          >
+            🖨 Print / Export PDF
+          </button>
           <span style={{ marginLeft: 'auto', fontSize: 13, color: '#94a3b8' }}>
             {statements.length} vendor{statements.length !== 1 ? 's' : ''}
           </span>
@@ -671,7 +620,7 @@ export default function Reconcile() {
                         }} title="View PDF">📄</button>
                       )}
                       {/* Attach / replace PDF — amber + text when missing, green + text when attached */}
-                      {periodStatus === 'open' && (
+                      {true && (
                         <label style={{
                           padding: '3px 10px', fontSize: 11, whiteSpace: 'nowrap', cursor: attachingPdf === stmt.id ? 'wait' : 'pointer',
                           borderRadius: 6, fontWeight: 600,
@@ -693,13 +642,13 @@ export default function Reconcile() {
                           />
                         </label>
                       )}
-                      {periodStatus === 'open' && (
+                      {true && (
                         <button onClick={() => loadDiff(stmt.id, true)} disabled={isLoading} style={{
                           padding: '3px 9px', fontSize: 13, border: '1px solid #cbd5e1',
                           borderRadius: 6, background: '#f1f5f9', cursor: 'pointer', color: '#475569', fontWeight: 700,
                         }} title="Force refresh from QBO">↺</button>
                       )}
-                      {periodStatus === 'open' && (
+                      {true && (
                         <button onClick={async () => {
                           const prev = prevPeriod(activePeriod);
                           if (!confirm(`Move ${stmt.vendor_name} to ${prev}?`)) return;
@@ -715,7 +664,7 @@ export default function Reconcile() {
                         }} title="Move to previous month">← Prev</button>
                       )}
                       {/* Reconcile toggle — available on open periods */}
-                      {periodStatus === 'open' && (
+                      {true && (
                         <button
                           onClick={() => toggleReconcile(stmt)}
                           disabled={reconcilingId === stmt.id}
@@ -733,7 +682,7 @@ export default function Reconcile() {
                           {reconcilingId === stmt.id ? '…' : isManuallyReconciled ? '↩ Unreconcile' : '✓ Reconcile'}
                         </button>
                       )}
-                      {periodStatus === 'open' && (
+                      {true && (
                         <button onClick={() => handleDelete(stmt.id, stmt.vendor_name)} style={{
                           padding: '3px 8px', fontSize: 11, border: '1px solid #fecaca',
                           borderRadius: 6, background: '#fff', cursor: 'pointer', color: '#dc2626',
