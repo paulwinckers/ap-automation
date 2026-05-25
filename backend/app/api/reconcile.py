@@ -291,6 +291,15 @@ async def _get_diff_for_statement(
     """Compute or return cached diff for one statement. Thread-safe: all state in args."""
     stmt_id = stmt["id"]
 
+    # 0. Manually reconciled — return stored snapshot immediately, no QBO needed
+    if stmt.get("reconciled") and stmt.get("qbo_snapshot"):
+        return {
+            "source": "reconciled",
+            "data": json.loads(stmt["qbo_snapshot"]),
+            "reconciled_at": stmt.get("reconciled_at"),
+            "reconciled_note": stmt.get("reconciled_note"),
+        }
+
     # 1. Closed period — return frozen snapshot
     period_rows = await db._q(
         "SELECT status FROM reconciliation_periods WHERE id = ?", [stmt["period_id"]]
@@ -412,6 +421,71 @@ async def get_statement_diff(statement_id: int, force: bool = False, db: Databas
     finally:
         await db.close()
         await svc.close()
+
+
+@router.post("/statements/{statement_id}/reconcile")
+async def mark_reconciled(statement_id: int, body: dict = None, db: Database = Depends(get_db)):
+    """
+    Mark a statement as reconciled.
+    Takes an optional JSON body: {"note": "..."}.
+    Snapshots the current QBO diff first so the reconciled view is frozen.
+    """
+    await db.connect()
+    svc = ReconciliationService()
+    try:
+        stmt = await db.get_statement(statement_id)
+        if not stmt:
+            raise HTTPException(status_code=404, detail="Statement not found")
+
+        note = (body or {}).get("note") if body else None
+
+        # Snapshot QBO state at the moment of reconciliation if not already captured
+        if not stmt.get("qbo_snapshot"):
+            period_rows = await db._q(
+                "SELECT * FROM reconciliation_periods WHERE id = ?", [stmt["period_id"]]
+            )
+            period_row = period_rows[0] if period_rows else None
+            if period_row:
+                from_date, to_date = _period_date_range(period_row["period"])
+            else:
+                stmt_date = stmt.get("statement_date") or date.today().isoformat()
+                from_date, to_date = _period_date_range(stmt_date[:7])
+
+            lines = await db.get_statement_lines(statement_id)
+            extraction = _extraction_from_stmt(stmt, lines)
+            link = await db.get_vendor_qbo_link(stmt["vendor_name"])
+            qbo_vendor_id = link["qbo_vendor_id"] if link else None
+            try:
+                diff_result = await svc.reconcile(extraction, from_date, to_date, qbo_vendor_id=qbo_vendor_id)
+                await db.save_qbo_snapshot(statement_id, diff_result)
+            except Exception as e:
+                logger.warning(f"Could not snapshot QBO before reconciling stmt {statement_id}: {e}")
+
+        await db.mark_statement_reconciled(statement_id, note)
+        stmt = await db.get_statement(statement_id)
+        return {
+            "statement_id": statement_id,
+            "reconciled": True,
+            "reconciled_at": stmt["reconciled_at"],
+            "reconciled_note": stmt["reconciled_note"],
+        }
+    finally:
+        await db.close()
+        await svc.close()
+
+
+@router.delete("/statements/{statement_id}/reconcile")
+async def unmark_reconciled(statement_id: int, db: Database = Depends(get_db)):
+    """Remove the reconciled flag so the statement is live-fetched again."""
+    await db.connect()
+    try:
+        stmt = await db.get_statement(statement_id)
+        if not stmt:
+            raise HTTPException(status_code=404, detail="Statement not found")
+        await db.unmark_statement_reconciled(statement_id)
+        return {"statement_id": statement_id, "reconciled": False}
+    finally:
+        await db.close()
 
 
 @router.post("/statements/{statement_id}/move")

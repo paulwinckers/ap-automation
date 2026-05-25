@@ -768,6 +768,18 @@ class Database:
             [period_id, statement_id],
         )
 
+    async def mark_statement_reconciled(self, statement_id: int, note: Optional[str] = None) -> None:
+        await self._x(
+            "UPDATE vendor_statements SET reconciled = 1, reconciled_at = datetime('now'), reconciled_note = ? WHERE id = ?",
+            [note, statement_id],
+        )
+
+    async def unmark_statement_reconciled(self, statement_id: int) -> None:
+        await self._x(
+            "UPDATE vendor_statements SET reconciled = 0, reconciled_at = NULL, reconciled_note = NULL WHERE id = ?",
+            [statement_id],
+        )
+
     async def delete_statement(self, statement_id: int) -> None:
         await self._x("DELETE FROM statement_lines WHERE statement_id = ?", [statement_id])
         await self._x("DELETE FROM vendor_statements WHERE id = ?", [statement_id])

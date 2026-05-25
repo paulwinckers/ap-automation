@@ -38,6 +38,9 @@ interface Statement {
   pdf_filename: string | null;
   pdf_r2_key: string | null;
   intake_source: string;
+  reconciled: number;       // 0 or 1
+  reconciled_at: string | null;
+  reconciled_note: string | null;
 }
 
 interface QboLink {
@@ -143,6 +146,7 @@ export default function Reconcile() {
   const [loadingDiffs, setLoadingDiffs] = useState(false);
   const [loadingStatements, setLoadingStatements] = useState(false);
   const [diffsError, setDiffsError] = useState<string | null>(null);
+  const [reconcilingId, setReconcilingId] = useState<number | null>(null);
   const loadPeriodRef = useRef<string>('');
   const fileRef    = useRef<HTMLInputElement>(null);
   const pdfRefs    = useRef<Record<number, HTMLInputElement | null>>({});
@@ -330,6 +334,26 @@ export default function Reconcile() {
     }
   }
 
+  async function toggleReconcile(stmt: Statement) {
+    const isReconciled = stmt.reconciled === 1;
+    setReconcilingId(stmt.id);
+    try {
+      if (isReconciled) {
+        await fetch(`${API}/reconcile/statements/${stmt.id}/reconcile`, { method: 'DELETE' });
+      } else {
+        const note = prompt(`Optional note for reconciling ${stmt.vendor_name}:`) ?? undefined;
+        await fetch(`${API}/reconcile/statements/${stmt.id}/reconcile`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ note: note || null }),
+        });
+      }
+      await loadStatements(activePeriod);
+    } finally {
+      setReconcilingId(null);
+    }
+  }
+
   async function handleDelete(statementId: number, vendorName: string) {
     if (!confirm(`Delete ${vendorName} statement?`)) return;
     await fetch(`${API}/reconcile/statements/${statementId}`, { method: 'DELETE' });
@@ -472,15 +496,15 @@ export default function Reconcile() {
           </div>
         )}
 
-        {/* Loading banner */}
-        {loadingDiffs && statements.length > 0 && (
+        {/* Loading banner — only shown when there are non-reconciled statements being fetched */}
+        {loadingDiffs && statements.some(s => !s.reconciled) && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16,
             padding: '10px 16px', background: '#eff6ff', borderRadius: 8,
             border: '1px solid #bfdbfe', color: '#1d4ed8', fontSize: 13, fontWeight: 500,
           }}>
             <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', fontSize: 16 }}>⟳</span>
-            Pulling QBO data for {statements.length} vendor{statements.length !== 1 ? 's' : ''}…
+            Pulling QBO data for {statements.filter(s => !s.reconciled).length} vendor{statements.filter(s => !s.reconciled).length !== 1 ? 's' : ''}…
           </div>
         )}
 
@@ -527,9 +551,10 @@ export default function Reconcile() {
           const isExpanded = expandedDiff === stmt.id;
 
           const qboBalForBorder = (diffData?.data as DiffResult | undefined)?.qbo_total_balance ?? null;
-          const isReconciled = qboBalForBorder !== null && Math.abs((stmt.closing_balance ?? 0) - qboBalForBorder) < 0.01;
+          const isManuallyReconciled = stmt.reconciled === 1;
+          const isBalanced = qboBalForBorder !== null && Math.abs((stmt.closing_balance ?? 0) - qboBalForBorder) < 0.01;
           const hasData = qboBalForBorder !== null;
-          const borderColor = !hasData ? '#e2e8f0' : isReconciled ? '#16a34a' : '#dc2626';
+          const borderColor = isManuallyReconciled ? '#2563eb' : !hasData ? '#e2e8f0' : isBalanced ? '#16a34a' : '#dc2626';
 
           return (
             <div key={stmt.id} style={{
@@ -581,9 +606,19 @@ export default function Reconcile() {
                       {balDiff === null ? '—' : `${balDiff >= 0 ? '+' : ''}${fmt(balDiff, '')}`}
                     </div>
 
-                    {/* Match badge */}
-                    <div style={{ flex: '1 1 0', minWidth: 0 }}>
-                      {summary && !isLoading && (
+                    {/* Match badge / Reconciled badge */}
+                    <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      {isManuallyReconciled && (
+                        <span title={stmt.reconciled_note ? `Note: ${stmt.reconciled_note}` : `Reconciled ${stmt.reconciled_at ? new Date(stmt.reconciled_at).toLocaleDateString() : ''}`} style={{
+                          display: 'inline-block',
+                          background: '#eff6ff', color: '#2563eb',
+                          padding: '2px 8px', borderRadius: 20, fontWeight: 700, fontSize: 11,
+                          whiteSpace: 'nowrap',
+                        }}>
+                          ✓ Reconciled{stmt.reconciled_at ? ` ${new Date(stmt.reconciled_at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}` : ''}
+                        </span>
+                      )}
+                      {summary && !isLoading && !isManuallyReconciled && (
                         <span style={{
                           display: 'inline-block',
                           background: summary.mismatch_count > 0 || summary.missing_from_qbo > 0 ? '#fef2f2' :
@@ -679,6 +714,25 @@ export default function Reconcile() {
                           borderRadius: 6, background: '#f1f5f9', cursor: 'pointer', color: '#475569', fontWeight: 600,
                         }} title="Move to previous month">← Prev</button>
                       )}
+                      {/* Reconcile toggle — available on open periods */}
+                      {periodStatus === 'open' && (
+                        <button
+                          onClick={() => toggleReconcile(stmt)}
+                          disabled={reconcilingId === stmt.id}
+                          title={isManuallyReconciled ? `Unreconcile${stmt.reconciled_note ? ` (Note: ${stmt.reconciled_note})` : ''}` : 'Mark as Reconciled'}
+                          style={{
+                            padding: '3px 9px', fontSize: 11, fontWeight: 600,
+                            border: isManuallyReconciled ? '1px solid #93c5fd' : '1px solid #cbd5e1',
+                            borderRadius: 6,
+                            background: isManuallyReconciled ? '#eff6ff' : '#f8fafc',
+                            color: isManuallyReconciled ? '#2563eb' : '#475569',
+                            cursor: reconcilingId === stmt.id ? 'wait' : 'pointer',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {reconcilingId === stmt.id ? '…' : isManuallyReconciled ? '↩ Unreconcile' : '✓ Reconcile'}
+                        </button>
+                      )}
                       {periodStatus === 'open' && (
                         <button onClick={() => handleDelete(stmt.id, stmt.vendor_name)} style={{
                           padding: '3px 8px', fontSize: 11, border: '1px solid #fecaca',
@@ -696,7 +750,9 @@ export default function Reconcile() {
                 <div style={{ padding: '0 20px 20px' }}>
                   {/* Source indicator */}
                   <div style={{ fontSize: 11, color: '#94a3b8', margin: '12px 0 8px', textAlign: 'right' }}>
-                    {diffData?.source === 'snapshot' ? '🔒 Frozen snapshot' : `⟳ Live QBO · refreshed ${diffData?.data?.refreshed_at ? new Date(diffData.data.refreshed_at).toLocaleTimeString() : ''}`}
+                    {diffData?.source === 'reconciled' ? `✓ Reconciled snapshot · locked ${(diffData as any).reconciled_at ? new Date((diffData as any).reconciled_at).toLocaleDateString() : ''}`
+                      : diffData?.source === 'snapshot' ? '🔒 Frozen snapshot'
+                      : `⟳ Live QBO · refreshed ${diffData?.data?.refreshed_at ? new Date(diffData.data.refreshed_at).toLocaleTimeString() : ''}`}
                   </div>
 
                   {/* Summary row */}

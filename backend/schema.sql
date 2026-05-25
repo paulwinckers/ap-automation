@@ -564,6 +564,15 @@ CREATE TABLE IF NOT EXISTS conversation_watchers (
 );
 CREATE INDEX IF NOT EXISTS idx_conv_watchers ON conversation_watchers(conversation_id);
 
+-- ── Reconciliation — mark-as-reconciled columns (migration) ─────────────────
+ALTER TABLE vendor_statements ADD COLUMN reconciled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE vendor_statements ADD COLUMN reconciled_at TEXT;
+ALTER TABLE vendor_statements ADD COLUMN reconciled_note TEXT;
+
+-- ── Reconciliation — live diff cache (migration) ──────────────────────────────
+ALTER TABLE vendor_statements ADD COLUMN diff_cache TEXT;
+ALTER TABLE vendor_statements ADD COLUMN diff_cached_at TEXT;
+
 -- ── General-purpose cache store ───────────────────────────────────────────────
 -- Persists expensive Aspire API responses across Railway restarts.
 -- TTL enforced via expires_at; entries replaced with INSERT OR REPLACE.
