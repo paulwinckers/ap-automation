@@ -13,6 +13,7 @@ GET  /invoices/audit         — Recent audit log entries
 
 import json
 import logging
+from datetime import date as _date
 from typing import Optional
 
 import anthropic
@@ -863,6 +864,19 @@ async def mark_as_overhead(
         line_items     = [LineItem(**li) for li in raw.get("line_items", [])],
         tax_lines      = [TaxLine(**tl) for tl in raw.get("tax_lines", [])],
     )
+
+    # Prior-year date guard — same check as in route_invoice
+    _inv_date_str = row.get("invoice_date") or ""
+    try:
+        _inv_year = int(_inv_date_str[:4]) if len(_inv_date_str) >= 4 else _date.today().year
+    except (ValueError, TypeError):
+        _inv_year = _date.today().year
+    if _inv_year < _date.today().year:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invoice date '{_inv_date_str}' is from a prior year ({_inv_year}). "
+                   f"Correct the date before posting to QBO."
+        )
 
     try:
         bill_id, qbo_amount = await _qbo.post_bill(

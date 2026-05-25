@@ -32,6 +32,7 @@ interface FeedEntry {
   doc_type: string | null;
   po_number: string | null;
   po_amount: number | null;
+  invoice_date: string | null;
 }
 
 interface Counts {
@@ -860,7 +861,15 @@ export default function APDashboard() {
                     )}
 
                     {/* Error message */}
-                    {e.error_message && (
+                    {e.error_message === 'prior_year_date' ? (
+                      <div style={{
+                        fontSize: 11, marginTop: 4, padding: '3px 7px', borderRadius: 5,
+                        background: '#fef2f2', border: '1px solid #fca5a5', color: '#b91c1c',
+                        fontWeight: 600,
+                      }}>
+                        ⛔ Prior-year date: {e.invoice_date || '?'} — correct before posting
+                      </div>
+                    ) : e.error_message && (
                       <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                            title={e.error_message}>
                         {e.error_message}
