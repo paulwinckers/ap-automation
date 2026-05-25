@@ -951,10 +951,6 @@ class QBOClient:
         # Wide window so old-but-still-open bills are included in reconciliation.
         from_dt   = date.fromisoformat(to_date) - __import__('datetime').timedelta(days=1825)
         from_date_qbo = from_dt.isoformat()
-        # Bills are queried up to TODAY (not to_date) so that bills entered into
-        # QBO after the period close are still found during reconciliation.
-        # Payments and credits still use to_date to compute the as-of-date balance.
-        today_str = date.today().isoformat()
 
         await self._ensure_token()
         bill_result, pay_result, credit_result = await asyncio.gather(
@@ -962,7 +958,7 @@ class QBOClient:
                 f"SELECT * FROM Bill "
                 f"WHERE VendorRef = '{vendor_id}' "
                 f"AND TxnDate >= '{from_date_qbo}' "
-                f"AND TxnDate <= '{today_str}' "
+                f"AND TxnDate <= '{to_date}' "
                 f"MAXRESULTS 200"
             )}),
             self._get("query", {"query": (
