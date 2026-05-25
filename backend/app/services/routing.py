@@ -62,10 +62,11 @@ async def route_invoice(
     """
     logger.info(f"Routing invoice {invoice.id} — vendor: {invoice.vendor_name}")
 
-    # ── Prior-year date guard ─────────────────────────────────────────────────
-    # Invoices dated before the current calendar year are almost always OCR
-    # errors. Block posting and send to the exception queue so AP can correct
-    # the date before it hits QBO or Aspire.
+    # ── Date year guard ───────────────────────────────────────────────────────
+    # Block any invoice whose year is not the current calendar year.
+    # Prior years (< current): almost always OCR errors or accidental backdating.
+    # Future years (> current): always OCR errors (e.g. 2026 misread as 2062).
+    # In both cases queue for AP review rather than posting to QBO/Aspire.
     from datetime import date as _date
     _current_year = _date.today().year
     _inv_date_str = invoice.invoice_date or ""
@@ -75,12 +76,19 @@ async def route_invoice(
         _inv_year = _current_year
     if _inv_year < _current_year:
         reason = "prior_year_date"
-        detail = {"invoice_date": _inv_date_str, "invoice_year": _inv_year, "current_year": _current_year}
         logger.warning(
             f"Invoice {invoice.id} has prior-year date '{_inv_date_str}' "
             f"(year={_inv_year}) — blocking post, sending to exception queue"
         )
-        await _queue(invoice, db, reason=reason, detail=detail)
+        await _queue(invoice, db, reason=reason, detail={"invoice_date": _inv_date_str, "invoice_year": _inv_year, "current_year": _current_year})
+        return RoutingOutcome.QUEUED
+    if _inv_year > _current_year:
+        reason = "future_year_date"
+        logger.warning(
+            f"Invoice {invoice.id} has future-year date '{_inv_date_str}' "
+            f"(year={_inv_year}) — blocking post, sending to exception queue"
+        )
+        await _queue(invoice, db, reason=reason, detail={"invoice_date": _inv_date_str, "invoice_year": _inv_year, "current_year": _current_year})
         return RoutingOutcome.QUEUED
 
     # ── Credit memos — post as QBO Vendor Credit using vendor rule GL ──────────

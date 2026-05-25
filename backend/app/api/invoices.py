@@ -865,16 +865,23 @@ async def mark_as_overhead(
         tax_lines      = [TaxLine(**tl) for tl in raw.get("tax_lines", [])],
     )
 
-    # Prior-year date guard — same check as in route_invoice
+    # Year guard — block prior and future years, same logic as route_invoice
     _inv_date_str = row.get("invoice_date") or ""
+    _current_year = _date.today().year
     try:
-        _inv_year = int(_inv_date_str[:4]) if len(_inv_date_str) >= 4 else _date.today().year
+        _inv_year = int(_inv_date_str[:4]) if len(_inv_date_str) >= 4 else _current_year
     except (ValueError, TypeError):
-        _inv_year = _date.today().year
-    if _inv_year < _date.today().year:
+        _inv_year = _current_year
+    if _inv_year < _current_year:
         raise HTTPException(
             status_code=422,
             detail=f"Invoice date '{_inv_date_str}' is from a prior year ({_inv_year}). "
+                   f"Correct the date before posting to QBO."
+        )
+    if _inv_year > _current_year:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invoice date '{_inv_date_str}' is a future year ({_inv_year}). "
                    f"Correct the date before posting to QBO."
         )
 
