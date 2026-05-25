@@ -947,11 +947,9 @@ class QBOClient:
 
         # ── Fetch bills, payments, and credits ───────────────────────────────
         # _ensure_token now uses a lock so concurrent calls across vendors are safe.
-        # Lower bound: 18 months before to_date.
-        # Any invoice older than that still showing as open on a current statement
-        # is a separate accounting issue — not a normal reconciliation item.
-        # This keeps the QBO query fast regardless of how long the company has been in QBO.
-        from_dt   = date.fromisoformat(to_date) - __import__('datetime').timedelta(days=548)
+        # Lower bound: 5 years before to_date.
+        # Wide window so old-but-still-open bills are included in reconciliation.
+        from_dt   = date.fromisoformat(to_date) - __import__('datetime').timedelta(days=1825)
         from_date_qbo = from_dt.isoformat()
 
         await self._ensure_token()
