@@ -906,13 +906,21 @@ class QBOClient:
     # ── Vendor statement reconciliation (future) ──────────────────────────────
 
     async def search_vendors(self, q: str) -> list[dict]:
-        """Search active QBO vendors by name fragment. Used for vendor linking UI."""
+        """Search QBO vendors by name fragment — active and inactive.
+        Inactive vendors are included so that reconciliation can link to the
+        vendor record that actually holds the bills (common when a vendor was
+        deactivated but old bills were never migrated to the new record).
+        Active vendors are returned first; inactive ones are labelled.
+        """
         escaped = q.replace("&", "&amp;").replace("'", "\\'")
         result = await self._get(
             "query",
-            {"query": f"SELECT Id, DisplayName, Active FROM Vendor WHERE DisplayName LIKE '%{escaped}%' AND Active = true MAXRESULTS 20"},
+            {"query": f"SELECT Id, DisplayName, Active FROM Vendor WHERE DisplayName LIKE '%{escaped}%' MAXRESULTS 40"},
         )
-        return result.get("QueryResponse", {}).get("Vendor", [])
+        vendors = result.get("QueryResponse", {}).get("Vendor", [])
+        # Sort: active first, then inactive
+        vendors.sort(key=lambda v: (0 if v.get("Active") else 1, v.get("DisplayName", "")))
+        return vendors
 
     async def get_vendor_bills(
         self,

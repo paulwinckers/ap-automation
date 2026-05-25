@@ -138,7 +138,7 @@ export default function Reconcile() {
   const [links, setLinks]               = useState<Record<string, QboLink | null>>({});
   const [linkingFor, setLinkingFor]     = useState<string | null>(null); // statement_name being linked
   const [vendorSearch, setVendorSearch] = useState('');
-  const [vendorResults, setVendorResults] = useState<{id: string; name: string}[]>([]);
+  const [vendorResults, setVendorResults] = useState<{id: string; name: string; active: boolean}[]>([]);
   const [searchingVendors, setSearchingVendors] = useState(false);
   const [attachingPdf, setAttachingPdf] = useState<number | null>(null);
   const [loadingDiffs, setLoadingDiffs] = useState(false);
@@ -310,12 +310,23 @@ export default function Reconcile() {
     }
   }
 
+  /** Refresh one statement row in-place without reloading the whole list or re-fetching all diffs. */
+  async function refreshStatement(statementId: number) {
+    const res = await fetch(`${API}/reconcile/statements/${statementId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    setStatements(prev => prev.map(s => s.id === statementId ? { ...s, ...data } : s));
+  }
+
   async function toggleReconcile(stmt: Statement) {
     const isReconciled = stmt.reconciled === 1;
     setReconcilingId(stmt.id);
     try {
       if (isReconciled) {
         await fetch(`${API}/reconcile/statements/${stmt.id}/reconcile`, { method: 'DELETE' });
+        // Unreconciled — refresh statement row then force-reload its diff from QBO
+        await refreshStatement(stmt.id);
+        await loadDiff(stmt.id, true);
       } else {
         const note = prompt(`Optional note for reconciling ${stmt.vendor_name}:`) ?? undefined;
         await fetch(`${API}/reconcile/statements/${stmt.id}/reconcile`, {
@@ -323,8 +334,10 @@ export default function Reconcile() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ note: note || null }),
         });
+        // Reconciled — refresh statement row then reload its diff (returns locked snapshot)
+        await refreshStatement(stmt.id);
+        await loadDiff(stmt.id);
       }
-      await loadStatements(activePeriod);
     } finally {
       setReconcilingId(null);
     }
@@ -333,7 +346,9 @@ export default function Reconcile() {
   async function handleDelete(statementId: number, vendorName: string) {
     if (!confirm(`Delete ${vendorName} statement?`)) return;
     await fetch(`${API}/reconcile/statements/${statementId}`, { method: 'DELETE' });
-    await loadStatements(activePeriod);
+    // Remove from local state — no full reload needed
+    setStatements(prev => prev.filter(s => s.id !== statementId));
+    setDiffs(prev => { const n = { ...prev }; delete n[statementId]; return n; });
   }
 
   async function handleAttachPdf(statementId: number, file: File) {
@@ -347,7 +362,8 @@ export default function Reconcile() {
         alert(`PDF upload failed: ${err.detail || res.statusText}`);
         return;
       }
-      await loadStatements(activePeriod);
+      // Just refresh this one statement's pdf_r2_key — no full reload
+      await refreshStatement(statementId);
     } catch {
       alert('PDF upload failed — check Railway logs');
     } finally {
@@ -478,16 +494,22 @@ export default function Reconcile() {
         )}
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
-        {/* Column headers */}
+        {/* Column headers — widths must match row cells exactly */}
         {!loadingStatements && statements.length > 0 && (
-          <div style={{ display: 'flex', gap: 12, padding: '4px 16px 6px', fontSize: 11,
-            fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-            <div style={{ minWidth: 180, flex: '0 0 auto' }}>Vendor</div>
-            <div style={{ minWidth: 90, flex: '0 0 auto' }}>Date</div>
-            <div style={{ minWidth: 100, flex: '0 0 auto' }}>Per Statement</div>
-            <div style={{ minWidth: 100, flex: '0 0 auto' }}>Per QBO</div>
-            <div style={{ minWidth: 90, flex: '0 0 auto' }}>Difference</div>
-            <div style={{ flex: 1 }}>Status</div>
+          <div style={{
+            display: 'flex', alignItems: 'center', padding: '4px 12px 6px 20px',
+            fontSize: 11, fontWeight: 700, color: '#94a3b8',
+            textTransform: 'uppercase', letterSpacing: '.04em',
+          }}>
+            <div style={{ width: 185, flexShrink: 0 }}>Vendor</div>
+            <div style={{ width: 94, flexShrink: 0 }}>Date</div>
+            <div style={{ width: 124, flexShrink: 0 }}>Per Statement</div>
+            <div style={{ width: 124, flexShrink: 0 }}>Per QBO</div>
+            <div style={{ width: 108, flexShrink: 0 }}>Difference</div>
+            <div style={{ width: 140, flexShrink: 0 }}>Status</div>
+            <div style={{ width: 148, flexShrink: 0 }}>QBO Link</div>
+            <div style={{ width: 88, flexShrink: 0, textAlign: 'center' }}>Reconciled</div>
+            <div style={{ flex: 1 }}>Actions</div>
           </div>
         )}
 
@@ -512,183 +534,185 @@ export default function Reconcile() {
               borderLeft: `4px solid ${borderColor}`,
               marginBottom: 8, overflow: 'hidden',
             }}>
-              {/* Compact single-line row */}
+              {/* Fixed-grid row — all widths match the column header exactly */}
               {(() => {
                 const qboBalance = (diffData?.data as DiffResult | undefined)?.qbo_total_balance ?? null;
                 const balDiff = qboBalance !== null ? (stmt.closing_balance ?? 0) - qboBalance : null;
                 const diffColor = balDiff === null ? '#94a3b8' : Math.abs(balDiff) < 0.01 ? '#16a34a' : '#dc2626';
+                // Shared cell style
+                const cell: React.CSSProperties = { flexShrink: 0, overflow: 'hidden' };
+                const iconBtn: React.CSSProperties = {
+                  width: 28, height: 26, padding: 0, fontSize: 13, border: '1px solid #e2e8f0',
+                  borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                };
                 return (
                   <div style={{
-                    padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '9px 12px', display: 'flex', alignItems: 'center',
                     borderBottom: isExpanded ? '1px solid #f1f5f9' : 'none',
-                    cursor: 'pointer', flexWrap: 'nowrap',
+                    cursor: 'pointer',
                   }} onClick={() => setExpandedDiff(isExpanded ? null : stmt.id)}>
 
-                    {/* Vendor name — truncate with ellipsis so long names don't push buttons off screen */}
+                    {/* Vendor */}
                     <div title={stmt.vendor_name} style={{
-                      fontWeight: 600, fontSize: 14, color: '#1e293b',
-                      minWidth: 140, maxWidth: 200, flex: '0 0 auto',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      ...cell, width: 185,
+                      fontWeight: 600, fontSize: 13, color: '#1e293b',
+                      textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                     }}>
                       {stmt.vendor_name}
                     </div>
 
                     {/* Date */}
-                    <div style={{ fontSize: 12, color: '#64748b', minWidth: 90, flex: '0 0 auto' }}>
+                    <div style={{ ...cell, width: 94, fontSize: 12, color: '#64748b' }}>
                       {stmt.statement_date || '—'}
                     </div>
 
-                    {/* Stmt balance */}
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b', minWidth: 100, flex: '0 0 auto' }}>
+                    {/* Per Statement */}
+                    <div style={{ ...cell, width: 124, fontSize: 13, fontWeight: 600, color: '#1e293b' }}>
                       {fmt(stmt.closing_balance, stmt.currency)}
                     </div>
 
-                    {/* QBO balance */}
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b', minWidth: 100, flex: '0 0 auto' }}>
-                      {isLoading ? <span style={{ color: '#94a3b8' }}>…</span>
-                        : diffData?.source === 'error' ? <span style={{ color: '#dc2626', fontSize: 11 }} title={(diffData as any).error}>⚠ QBO err</span>
-                        : qboBalance !== null ? fmt(qboBalance, stmt.currency) : '—'}
+                    {/* Per QBO */}
+                    <div style={{ ...cell, width: 124, fontSize: 13, fontWeight: 600, color: '#1e293b' }}>
+                      {isLoading
+                        ? <span style={{ color: '#94a3b8' }}>…</span>
+                        : diffData?.source === 'error'
+                          ? <span style={{ color: '#dc2626', fontSize: 11 }} title={(diffData as any).error}>⚠ Error</span>
+                          : qboBalance !== null ? fmt(qboBalance, stmt.currency) : '—'}
                     </div>
 
                     {/* Difference */}
-                    <div style={{ fontSize: 13, fontWeight: 700, color: diffColor, minWidth: 90, flex: '0 0 auto' }}>
+                    <div style={{ ...cell, width: 108, fontSize: 13, fontWeight: 700, color: diffColor }}>
                       {balDiff === null ? '—' : `${balDiff >= 0 ? '+' : ''}${fmt(balDiff, '')}`}
                     </div>
 
-                    {/* Match badge / Reconciled badge */}
-                    <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                      {isManuallyReconciled && (
-                        <span title={stmt.reconciled_note ? `Note: ${stmt.reconciled_note}` : `Reconciled ${stmt.reconciled_at ? new Date(stmt.reconciled_at).toLocaleDateString() : ''}`} style={{
-                          display: 'inline-block',
-                          background: '#eff6ff', color: '#2563eb',
-                          padding: '2px 8px', borderRadius: 20, fontWeight: 700, fontSize: 11,
-                          whiteSpace: 'nowrap',
-                        }}>
-                          ✓ Reconciled{stmt.reconciled_at ? ` ${new Date(stmt.reconciled_at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}` : ''}
-                        </span>
-                      )}
-                      {summary && !isLoading && !isManuallyReconciled && (
+                    {/* Status badge — match summary only */}
+                    <div style={{ ...cell, width: 140 }}>
+                      {summary && !isLoading ? (
                         <span style={{
-                          display: 'inline-block',
-                          background: summary.mismatch_count > 0 || summary.missing_from_qbo > 0 ? '#fef2f2' :
-                            summary.extra_in_qbo > 0 ? '#fffbeb' : '#f0fdf4',
+                          display: 'inline-block', fontSize: 11, fontWeight: 700,
+                          padding: '2px 7px', borderRadius: 20, whiteSpace: 'nowrap',
+                          maxWidth: 136, overflow: 'hidden', textOverflow: 'ellipsis',
+                          background: summary.mismatch_count > 0 || summary.missing_from_qbo > 0 ? '#fef2f2'
+                            : summary.extra_in_qbo > 0 ? '#fffbeb' : '#f0fdf4',
                           color: diffSummaryColor(diffData!.data),
-                          padding: '2px 8px', borderRadius: 20, fontWeight: 700, fontSize: 11,
-                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%',
                         }}>
                           {summary.mismatch_count === 0 && summary.missing_from_qbo === 0 && summary.extra_in_qbo === 0
                             ? `✓ ${summary.matched_count} matched`
-                            : `⚠ ${summary.missing_from_qbo} miss · ${summary.mismatch_count} mismatch · ${summary.extra_in_qbo} extra`}
+                            : `⚠ ${[
+                                summary.missing_from_qbo > 0 ? `${summary.missing_from_qbo} missing` : '',
+                                summary.mismatch_count   > 0 ? `${summary.mismatch_count} mismatch` : '',
+                                summary.extra_in_qbo     > 0 ? `${summary.extra_in_qbo} extra`     : '',
+                              ].filter(Boolean).join(' · ')}`}
                         </span>
-                      )}
+                      ) : null}
                     </div>
 
-                    {/* QBO link — cap width so long vendor names don't overflow */}
-                    <div style={{ fontSize: 11, flex: '0 0 auto', maxWidth: 180 }} onClick={e => e.stopPropagation()}>
+                    {/* QBO link */}
+                    <div style={{ ...cell, width: 148 }} onClick={e => e.stopPropagation()}>
+
                       {links[stmt.vendor_name] ? (
                         <span title={links[stmt.vendor_name]!.qbo_vendor_name} style={{
-                          display: 'flex', alignItems: 'center', gap: 4,
-                          background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8,
-                          padding: '2px 8px', color: '#15803d', whiteSpace: 'nowrap',
-                          overflow: 'hidden', maxWidth: 180,
+                          display: 'flex', alignItems: 'center', gap: 3, maxWidth: 144,
+                          background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7,
+                          padding: '2px 6px', color: '#15803d',
                         }}>
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>🔗 {links[stmt.vendor_name]!.qbo_vendor_name}</span>
+                          <span style={{ fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                            🔗 {links[stmt.vendor_name]!.qbo_vendor_name}
+                          </span>
                           <button onClick={() => removeLink(stmt.vendor_name)} title="Remove link"
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 0, fontSize: 11, flexShrink: 0 }}>✕</button>
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 0, fontSize: 10, flexShrink: 0 }}>✕</button>
                         </span>
                       ) : (
                         <button onClick={() => { setLinkingFor(stmt.vendor_name); setVendorSearch(''); setVendorResults([]); }}
-                          style={{ padding: '2px 8px', fontSize: 11, border: '1px dashed #cbd5e1',
-                            borderRadius: 8, background: '#f8fafc', cursor: 'pointer', color: '#64748b', whiteSpace: 'nowrap' }}>
-                          🔗 Link
+                          style={{ padding: '2px 7px', fontSize: 11, border: '1px dashed #cbd5e1',
+                            borderRadius: 7, background: '#f8fafc', cursor: 'pointer', color: '#94a3b8', whiteSpace: 'nowrap' }}>
+                          + Link QBO
                         </button>
                       )}
                     </div>
 
-                    {/* Actions */}
-                    <div style={{ display: 'flex', gap: 6, flex: '0 0 auto' }} onClick={e => e.stopPropagation()}>
-                      {/* View PDF — only shown when PDF is actually stored in R2 */}
+                    {/* Reconcile checkmark column */}
+                    <div style={{ width: 88, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      onClick={e => e.stopPropagation()}>
+                      <button
+                        onClick={() => toggleReconcile(stmt)}
+                        disabled={reconcilingId === stmt.id}
+                        title={isManuallyReconciled
+                          ? `Reconciled${stmt.reconciled_at ? ` on ${new Date(stmt.reconciled_at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}` : ''}${stmt.reconciled_note ? ` — ${stmt.reconciled_note}` : ''}\nClick to unreconcile`
+                          : 'Mark as reconciled'}
+                        style={{
+                          width: 30, height: 30, padding: 0, border: 'none', borderRadius: '50%',
+                          background: 'none', cursor: reconcilingId === stmt.id ? 'wait' : 'pointer',
+                          fontSize: 20, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color: isManuallyReconciled ? '#2563eb' : '#e2e8f0',
+                          transition: 'color .15s',
+                        }}
+                        onMouseEnter={e => { if (!isManuallyReconciled) (e.currentTarget as HTMLButtonElement).style.color = '#93c5fd'; }}
+                        onMouseLeave={e => { if (!isManuallyReconciled) (e.currentTarget as HTMLButtonElement).style.color = '#e2e8f0'; }}
+                      >
+                        {reconcilingId === stmt.id ? '…' : '✓'}
+                      </button>
+                    </div>
+
+                    {/* Actions — compact icon buttons */}
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}
+                      onClick={e => e.stopPropagation()}>
+
+                      {/* View PDF */}
                       {stmt.pdf_r2_key && (
                         <button onClick={async () => {
                           const res = await fetch(`${API}/reconcile/statements/${stmt.id}/pdf`);
-                          if (!res.ok) { alert('No PDF stored for this statement'); return; }
+                          if (!res.ok) { alert('No PDF stored'); return; }
                           const { url } = await res.json();
                           window.open(url, '_blank');
-                        }} style={{
-                          padding: '3px 10px', fontSize: 11, border: '1px solid #e2e8f0',
-                          borderRadius: 6, background: '#f8fafc', cursor: 'pointer', color: '#64748b',
-                        }} title="View PDF">📄</button>
+                        }} style={iconBtn} title="View PDF">📄</button>
                       )}
-                      {/* Attach / replace PDF — amber + text when missing, green + text when attached */}
-                      {true && (
-                        <label style={{
-                          padding: '3px 10px', fontSize: 11, whiteSpace: 'nowrap', cursor: attachingPdf === stmt.id ? 'wait' : 'pointer',
-                          borderRadius: 6, fontWeight: 600,
-                          border: stmt.pdf_r2_key ? '1px solid #86efac' : '1.5px solid #f59e0b',
-                          background: stmt.pdf_r2_key ? '#f0fdf4' : '#fffbeb',
-                          color: stmt.pdf_r2_key ? '#15803d' : '#b45309',
-                        }} title={stmt.pdf_r2_key ? 'Replace PDF' : 'Attach PDF'}>
-                          {attachingPdf === stmt.id ? '⏳ …' : stmt.pdf_r2_key ? '📎 PDF ✓' : '📎 Attach PDF'}
-                          <input
-                            type="file" accept=".pdf,.png,.jpg,.jpeg"
-                            style={{ display: 'none' }}
-                            ref={el => { pdfRefs.current[stmt.id] = el; }}
-                            disabled={attachingPdf !== null}
-                            onChange={e => {
-                              const f = e.target.files?.[0];
-                              if (f) handleAttachPdf(stmt.id, f);
-                              if (pdfRefs.current[stmt.id]) pdfRefs.current[stmt.id]!.value = '';
-                            }}
-                          />
-                        </label>
-                      )}
-                      {true && (
-                        <button onClick={() => loadDiff(stmt.id, true)} disabled={isLoading} style={{
-                          padding: '3px 9px', fontSize: 13, border: '1px solid #cbd5e1',
-                          borderRadius: 6, background: '#f1f5f9', cursor: 'pointer', color: '#475569', fontWeight: 700,
-                        }} title="Force refresh from QBO">↺</button>
-                      )}
-                      {true && (
-                        <button onClick={async () => {
-                          const prev = prevPeriod(activePeriod);
-                          if (!confirm(`Move ${stmt.vendor_name} to ${prev}?`)) return;
-                          await fetch(`${API}/reconcile/statements/${stmt.id}/move`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ period: prev }),
-                          });
-                          await loadStatements(activePeriod);
-                        }} style={{
-                          padding: '3px 9px', fontSize: 11, border: '1px solid #cbd5e1',
-                          borderRadius: 6, background: '#f1f5f9', cursor: 'pointer', color: '#475569', fontWeight: 600,
-                        }} title="Move to previous month">← Prev</button>
-                      )}
-                      {/* Reconcile toggle — available on open periods */}
-                      {true && (
-                        <button
-                          onClick={() => toggleReconcile(stmt)}
-                          disabled={reconcilingId === stmt.id}
-                          title={isManuallyReconciled ? `Unreconcile${stmt.reconciled_note ? ` (Note: ${stmt.reconciled_note})` : ''}` : 'Mark as Reconciled'}
-                          style={{
-                            padding: '3px 9px', fontSize: 11, fontWeight: 600,
-                            border: isManuallyReconciled ? '1px solid #93c5fd' : '1px solid #cbd5e1',
-                            borderRadius: 6,
-                            background: isManuallyReconciled ? '#eff6ff' : '#f8fafc',
-                            color: isManuallyReconciled ? '#2563eb' : '#475569',
-                            cursor: reconcilingId === stmt.id ? 'wait' : 'pointer',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {reconcilingId === stmt.id ? '…' : isManuallyReconciled ? '↩ Unreconcile' : '✓ Reconcile'}
-                        </button>
-                      )}
-                      {true && (
-                        <button onClick={() => handleDelete(stmt.id, stmt.vendor_name)} style={{
-                          padding: '3px 8px', fontSize: 11, border: '1px solid #fecaca',
-                          borderRadius: 6, background: '#fff', cursor: 'pointer', color: '#dc2626',
-                        }}>✕</button>
-                      )}
-                      <span style={{ fontSize: 14, color: '#94a3b8', padding: '0 2px' }}>{isExpanded ? '▲' : '▼'}</span>
+
+                      {/* Attach / replace PDF */}
+                      <label style={{
+                        ...iconBtn,
+                        cursor: attachingPdf === stmt.id ? 'wait' : 'pointer',
+                        border: stmt.pdf_r2_key ? '1px solid #86efac' : '1.5px solid #f59e0b',
+                        background: stmt.pdf_r2_key ? '#f0fdf4' : '#fffbeb',
+                        color: stmt.pdf_r2_key ? '#15803d' : '#b45309',
+                      }} title={stmt.pdf_r2_key ? 'Replace PDF' : 'Attach PDF'}>
+                        {attachingPdf === stmt.id ? '⏳' : '📎'}
+                        <input type="file" accept=".pdf,.png,.jpg,.jpeg" style={{ display: 'none' }}
+                          ref={el => { pdfRefs.current[stmt.id] = el; }}
+                          disabled={attachingPdf !== null}
+                          onChange={e => {
+                            const f = e.target.files?.[0];
+                            if (f) handleAttachPdf(stmt.id, f);
+                            if (pdfRefs.current[stmt.id]) pdfRefs.current[stmt.id]!.value = '';
+                          }} />
+                      </label>
+
+                      {/* Refresh QBO */}
+                      <button onClick={() => loadDiff(stmt.id, true)} disabled={isLoading}
+                        style={{ ...iconBtn, fontSize: 14 }} title="Refresh from QBO">↺</button>
+
+                      {/* Move to prev month — statement leaves this period, so remove from list */}
+                      <button onClick={async () => {
+                        const prev = prevPeriod(activePeriod);
+                        if (!confirm(`Move ${stmt.vendor_name} to ${prev}?`)) return;
+                        await fetch(`${API}/reconcile/statements/${stmt.id}/move`, {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ period: prev }),
+                        });
+                        setStatements(p => p.filter(s => s.id !== stmt.id));
+                        setDiffs(p => { const n = { ...p }; delete n[stmt.id]; return n; });
+                      }} style={iconBtn} title={`Move to ${prevPeriod(activePeriod)}`}>←</button>
+
+                      {/* Delete */}
+                      <button onClick={() => handleDelete(stmt.id, stmt.vendor_name)}
+                        style={{ ...iconBtn, border: '1px solid #fecaca', background: '#fff', color: '#dc2626' }}
+                        title="Delete statement">✕</button>
+
+                      {/* Expand toggle */}
+                      <span style={{ fontSize: 12, color: '#94a3b8', width: 16, textAlign: 'center', flexShrink: 0 }}>
+                        {isExpanded ? '▲' : '▼'}
+                      </span>
                     </div>
                   </div>
                 );
@@ -812,11 +836,19 @@ export default function Reconcile() {
                     style={{
                       padding: '10px 14px', cursor: 'pointer', fontSize: 14,
                       borderBottom: '1px solid #f1f5f9',
+                      display: 'flex', alignItems: 'center', gap: 8,
                     }}
                     onMouseEnter={e => (e.currentTarget.style.background = '#f0fdf4')}
                     onMouseLeave={e => (e.currentTarget.style.background = '')}
                   >
-                    {v.name}
+                    <span>{v.name}</span>
+                    {!v.active && (
+                      <span style={{
+                        fontSize: 10, background: '#fef3c7', color: '#92400e',
+                        border: '1px solid #fcd34d', borderRadius: 4, padding: '1px 5px',
+                        flexShrink: 0,
+                      }}>inactive</span>
+                    )}
                   </div>
                 ))}
               </div>

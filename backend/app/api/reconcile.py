@@ -596,7 +596,7 @@ async def search_qbo_vendors(q: str = ""):
     qbo = QBOClient()
     try:
         vendors = await qbo.search_vendors(q)
-        return {"vendors": [{"id": v["Id"], "name": v["DisplayName"]} for v in vendors]}
+        return {"vendors": [{"id": v["Id"], "name": v["DisplayName"], "active": v.get("Active", True)} for v in vendors]}
     finally:
         await qbo.close()
 
