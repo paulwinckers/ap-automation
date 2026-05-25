@@ -145,6 +145,7 @@ export default function Reconcile() {
   const [loadingStatements, setLoadingStatements] = useState(false);
   const [diffsError, setDiffsError] = useState<string | null>(null);
   const [reconcilingId, setReconcilingId] = useState<number | null>(null);
+  const [reconcileFilter, setReconcileFilter] = useState<'all' | 'reconciled' | 'unreconciled'>('all');
   const loadPeriodRef = useRef<string>('');
   const fileRef    = useRef<HTMLInputElement>(null);
   const pdfRefs    = useRef<Record<number, HTMLInputElement | null>>({});
@@ -439,8 +440,26 @@ export default function Reconcile() {
           >
             🖨 Print / Export PDF
           </button>
+          {/* Reconcile filter toggle */}
+          <div style={{ display: 'flex', border: '1.5px solid #e2e8f0', borderRadius: 8, overflow: 'hidden', flexShrink: 0 }}>
+            {(['all', 'unreconciled', 'reconciled'] as const).map(opt => (
+              <button key={opt} onClick={() => setReconcileFilter(opt)} style={{
+                padding: '6px 14px', fontSize: 13, fontWeight: 500, border: 'none',
+                borderRight: opt !== 'reconciled' ? '1px solid #e2e8f0' : 'none',
+                cursor: 'pointer',
+                background: reconcileFilter === opt ? '#1e3a2f' : '#fff',
+                color: reconcileFilter === opt ? '#fff' : '#64748b',
+              }}>
+                {opt === 'all' ? 'All' : opt === 'unreconciled' ? 'Unreconciled' : 'Reconciled'}
+              </button>
+            ))}
+          </div>
           <span style={{ marginLeft: 'auto', fontSize: 13, color: '#94a3b8' }}>
-            {statements.length} vendor{statements.length !== 1 ? 's' : ''}
+            {statements.filter(s =>
+              reconcileFilter === 'all' ? true :
+              reconcileFilter === 'reconciled' ? s.reconciled === 1 :
+              s.reconciled !== 1
+            ).length} vendor{statements.length !== 1 ? 's' : ''}
           </span>
         </div>
 
@@ -514,7 +533,11 @@ export default function Reconcile() {
         )}
 
         {/* Statement cards */}
-        {!loadingStatements && statements.map(stmt => {
+        {!loadingStatements && statements.filter(s =>
+          reconcileFilter === 'all' ? true :
+          reconcileFilter === 'reconciled' ? s.reconciled === 1 :
+          s.reconciled !== 1
+        ).map(stmt => {
           const diffData = diffs[stmt.id];
           const diff = diffData?.data?.diff;
           const summary = diff?.summary;
