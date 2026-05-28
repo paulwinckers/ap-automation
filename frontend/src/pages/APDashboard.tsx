@@ -739,6 +739,7 @@ export default function APDashboard() {
                 <th style={styles.th}>Received</th>
                 <th style={styles.th}>Vendor</th>
                 <th style={styles.th}>Invoice #</th>
+                <th style={styles.th}>Inv Date</th>
                 <th style={styles.th}>PO</th>
                 <th style={styles.th}>Amount</th>
                 <th style={styles.th}>QBO Total</th>
@@ -779,6 +780,15 @@ export default function APDashboard() {
                   </td>
                   <td style={{ ...styles.td, fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>
                     {e.invoice_number || '—'}
+                  </td>
+                  <td style={{
+                    ...styles.td, fontSize: 12, whiteSpace: 'nowrap',
+                    color: (e.error_message === 'prior_year_date' || e.error_message === 'future_year_date')
+                      ? '#b91c1c' : '#64748b',
+                    fontWeight: (e.error_message === 'prior_year_date' || e.error_message === 'future_year_date')
+                      ? 600 : undefined,
+                  }}>
+                    {e.invoice_date || <span style={{ color: '#cbd5e1' }}>—</span>}
                   </td>
                   <td style={{ ...styles.td, fontSize: 12, textAlign: 'right' }}>
                     {e.po_number
