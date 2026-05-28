@@ -937,7 +937,9 @@ async def backfill_qbo_amounts(db: Database = Depends(get_db)):
     - Posted invoices: look up by qbo_bill_id
     - Forwarded invoices: search QBO by invoice_number (DocNumber)
     Safe to call multiple times — skips rows already populated.
+    Runs in parallel (max 8 concurrent QBO calls) to avoid Railway timeouts.
     """
+    import asyncio as _asyncio
     rows = await db._q(
         """SELECT id, qbo_bill_id, doc_type, forwarded_to, invoice_number FROM invoices
            WHERE (destination = 'qbo' OR forwarded_to IS NOT NULL)
@@ -947,31 +949,36 @@ async def backfill_qbo_amounts(db: Database = Depends(get_db)):
     if not rows:
         return {"updated": 0, "message": "Nothing to backfill"}
 
-    updated = 0
-    failed = 0
-    for row in rows:
-        if row.get("qbo_bill_id"):
-            # Posted directly — look up by bill ID
-            amount = await _qbo.get_transaction_amount(row["qbo_bill_id"], row["doc_type"])
-            if amount is not None:
-                await db._x("UPDATE invoices SET qbo_amount = ? WHERE id = ?", [amount, row["id"]])
-                updated += 1
-            else:
-                logger.warning(f"Could not fetch QBO amount for invoice {row['id']} bill {row['qbo_bill_id']}")
-                failed += 1
-        elif row.get("invoice_number") and row.get("forwarded_to"):
-            # Forwarded — search QBO by DocNumber
-            bill_id, amount = await _qbo.find_bill_by_doc_number(row["invoice_number"])
-            if amount is not None:
-                await db._x(
-                    "UPDATE invoices SET qbo_amount = ?, qbo_bill_id = ? WHERE id = ?",
-                    [amount, bill_id, row["id"]],
-                )
-                updated += 1
-            else:
-                failed += 1
+    semaphore = _asyncio.Semaphore(8)  # max 8 concurrent QBO calls
+    results = {"updated": 0, "failed": 0}
 
-    return {"updated": updated, "failed": failed, "total": len(rows)}
+    async def _sync_one(row):
+        async with semaphore:
+            try:
+                if row.get("qbo_bill_id"):
+                    amount = await _qbo.get_transaction_amount(row["qbo_bill_id"], row["doc_type"])
+                    if amount is not None:
+                        await db._x("UPDATE invoices SET qbo_amount = ? WHERE id = ?", [amount, row["id"]])
+                        results["updated"] += 1
+                    else:
+                        logger.warning(f"Could not fetch QBO amount for invoice {row['id']} bill {row['qbo_bill_id']}")
+                        results["failed"] += 1
+                elif row.get("invoice_number") and row.get("forwarded_to"):
+                    bill_id, amount = await _qbo.find_bill_by_doc_number(row["invoice_number"])
+                    if amount is not None:
+                        await db._x(
+                            "UPDATE invoices SET qbo_amount = ?, qbo_bill_id = ? WHERE id = ?",
+                            [amount, bill_id, row["id"]],
+                        )
+                        results["updated"] += 1
+                    else:
+                        results["failed"] += 1
+            except Exception as e:
+                logger.warning(f"backfill_qbo_amounts: invoice {row['id']} failed: {e}")
+                results["failed"] += 1
+
+    await _asyncio.gather(*[_sync_one(row) for row in rows])
+    return {"updated": results["updated"], "failed": results["failed"], "total": len(rows)}
 
 
 @router.post("/{invoice_id}/sync-qbo-amount")
