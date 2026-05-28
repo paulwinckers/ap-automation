@@ -1015,6 +1015,51 @@ async def delete_invoice(invoice_id: int, db: Database = Depends(get_db)):
     return {"invoice_id": invoice_id, "deleted": True}
 
 
+# ── Inline corrections ────────────────────────────────────────────────────────
+
+class VendorCorrection(BaseModel):
+    vendor_name: str
+
+class DateCorrection(BaseModel):
+    invoice_date: str  # YYYY-MM-DD
+
+@router.patch("/{invoice_id}/vendor")
+async def correct_vendor(invoice_id: int, body: VendorCorrection, db: Database = Depends(get_db)):
+    """Correct the vendor name on a queued/error invoice and re-queue for retry."""
+    row = await db.get_invoice(invoice_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if row["status"] not in ("queued", "error", "pending"):
+        raise HTTPException(status_code=400, detail="Only queued/error/pending invoices can be corrected")
+    vendor_name = body.vendor_name.strip()
+    if not vendor_name:
+        raise HTTPException(status_code=422, detail="vendor_name is required")
+    await db._x(
+        "UPDATE invoices SET vendor_name = ?, status = 'queued', error_message = NULL WHERE id = ?",
+        [vendor_name, invoice_id],
+    )
+    await db.audit(invoice_id, "corrected", "dashboard", {"field": "vendor_name", "new_value": vendor_name})
+    return {"invoice_id": invoice_id, "vendor_name": vendor_name}
+
+@router.patch("/{invoice_id}/date")
+async def correct_date(invoice_id: int, body: DateCorrection, db: Database = Depends(get_db)):
+    """Correct the invoice date on a queued/error invoice and re-queue for retry."""
+    row = await db.get_invoice(invoice_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if row["status"] not in ("queued", "error", "pending"):
+        raise HTTPException(status_code=400, detail="Only queued/error/pending invoices can be corrected")
+    invoice_date = body.invoice_date.strip()
+    if not invoice_date:
+        raise HTTPException(status_code=422, detail="invoice_date is required")
+    await db._x(
+        "UPDATE invoices SET invoice_date = ?, status = 'queued', error_message = NULL WHERE id = ?",
+        [invoice_date, invoice_id],
+    )
+    await db.audit(invoice_id, "corrected", "dashboard", {"field": "invoice_date", "new_value": invoice_date})
+    return {"invoice_id": invoice_id, "invoice_date": invoice_date}
+
+
 @router.post("/{invoice_id}/retry")
 async def retry_invoice(invoice_id: int, db: Database = Depends(get_db)):
     """Retry a failed invoice."""

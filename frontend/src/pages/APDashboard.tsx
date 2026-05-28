@@ -137,6 +137,14 @@ export default function APDashboard() {
   const [syncingQbo, setSyncingQbo]   = useState<number | null>(null);
   const [poInputs, setPoInputs]       = useState<Record<number, string>>({});
   const [poSaving, setPoSaving]       = useState<number | null>(null);
+  // Inline corrections
+  const [editingVendor, setEditingVendor]   = useState<number | null>(null);
+  const [vendorSearch, setVendorSearch]     = useState('');
+  const [vendorOptions, setVendorOptions]   = useState<{id: number; name: string}[]>([]);
+  const [vendorSaving, setVendorSaving]     = useState<number | null>(null);
+  const [editingDate, setEditingDate]       = useState<number | null>(null);
+  const [dateInput, setDateInput]           = useState('');
+  const [dateSaving, setDateSaving]         = useState<number | null>(null);
   const [view, setView]               = useState<'active' | 'archived'>('active');
   const [search, setSearch]           = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -234,6 +242,57 @@ export default function APDashboard() {
     } finally {
       setArchiving(null);
     }
+  }
+
+  async function openVendorEdit(id: number) {
+    setEditingVendor(id);
+    setVendorSearch('');
+    // Load all vendor rules once
+    if (vendorOptions.length === 0) {
+      try {
+        const res = await fetch(`${API}/vendors/`);
+        const data = await res.json();
+        setVendorOptions((data.vendors || data || []).map((v: any) => ({ id: v.id, name: v.vendor_name })));
+      } catch { /* non-fatal */ }
+    }
+  }
+
+  async function saveVendor(invoiceId: number, vendorName: string) {
+    setVendorSaving(invoiceId);
+    try {
+      const res = await fetch(`${API}/invoices/${invoiceId}/vendor`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vendor_name: vendorName }),
+      });
+      if (!res.ok) { alert('Could not save vendor'); return; }
+      setEditingVendor(null);
+      setVendorSearch('');
+      // Retry immediately
+      await fetch(`${API}/invoices/${invoiceId}/retry`, { method: 'POST' });
+      await refresh();
+    } catch { alert('Save failed'); }
+    finally { setVendorSaving(null); }
+  }
+
+  async function saveDate(invoiceId: number) {
+    const d = dateInput.trim();
+    if (!d) return;
+    setDateSaving(invoiceId);
+    try {
+      const res = await fetch(`${API}/invoices/${invoiceId}/date`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoice_date: d }),
+      });
+      if (!res.ok) { alert('Could not save date'); return; }
+      setEditingDate(null);
+      setDateInput('');
+      // Retry immediately
+      await fetch(`${API}/invoices/${invoiceId}/retry`, { method: 'POST' });
+      await refresh();
+    } catch { alert('Save failed'); }
+    finally { setDateSaving(null); }
   }
 
   async function openPdf(id: number) {
@@ -903,6 +962,96 @@ export default function APDashboard() {
                           {poSaving === e.id ? '…' : '✓ PO'}
                         </button>
                       </div>
+                    )}
+
+                    {/* Vendor correction */}
+                    {(e.status === 'queued' || e.status === 'error') && view === 'active' && (
+                      editingVendor === e.id ? (
+                        <div style={{ marginTop: 6 }}>
+                          <input
+                            autoFocus
+                            type="text"
+                            placeholder="Search vendor…"
+                            value={vendorSearch}
+                            onChange={ev => setVendorSearch(ev.target.value)}
+                            style={{
+                              fontSize: 11, padding: '2px 6px', borderRadius: 5,
+                              border: '1px solid #a78bfa', width: 160, outline: 'none',
+                            }}
+                          />
+                          <button onClick={() => { setEditingVendor(null); setVendorSearch(''); }}
+                            style={{ marginLeft: 4, fontSize: 11, background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>✕</button>
+                          {vendorSearch.length >= 1 && (
+                            <div style={{ marginTop: 3, border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden', maxHeight: 160, overflowY: 'auto', background: '#fff', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+                              {vendorOptions
+                                .filter(v => v.name.toLowerCase().includes(vendorSearch.toLowerCase()))
+                                .slice(0, 8)
+                                .map(v => (
+                                  <div key={v.id}
+                                    onClick={() => saveVendor(e.id, v.name)}
+                                    style={{ padding: '6px 10px', cursor: vendorSaving === e.id ? 'wait' : 'pointer', fontSize: 12, borderBottom: '1px solid #f1f5f9' }}
+                                    onMouseEnter={ev => (ev.currentTarget.style.background = '#f5f3ff')}
+                                    onMouseLeave={ev => (ev.currentTarget.style.background = '')}
+                                  >
+                                    {v.name}
+                                  </div>
+                                ))}
+                              {vendorOptions.filter(v => v.name.toLowerCase().includes(vendorSearch.toLowerCase())).length === 0 && (
+                                <div style={{ padding: '6px 10px', fontSize: 11, color: '#94a3b8' }}>No match</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <button onClick={() => openVendorEdit(e.id)}
+                          style={{
+                            marginTop: 4, fontSize: 10, padding: '2px 7px', borderRadius: 5,
+                            background: '#f5f3ff', border: '1px solid #a78bfa',
+                            color: '#7c3aed', cursor: 'pointer', display: 'block',
+                          }}>
+                          ✎ Fix vendor
+                        </button>
+                      )
+                    )}
+
+                    {/* Date correction */}
+                    {(e.status === 'queued' || e.status === 'error') && view === 'active' && (
+                      editingDate === e.id ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                          <input
+                            autoFocus
+                            type="date"
+                            value={dateInput}
+                            onChange={ev => setDateInput(ev.target.value)}
+                            onKeyDown={ev => ev.key === 'Enter' && saveDate(e.id)}
+                            style={{
+                              fontSize: 11, padding: '2px 6px', borderRadius: 5,
+                              border: '1px solid #fb923c', outline: 'none',
+                            }}
+                          />
+                          <button onClick={() => saveDate(e.id)}
+                            disabled={dateSaving === e.id || !dateInput}
+                            style={{
+                              fontSize: 11, padding: '2px 7px', borderRadius: 5,
+                              background: '#fff7ed', border: '1px solid #fb923c',
+                              color: '#c2410c', fontWeight: 600,
+                              cursor: dateSaving === e.id ? 'wait' : 'pointer',
+                            }}>
+                            {dateSaving === e.id ? '…' : '✓'}
+                          </button>
+                          <button onClick={() => { setEditingDate(null); setDateInput(''); }}
+                            style={{ fontSize: 11, background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>✕</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setEditingDate(e.id); setDateInput(e.invoice_date || ''); }}
+                          style={{
+                            marginTop: 4, fontSize: 10, padding: '2px 7px', borderRadius: 5,
+                            background: '#fff7ed', border: '1px solid #fb923c',
+                            color: '#c2410c', cursor: 'pointer', display: 'block',
+                          }}>
+                          ✎ Fix date
+                        </button>
+                      )
                     )}
                   </td>
                   <td style={{ ...styles.td, fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>
