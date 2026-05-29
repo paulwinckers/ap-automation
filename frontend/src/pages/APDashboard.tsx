@@ -419,13 +419,23 @@ export default function APDashboard() {
     // Search: vendor name, invoice number, GL name, ref
     if (search.trim()) {
       const q = search.toLowerCase();
+      const paymentLabel = e.doc_type === 'mastercard' ? 'mastercard'
+        : e.doc_type === 'debit_card' ? 'debit card'
+        : e.doc_type === 'expense'    ? 'expense'
+        : e.doc_type === 'credit_memo'? 'credit memo'
+        : 'on account';
       const haystack = [
         e.vendor_name,
         e.invoice_number,
+        e.invoice_date,
+        e.po_number,
         e.gl_name,
         e.gl_account,
         e.qbo_bill_id,
         e.aspire_receipt_id,
+        e.forwarded_to,
+        e.error_message,
+        paymentLabel,
       ].filter(Boolean).join(' ').toLowerCase();
       if (!haystack.includes(q)) return false;
     }
