@@ -740,6 +740,7 @@ export default function APDashboard() {
                 <th style={styles.th}>Vendor</th>
                 <th style={styles.th}>Invoice #</th>
                 <th style={styles.th}>Inv Date</th>
+                <th style={styles.th}>Payment</th>
                 <th style={styles.th}>PO</th>
                 <th style={styles.th}>Amount</th>
                 <th style={styles.th}>QBO Total</th>
@@ -789,6 +790,13 @@ export default function APDashboard() {
                       ? 600 : undefined,
                   }}>
                     {e.invoice_date || <span style={{ color: '#cbd5e1' }}>—</span>}
+                  </td>
+                  <td style={{ ...styles.td, fontSize: 11, whiteSpace: 'nowrap' }}>
+                    {e.doc_type === 'mastercard'  ? <span style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: 4, padding: '1px 6px', fontWeight: 600 }}>MasterCard</span>
+                    : e.doc_type === 'debit_card' ? <span style={{ background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: 4, padding: '1px 6px', fontWeight: 600 }}>Debit Card</span>
+                    : e.doc_type === 'expense'    ? <span style={{ background: '#fef9c3', color: '#854d0e', border: '1px solid #fde68a', borderRadius: 4, padding: '1px 6px', fontWeight: 600 }}>Expense</span>
+                    : e.doc_type === 'credit_memo'? <span style={{ background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', borderRadius: 4, padding: '1px 6px', fontWeight: 600 }}>Credit Memo</span>
+                    : <span style={{ color: '#94a3b8', fontSize: 11 }}>On Account</span>}
                   </td>
                   <td style={{ ...styles.td, fontSize: 12, textAlign: 'right' }}>
                     {e.po_number
