@@ -101,19 +101,20 @@ async def route_invoice(
     # directly and skip vendor rule lookup for the GL.
     if invoice.gl_account:
         logger.info(f"Using user-confirmed GL '{invoice.gl_account}' for invoice {invoice.id}")
-        _has_po = bool(invoice.po_number_override or invoice.po_number)
-        if invoice.doc_type in ("mastercard", "debit_card") and _has_po:
-            # Job-cost card receipt — never post to QBO regardless of GL override.
-            # Queue and notify the contact so they can enter it in Aspire manually.
-            vendor_rule_for_notify = await db.get_vendor_rule_by_name(invoice.vendor_name)
-            await _queue(invoice, db, reason="job_cost_card_receipt")
-            await _notify_queued(invoice, vendor_rule_for_notify, "job_cost_card_receipt", db)
-            return RoutingOutcome.QUEUED
-        if invoice.doc_type == "mastercard":
-            return await _route_to_qbo_purchase(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None, payment_account=settings.MASTERCARD_GL)
-        if invoice.doc_type == "debit_card":
-            return await _route_to_qbo_purchase(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None, payment_account=settings.DEBIT_CARD_GL)
-        return await _route_to_qbo(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None, notify_ap=notify_ap)
+        _effective_po_early = invoice.po_number_override or invoice.po_number
+        if invoice.doc_type in ("mastercard", "debit_card") and _effective_po_early:
+            # Card receipt with a PO → job cost. Fall through to vendor rule lookup
+            # so it routes to Aspire correctly. Never post card job-cost to QBO.
+            logger.info(
+                f"Invoice {invoice.id}: {invoice.doc_type} receipt has PO "
+                f"'{_effective_po_early}' — bypassing GL override, routing as job cost"
+            )
+        else:
+            if invoice.doc_type == "mastercard":
+                return await _route_to_qbo_purchase(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None, payment_account=settings.MASTERCARD_GL)
+            if invoice.doc_type == "debit_card":
+                return await _route_to_qbo_purchase(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None, payment_account=settings.DEBIT_CARD_GL)
+            return await _route_to_qbo(invoice, invoice.gl_account, db, qbo, employee_name, gl_name=None, notify_ap=notify_ap)
 
     # ── Step 1: Vendor lookup ─────────────────────────────────────────────────
     vendor_rule = await db.get_vendor_rule_by_name(invoice.vendor_name)
@@ -163,16 +164,6 @@ async def route_invoice(
         return await _route_to_aspire_unmatched(invoice, db, aspire, vendor_rule=vendor_rule)
 
     if decision == RoutingDecision.ASPIRE:
-        # Card receipts for job-cost vendors never post to Aspire or QBO.
-        # Forward to the contact with payment method clearly stated in the email.
-        if invoice.doc_type in ("mastercard", "debit_card"):
-            logger.info(
-                f"Invoice {invoice.id}: job-cost {invoice.doc_type} receipt for "
-                f"'{invoice.vendor_name}' — queuing and notifying contact (no QBO post)"
-            )
-            await _queue(invoice, db, reason="job_cost_card_receipt")
-            await _notify_queued(invoice, vendor_rule, "job_cost_card_receipt", db)
-            return RoutingOutcome.QUEUED
         return await _route_to_aspire(invoice, effective_po, db, aspire, vendor_rule=vendor_rule)
 
     elif decision == RoutingDecision.QBO:
@@ -423,13 +414,23 @@ async def _notify_aspire_updated(invoice, receipt, vendor_rule, db=None):
         receipt_num = receipt.get("ReceiptNumber") or receipt.get("ReceiptID")
         work_ticket = receipt.get("WorkTicketNumber") or receipt.get("WorkTicketID") or "—"
         opportunity = receipt.get("OpportunityNumber") or receipt.get("OpportunityID") or "—"
+        payment_method = {
+            "mastercard": "MasterCard",
+            "debit_card": "Company Debit Card",
+        }.get(invoice.doc_type or "", None)
+
+        # Subject line calls out card payment method explicitly
+        if payment_method:
+            subject = f"PO #{receipt_num} updated — {invoice.vendor_name or 'Unknown vendor'} {amount} [{payment_method}]"
+        else:
+            subject = f"PO #{receipt_num} updated — {invoice.vendor_name or 'Unknown vendor'} {amount}"
 
         graph = GraphClient()
         try:
             await graph.send_email(
                 mailbox=settings.MS_AP_INBOX,
                 to_addresses=[forward_to],
-                subject=f"PO #{receipt_num} updated — {invoice.vendor_name or 'Unknown vendor'} {amount}",
+                subject=subject,
                 body_html=f"""
 <html><body style="font-family:Arial,sans-serif;color:#1a1d23;max-width:600px">
 <div style="background:#1e3a2f;padding:20px 24px;border-radius:8px 8px 0 0">
@@ -442,6 +443,9 @@ async def _notify_aspire_updated(invoice, receipt, vendor_rule, db=None):
   <table style="width:100%;border-collapse:collapse;font-size:14px">
     <tr><td style="padding:8px 0;color:#6b7280;width:160px">Vendor</td>
         <td style="padding:8px 0;font-weight:600">{invoice.vendor_name or '—'}</td></tr>
+    {f'''<tr style="border-top:1px solid #f0f0f0">
+        <td style="padding:8px 0;color:#6b7280">Paid By</td>
+        <td style="padding:8px 0;font-weight:600;color:#1d4ed8">{payment_method}</td></tr>''' if payment_method else ''}
     <tr style="border-top:1px solid #f0f0f0">
         <td style="padding:8px 0;color:#6b7280">Receipt / PO #</td>
         <td style="padding:8px 0;font-weight:600">{receipt_num}</td></tr>
