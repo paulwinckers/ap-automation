@@ -64,6 +64,7 @@ import {
   updateVendor,
   deactivateVendor,
   lookupGLName,
+  getPOVendors,
   type VendorRule,
 } from '../lib/api';
 
@@ -104,6 +105,8 @@ function VendorAdminInner() {
   const [showInactive, setShowInactive] = useState(false);
   const [search, setSearch] = useState('');
   const [glLooking, setGlLooking] = useState(false);
+  const [aspireResults, setAspireResults] = useState<{id: number; name: string}[]>([]);
+  const [aspireSearching, setAspireSearching] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
@@ -218,15 +221,38 @@ function VendorAdminInner() {
 
   useEffect(() => { load(); }, []);
 
+  async function searchAspireVendors() {
+    const q = form.vendor_name.trim();
+    if (!q) return;
+    setAspireSearching(true);
+    setAspireResults([]);
+    try {
+      const r = await getPOVendors(q);
+      // Include all results (DB-preferred + live Aspire), deduplicate by id
+      const seen = new Set<number>();
+      const results: {id: number; name: string}[] = [];
+      for (const v of r.vendors) {
+        if (v.vendor_id && !seen.has(v.vendor_id)) {
+          seen.add(v.vendor_id);
+          results.push({ id: v.vendor_id, name: v.vendor_name });
+        }
+      }
+      setAspireResults(results);
+    } catch { /* non-fatal */ }
+    finally { setAspireSearching(false); }
+  }
+
   const openCreate = () => {
     setEditingId(null);
     setForm(EMPTY_FORM);
+    setAspireResults([]);
     setSaveError(null);
     setShowForm(true);
   };
 
   const openEdit = (v: VendorRule) => {
     setEditingId(v.id);
+    setAspireResults([]);
     setForm({
       vendor_name:        v.vendor_name,
       type:               v.type,
@@ -625,26 +651,70 @@ function VendorAdminInner() {
                 </div>
               )}
 
-              {/* Aspire / QBO IDs */}
-              <div style={S.fieldRow}>
-                <div style={{ ...S.field, flex: 1 }}>
-                  <label style={S.label}>Aspire vendor ID</label>
+              {/* Aspire vendor ID — searchable */}
+              <div style={S.field}>
+                <label style={S.label}>Aspire vendor ID</label>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input
-                    style={S.input}
+                    style={{ ...S.input, flex: 1, fontFamily: 'monospace', color: form.vendor_id_aspire ? '#059669' : undefined }}
                     value={form.vendor_id_aspire}
                     onChange={e => setForm(f => ({ ...f, vendor_id_aspire: e.target.value }))}
-                    placeholder="optional"
+                    placeholder="e.g. 4821"
                   />
+                  <button
+                    type="button"
+                    onClick={searchAspireVendors}
+                    disabled={aspireSearching || !form.vendor_name.trim()}
+                    style={{
+                      padding: '10px 14px', borderRadius: 8, border: '1.5px solid #2563eb',
+                      background: '#eff6ff', color: '#2563eb', fontSize: 13, fontWeight: 600,
+                      cursor: aspireSearching || !form.vendor_name.trim() ? 'not-allowed' : 'pointer',
+                      opacity: !form.vendor_name.trim() ? 0.4 : 1,
+                      whiteSpace: 'nowrap', fontFamily: 'inherit',
+                    }}
+                  >
+                    {aspireSearching ? '…' : '🔍 Find in Aspire'}
+                  </button>
                 </div>
-                <div style={{ ...S.field, flex: 1 }}>
-                  <label style={S.label}>QBO vendor ID</label>
-                  <input
-                    style={S.input}
-                    value={form.vendor_id_qbo}
-                    onChange={e => setForm(f => ({ ...f, vendor_id_qbo: e.target.value }))}
-                    placeholder="optional"
-                  />
-                </div>
+                {aspireResults.length > 0 && (
+                  <div style={{ marginTop: 6, border: '1.5px solid #bfdbfe', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+                    <div style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: '#6b7280', background: '#f0f9ff', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                      Select to fill in Aspire ID
+                    </div>
+                    {aspireResults.map(v => (
+                      <div
+                        key={v.id}
+                        onClick={() => { setForm(f => ({ ...f, vendor_id_aspire: String(v.id) })); setAspireResults([]); }}
+                        style={{ padding: '10px 12px', cursor: 'pointer', borderTop: '1px solid #e0f2fe', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13 }}
+                        onMouseEnter={e => (e.currentTarget.style.background = '#eff6ff')}
+                        onMouseLeave={e => (e.currentTarget.style.background = '')}
+                      >
+                        <span style={{ fontWeight: 500 }}>{v.name}</span>
+                        <span style={{ fontFamily: 'monospace', color: '#059669', fontSize: 12 }}>ID: {v.id}</span>
+                      </div>
+                    ))}
+                    <div style={{ padding: '8px 12px', fontSize: 11, color: '#94a3b8', borderTop: '1px solid #e0f2fe' }}>
+                      Not listed? The vendor may not exist in Aspire yet.
+                    </div>
+                  </div>
+                )}
+                {aspireResults.length === 0 && !aspireSearching && form.vendor_id_aspire && (
+                  <div style={{ fontSize: 12, color: '#059669', marginTop: 4 }}>✓ Aspire ID set — vendor will appear in the preferred PO list</div>
+                )}
+                {aspireResults.length === 0 && !aspireSearching && !form.vendor_id_aspire && (
+                  <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>Click "Find in Aspire" to search by vendor name and auto-fill the ID</div>
+                )}
+              </div>
+
+              {/* QBO vendor ID */}
+              <div style={S.field}>
+                <label style={S.label}>QBO vendor ID</label>
+                <input
+                  style={{ ...S.input, fontFamily: 'monospace' }}
+                  value={form.vendor_id_qbo}
+                  onChange={e => setForm(f => ({ ...f, vendor_id_qbo: e.target.value }))}
+                  placeholder="optional"
+                />
               </div>
 
               {/* Match keyword */}

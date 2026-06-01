@@ -246,10 +246,12 @@ export default function Reconcile() {
   }
 
   async function saveLink(statementName: string, vendor: {id: string; name: string}) {
-    await fetch(`${API}/reconcile/vendor-links/${encodeURIComponent(statementName)}`, {
-      method: 'PUT',
+    // Use POST body endpoint — PUT path breaks for vendor names containing '/' or other
+    // URL-special characters (e.g. "Westbank Nursery Ltd/dba Dogwood Nursery").
+    await fetch(`${API}/reconcile/vendor-links`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ qbo_vendor_id: vendor.id, qbo_vendor_name: vendor.name }),
+      body: JSON.stringify({ statement_name: statementName, qbo_vendor_id: vendor.id, qbo_vendor_name: vendor.name }),
     });
     setLinks(prev => ({ ...prev, [statementName]: { qbo_vendor_id: vendor.id, qbo_vendor_name: vendor.name } }));
     setLinkingFor(null);

@@ -128,19 +128,69 @@ export default function FieldPurchaseOrder() {
   const [result, setResult]         = useState<{ receipt_id: number | null; display_number: number | null; total: number } | null>(null);
   const [error, setError]           = useState('');
 
-  const jobTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const vendorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jobTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const vendorTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const preferredRef  = useRef<POVendor[]>([]); // cached preferred list for instant filtering
 
-  // Load preferred vendors, employee list, and UOM types on mount.
-  // Also pre-fetch ticket materials when arriving from the project page.
+  const VENDOR_CACHE_KEY = 'po_vendors_v1';
+  const VENDOR_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+  // Load preferred vendors (from cache or backend), employees, and UOM types on mount.
   useEffect(() => {
-    getPOVendors().then(r => setVendors(r.vendors)).catch(() => {});
+    let loaded = false;
+    try {
+      const raw = sessionStorage.getItem(VENDOR_CACHE_KEY);
+      if (raw) {
+        const { vendors: v, ts } = JSON.parse(raw);
+        if (Date.now() - ts < VENDOR_CACHE_TTL && Array.isArray(v) && v.length > 0) {
+          preferredRef.current = v;
+          setVendors(v);
+          loaded = true;
+        }
+      }
+    } catch { /* ignore */ }
+
+    if (!loaded) {
+      getPOVendors().then(r => {
+        preferredRef.current = r.vendors;
+        setVendors(r.vendors);
+        try {
+          sessionStorage.setItem(VENDOR_CACHE_KEY, JSON.stringify({ vendors: r.vendors, ts: Date.now() }));
+        } catch { /* storage full */ }
+      }).catch(() => {});
+    }
+
     getAspireEmployees().then(r => setEmployees(r)).catch(() => {});
     getPOUomTypes().then(r => setUomTypes(r)).catch(() => {});
     if (prefilled && preWtId) {
       fetchTicketItems(Number(preWtId));
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Vendor search:
+  // 1. Instantly filter the cached preferred list (0ms — gives immediate visual feedback)
+  // 2. After 300ms debounce, fire the Aspire live search and merge full results in
+  useEffect(() => {
+    if (!vendorQuery.trim()) {
+      setVendors(preferredRef.current);
+      return;
+    }
+    // Step 1 — instant: show matching preferred vendors right away
+    const q = vendorQuery.toLowerCase();
+    const instant = preferredRef.current.filter(v => v.vendor_name.toLowerCase().includes(q));
+    setVendors(instant);
+
+    // Step 2 — debounced: full Aspire live search (finds vendors not in preferred list)
+    if (vendorTimer.current) clearTimeout(vendorTimer.current);
+    vendorTimer.current = setTimeout(async () => {
+      setVendorLoading(true);
+      try {
+        const r = await getPOVendors(vendorQuery.trim());
+        setVendors(r.vendors);
+      } catch { /* keep the instant filtered list */ }
+      finally { setVendorLoading(false); }
+    }, 300);
+  }, [vendorQuery]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced job search
   useEffect(() => {
@@ -156,22 +206,6 @@ export default function FieldPurchaseOrder() {
     }, 400);
   }, [jobQuery]);
 
-  // Debounced vendor search
-  useEffect(() => {
-    if (!vendorQuery.trim()) {
-      getPOVendors().then(r => setVendors(r.vendors)).catch(() => {});
-      return;
-    }
-    if (vendorTimer.current) clearTimeout(vendorTimer.current);
-    vendorTimer.current = setTimeout(async () => {
-      setVendorLoading(true);
-      try {
-        const r = await getPOVendors(vendorQuery.trim());
-        setVendors(r.vendors);
-      } catch { setVendors([]); }
-      finally { setVendorLoading(false); }
-    }, 400);
-  }, [vendorQuery]);
 
   async function fetchTicketItems(ticketId: number) {
     setTicketItemsLoading(true);

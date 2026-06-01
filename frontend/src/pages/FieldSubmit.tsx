@@ -394,12 +394,18 @@ export default function FieldSubmit() {
       {/* Bottom bar */}
       <div style={S.bar}>
         {step===5 ? (
-          <button style={S.bsuccess} onClick={reset}>Submit another receipt</button>
+          <>
+            <button style={S.bsuccess} onClick={reset}>Submit another receipt</button>
+            <a href="/" style={{...S.bback,display:'block',textAlign:'center',textDecoration:'none',marginTop:8}}>🏠 Main Menu</a>
+          </>
         ) : <>
           <button style={{...S.bprimary,opacity:canProceed()&&!submitting?1:.4}} onClick={next} disabled={!canProceed()||submitting}>
             {submitting?'Submitting...':step===4?'Submit receipt':'Continue'}
           </button>
-          {step>1 && <button style={S.bback} onClick={back}>← Back</button>}
+          {step>1
+            ? <button style={S.bback} onClick={back}>← Back</button>
+            : <a href="/" style={{...S.bback,display:'block',textAlign:'center',textDecoration:'none',marginTop:8}}>🏠 Main Menu</a>
+          }
         </>}
       </div>
     </div>

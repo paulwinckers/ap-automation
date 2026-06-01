@@ -8,7 +8,7 @@
  *   4. Success
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   getNewReceipts, getPOVendors, amendPOVendor,
   type NewReceipt, type POVendor,
@@ -49,6 +49,10 @@ export default function FieldAmendPO() {
   const [newVendor,   setNewVendor]   = useState<POVendor | null>(null);
   const [error,       setError]       = useState<string | null>(null);
   const [result,      setResult]      = useState<{ display_number: number | null; old_vendor: string; vendor_name: string } | null>(null);
+  const vendorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const VENDOR_CACHE_KEY = 'po_vendors_v1';
+  const VENDOR_CACHE_TTL = 60 * 60 * 1000;
 
   // Load New receipts on mount
   useEffect(() => {
@@ -57,22 +61,49 @@ export default function FieldAmendPO() {
       .catch(e => { setError(String(e)); setStep('error'); });
   }, []);
 
-  // Load preferred vendors on mount (for step 2)
+  // Load preferred vendors on mount — use cache for instant display
   useEffect(() => {
-    getPOVendors('').then(r => setVendors(r.vendors)).catch(() => {});
-  }, []);
+    let loaded = false;
+    try {
+      const raw = sessionStorage.getItem(VENDOR_CACHE_KEY);
+      if (raw) {
+        const { vendors: v, ts } = JSON.parse(raw);
+        if (Date.now() - ts < VENDOR_CACHE_TTL && Array.isArray(v) && v.length > 0) {
+          setVendors(v);
+          loaded = true;
+        }
+      }
+    } catch { /* ignore */ }
+    if (!loaded) {
+      getPOVendors('').then(r => {
+        setVendors(r.vendors);
+        try {
+          sessionStorage.setItem(VENDOR_CACHE_KEY, JSON.stringify({ vendors: r.vendors, ts: Date.now() }));
+        } catch { /* non-fatal */ }
+      }).catch(() => {});
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Live vendor search
+  // Vendor search — debounced backend call (includes Aspire live search for typed queries)
   useEffect(() => {
-    if (!vendorQ) {
+    if (!vendorQ.trim()) {
+      try {
+        const raw = sessionStorage.getItem(VENDOR_CACHE_KEY);
+        if (raw) {
+          const { vendors: v, ts } = JSON.parse(raw);
+          if (Date.now() - ts < VENDOR_CACHE_TTL && Array.isArray(v) && v.length > 0) {
+            setVendors(v); return;
+          }
+        }
+      } catch { /* ignore */ }
       getPOVendors('').then(r => setVendors(r.vendors)).catch(() => {});
       return;
     }
-    const t = setTimeout(() => {
+    if (vendorTimer.current) clearTimeout(vendorTimer.current);
+    vendorTimer.current = setTimeout(() => {
       getPOVendors(vendorQ).then(r => setVendors(r.vendors)).catch(() => {});
     }, 300);
-    return () => clearTimeout(t);
-  }, [vendorQ]);
+  }, [vendorQ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSubmit() {
     if (!selected || !newVendor) return;
