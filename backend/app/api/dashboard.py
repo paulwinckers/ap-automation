@@ -2412,12 +2412,12 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
             return False
         if atype == "email" and not _re.search(r'Issue\s*#', subject, _re.IGNORECASE):
             return False
-        # Filter completed — check API status, parsed HTML status, AND CompleteDate
+        # Filter completed/deleted — check API status, parsed HTML status, AND CompleteDate
         if not show_completed:
             api_status    = (a.get("Status") or "").strip().lower()
             parsed_status = (_parsed_cache.get(a.get("ActivityID"), {}).get("status") or "").strip().lower()
             combined      = api_status + " " + parsed_status
-            if "complet" in combined or "closed" in combined or "cancel" in combined:
+            if "complet" in combined or "closed" in combined or "cancel" in combined or "delet" in combined or "void" in combined:
                 return False
             # CompleteDate being set means the issue was resolved in Aspire,
             # even if the Status field still reads "Open"
@@ -2516,8 +2516,27 @@ async def get_activities_dashboard(show_completed: bool = False, include_emails:
                 _issue_meta[issue_num] = _pick_closest_native(nat_list, ref_rec)
                 break
 
+    # ── Issues whose native record is deleted/completed in Aspire ────────────
+    # When the underlying Issue is deleted in Aspire after its email notifications
+    # were sent, the email notification records still exist and would pass is_active.
+    # Check the native Issue record status from _issue_meta to catch these.
+    _closed_issue_nums: set = set()
+    if not show_completed:
+        for inum, native in _issue_meta.items():
+            nat_status = (native.get("Status") or "").strip().lower()
+            if ("delet" in nat_status or "complet" in nat_status or
+                    "closed" in nat_status or "cancel" in nat_status or
+                    "void" in nat_status or native.get("CompleteDate")):
+                _closed_issue_nums.add(inum)
+
+    def _issue_num_of(a: dict):
+        return _parsed_cache.get(a.get("ActivityID"), {}).get("issue_number")
+
     # ── Now apply status filter on the deduplicated set ───────────────────────
-    activities = [a for a in deduped if is_active(a)]
+    activities = [
+        a for a in deduped
+        if is_active(a) and _issue_num_of(a) not in _closed_issue_nums
+    ]
 
     # ── Batch-fetch property + opportunity names ──────────────────────────────
     async def _fetch_names(entity: str, id_field: str, name_field: str, ids: list) -> dict:
