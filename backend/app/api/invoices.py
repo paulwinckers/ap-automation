@@ -200,8 +200,14 @@ async def upload_invoice(
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Extraction failed: {e}")
 
-    # Duplicate check — reject if this invoice number was already processed
-    if extraction.invoice_number and extraction.vendor_name:
+    # Duplicate check — reject if this invoice number was already processed.
+    # Card receipts (mastercard / debit_card) are SKIPPED: retail receipts use
+    # terminal slip counters (e.g. MC NO.0008) that reset per terminal/batch and
+    # are NOT unique across transactions. Two different purchases at the same store
+    # on the same day will both show slip "0008". The real uniqueness for card
+    # receipts comes from PO + amount, not the slip number.
+    _is_card = original_doc_type in ("mastercard", "debit_card")
+    if not _is_card and extraction.invoice_number and extraction.vendor_name:
         duplicate = await db.find_duplicate_invoice(extraction.vendor_name, extraction.invoice_number)
         if duplicate:
             raise HTTPException(
