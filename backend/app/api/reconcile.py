@@ -601,7 +601,30 @@ async def search_qbo_vendors(q: str = ""):
         await qbo.close()
 
 
-@router.get("/vendor-links/{statement_name}")
+@router.post("/vendor-links")
+async def save_vendor_link_by_body(
+    body: dict,
+    db: Database = Depends(get_db),
+):
+    """
+    Save or update a vendor QBO link — accepts statement_name in the body.
+    Preferred over the PUT path variant when vendor names contain slashes or
+    other characters that interfere with URL routing.
+    """
+    statement_name  = body.get("statement_name")
+    qbo_vendor_id   = body.get("qbo_vendor_id")
+    qbo_vendor_name = body.get("qbo_vendor_name")
+    if not statement_name or not qbo_vendor_id or not qbo_vendor_name:
+        raise HTTPException(status_code=400, detail="statement_name, qbo_vendor_id and qbo_vendor_name required")
+    await db.connect()
+    try:
+        await db.save_vendor_qbo_link(statement_name, qbo_vendor_id, qbo_vendor_name)
+        return {"statement_name": statement_name, "qbo_vendor_id": qbo_vendor_id, "qbo_vendor_name": qbo_vendor_name}
+    finally:
+        await db.close()
+
+
+@router.get("/vendor-links/{statement_name:path}")
 async def get_vendor_link(statement_name: str, db: Database = Depends(get_db)):
     """Get the QBO vendor link for a statement vendor name."""
     await db.connect()
@@ -612,7 +635,7 @@ async def get_vendor_link(statement_name: str, db: Database = Depends(get_db)):
         await db.close()
 
 
-@router.put("/vendor-links/{statement_name}")
+@router.put("/vendor-links/{statement_name:path}")
 async def save_vendor_link(
     statement_name: str,
     body: dict,
@@ -631,7 +654,7 @@ async def save_vendor_link(
         await db.close()
 
 
-@router.delete("/vendor-links/{statement_name}")
+@router.delete("/vendor-links/{statement_name:path}")
 async def delete_vendor_link(statement_name: str, db: Database = Depends(get_db)):
     """Remove a vendor QBO link (revert to fuzzy matching)."""
     await db.connect()
