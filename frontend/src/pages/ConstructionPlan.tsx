@@ -605,7 +605,7 @@ export default function ConstructionPlan() {
     load();
   };
 
-  const { goal, jobs, summary } = plan || { goal: { month, revenue_goal: null, hours_goal: null, notes: null }, jobs: [], summary: { job_count: 0, scheduled_count: 0, manual_count: 0, days_left: 0, hrs_est: 0, hrs_act: 0, revenue_est: 0, revenue_act: 0 } };
+  const { goal, jobs, summary } = plan || { goal: { month, revenue_goal: null, hours_goal: null, notes: null }, jobs: [], summary: { job_count: 0, scheduled_count: 0, manual_count: 0, days_left: 0, hrs_est: 0, hrs_act: 0, hrs_est_month: 0, hrs_act_month: 0, revenue_est: 0, revenue_act: 0 } };
 
 
   const overBudget = jobs.filter(j => j.risk === 'over_budget');
@@ -679,7 +679,7 @@ export default function ConstructionPlan() {
           </div>
           <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
             <GoalBar label="Revenue" actual={summary.revenue_act} goal={goal.revenue_goal} unit="$" />
-            <GoalBar label="Hours" actual={summary.hrs_act} goal={goal.hours_goal} unit="h" />
+            <GoalBar label="Hours" actual={summary.hrs_act_month} goal={goal.hours_goal} unit="h" />
           </div>
           {goal.notes && (
             <div style={{ marginTop: 12, fontSize: 13, color: '#6b7280', fontStyle: 'italic' }}>
