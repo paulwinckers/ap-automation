@@ -657,7 +657,7 @@ export default function ConstructionPlan() {
           </div>
         </div>
 
-        {/* Goal progress bars */}
+        {/* Goal progress bars + projected totals */}
         <div style={{
           background: '#fff', borderRadius: 14, padding: '20px 24px',
           border: '1px solid #e5e7eb', marginBottom: 20,
@@ -684,6 +684,29 @@ export default function ConstructionPlan() {
           {goal.notes && (
             <div style={{ marginTop: 12, fontSize: 13, color: '#6b7280', fontStyle: 'italic' }}>
               {goal.notes}
+            </div>
+          )}
+
+          {/* Projected totals — ticket-based, this month only */}
+          {!loading && jobs.length > 0 && (
+            <div style={{
+              marginTop: 16, paddingTop: 16, borderTop: '1px solid #f1f5f9',
+              display: 'flex', gap: 32, flexWrap: 'wrap', fontSize: 13,
+            }}>
+              <div>
+                <span style={{ color: '#6b7280' }}>Ticket hours this month: </span>
+                <strong style={{ color: '#111827' }}>{fmtH(summary.hrs_act_month)}</strong>
+                <span style={{ color: '#9ca3af' }}> actual / </span>
+                <strong style={{ color: '#111827' }}>{fmtH(summary.hrs_est_month)}</strong>
+                <span style={{ color: '#9ca3af' }}> projected</span>
+              </div>
+              <div>
+                <span style={{ color: '#6b7280' }}>Contracted revenue: </span>
+                <strong style={{ color: '#111827' }}>{fmt$(summary.revenue_act)}</strong>
+                <span style={{ color: '#9ca3af' }}> earned / </span>
+                <strong style={{ color: '#111827' }}>{fmt$(summary.revenue_est)}</strong>
+                <span style={{ color: '#9ca3af' }}> total</span>
+              </div>
             </div>
           )}
         </div>
@@ -839,33 +862,10 @@ export default function ConstructionPlan() {
 
         {/* Summary totals */}
         {jobs.length > 0 && (
-          <div style={{ marginTop: 16 }}>
-            {/* Status summary */}
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 13, color: '#6b7280', marginBottom: 10 }}>
-              <span><strong style={{ color: overBudget.length ? '#dc2626' : atRisk.length ? '#d97706' : '#15803d' }}>
-                {complete.length} complete · {onTrack.length} on track · {atRisk.length} at risk · {overBudget.length} over budget
-              </strong></span>
-            </div>
-            {/* Projected totals for this month */}
-            <div style={{
-              background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10,
-              padding: '12px 20px', display: 'flex', gap: 32, flexWrap: 'wrap', fontSize: 13,
-            }}>
-              <div>
-                <div style={{ color: '#6b7280', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>This Month — Ticket Hours</div>
-                <span style={{ color: '#111827', fontWeight: 600 }}>{fmtH(summary.hrs_act_month)}</span>
-                <span style={{ color: '#9ca3af' }}> actual / </span>
-                <span style={{ color: '#111827', fontWeight: 600 }}>{fmtH(summary.hrs_est_month)}</span>
-                <span style={{ color: '#9ca3af' }}> projected</span>
-              </div>
-              <div style={{ borderLeft: '1px solid #e5e7eb', paddingLeft: 32 }}>
-                <div style={{ color: '#6b7280', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Contracted Revenue (all active jobs)</div>
-                <span style={{ color: '#111827', fontWeight: 600 }}>{fmt$(summary.revenue_act)}</span>
-                <span style={{ color: '#9ca3af' }}> earned / </span>
-                <span style={{ color: '#111827', fontWeight: 600 }}>{fmt$(summary.revenue_est)}</span>
-                <span style={{ color: '#9ca3af' }}> contracted</span>
-              </div>
-            </div>
+          <div style={{ marginTop: 12, fontSize: 13, color: '#6b7280' }}>
+            <strong style={{ color: overBudget.length ? '#dc2626' : atRisk.length ? '#d97706' : '#15803d' }}>
+              {complete.length} complete · {onTrack.length} on track · {atRisk.length} at risk · {overBudget.length} over budget
+            </strong>
           </div>
         )}
       </div>
