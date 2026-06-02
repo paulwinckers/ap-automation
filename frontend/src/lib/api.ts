@@ -384,7 +384,16 @@ export interface MonthlyPlan {
 }
 
 export async function getMonthlyPlan(month: string): Promise<MonthlyPlan> {
-  return request('GET', `/construction/plan/${month}`);
+  // Always bypass browser/CDN cache — plan data includes live Aspire work tickets
+  const token = localStorage.getItem('ap_token');
+  const headers: Record<string, string> = { 'Cache-Control': 'no-cache' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(
+    `${BASE}/construction/plan/${month}?_=${Date.now()}`,
+    { headers, cache: 'no-store' },
+  );
+  if (!res.ok) throw new Error(`Plan fetch failed: ${res.status}`);
+  return res.json();
 }
 
 export async function setMonthlyGoal(month: string, goal: Partial<PlanGoal>): Promise<{ ok: boolean }> {
