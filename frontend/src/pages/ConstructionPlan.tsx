@@ -197,7 +197,8 @@ function AddJobPanel({ month, onAdded, onClose }: {
   onAdded: () => void;
   onClose: () => void;
 }) {
-  const [suggestions, setSuggestions] = useState<PlanSuggestion[]>([]);
+  const [suggestions,    setSuggestions]    = useState<PlanSuggestion[]>([]);
+  const [scheduledCount, setScheduledCount] = useState(0);
   const [q, setQ]         = useState('');
   const [loading, setLoading] = useState(true);
   const [adding, setAdding]   = useState<number | null>(null);
@@ -205,6 +206,7 @@ function AddJobPanel({ month, onAdded, onClose }: {
   useEffect(() => {
     getPlanSuggestions(month).then(r => {
       setSuggestions(r.suggestions);
+      setScheduledCount(r.scheduled_count ?? 0);
       setLoading(false);
     });
   }, [month]);
@@ -213,6 +215,9 @@ function AddJobPanel({ month, onAdded, onClose }: {
     ? suggestions.filter(s =>
         (s.opportunity_name + ' ' + s.property_name).toLowerCase().includes(q.toLowerCase()))
     : suggestions;
+
+  const filteredScheduled = filtered.filter(s => s.has_scheduled);
+  const filteredOther     = filtered.filter(s => !s.has_scheduled);
 
   const add = async (s: PlanSuggestion) => {
     setAdding(s.opportunity_id);
@@ -224,6 +229,48 @@ function AddJobPanel({ month, onAdded, onClose }: {
     onAdded();
   };
 
+  const SuggestionRow = ({ s }: { s: PlanSuggestion }) => (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12,
+      padding: '10px 12px', borderRadius: 8, marginBottom: 4,
+      background: s.has_scheduled ? '#eff6ff' : '#f9fafb',
+      border: `1px solid ${s.has_scheduled ? '#bfdbfe' : '#f3f4f6'}`,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600, fontSize: 13, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {s.property_name || s.opportunity_name}
+          </span>
+          {s.has_scheduled && (
+            <span style={{
+              background: '#dbeafe', color: '#1d4ed8', fontSize: 10, fontWeight: 700,
+              padding: '1px 6px', borderRadius: 8, whiteSpace: 'nowrap', flexShrink: 0,
+            }}>
+              📅 {s.ticket_count} ticket{s.ticket_count !== 1 ? 's' : ''} this month
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+          {s.opportunity_name}
+          {s.won_dollars > 0 && <span style={{ marginLeft: 8, color: '#374151' }}>{fmt$(s.won_dollars)}</span>}
+          {s.hrs_est > 0 && <span style={{ marginLeft: 8 }}>{fmtH(s.hrs_est)} est</span>}
+          <span style={{ marginLeft: 8, background: '#e5e7eb', borderRadius: 8, padding: '1px 6px' }}>{s.status}</span>
+        </div>
+      </div>
+      <button
+        onClick={() => add(s)}
+        disabled={adding === s.opportunity_id}
+        style={{
+          padding: '5px 14px', borderRadius: 8, border: 'none',
+          background: adding === s.opportunity_id ? '#9ca3af' : '#1d4ed8',
+          color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: 13, flexShrink: 0,
+        }}
+      >
+        {adding === s.opportunity_id ? '…' : '+ Add'}
+      </button>
+    </div>
+  );
+
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 1000,
@@ -232,13 +279,18 @@ function AddJobPanel({ month, onAdded, onClose }: {
     }} onClick={onClose}>
       <div style={{
         background: '#fff', borderRadius: 14, padding: 24,
-        width: 540, maxHeight: '80vh', display: 'flex', flexDirection: 'column',
+        width: 560, maxHeight: '82vh', display: 'flex', flexDirection: 'column',
         boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
       }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
           <span style={{ fontWeight: 700, fontSize: 16, color: '#111827' }}>Add Job — {monthLabel(month)}</span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: '#9ca3af' }}>✕</button>
         </div>
+        {!loading && scheduledCount > 0 && (
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
+            📅 <strong>{scheduledCount}</strong> job{scheduledCount !== 1 ? 's' : ''} have work tickets scheduled in Aspire for {monthLabel(month)}
+          </div>
+        )}
         <input
           autoFocus
           placeholder="Search by property or job name…"
@@ -253,36 +305,32 @@ function AddJobPanel({ month, onAdded, onClose }: {
           {!loading && filtered.length === 0 && (
             <div style={{ color: '#9ca3af', padding: 20, textAlign: 'center' }}>No results</div>
           )}
-          {filtered.map(s => (
-            <div key={s.opportunity_id} style={{
-              display: 'flex', alignItems: 'center', gap: 12,
-              padding: '10px 12px', borderRadius: 8, marginBottom: 4,
-              background: '#f9fafb', border: '1px solid #f3f4f6',
-            }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {s.property_name || s.opportunity_name}
-                </div>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>
-                  {s.opportunity_name}
-                  {s.won_dollars > 0 && <span style={{ marginLeft: 8, color: '#374151' }}>{fmt$(s.won_dollars)}</span>}
-                  {s.hrs_est > 0 && <span style={{ marginLeft: 8 }}>{fmtH(s.hrs_est)} est</span>}
-                  <span style={{ marginLeft: 8, background: '#e5e7eb', borderRadius: 8, padding: '1px 6px' }}>{s.status}</span>
-                </div>
+
+          {/* Tier 1 — scheduled work tickets this month */}
+          {filteredScheduled.length > 0 && (
+            <>
+              <div style={{
+                fontSize: 11, fontWeight: 700, color: '#1d4ed8', textTransform: 'uppercase',
+                letterSpacing: '0.06em', marginBottom: 8,
+              }}>
+                📅 Scheduled this month
               </div>
-              <button
-                onClick={() => add(s)}
-                disabled={adding === s.opportunity_id}
-                style={{
-                  padding: '5px 14px', borderRadius: 8, border: 'none',
-                  background: adding === s.opportunity_id ? '#9ca3af' : '#1d4ed8',
-                  color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: 13, flexShrink: 0,
-                }}
-              >
-                {adding === s.opportunity_id ? '…' : '+ Add'}
-              </button>
-            </div>
-          ))}
+              {filteredScheduled.map(s => <SuggestionRow key={s.opportunity_id} s={s} />)}
+            </>
+          )}
+
+          {/* Tier 2 — other active construction opps */}
+          {filteredOther.length > 0 && (
+            <>
+              <div style={{
+                fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase',
+                letterSpacing: '0.06em', margin: `${filteredScheduled.length > 0 ? 16 : 0}px 0 8px`,
+              }}>
+                Other Active Jobs
+              </div>
+              {filteredOther.map(s => <SuggestionRow key={s.opportunity_id} s={s} />)}
+            </>
+          )}
         </div>
       </div>
     </div>

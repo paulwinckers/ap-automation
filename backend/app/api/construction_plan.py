@@ -382,28 +382,104 @@ async def remove_job(month: str, opp_id: int, db: Database = Depends(get_db)):
     return {"ok": True, "month": month, "opportunity_id": opp_id}
 
 
+async def _fetch_scheduled_opp_ids_all_divisions(month: str) -> dict[int, int]:
+    """
+    Like _fetch_scheduled_opp_ids but WITHOUT the Construction division filter.
+    Returns {opportunity_id: ticket_count} for ALL opps with scheduled work tickets
+    in the given month — used so suggestions can surface jobs from any division.
+    """
+    y, m = int(month[:4]), int(month[5:7])
+    next_m = f"{y + 1}-01" if m == 12 else f"{y}-{str(m + 1).zfill(2)}"
+    start, end = f"{month}-01", f"{next_m}-01"
+
+    tickets: list[dict] = []
+    for date_fmt in (
+        f"ScheduledStartDate ge {start} and ScheduledStartDate lt {end}",
+        f"ScheduledStartDate ge {start}T00:00:00Z and ScheduledStartDate lt {end}T00:00:00Z",
+    ):
+        try:
+            res = await _aspire._get("WorkTickets", {
+                "$filter": date_fmt,
+                "$select": "WorkTicketID,OpportunityID",
+                "$top": "500",
+            })
+            tickets = _aspire._extract_list(res)
+            if tickets:
+                break
+        except Exception:
+            pass
+
+    out: dict[int, int] = {}
+    for t in tickets:
+        oid = t.get("OpportunityID")
+        if oid:
+            out[oid] = out.get(oid, 0) + 1
+    return out
+
+
 @router.get("/{month}/suggestions")
 async def get_suggestions(month: str, db: Database = Depends(get_db)):
     """
-    Return active Construction opportunities not already in this month's plan
-    (neither scheduled nor manually added). Used to populate the 'Add Job' dropdown.
+    Return Construction opportunities not already in this month's plan.
+
+    Two tiers — returned in order:
+      1. SCHEDULED  — have work tickets in Aspire for this month (most relevant)
+      2. OTHER      — remaining active Construction opps with no scheduled tickets
+
+    Each suggestion includes `ticket_count` (0 for tier-2 entries) so the
+    frontend can visually distinguish them.
     """
     if len(month) != 7 or month[4] != "-":
         raise HTTPException(status_code=400, detail="month must be YYYY-MM")
 
     import asyncio as _aio
 
-    committed_rows_coro = db._q(
+    committed_rows_coro  = db._q(
         "SELECT opportunity_id FROM construction_job_targets WHERE month = ?", [month]
     )
-    committed_rows, scheduled_map = await _aio.gather(
-        committed_rows_coro, _fetch_scheduled_opp_ids(month)
+    # Fetch manually committed jobs, auto-scheduled plan jobs, and all-division
+    # scheduled ticket map in parallel
+    committed_rows, scheduled_plan_map, all_scheduled_map = await _aio.gather(
+        committed_rows_coro,
+        _fetch_scheduled_opp_ids(month),          # Construction division, used for plan
+        _fetch_scheduled_opp_ids_all_divisions(month),  # All divisions, for suggestions
     )
 
-    already_in_plan = {r["opportunity_id"] for r in committed_rows} | set(scheduled_map.keys())
+    already_in_plan = {r["opportunity_id"] for r in committed_rows} | set(scheduled_plan_map.keys())
 
-    opps = await _fetch_construction_opps(exclude_ids=already_in_plan)
-    suggestions = [
+    # Tier 1: opps with scheduled tickets this month but not yet in plan
+    # Fetch actuals for those opps so we can show name/contract value
+    tier1_ids = [oid for oid in all_scheduled_map if oid not in already_in_plan]
+    tier1_actuals: dict[int, dict] = {}
+    if tier1_ids:
+        tier1_actuals = await _fetch_opp_actuals(tier1_ids)
+
+    tier1 = []
+    for oid in tier1_ids:
+        o = tier1_actuals.get(oid, {})
+        div = (o.get("DivisionName") or "").lower()
+        branch = (settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction").lower()
+        # Only include Construction division jobs in tier 1
+        if branch not in div:
+            continue
+        tier1.append({
+            "opportunity_id":   oid,
+            "opportunity_name": o.get("OpportunityName") or f"Job #{oid}",
+            "property_name":    o.get("PropertyName") or "",
+            "status":           o.get("OpportunityStatusName") or "",
+            "pct_complete":     float(o.get("PercentComplete") or 0),
+            "hrs_est":          float(o.get("EstimatedLaborHours") or 0),
+            "hrs_act":          float(o.get("ActualLaborHours") or 0),
+            "won_dollars":      float(o.get("WonDollars") or 0),
+            "ticket_count":     all_scheduled_map[oid],
+            "has_scheduled":    True,
+        })
+    tier1.sort(key=lambda s: s["property_name"])
+
+    # Tier 2: all other active Construction opps (no scheduled tickets, not in plan)
+    exclude_tier2 = already_in_plan | {s["opportunity_id"] for s in tier1}
+    other_opps = await _fetch_construction_opps(exclude_ids=exclude_tier2)
+    tier2 = [
         {
             "opportunity_id":   o.get("OpportunityID"),
             "opportunity_name": o.get("OpportunityName") or "",
@@ -413,7 +489,14 @@ async def get_suggestions(month: str, db: Database = Depends(get_db)):
             "hrs_est":          float(o.get("EstimatedLaborHours") or 0),
             "hrs_act":          float(o.get("ActualLaborHours") or 0),
             "won_dollars":      float(o.get("WonDollars") or 0),
+            "ticket_count":     0,
+            "has_scheduled":    False,
         }
-        for o in opps
+        for o in other_opps
     ]
-    return {"month": month, "suggestions": suggestions}
+
+    return {
+        "month": month,
+        "suggestions": tier1 + tier2,
+        "scheduled_count": len(tier1),
+    }

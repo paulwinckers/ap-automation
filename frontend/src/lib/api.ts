@@ -361,6 +361,8 @@ export interface PlanSuggestion {
   hrs_est: number;
   hrs_act: number;
   won_dollars: number;
+  ticket_count: number;
+  has_scheduled: boolean;
 }
 
 export interface PlanSummary {
@@ -397,7 +399,7 @@ export async function removeJobFromMonth(month: string, opportunityId: number): 
   return request('DELETE', `/construction/plan/${month}/jobs/${opportunityId}`);
 }
 
-export async function getPlanSuggestions(month: string): Promise<{ month: string; suggestions: PlanSuggestion[] }> {
+export async function getPlanSuggestions(month: string): Promise<{ month: string; suggestions: PlanSuggestion[]; scheduled_count: number }> {
   return request('GET', `/construction/plan/${month}/suggestions`);
 }
 
