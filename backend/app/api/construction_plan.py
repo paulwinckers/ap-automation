@@ -115,7 +115,7 @@ async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
                 "$filter": date_fmt,
                 "$orderby": "WorkTicketID desc",
                 "$top": "500",
-                "$select": "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,OpportunityID,OpportunityServiceID,ScheduledStartDate,CompleteDate,HoursEst,HoursAct,BudgetVariance,CrewLeaderName,PercentComplete",
+                "$select": "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,OpportunityID,OpportunityServiceID,ScheduledStartDate,CompleteDate,HoursEst,HoursAct,EarnedRevenue,Revenue,BudgetVariance,CrewLeaderName,PercentComplete",
             })
             tickets = _aspire._extract_list(res)
             logger.info(f"Plan: fetched {len(tickets)} work tickets for {month} using filter: {date_fmt}")
@@ -281,9 +281,13 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         n_complete  = len(completed_tickets)
         pct_month   = (n_complete / n_total * 100) if n_total else 0
 
-        # ── Month-specific hours from scheduled tickets (excludes prior-month actuals) ──
-        hrs_est_month = sum(float(t.get("HoursEst") or 0) for t in tickets)
-        hrs_act_month = sum(float(t.get("HoursAct") or 0) for t in tickets)
+        # ── Month-specific hours & revenue from scheduled tickets ──────────────
+        hrs_est_month     = sum(float(t.get("HoursEst")      or 0) for t in tickets)
+        hrs_act_month     = sum(float(t.get("HoursAct")      or 0) for t in tickets)
+        # EarnedRevenue = Aspire's computed per-ticket earned revenue (read-only)
+        # Revenue       = the ticket's budgeted/target revenue
+        revenue_act_month = sum(float(t.get("EarnedRevenue") or 0) for t in tickets)
+        revenue_est_month = sum(float(t.get("Revenue")       or 0) for t in tickets)
 
         rev_act = float(opp.get("ActualEarnedRevenue") or 0)
 
@@ -295,8 +299,10 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             "status":            opp.get("OpportunityStatusName") or "",
             "hrs_est":           hrs_est,           # total job estimated hours
             "hrs_act":           hrs_act,           # total job actual hours (lifetime)
-            "hrs_est_month":     hrs_est_month,     # estimated hours from THIS month's tickets
-            "hrs_act_month":     hrs_act_month,     # actual hours from THIS month's tickets only
+            "hrs_est_month":         hrs_est_month,     # estimated hours from THIS month's tickets
+            "hrs_act_month":         hrs_act_month,     # actual hours from THIS month's tickets only
+            "revenue_act_month":     revenue_act_month, # EarnedRevenue from THIS month's tickets
+            "revenue_est_month":     revenue_est_month, # budgeted Revenue from THIS month's tickets
             "pct_complete":      pct_month,         # tickets done this month / total this month
             "pct_complete_job":  pct,               # Aspire's overall job % complete
             "revenue_est":       rev_est,
@@ -345,10 +351,13 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         "hrs_est":           sum(j["hrs_est"] for j in job_list),
         "hrs_act":           sum(j["hrs_act"] for j in job_list),
         # Month-specific ticket hours (excludes prior-month accumulated actuals)
-        "hrs_est_month":     sum(j["hrs_est_month"] for j in job_list),
-        "hrs_act_month":     sum(j["hrs_act_month"] for j in job_list),
-        "revenue_est":       sum(j["revenue_est"] for j in job_list),
-        "revenue_act":       sum(j["revenue_act"] for j in job_list),
+        "hrs_est_month":         sum(j["hrs_est_month"] for j in job_list),
+        "hrs_act_month":         sum(j["hrs_act_month"] for j in job_list),
+        # Month-specific ticket revenue from Aspire EarnedRevenue field
+        "revenue_act_month":     sum(j["revenue_act_month"] for j in job_list),
+        "revenue_est_month":     sum(j["revenue_est_month"] for j in job_list),
+        "revenue_est":           sum(j["revenue_est"] for j in job_list),
+        "revenue_act":           sum(j["revenue_act"] for j in job_list),
     }
 
     return {"month": month, "goal": goal, "jobs": job_list, "summary": summary}

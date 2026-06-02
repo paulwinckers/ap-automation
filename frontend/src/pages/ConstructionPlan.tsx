@@ -605,7 +605,7 @@ export default function ConstructionPlan() {
     load();
   };
 
-  const { goal, jobs, summary } = plan || { goal: { month, revenue_goal: null, hours_goal: null, notes: null }, jobs: [], summary: { job_count: 0, scheduled_count: 0, manual_count: 0, days_left: 0, hrs_est: 0, hrs_act: 0, hrs_est_month: 0, hrs_act_month: 0, revenue_est: 0, revenue_act: 0 } };
+  const { goal, jobs, summary } = plan || { goal: { month, revenue_goal: null, hours_goal: null, notes: null }, jobs: [], summary: { job_count: 0, scheduled_count: 0, manual_count: 0, days_left: 0, hrs_est: 0, hrs_act: 0, hrs_est_month: 0, hrs_act_month: 0, revenue_est: 0, revenue_act: 0, revenue_act_month: 0, revenue_est_month: 0 } };
 
 
   const overBudget = jobs.filter(j => j.risk === 'over_budget');
@@ -678,7 +678,7 @@ export default function ConstructionPlan() {
             </span>
           </div>
           <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
-            <GoalBar label="Revenue" actual={summary.revenue_act} goal={goal.revenue_goal} unit="$" />
+            <GoalBar label="Revenue" actual={summary.revenue_act_month} goal={goal.revenue_goal} unit="$" />
             <GoalBar label="Hours" actual={summary.hrs_act_month} goal={goal.hours_goal} unit="h" />
           </div>
           {goal.notes && (
@@ -701,11 +701,11 @@ export default function ConstructionPlan() {
                 <span style={{ color: '#9ca3af' }}> projected</span>
               </div>
               <div>
-                <span style={{ color: '#6b7280' }}>Contracted revenue: </span>
-                <strong style={{ color: '#111827' }}>{fmt$(summary.revenue_act)}</strong>
+                <span style={{ color: '#6b7280' }}>Earned revenue this month: </span>
+                <strong style={{ color: '#111827' }}>{fmt$(summary.revenue_act_month)}</strong>
                 <span style={{ color: '#9ca3af' }}> earned / </span>
-                <strong style={{ color: '#111827' }}>{fmt$(summary.revenue_est)}</strong>
-                <span style={{ color: '#9ca3af' }}> total</span>
+                <strong style={{ color: '#111827' }}>{fmt$(summary.revenue_est_month)}</strong>
+                <span style={{ color: '#9ca3af' }}> projected</span>
               </div>
             </div>
           )}
