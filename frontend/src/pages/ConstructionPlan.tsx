@@ -796,9 +796,12 @@ export default function ConstructionPlan() {
                       )}
                     </td>
 
-                    {/* Hours */}
+                    {/* Hours — month-specific ticket hours, not lifetime job totals */}
                     <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
-                      <HrsBar act={j.hrs_act} est={j.hrs_est} />
+                      {j.ticket_count > 0
+                        ? <HrsBar act={j.hrs_act_month} est={j.hrs_est_month} />
+                        : <span style={{ color: '#9ca3af', fontSize: 12 }}>—</span>
+                      }
                     </td>
 
                     {/* Revenue */}
@@ -836,17 +839,33 @@ export default function ConstructionPlan() {
 
         {/* Summary totals */}
         {jobs.length > 0 && (
-          <div style={{
-            marginTop: 16, display: 'flex', gap: 16, flexWrap: 'wrap',
-            fontSize: 13, color: '#6b7280',
-          }}>
-            <span>Totals: <strong style={{ color: '#111827' }}>{fmtH(summary.hrs_act)}</strong> actual / <strong style={{ color: '#111827' }}>{fmtH(summary.hrs_est)}</strong> est hours</span>
-            <span>·</span>
-            <span><strong style={{ color: '#111827' }}>{fmt$(summary.revenue_act)}</strong> earned / <strong style={{ color: '#111827' }}>{fmt$(summary.revenue_est)}</strong> contracted</span>
-            <span>·</span>
-            <span><strong style={{ color: overBudget.length ? '#dc2626' : atRisk.length ? '#d97706' : '#15803d' }}>
-              {complete.length} complete · {onTrack.length} on track · {atRisk.length} at risk · {overBudget.length} over budget
-            </strong></span>
+          <div style={{ marginTop: 16 }}>
+            {/* Status summary */}
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 13, color: '#6b7280', marginBottom: 10 }}>
+              <span><strong style={{ color: overBudget.length ? '#dc2626' : atRisk.length ? '#d97706' : '#15803d' }}>
+                {complete.length} complete · {onTrack.length} on track · {atRisk.length} at risk · {overBudget.length} over budget
+              </strong></span>
+            </div>
+            {/* Projected totals for this month */}
+            <div style={{
+              background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10,
+              padding: '12px 20px', display: 'flex', gap: 32, flexWrap: 'wrap', fontSize: 13,
+            }}>
+              <div>
+                <div style={{ color: '#6b7280', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>This Month — Ticket Hours</div>
+                <span style={{ color: '#111827', fontWeight: 600 }}>{fmtH(summary.hrs_act_month)}</span>
+                <span style={{ color: '#9ca3af' }}> actual / </span>
+                <span style={{ color: '#111827', fontWeight: 600 }}>{fmtH(summary.hrs_est_month)}</span>
+                <span style={{ color: '#9ca3af' }}> projected</span>
+              </div>
+              <div style={{ borderLeft: '1px solid #e5e7eb', paddingLeft: 32 }}>
+                <div style={{ color: '#6b7280', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Contracted Revenue (all active jobs)</div>
+                <span style={{ color: '#111827', fontWeight: 600 }}>{fmt$(summary.revenue_act)}</span>
+                <span style={{ color: '#9ca3af' }}> earned / </span>
+                <span style={{ color: '#111827', fontWeight: 600 }}>{fmt$(summary.revenue_est)}</span>
+                <span style={{ color: '#9ca3af' }}> contracted</span>
+              </div>
+            </div>
           </div>
         )}
       </div>

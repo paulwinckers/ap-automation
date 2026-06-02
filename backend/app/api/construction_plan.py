@@ -281,6 +281,10 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         n_complete  = len(completed_tickets)
         pct_month   = (n_complete / n_total * 100) if n_total else 0
 
+        # ── Month-specific hours from scheduled tickets (excludes prior-month actuals) ──
+        hrs_est_month = sum(float(t.get("HoursEst") or 0) for t in tickets)
+        hrs_act_month = sum(float(t.get("HoursAct") or 0) for t in tickets)
+
         rev_act = float(opp.get("ActualEarnedRevenue") or 0)
 
         return {
@@ -289,10 +293,12 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             "property_name":     opp.get("PropertyName") or "",
             "opp_number":        opp.get("OpportunityNumber"),
             "status":            opp.get("OpportunityStatusName") or "",
-            "hrs_est":           hrs_est,
-            "hrs_act":           hrs_act,
-            "pct_complete":      pct_month,   # tickets done this month / total this month
-            "pct_complete_job":  pct,          # Aspire's overall job % complete
+            "hrs_est":           hrs_est,           # total job estimated hours
+            "hrs_act":           hrs_act,           # total job actual hours (lifetime)
+            "hrs_est_month":     hrs_est_month,     # estimated hours from THIS month's tickets
+            "hrs_act_month":     hrs_act_month,     # actual hours from THIS month's tickets only
+            "pct_complete":      pct_month,         # tickets done this month / total this month
+            "pct_complete_job":  pct,               # Aspire's overall job % complete
             "revenue_est":       rev_est,
             "revenue_act":       rev_act,
             "start_date":        opp.get("StartDate"),
@@ -338,6 +344,9 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         "days_left":         _days_left_in_month(month),
         "hrs_est":           sum(j["hrs_est"] for j in job_list),
         "hrs_act":           sum(j["hrs_act"] for j in job_list),
+        # Month-specific ticket hours (excludes prior-month accumulated actuals)
+        "hrs_est_month":     sum(j["hrs_est_month"] for j in job_list),
+        "hrs_act_month":     sum(j["hrs_act_month"] for j in job_list),
         "revenue_est":       sum(j["revenue_est"] for j in job_list),
         "revenue_act":       sum(j["revenue_act"] for j in job_list),
     }

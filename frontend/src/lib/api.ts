@@ -331,6 +331,8 @@ export interface PlanGoal {
 export interface PlanJob {
   opportunity_id: number;
   opportunity_name: string;
+  hrs_est_month: number;   // estimated hours from THIS month's tickets
+  hrs_act_month: number;   // actual hours from THIS month's tickets only
   property_name: string;
   opp_number: number | null;
   status: string;
@@ -372,6 +374,8 @@ export interface PlanSummary {
   days_left: number;
   hrs_est: number;
   hrs_act: number;
+  hrs_est_month: number;   // sum of this month's ticket estimated hours
+  hrs_act_month: number;   // sum of this month's ticket actual hours
   revenue_est: number;
   revenue_act: number;
 }
