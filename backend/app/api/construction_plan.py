@@ -287,9 +287,12 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
     goal = dict(goal_rows[0]) if goal_rows else {
         "month": month, "revenue_goal": None, "hours_goal": None, "notes": None
     }
-    manual_targets = [dict(r) for r in target_rows]
+    all_targets    = [dict(r) for r in target_rows]
+    # Suppressed jobs (manually removed by user) — exclude from plan entirely
+    suppressed_ids = {t["opportunity_id"] for t in all_targets if t.get("notes") == "__suppressed__"}
+    manual_targets = [t for t in all_targets if t.get("notes") != "__suppressed__"]
     manual_ids     = {t["opportunity_id"] for t in manual_targets}
-    scheduled_ids  = set(scheduled_map.keys())
+    scheduled_ids  = set(scheduled_map.keys()) - suppressed_ids
 
     # All ticket IDs across all scheduled opps — used for the revenue query
     all_ticket_ids: set[int] = set()
@@ -450,9 +453,24 @@ async def add_job(month: str, body: JobIn, db: Database = Depends(get_db)):
 
 @router.delete("/{month}/jobs/{opp_id}")
 async def remove_job(month: str, opp_id: int, db: Database = Depends(get_db)):
-    """Remove an opportunity from the month's plan."""
+    """
+    Remove an opportunity from the month's plan.
+    - For manually committed jobs: removes the D1 entry.
+    - For Aspire-scheduled jobs: adds a '__suppressed__' marker so the job
+      does not reappear on the next refresh (even though Aspire still has
+      a work ticket scheduled for that month).
+    Suppression is stored in the same table using notes='__suppressed__'.
+    """
+    # Remove any existing manual commitment (no-op if job is only scheduled)
     await db._x(
         "DELETE FROM construction_job_targets WHERE month = ? AND opportunity_id = ?",
+        [month, opp_id],
+    )
+    # Insert suppression marker — prevents scheduled jobs from reappearing
+    await db._x(
+        """INSERT OR IGNORE INTO construction_job_targets
+           (month, opportunity_id, notes)
+           VALUES (?, ?, '__suppressed__')""",
         [month, opp_id],
     )
     return {"ok": True, "month": month, "opportunity_id": opp_id}

@@ -838,20 +838,24 @@ export default function ConstructionPlan() {
                       <RiskBadge risk={j.risk} />
                     </td>
 
-                    {/* Remove — only for manually added jobs */}
+                    {/* Remove — available on all jobs */}
                     <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
-                      {(j.source === 'manual' || j.source === 'both') && (
-                        <button
-                          onClick={() => handleRemove(j.opportunity_id)}
-                          title={j.source === 'both' ? 'Remove manual pin (still shows as scheduled)' : 'Remove from this month\'s plan'}
-                          style={{
-                            background: 'none', border: 'none', cursor: 'pointer',
-                            color: '#d1d5db', fontSize: 16, padding: '2px 6px', borderRadius: 6,
-                          }}
-                          onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
-                          onMouseLeave={e => (e.currentTarget.style.color = '#d1d5db')}
-                        >✕</button>
-                      )}
+                      <button
+                        onClick={() => handleRemove(j.opportunity_id)}
+                        title={
+                          j.source === 'scheduled'
+                            ? 'Suppress from this month\'s plan (work ticket stays in Aspire)'
+                            : j.source === 'both'
+                            ? 'Remove manual pin and suppress from plan'
+                            : 'Remove from this month\'s plan'
+                        }
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          color: '#d1d5db', fontSize: 16, padding: '2px 6px', borderRadius: 6,
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                        onMouseLeave={e => (e.currentTarget.style.color = '#d1d5db')}
+                      >✕</button>
                     </td>
                   </tr>
                 ))}
