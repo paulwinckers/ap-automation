@@ -4,7 +4,7 @@
  * Route: /dashboards/construction/plan
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   getMonthlyPlan, setMonthlyGoal, addJobToMonth, removeJobFromMonth, getPlanSuggestions,
   listConstructionLeads, upsertConstructionLead, deleteConstructionLead,
@@ -570,17 +570,22 @@ export default function ConstructionPlan() {
   const [showAdd,     setShowAdd]     = useState(false);
   const [showLeads,   setShowLeads]   = useState(false);
   const [showCheckin, setShowCheckin] = useState(false);
+  const activeMonthRef = useRef(month);
 
   const load = useCallback(async () => {
+    activeMonthRef.current = month;
     setLoading(true);
     setError('');
     try {
       const data = await getMonthlyPlan(month);
+      // Discard stale responses — user may have switched months while this was in-flight
+      if (activeMonthRef.current !== month) return;
       setPlan(data);
     } catch (e: any) {
+      if (activeMonthRef.current !== month) return;
       setError(e.message || 'Failed to load plan');
     } finally {
-      setLoading(false);
+      if (activeMonthRef.current === month) setLoading(false);
     }
   }, [month]);
 
