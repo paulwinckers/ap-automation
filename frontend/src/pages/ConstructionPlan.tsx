@@ -32,7 +32,10 @@ function currentMonth(): string {
 }
 function monthLabel(m: string): string {
   try {
-    return new Date(m + '-01').toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
+    const [y, mo] = m.split('-').map(Number);
+    // Use local-time constructor — new Date("YYYY-MM-01") is parsed as UTC
+    // which shifts the date one month back in Pacific time (UTC-7).
+    return new Date(y, mo - 1, 1).toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
   } catch { return m; }
 }
 function prevMonth(m: string): string {
@@ -603,6 +606,7 @@ export default function ConstructionPlan() {
   };
 
   const { goal, jobs, summary } = plan || { goal: { month, revenue_goal: null, hours_goal: null, notes: null }, jobs: [], summary: { job_count: 0, scheduled_count: 0, manual_count: 0, days_left: 0, hrs_est: 0, hrs_act: 0, revenue_est: 0, revenue_act: 0 } };
+
 
   const overBudget = jobs.filter(j => j.risk === 'over_budget');
   const atRisk     = jobs.filter(j => j.risk === 'at_risk');
