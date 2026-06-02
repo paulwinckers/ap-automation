@@ -115,7 +115,7 @@ async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
                 "$filter": date_fmt,
                 "$orderby": "WorkTicketID desc",
                 "$top": "500",
-                "$select": "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,OpportunityID,OpportunityServiceID,ScheduledStartDate,CompleteDate,HoursEst,HoursAct,EarnedRevenue,Revenue,BudgetVariance,CrewLeaderName,PercentComplete",
+                "$select": "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,OpportunityID,OpportunityServiceID,ScheduledStartDate,CompleteDate,HoursEst,HoursAct,Revenue,BudgetVariance,CrewLeaderName,PercentComplete",
             })
             tickets = _aspire._extract_list(res)
             logger.info(f"Plan: fetched {len(tickets)} work tickets for {month} using filter: {date_fmt}")
@@ -158,6 +158,41 @@ async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
 
     logger.info(f"Plan: {len(out)} Construction opportunities with scheduled tickets in {month}")
     return out
+
+
+async def _fetch_ticket_revenues(month: str, ticket_ids: set[int]) -> dict[int, float]:
+    """
+    Query /WorkTicketRevenues for the given month and return
+    {WorkTicketID: total_RevenueAmount} for only the supplied ticket IDs.
+
+    Uses RevenueMonth to get revenue recognised in this specific month —
+    much more accurate than EarnedRevenue (lifetime) on the WorkTicket itself.
+    """
+    if not ticket_ids:
+        return {}
+
+    y, m = int(month[:4]), int(month[5:7])
+    next_m = f"{y + 1}-01" if m == 12 else f"{y}-{str(m + 1).zfill(2)}"
+    start = f"{month}-01T00:00:00Z"
+    end   = f"{next_m}-01T00:00:00Z"
+
+    revenues: dict[int, float] = {}
+    try:
+        res = await _aspire._get("WorkTicketRevenues", {
+            "$filter": f"RevenueMonth ge {start} and RevenueMonth lt {end}",
+            "$select": "WorkTicketRevenueID,WorkTicketID,RevenueMonth,RevenueAmount",
+            "$top": "2000",
+        })
+        for row in _aspire._extract_list(res):
+            tid = row.get("WorkTicketID")
+            amt = float(row.get("RevenueAmount") or 0)
+            if tid and tid in ticket_ids:
+                revenues[tid] = revenues.get(tid, 0.0) + amt
+        logger.info(f"WorkTicketRevenues: {len(revenues)} tickets with revenue in {month}")
+    except Exception as e:
+        logger.warning(f"WorkTicketRevenues fetch failed: {e}")
+
+    return revenues
 
 
 async def _fetch_construction_opps(exclude_ids: set[int] | None = None) -> list[dict]:
@@ -256,9 +291,20 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
     manual_ids     = {t["opportunity_id"] for t in manual_targets}
     scheduled_ids  = set(scheduled_map.keys())
 
-    # All unique opportunity IDs we need actuals for
+    # All ticket IDs across all scheduled opps — used for the revenue query
+    all_ticket_ids: set[int] = set()
+    for tlist in scheduled_map.values():
+        for t in tlist:
+            tid = t.get("WorkTicketID")
+            if tid:
+                all_ticket_ids.add(tid)
+
+    # Fetch opportunity actuals and ticket revenues in parallel
     all_opp_ids = list(scheduled_ids | manual_ids)
-    actuals = await _fetch_opp_actuals(all_opp_ids)
+    actuals, ticket_revenues = await _aio.gather(
+        _fetch_opp_actuals(all_opp_ids),
+        _fetch_ticket_revenues(month, all_ticket_ids),
+    )
 
     def _make_job(oid: int, source: str, notes: str = "", committed_by: str = "", committed_at: str = "") -> dict:
         opp     = actuals.get(oid, {})
@@ -282,12 +328,15 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         pct_month   = (n_complete / n_total * 100) if n_total else 0
 
         # ── Month-specific hours & revenue from scheduled tickets ──────────────
-        hrs_est_month     = sum(float(t.get("HoursEst")      or 0) for t in tickets)
-        hrs_act_month     = sum(float(t.get("HoursAct")      or 0) for t in tickets)
-        # EarnedRevenue = Aspire's computed per-ticket earned revenue (read-only)
-        # Revenue       = the ticket's budgeted/target revenue
-        revenue_act_month = sum(float(t.get("EarnedRevenue") or 0) for t in tickets)
-        revenue_est_month = sum(float(t.get("Revenue")       or 0) for t in tickets)
+        hrs_est_month     = sum(float(t.get("HoursEst") or 0) for t in tickets)
+        hrs_act_month     = sum(float(t.get("HoursAct") or 0) for t in tickets)
+        # Revenue from /WorkTicketRevenues filtered to this month — accurate per-month earned
+        revenue_act_month = sum(
+            ticket_revenues.get(t.get("WorkTicketID"), 0.0)
+            for t in tickets if t.get("WorkTicketID")
+        )
+        # Budgeted revenue for this month's tickets (ticket-level Revenue field)
+        revenue_est_month = sum(float(t.get("Revenue") or 0) for t in tickets)
 
         rev_act = float(opp.get("ActualEarnedRevenue") or 0)
 
