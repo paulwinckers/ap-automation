@@ -186,13 +186,22 @@ async def _fetch_construction_opps(exclude_ids: set[int] | None = None) -> list[
 
 
 def _risk_flag(opp: dict, pct_month: float | None = None) -> str:
-    """Return a risk label based on hours burn vs monthly ticket completion."""
-    pct  = pct_month if pct_month is not None else float(opp.get("PercentComplete") or 0)
+    """Return a risk label based on hours burn vs monthly ticket completion.
+
+    Aspire returns PercentComplete as a decimal (0–1), not a percentage (0–100).
+    pct_month (from ticket counts) is already in 0–100 form.
+    """
+    aspire_pct = float(opp.get("PercentComplete") or 0)
+    # Aspire decimal → percentage; clamp to 0-100
+    aspire_pct_scaled = min(aspire_pct * 100, 100.0)
+
+    pct  = pct_month if pct_month is not None else aspire_pct_scaled
     est  = float(opp.get("EstimatedLaborHours") or 0)
     act  = float(opp.get("ActualLaborHours") or 0)
     burn = (act / est * 100) if est else 0
 
-    if pct >= 100:
+    # Also treat as complete if Aspire job-level completion is 100%
+    if pct >= 100 or aspire_pct_scaled >= 100:
         return "complete"
     if burn > 90 and pct < 70:
         return "over_budget"
