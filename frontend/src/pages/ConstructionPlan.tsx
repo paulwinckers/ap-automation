@@ -827,10 +827,21 @@ export default function ConstructionPlan() {
                       }
                     </td>
 
-                    {/* Revenue */}
+                    {/* Revenue — month-specific from WorkTicketRevenues */}
                     <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
-                      <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>{fmt$(j.revenue_act)}</div>
-                      <div style={{ fontSize: 11, color: '#9ca3af' }}>of {fmt$(j.revenue_est)}</div>
+                      {j.ticket_count > 0 ? (
+                        <>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>
+                            {j.revenue_act_month > 0 ? fmt$(j.revenue_act_month) : '—'}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#9ca3af' }}>of {fmt$(j.revenue_est_month)}</div>
+                        </>
+                      ) : (
+                        <>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>—</div>
+                          <div style={{ fontSize: 11, color: '#9ca3af' }}>of {fmt$(j.revenue_est)}</div>
+                        </>
+                      )}
                     </td>
 
                     {/* Risk */}
