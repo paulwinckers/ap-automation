@@ -515,13 +515,29 @@ async def diagnose_job(opportunity_id: int):
         except Exception as e:
             results["Receipts_by_wt"] = {"error": str(e)}
 
-    # 4. Receipts by OpportunityID (if supported)
+    # 4. All receipts (no filter) — check if any exist + see field names
     try:
-        res = await _aspire._get("Receipts", {"$filter": f"OpportunityID eq {opportunity_id}", "$top": "5"})
+        res = await _aspire._get("Receipts", {"$top": "3", "$orderby": "ReceiptID desc"})
         recs = _aspire._extract_list(res)
-        results["Receipts_by_opp"] = {"count": len(recs)}
+        results["Receipts_any"] = {"count": len(recs), "sample_keys": list(recs[0].keys())[:20] if recs else []}
     except Exception as e:
-        results["Receipts_by_opp"] = {"error": str(e)}
+        results["Receipts_any"] = {"error": str(e)}
+
+    # 5. WorkTicketItems — show ALL types for first ticket
+    if tids:
+        try:
+            res = await _aspire._get("WorkTicketItems", {
+                "$filter": f"WorkTicketID eq {tids[0]}",
+                "$top": "20",
+            })
+            items = _aspire._extract_list(res)
+            results["WorkTicketItems_types"] = {
+                "ticket_id": tids[0],
+                "count": len(items),
+                "types": [{"name": i.get("ItemName"), "type": i.get("ItemType"), "cat": i.get("CatalogItemCategoryName"), "qty": i.get("ItemQuantityExtended"), "uom": i.get("AllocationUnitTypeName"), "do_not_purchase": i.get("DoNotPurchase")} for i in items],
+            }
+        except Exception as e:
+            results["WorkTicketItems_types"] = {"error": str(e)}
 
     return results
 
