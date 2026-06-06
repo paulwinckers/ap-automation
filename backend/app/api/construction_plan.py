@@ -498,14 +498,13 @@ async def diagnose_job(opportunity_id: int):
     if tids:
         or_f = " or ".join(f"WorkTicketID eq {tid}" for tid in tids)
 
-        # 2. WorkTicketItems — all types
-        for entity in ["WorkTicketItems", "WorkTicketItem", "WorkTicketServiceItems"]:
-            try:
-                res = await _aspire._get(entity, {"$filter": f"({or_f})", "$top": "5"})
-                items = _aspire._extract_list(res)
-                results[entity] = {"count": len(items), "sample_keys": list(items[0].keys())[:15] if items else [], "sample": items[0] if items else None}
-            except Exception as e:
-                results[entity] = {"error": str(e)}
+        # 2. WorkTicketItems — confirmed entity name
+        try:
+            res = await _aspire._get("WorkTicketItems", {"$filter": f"({or_f})", "$top": "5"})
+            items = _aspire._extract_list(res)
+            results["WorkTicketItems"] = {"count": len(items), "sample_keys": list(items[0].keys())[:15] if items else [], "sample": items[0] if items else None}
+        except Exception as e:
+            results["WorkTicketItems"] = {"error": str(e)}
 
         # 3. Receipts by WorkTicketID
         try:
@@ -575,7 +574,12 @@ async def get_job_materials(opportunity_id: int):
 
     # ── Step 2: fetch WorkTicketItems and Receipts in parallel ────────────────
     async def _fetch_wt_items(tids: list[int]) -> list[dict]:
-        """Fetch material items across all work tickets in chunks of 10."""
+        """Fetch purchasable items across all work tickets in chunks of 10.
+        Uses confirmed field names from Aspire OData discovery:
+          - AllocationUnitTypeName = UOM  (not UOMName)
+          - ItemQuantityExtended   = qty  (not ItemQuantity)
+          - ItemCost               = total cost (no per-unit cost field)
+        """
         out: list[dict] = []
         for i in range(0, len(tids), 10):
             chunk = tids[i:i + 10]
@@ -585,8 +589,8 @@ async def get_job_materials(opportunity_id: int):
                     "$filter": f"({or_f})",
                     "$select": (
                         "WorkTicketItemID,WorkTicketID,ItemName,ItemType,"
-                        "ItemQuantity,UOMName,ItemEstUnitCost,ItemActUnitCost,"
-                        "OpportunityServiceID"
+                        "CatalogItemCategoryName,AllocationUnitTypeName,"
+                        "ItemQuantityExtended,ItemCost,DoNotPurchase,EstimatingNotes"
                     ),
                     "$top": "500",
                 })
@@ -650,10 +654,13 @@ async def get_job_materials(opportunity_id: int):
         for t in tickets if t.get("WorkTicketID")
     }
 
-    # ── Step 4: build material items (filter to Material type only) ───────────
+    # ── Step 4: build purchasable items (Material + Sub, exclude Labor/Equip) ──
+    # DoNotPurchase=True means internal cost only — no PO expected
+    PURCHASABLE_TYPES = {"material", "sub", "other"}
     items = []
     for it in wt_items:
-        if (it.get("ItemType") or "").lower() != "material":
+        item_type = (it.get("ItemType") or "").lower()
+        if item_type not in PURCHASABLE_TYPES:
             continue
         tid = it.get("WorkTicketID")
         items.append({
@@ -661,10 +668,13 @@ async def get_job_materials(opportunity_id: int):
             "work_ticket_id":      tid,
             "service_name":        ticket_svc.get(tid, ""),
             "item_name":           it.get("ItemName") or "",
-            "quantity":            it.get("ItemQuantity"),
-            "uom":                 it.get("UOMName") or "",
-            "unit_cost_est":       it.get("ItemEstUnitCost"),
-            "unit_cost_act":       it.get("ItemActUnitCost"),
+            "item_type":           it.get("ItemType") or "",
+            "category":            it.get("CatalogItemCategoryName") or "",
+            "quantity":            it.get("ItemQuantityExtended"),
+            "uom":                 it.get("AllocationUnitTypeName") or "",
+            "total_cost_est":      it.get("ItemCost"),
+            "do_not_purchase":     it.get("DoNotPurchase") or False,
+            "notes":               it.get("EstimatingNotes") or "",
         })
 
     # ── Step 5: build PO list ──────────────────────────────────────────────────
