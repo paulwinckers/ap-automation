@@ -476,6 +476,56 @@ async def remove_job(month: str, opp_id: int, db: Database = Depends(get_db)):
     return {"ok": True, "month": month, "opportunity_id": opp_id}
 
 
+@router.get("/jobs/{opportunity_id}/diagnose")
+async def diagnose_job(opportunity_id: int):
+    """Temporary diagnostic — tests entity names and filter shapes."""
+    import asyncio as _aio
+    results: dict = {}
+
+    # 1. Get first 3 work ticket IDs for this opp
+    try:
+        wt_res = await _aspire._get("WorkTickets", {
+            "$filter": f"OpportunityID eq {opportunity_id}",
+            "$select": "WorkTicketID,WorkTicketNumber",
+            "$top": "5",
+        })
+        tickets = _aspire._extract_list(wt_res)
+        results["tickets"] = [{"id": t["WorkTicketID"], "num": t.get("WorkTicketNumber")} for t in tickets]
+        tids = [t["WorkTicketID"] for t in tickets[:3]]
+    except Exception as e:
+        results["tickets_error"] = str(e); tids = []
+
+    if tids:
+        or_f = " or ".join(f"WorkTicketID eq {tid}" for tid in tids)
+
+        # 2. WorkTicketItems — all types
+        for entity in ["WorkTicketItems", "WorkTicketItem", "WorkTicketServiceItems"]:
+            try:
+                res = await _aspire._get(entity, {"$filter": f"({or_f})", "$top": "5"})
+                items = _aspire._extract_list(res)
+                results[entity] = {"count": len(items), "sample_keys": list(items[0].keys())[:15] if items else [], "sample": items[0] if items else None}
+            except Exception as e:
+                results[entity] = {"error": str(e)}
+
+        # 3. Receipts by WorkTicketID
+        try:
+            res = await _aspire._get("Receipts", {"$filter": f"({or_f})", "$top": "5"})
+            recs = _aspire._extract_list(res)
+            results["Receipts_by_wt"] = {"count": len(recs), "sample": {k:v for k,v in recs[0].items() if k not in ('ReceiptItems','ItemAllocations')} if recs else None}
+        except Exception as e:
+            results["Receipts_by_wt"] = {"error": str(e)}
+
+    # 4. Receipts by OpportunityID (if supported)
+    try:
+        res = await _aspire._get("Receipts", {"$filter": f"OpportunityID eq {opportunity_id}", "$top": "5"})
+        recs = _aspire._extract_list(res)
+        results["Receipts_by_opp"] = {"count": len(recs)}
+    except Exception as e:
+        results["Receipts_by_opp"] = {"error": str(e)}
+
+    return results
+
+
 @router.get("/jobs/{opportunity_id}/materials")
 async def get_job_materials(opportunity_id: int):
     """
