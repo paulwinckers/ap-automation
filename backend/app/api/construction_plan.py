@@ -647,15 +647,19 @@ async def get_job_materials(opportunity_id: int):
         for t in tickets if t.get("WorkTicketID")
     }
 
-    # ── Step 4: build purchasable items (Material + Sub, exclude Labor/Equip) ──
-    # DoNotPurchase=True means internal cost only — no PO expected
+    # ── Step 4: build purchasable items (Material + Sub + Other) ─────────────
+    # Exclude Labor and Equipment — those are internal resources, not purchased.
+    # DoNotPurchase=True means the item is costed internally, no PO expected.
+    # ItemCost = unit cost; total = ItemCost × ItemQuantityExtended
     PURCHASABLE_TYPES = {"material", "sub", "other"}
     items = []
     for it in wt_items:
         item_type = (it.get("ItemType") or "").lower()
         if item_type not in PURCHASABLE_TYPES:
             continue
-        tid = it.get("WorkTicketID")
+        tid  = it.get("WorkTicketID")
+        qty  = float(it.get("ItemQuantityExtended") or 0)
+        unit = float(it.get("ItemCost") or 0)
         items.append({
             "work_ticket_item_id": it.get("WorkTicketItemID"),
             "work_ticket_id":      tid,
@@ -663,9 +667,10 @@ async def get_job_materials(opportunity_id: int):
             "item_name":           it.get("ItemName") or "",
             "item_type":           it.get("ItemType") or "",
             "category":            it.get("CatalogItemCategoryName") or "",
-            "quantity":            it.get("ItemQuantityExtended"),
+            "quantity":            qty,
             "uom":                 it.get("AllocationUnitTypeName") or "",
-            "total_cost_est":      it.get("ItemCost"),
+            "unit_cost":           unit,
+            "total_cost_est":      round(qty * unit, 2),
             "do_not_purchase":     it.get("DoNotPurchase") or False,
             "notes":               it.get("EstimatingNotes") or "",
         })
@@ -707,8 +712,6 @@ async def get_job_materials(opportunity_id: int):
     return {
         "opportunity_id": opportunity_id,
         "ticket_count":   len(ticket_ids),
-        "ticket_ids":     ticket_ids[:10],   # debug — first 10 ticket IDs fetched
-        "raw_item_count": len(wt_items),     # debug — total before type filter
         "items":          items,
         "pos":            pos,
     }
