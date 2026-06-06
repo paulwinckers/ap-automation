@@ -574,27 +574,20 @@ async def get_job_materials(opportunity_id: int):
 
     # ── Step 2: fetch WorkTicketItems and Receipts in parallel ────────────────
     async def _fetch_wt_items(tids: list[int]) -> list[dict]:
-        """Fetch purchasable items across all work tickets in chunks of 10.
-        Uses confirmed field names from Aspire OData discovery:
-          - AllocationUnitTypeName = UOM  (not UOMName)
-          - ItemQuantityExtended   = qty  (not ItemQuantity)
-          - ItemCost               = total cost (no per-unit cost field)
-        """
+        """Fetch purchasable items across all work tickets in chunks of 10."""
         out: list[dict] = []
         for i in range(0, len(tids), 10):
             chunk = tids[i:i + 10]
             or_f  = " or ".join(f"WorkTicketID eq {tid}" for tid in chunk)
             try:
+                # No $select — fetches all fields to avoid field-name issues
                 res = await _aspire._get("WorkTicketItems", {
                     "$filter": f"({or_f})",
-                    "$select": (
-                        "WorkTicketItemID,WorkTicketID,ItemName,ItemType,"
-                        "CatalogItemCategoryName,AllocationUnitTypeName,"
-                        "ItemQuantityExtended,ItemCost,DoNotPurchase,EstimatingNotes"
-                    ),
                     "$top": "500",
                 })
-                out.extend(_aspire._extract_list(res))
+                records = _aspire._extract_list(res)
+                logger.info(f"WorkTicketItems chunk {chunk}: got {len(records)} records")
+                out.extend(records)
             except Exception as e:
                 logger.warning(f"WorkTicketItems chunk failed: {e}")
         return out
@@ -714,6 +707,8 @@ async def get_job_materials(opportunity_id: int):
     return {
         "opportunity_id": opportunity_id,
         "ticket_count":   len(ticket_ids),
+        "ticket_ids":     ticket_ids[:10],   # debug — first 10 ticket IDs fetched
+        "raw_item_count": len(wt_items),     # debug — total before type filter
         "items":          items,
         "pos":            pos,
     }
