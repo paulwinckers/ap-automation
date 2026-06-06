@@ -476,6 +476,173 @@ async def remove_job(month: str, opp_id: int, db: Database = Depends(get_db)):
     return {"ok": True, "month": month, "opportunity_id": opp_id}
 
 
+@router.get("/jobs/{opportunity_id}/materials")
+async def get_job_materials(opportunity_id: int):
+    """
+    Return all material items for a construction opportunity, with PO status.
+
+    Flow (mirrors Aspire's own data path):
+      Estimate items → WorkTicketItems (ItemType = Material) → Receipts (POs)
+
+    Returns:
+      - items: list of material line items with quantity, UOM, cost, service name
+      - pos:   list of POs (Receipts) linked to any work ticket for this opp,
+               each with status and their line items
+    """
+    import asyncio as _aio
+
+    # ── Step 1: get all work tickets for this opportunity ─────────────────────
+    try:
+        wt_res = await _aspire._get("WorkTickets", {
+            "$filter":  f"OpportunityID eq {opportunity_id}",
+            "$select":  "WorkTicketID,WorkTicketNumber,WorkTicketStatusName,OpportunityServiceID",
+            "$top":     "200",
+        })
+        tickets = _aspire._extract_list(wt_res)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"WorkTickets fetch failed: {e}")
+
+    if not tickets:
+        return {"items": [], "pos": [], "ticket_count": 0}
+
+    ticket_ids = [t["WorkTicketID"] for t in tickets if t.get("WorkTicketID")]
+
+    # ── Step 2: fetch WorkTicketItems and Receipts in parallel ────────────────
+    async def _fetch_wt_items(tids: list[int]) -> list[dict]:
+        """Fetch material items across all work tickets in chunks of 10."""
+        out: list[dict] = []
+        for i in range(0, len(tids), 10):
+            chunk = tids[i:i + 10]
+            or_f  = " or ".join(f"WorkTicketID eq {tid}" for tid in chunk)
+            try:
+                res = await _aspire._get("WorkTicketItems", {
+                    "$filter": f"({or_f})",
+                    "$select": (
+                        "WorkTicketItemID,WorkTicketID,ItemName,ItemType,"
+                        "ItemQuantity,UOMName,ItemEstUnitCost,ItemActUnitCost,"
+                        "OpportunityServiceID"
+                    ),
+                    "$top": "500",
+                })
+                out.extend(_aspire._extract_list(res))
+            except Exception as e:
+                logger.warning(f"WorkTicketItems chunk failed: {e}")
+        return out
+
+    async def _fetch_receipts(tids: list[int]) -> list[dict]:
+        """Fetch all Receipts (POs) for these work tickets."""
+        out: list[dict] = []
+        for i in range(0, len(tids), 10):
+            chunk = tids[i:i + 10]
+            or_f  = " or ".join(f"WorkTicketID eq {tid}" for tid in chunk)
+            try:
+                res = await _aspire._get("Receipts", {
+                    "$filter": f"({or_f})",
+                    "$select": (
+                        "ReceiptID,ReceiptNumber,WorkTicketID,VendorName,"
+                        "ReceiptStatusName,ReceivedDate,ReceiptTotalCost,"
+                        "ReceiptNote,ReceiptItems"
+                    ),
+                    "$top": "200",
+                })
+                out.extend(_aspire._extract_list(res))
+            except Exception as e:
+                logger.warning(f"Receipts chunk failed: {e}")
+        return out
+
+    # Fetch service names for richer display
+    svc_ids = list({t.get("OpportunityServiceID") for t in tickets if t.get("OpportunityServiceID")})
+
+    async def _fetch_services(svc_ids: list[int]) -> dict[int, str]:
+        if not svc_ids:
+            return {}
+        out: dict[int, str] = {}
+        or_f = " or ".join(f"OpportunityServiceID eq {sid}" for sid in svc_ids)
+        try:
+            res = await _aspire._get("OpportunityServices", {
+                "$filter": f"({or_f})",
+                "$select": "OpportunityServiceID,ServiceName,DisplayName,ServiceNameAbr",
+                "$top": "100",
+            })
+            for s in _aspire._extract_list(res):
+                sid = s.get("OpportunityServiceID")
+                if sid:
+                    out[sid] = (s.get("DisplayName") or s.get("ServiceName") or s.get("ServiceNameAbr") or "")
+        except Exception as e:
+            logger.warning(f"OpportunityServices fetch failed: {e}")
+        return out
+
+    wt_items, receipts, svc_map = await _aio.gather(
+        _fetch_wt_items(ticket_ids),
+        _fetch_receipts(ticket_ids),
+        _fetch_services(svc_ids),
+    )
+
+    # ── Step 3: map ticket → service name ─────────────────────────────────────
+    ticket_svc: dict[int, str] = {
+        t["WorkTicketID"]: svc_map.get(t.get("OpportunityServiceID") or 0, "")
+        for t in tickets if t.get("WorkTicketID")
+    }
+
+    # ── Step 4: build material items (filter to Material type only) ───────────
+    items = []
+    for it in wt_items:
+        if (it.get("ItemType") or "").lower() != "material":
+            continue
+        tid = it.get("WorkTicketID")
+        items.append({
+            "work_ticket_item_id": it.get("WorkTicketItemID"),
+            "work_ticket_id":      tid,
+            "service_name":        ticket_svc.get(tid, ""),
+            "item_name":           it.get("ItemName") or "",
+            "quantity":            it.get("ItemQuantity"),
+            "uom":                 it.get("UOMName") or "",
+            "unit_cost_est":       it.get("ItemEstUnitCost"),
+            "unit_cost_act":       it.get("ItemActUnitCost"),
+        })
+
+    # ── Step 5: build PO list ──────────────────────────────────────────────────
+    pos = []
+    for r in receipts:
+        rid = r.get("ReceiptID")
+        # ReceiptNumber in Aspire is display_number + 1
+        receipt_num = r.get("ReceiptNumber")
+        display_num = (receipt_num - 1) if receipt_num else None
+        raw_items   = r.get("ReceiptItems") or []
+        po_items = []
+        if isinstance(raw_items, list):
+            for ri in raw_items:
+                po_items.append({
+                    "item_name": ri.get("ItemName") or "",
+                    "quantity":  ri.get("ItemQuantity"),
+                    "uom":       ri.get("UOMName") or ri.get("ItemUOM") or "",
+                    "unit_cost": ri.get("ItemUnitCost"),
+                })
+        pos.append({
+            "receipt_id":     rid,
+            "po_number":      display_num,
+            "work_ticket_id": r.get("WorkTicketID"),
+            "vendor_name":    r.get("VendorName") or "",
+            "status":         r.get("ReceiptStatusName") or "",
+            "received_date":  (r.get("ReceivedDate") or "")[:10],
+            "total_cost":     r.get("ReceiptTotalCost") or 0,
+            "note":           (r.get("ReceiptNote") or "")[:120],
+            "items":          po_items,
+        })
+
+    logger.info(
+        f"Materials for opp {opportunity_id}: {len(items)} items, "
+        f"{len(pos)} POs across {len(ticket_ids)} tickets"
+    )
+
+    return {
+        "opportunity_id": opportunity_id,
+        "ticket_count":   len(ticket_ids),
+        "items":          items,
+        "pos":            pos,
+    }
+
+
 async def _fetch_scheduled_opp_ids_all_divisions(month: str) -> dict[int, int]:
     """
     Like _fetch_scheduled_opp_ids but WITHOUT the Construction division filter.
