@@ -180,6 +180,9 @@ interface ProjectData {
   tickets:          Ticket[];
   ai_tip:           string | null;
   scope_summary:    string;
+  strategy:             string;
+  strategy_updated_at:  string | null;
+  strategy_updated_by:  string | null;
   attachments:      Attachment[];
   project_summary:  string;
   smart_prompts:    SmartPrompt[];
@@ -717,6 +720,40 @@ export default function FieldProject() {
 
   useEffect(() => { load(); loadJobAtts(); }, [oppId]);
 
+  // Project strategy (CM's living plan — app-side, seeded from Aspire scope on first edit)
+  const [stratEditing, setStratEditing] = useState(false);
+  const [stratDraft,   setStratDraft]   = useState('');
+  const [stratSaving,  setStratSaving]  = useState(false);
+  const [stratMsg,     setStratMsg]     = useState('');
+
+  const startEditStrategy = () => {
+    // Seed the editor from the saved strategy, or fall back to the Aspire scope on first edit
+    setStratDraft(data?.strategy?.trim() ? data.strategy : (data?.scope_summary || ''));
+    setStratMsg('');
+    setStratEditing(true);
+  };
+
+  const saveStrategy = async () => {
+    if (!oppId) return;
+    setStratSaving(true);
+    setStratMsg('');
+    try {
+      const fd = new FormData();
+      fd.append('strategy', stratDraft);
+      const r = await fetch(`${API}/checkin/project/${oppId}/strategy`, { method: 'POST', body: fd });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error((j as any).detail || 'Save failed');
+      }
+      setStratEditing(false);
+      await load(true);   // quiet refresh to pull the saved value + timestamp
+    } catch (e: any) {
+      setStratMsg(e.message || 'Save failed');
+    } finally {
+      setStratSaving(false);
+    }
+  };
+
   // Pre-populate prompt selections from localStorage once data arrives
   useEffect(() => {
     if (!data) return;
@@ -883,6 +920,61 @@ export default function FieldProject() {
           {/* ── Scope tab ────────────────────────────────────────────────── */}
           {tab === 'scope' && (
             <>
+              {/* Project Strategy — CM's living plan (seeded from Aspire scope, edited here) */}
+              <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '14px 16px', marginBottom: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div style={{ fontWeight: 700, fontSize: 11, color: '#15803d', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    🎯 Project Strategy
+                  </div>
+                  {!stratEditing && (
+                    <button onClick={startEditStrategy}
+                      style={{ padding: '5px 12px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                      {data.strategy?.trim() ? '✏️ Edit' : '＋ Add strategy'}
+                    </button>
+                  )}
+                </div>
+
+                {stratEditing ? (
+                  <>
+                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 6 }}>
+                      How will we complete this job? Approach, sequencing, risks, key decisions.
+                      {!data.strategy?.trim() && ' (Pre-filled from the Aspire scope — edit freely.)'}
+                    </div>
+                    <textarea
+                      value={stratDraft}
+                      onChange={e => setStratDraft(e.target.value)}
+                      rows={8}
+                      placeholder="Describe the approach to completing this job…"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, lineHeight: 1.5, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit' }}
+                    />
+                    {stratMsg && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 6 }}>{stratMsg}</div>}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                      <button onClick={saveStrategy} disabled={stratSaving}
+                        style={{ flex: 1, padding: '9px', background: stratSaving ? '#86efac' : '#16a34a', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: stratSaving ? 'default' : 'pointer' }}>
+                        {stratSaving ? 'Saving…' : 'Save strategy'}
+                      </button>
+                      <button onClick={() => { setStratEditing(false); setStratMsg(''); }} disabled={stratSaving}
+                        style={{ padding: '9px 16px', background: '#fff', color: '#6b7280', border: '1px solid #d1d5db', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                ) : data.strategy?.trim() ? (
+                  <>
+                    <div style={{ fontSize: 13, color: '#14532d', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{data.strategy}</div>
+                    {data.strategy_updated_at && (
+                      <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 8 }}>
+                        Updated {fmtDate(data.strategy_updated_at)}{data.strategy_updated_by ? ` · ${data.strategy_updated_by}` : ''}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div style={{ fontSize: 13, color: '#6b7280', lineHeight: 1.5 }}>
+                    No strategy captured yet. Tap <strong>＋ Add strategy</strong> to describe how the crew will complete this job — we'll start you off from the Aspire scope.
+                  </div>
+                )}
+              </div>
+
               {/* Scope summary */}
               {data.scope_summary ? (
                 <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 10, padding: '14px 16px', marginBottom: 20 }}>

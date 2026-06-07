@@ -146,6 +146,14 @@ async def lifespan(app: FastAPI):
                 asked_at     TEXT    NOT NULL DEFAULT (datetime('now'))
             )
         """,
+        "project_strategy": """
+            CREATE TABLE IF NOT EXISTS project_strategy (
+                opp_id     INTEGER PRIMARY KEY,
+                strategy   TEXT    NOT NULL DEFAULT '',
+                updated_by TEXT,
+                updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
         "reconciliation_periods": """
             CREATE TABLE IF NOT EXISTS reconciliation_periods (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1549,6 +1549,16 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
     except Exception:
         advisor_rows = []  # table may not exist yet on older deployments
 
+    # Construction Manager's living project strategy (app-side; seeded from scope in UI)
+    try:
+        strat_rows = await db._q(
+            "SELECT strategy, updated_by, updated_at FROM project_strategy WHERE opp_id = ?",
+            [opp_id],
+        )
+    except Exception:
+        strat_rows = []  # table may not exist yet on older deployments
+    strat = strat_rows[0] if strat_rows else {}
+
     return {
         "opportunity_id":   opp_id,
         "opportunity_name": opp.get("OpportunityName") or f"Job #{opp_id}",
@@ -1577,6 +1587,9 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         } for t in tickets],
         "ai_tip":          ai_tip,
         "scope_summary":   scope_summary,
+        "strategy":             strat.get("strategy") or "",
+        "strategy_updated_at":  strat.get("updated_at"),
+        "strategy_updated_by":  strat.get("updated_by"),
         "attachments":     attachments,
         "project_summary": project_summary,
         "smart_prompts":   smart_prompts,
@@ -1603,6 +1616,30 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             ],
         } for a in activities],
     }
+
+
+@public_router.post("/project/{opp_id}/strategy")
+async def save_project_strategy(
+    opp_id:     int,
+    strategy:   str           = Form(...),
+    updated_by: Optional[str] = Form(default=None),
+    db:         Database      = Depends(get_db),
+):
+    """
+    Save the Construction Manager's living project strategy (one row per opportunity).
+    App-side only — not written back to Aspire. The UI seeds the first draft from the
+    Aspire scope; this just persists whatever the CM saves.
+    """
+    await db._x(
+        """INSERT INTO project_strategy (opp_id, strategy, updated_by, updated_at)
+           VALUES (?, ?, ?, datetime('now'))
+           ON CONFLICT(opp_id) DO UPDATE SET
+             strategy   = excluded.strategy,
+             updated_by = excluded.updated_by,
+             updated_at = datetime('now')""",
+        [opp_id, (strategy or "").strip(), (updated_by or None)],
+    )
+    return {"ok": True}
 
 
 @public_router.get("/project/{opp_id}/scope-probe")

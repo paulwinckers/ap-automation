@@ -193,6 +193,16 @@ ALTER TABLE invoices ADD COLUMN forwarded_to TEXT;
 -- Migration: actual amount confirmed by QBO on posting (vs extracted total_amount)
 ALTER TABLE invoices ADD COLUMN qbo_amount REAL;
 
+-- ── Project Strategy — CM's living "how we'll complete this job" plan ──────────
+-- One row per Aspire opportunity. Seeded in the UI from the Aspire scope, then
+-- edited/owned by the Construction Manager. App-side only (not written to Aspire).
+CREATE TABLE IF NOT EXISTS project_strategy (
+    opp_id     INTEGER PRIMARY KEY,        -- Aspire OpportunityID
+    strategy   TEXT    NOT NULL DEFAULT '',
+    updated_by TEXT,
+    updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ── Crew Assignments — field crew scheduling per route per day ────────────────
 CREATE TABLE IF NOT EXISTS crew_assignments (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
