@@ -51,8 +51,11 @@ npx wrangler@latest pages deploy frontend/dist --project-name=darios-ap
 Requires Cloudflare auth (`wrangler login` or `CLOUDFLARE_API_TOKEN`). The deploy command
 prints a per-deployment URL; production is https://darios-ap.pages.dev.
 
-**Backend:** Docker image; production API runs at the Railway URL hard-coded in
-`frontend/src/lib/api.ts`. The exact deploy trigger is unconfirmed — verify before relying on it.
+**Backend (Railway) — auto-deploys on push.** Railway is connected to the GitHub repo and
+rebuilds the Docker image on every push to `main`. Production API:
+https://ap-automation-production.up.railway.app (hard-coded in `frontend/src/lib/api.ts`).
+Deploys take ~1-3 min; verify by curling a new endpoint. (So a push deploys the backend but
+NOT the frontend — the frontend still needs the manual `wrangler` deploy above.)
 
 There is no test suite yet.
 
