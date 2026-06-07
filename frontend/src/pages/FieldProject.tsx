@@ -1811,22 +1811,77 @@ export default function FieldProject() {
                             </>
                           )}
 
-                          {/* Existing receipt line items (what was actually ordered) */}
-                          {ticket.has_po && ticket.pos.length > 0 && ticket.pos.some(p => p.items.length > 0) && (
-                            <div style={{ borderTop: '2px solid #e5e7eb', background: '#fafafa', padding: '8px 14px 4px' }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>Ordered (Receipt Items)</div>
-                              {ticket.pos.flatMap(po => po.items).map((item, idx) => (
-                                <div key={idx} style={{
-                                  display: 'grid', gridTemplateColumns: '1fr 48px 64px 70px',
-                                  padding: '5px 0', borderTop: idx > 0 ? '1px solid #f1f5f9' : undefined,
-                                  fontSize: 12,
-                                }}>
-                                  <div style={{ color: '#374151' }}>{item.description}</div>
-                                  <div style={{ textAlign: 'right', color: '#6b7280' }}>{item.quantity}</div>
-                                  <div style={{ textAlign: 'right', color: '#6b7280' }}>${item.unit_cost?.toFixed(2)}</div>
-                                  <div style={{ textAlign: 'right', fontWeight: 600, color: '#111827' }}>${item.total?.toLocaleString('en-CA', { minimumFractionDigits: 2 })}</div>
-                                </div>
-                              ))}
+                          {/* Receipt POs — one card per PO, items consolidated within each */}
+                          {ticket.has_po && ticket.pos.length > 0 && (
+                            <div style={{ borderTop: '2px solid #e5e7eb' }}>
+                              {ticket.pos.map((po, poIdx) => {
+                                // Split items into regular lines and tax/fee lines
+                                const TAX_NAMES = /^(pst|gst|hst|qst|tax|environmental fee|environmental$)/i;
+                                const lineItems  = (po.items || []).filter(it => !TAX_NAMES.test((it.description || '').trim()));
+                                const taxItems   = (po.items || []).filter(it =>  TAX_NAMES.test((it.description || '').trim()));
+                                const taxTotal   = taxItems.reduce((s, it) => s + (it.total || 0), 0);
+                                const lineTotal  = lineItems.reduce((s, it) => s + (it.total || 0), 0);
+
+                                return (
+                                  <div key={po.receipt_id} style={{ background: '#fafafa', borderTop: poIdx > 0 ? '1px solid #e5e7eb' : undefined }}>
+                                    {/* PO sub-header */}
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 14px 4px' }}>
+                                      <div style={{ fontSize: 11, fontWeight: 700, color: '#374151' }}>
+                                        PO #{po.display_number ?? po.receipt_id}
+                                        <span style={{ color: '#9ca3af', fontWeight: 400, marginLeft: 6 }}>{po.vendor_name}</span>
+                                        {po.received_date && <span style={{ color: '#9ca3af', fontWeight: 400, marginLeft: 6 }}>· {po.received_date}</span>}
+                                      </div>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                        <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>
+                                          ${(po.total ?? (lineTotal + taxTotal)).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                        {(() => { const st = poStatusStyle(po.status); return <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 8, background: st.bg, color: st.color }}>{po.status}</span>; })()}
+                                      </div>
+                                    </div>
+
+                                    {/* Line items */}
+                                    {lineItems.length > 0 && (
+                                      <>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 44px 60px', padding: '4px 14px', fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', background: '#f1f5f9' }}>
+                                          <div>Item</div><div style={{ textAlign: 'right' }}>Qty</div><div style={{ textAlign: 'right' }}>Total</div>
+                                        </div>
+                                        {lineItems.map((item, idx) => (
+                                          <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 44px 60px', padding: '6px 14px', borderTop: '1px solid #f1f5f9', fontSize: 12, background: idx % 2 === 0 ? '#fff' : '#f9fafb' }}>
+                                            <div style={{ color: '#374151' }}>{item.description}</div>
+                                            <div style={{ textAlign: 'right', color: '#6b7280' }}>{item.quantity}</div>
+                                            <div style={{ textAlign: 'right', fontWeight: 600, color: '#111827' }}>
+                                              ${(item.total || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </div>
+                                          </div>
+                                        ))}
+                                        {/* Consolidated tax line */}
+                                        {taxTotal > 0 && (
+                                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 44px 60px', padding: '6px 14px', borderTop: '1px solid #f1f5f9', fontSize: 12, background: '#fffbeb' }}>
+                                            <div style={{ color: '#92400e', fontStyle: 'italic' }}>
+                                              Taxes & Fees ({taxItems.map(t => t.description).join(', ')})
+                                            </div>
+                                            <div />
+                                            <div style={{ textAlign: 'right', fontWeight: 600, color: '#92400e' }}>
+                                              ${taxTotal.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </div>
+                                          </div>
+                                        )}
+                                        {/* Line subtotal */}
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 44px 60px', padding: '6px 14px', borderTop: '2px solid #e5e7eb', fontSize: 12, background: '#f8fafc' }}>
+                                          <div style={{ color: '#374151', fontWeight: 700 }}>Total</div>
+                                          <div />
+                                          <div style={{ textAlign: 'right', fontWeight: 700, color: '#111827' }}>
+                                            ${(lineTotal + taxTotal).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                          </div>
+                                        </div>
+                                      </>
+                                    )}
+                                    {lineItems.length === 0 && po.items.length === 0 && (
+                                      <div style={{ padding: '8px 14px', fontSize: 12, color: '#9ca3af' }}>No line items on this receipt</div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
                         </div>
