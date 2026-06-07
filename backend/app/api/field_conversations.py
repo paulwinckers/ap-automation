@@ -329,7 +329,7 @@ async def notifiable_users(context_type: str = "", db: Database = Depends(get_db
 
 
 @router.get("/whatsapp-diag")
-async def whatsapp_diag(to: str = ""):
+async def whatsapp_diag(to: str = "", check_sid: str = ""):
     """
     TEMP diagnostic — reports Twilio/WhatsApp config status and (optionally) attempts a
     real test send to ?to=<number>. Returns Twilio's actual status/error so we can see
@@ -353,6 +353,17 @@ async def whatsapp_diag(to: str = ""):
         out["twilio_version"]   = getattr(_tw, "__version__", "?")
     except Exception as e:
         out["twilio_import_error"] = str(e)
+
+    # Fetch the final delivery status of a previously-sent message by SID
+    if check_sid.strip() and sid and token:
+        try:
+            from twilio.rest import Client as TwilioClient
+            m = TwilioClient(sid, token).messages(check_sid.strip()).fetch()
+            out["message_status"] = {
+                "status": m.status, "error_code": m.error_code, "error_message": m.error_message,
+            }
+        except Exception as e:
+            out["message_status"] = {"error": str(e)}
 
     if to.strip():
         wa_to = _format_whatsapp_number(to)
