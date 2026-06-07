@@ -204,6 +204,15 @@ async def lifespan(app: FastAPI):
                 created_at      TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """,
+        "user_divisions": """
+            CREATE TABLE IF NOT EXISTS user_divisions (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER NOT NULL,
+                division   TEXT    NOT NULL,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(user_id, division)
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:
@@ -226,6 +235,8 @@ async def lifespan(app: FastAPI):
         ("vendor_statements", "diff_cached_at", "ALTER TABLE vendor_statements ADD COLUMN diff_cached_at TEXT"),
         # vendor_rules.job_cost_forward_to — AP email for employee job cost expense notifications
         ("vendor_rules", "job_cost_forward_to", "ALTER TABLE vendor_rules ADD COLUMN job_cost_forward_to TEXT"),
+        # field_conversations.created_by_user_id — link a conversation to a real user (directory identity)
+        ("field_conversations", "created_by_user_id", "ALTER TABLE field_conversations ADD COLUMN created_by_user_id INTEGER"),
     ]
     for tbl, col, sql in _COLUMN_MIGRATIONS:
         try:

@@ -53,6 +53,19 @@ interface Message {
   created_at:      string;
 }
 
+interface Person {
+  id:    number;
+  name:  string;
+  phone: string | null;
+}
+
+interface NotifiableUser {
+  id:          number;
+  name:        string;
+  in_division: boolean;
+  is_default:  boolean;
+}
+
 function fmtTime(dt: string) {
   if (!dt) return '';
   try {
@@ -85,37 +98,44 @@ interface Props {
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function FieldConversations({ oppId, contextType, propertyName, initialConvId }: Props) {
   const [crewName, setCrewName] = useState<string>(() => {
-    // If logged in, pre-fill from account; otherwise use remembered field value
-    try {
-      const u = JSON.parse(localStorage.getItem('ap_user') || '{}');
-      if (u.name) return u.name;
-    } catch {}
+    // Identity priority: directory pick → logged-in account → remembered field value
+    try { const f = JSON.parse(localStorage.getItem('fieldUser') || '{}'); if (f.name) return f.name; } catch {}
+    try { const u = JSON.parse(localStorage.getItem('ap_user') || '{}'); if (u.name) return u.name; } catch {}
     return localStorage.getItem('fieldCrewName') || '';
   });
   const [crewWhatsApp, setCrewWhatsApp] = useState<string>(() => {
-    // If logged in and have a phone on account, pre-fill from there
-    try {
-      const u = JSON.parse(localStorage.getItem('ap_user') || '{}');
-      if (u.phone) return u.phone;
-    } catch {}
+    try { const f = JSON.parse(localStorage.getItem('fieldUser') || '{}'); if (f.phone) return f.phone; } catch {}
+    try { const u = JSON.parse(localStorage.getItem('ap_user') || '{}'); if (u.phone) return u.phone; } catch {}
     return localStorage.getItem('fieldCrewPhone') || '';
   });
+
+  // Directory identity — "who are you?" picker
+  const [people, setPeople]   = useState<Person[]>([]);
+  const [userId, setUserId]   = useState<number | null>(() => {
+    try { const f = JSON.parse(localStorage.getItem('fieldUser') || '{}'); return f.user_id ?? null; } catch { return null; }
+  });
+  const [manualIdentity, setManualIdentity] = useState(false);
   const [view, setView]                   = useState<'list' | 'new' | 'thread'>('list');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loadingList, setLoadingList]     = useState(true);
   const [showResolved, setShowResolved]   = useState(false);
 
-  // New conversation form
-  const [newTitle,   setNewTitle]   = useState('');
-  const [newTag,     setNewTag]     = useState<string | null>(null);
-  const [newMessage, setNewMessage] = useState('');
-  const [newPhoto,   setNewPhoto]   = useState<File | null>(null);
-  const [newPreview, setNewPreview] = useState<string | null>(null);
-  const [creating,   setCreating]   = useState(false);
+  // New conversation form — category IS the label now (Other → free-text describe)
+  const [newTag,       setNewTag]       = useState<string | null>(null);
+  const [newOtherText, setNewOtherText] = useState('');
+  const [newMessage,   setNewMessage]   = useState('');
+  const [newPhoto,     setNewPhoto]     = useState<File | null>(null);
+  const [newPreview,   setNewPreview]   = useState<string | null>(null);
+  const [creating,     setCreating]     = useState(false);
+
+  // Derived conversation label
+  const derivedTitle = newTag === 'Other' ? newOtherText.trim() : (newTag || '');
+  const canSubmitNew = !!newTag && !!derivedTitle && !!newMessage.trim();
 
   // Who to notify
-  const [notifiableUsers, setNotifiableUsers] = useState<{id: number; name: string}[]>([]);
+  const [notifiableUsers, setNotifiableUsers] = useState<NotifiableUser[]>([]);
   const [selectedNotify,  setSelectedNotify]  = useState<Set<number>>(new Set());
+  const [showMoreNotify,  setShowMoreNotify]  = useState(false);
 
   // Thread view
   const [activeConv,    setActiveConv]    = useState<Conversation | null>(null);
@@ -125,22 +145,33 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
   const [msgPhoto,      setMsgPhoto]      = useState<File | null>(null);
   const [msgPreview,    setMsgPreview]    = useState<string | null>(null);
   const [sending,       setSending]       = useState(false);
-  const [aiLoading,     setAiLoading]     = useState(false);
   const [resolving,     setResolving]     = useState(false);
 
   const cameraRef  = useRef<HTMLInputElement>(null);
   const msgCamRef  = useRef<HTMLInputElement>(null);
   const bottomRef  = useRef<HTMLDivElement>(null);
 
+  // Load the people directory once (for the "who are you?" identity picker)
+  useEffect(() => {
+    fetch(`${API}/field/conversations/people`)
+      .then(r => r.json())
+      .then(d => setPeople(d.people || []))
+      .catch(() => {});
+  }, []);
+
   // Load notifiable users when new-conversation form opens
   useEffect(() => {
     if (view === 'new' && notifiableUsers.length === 0) {
-      fetch(`${API}/field/conversations/notifiable-users`)
+      fetch(`${API}/field/conversations/notifiable-users?context_type=${contextType}`)
         .then(r => r.json())
         .then(d => {
-          const users = d.users || [];
+          const users: NotifiableUser[] = d.users || [];
           setNotifiableUsers(users);
-          setSelectedNotify(new Set(users.map((u: {id: number}) => u.id)));
+          // Pre-check the division's default recipients (construction: Keeland & Dustin).
+          // If none are flagged as default, fall back to selecting everyone.
+          const defaults = users.filter(u => u.is_default);
+          const preselect = defaults.length > 0 ? defaults : users;
+          setSelectedNotify(new Set(preselect.map(u => u.id)));
         })
         .catch(() => {});
     }
@@ -194,6 +225,62 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
     localStorage.setItem('fieldCrewPhone', v);
   }
 
+  function selectIdentity(id: number) {
+    const p = people.find(x => x.id === id);
+    if (!p) return;
+    setUserId(p.id);
+    setCrewName(p.name);
+    setCrewWhatsApp(p.phone || '');
+    setManualIdentity(false);
+    localStorage.setItem('fieldUser', JSON.stringify({ user_id: p.id, name: p.name, phone: p.phone || '' }));
+    localStorage.setItem('fieldCrewName', p.name);
+    localStorage.setItem('fieldCrewPhone', p.phone || '');
+  }
+
+  function clearIdentity() {
+    setUserId(null);
+    setManualIdentity(false);
+    localStorage.removeItem('fieldUser');
+  }
+
+  // Shared "who are you?" block — directory pick, with a manual fallback for non-directory crew
+  const identityBlock = (
+    <div style={S.section}>
+      {userId && crewName && !manualIdentity ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <div style={{ fontSize: 14, color: '#111827' }}>
+            Posting as <strong>{crewName}</strong>
+            {crewWhatsApp ? <span style={{ color: '#9ca3af' }}> · {crewWhatsApp}</span> : null}
+          </div>
+          <button onClick={clearIdentity} style={{ ...S.photoBtn, fontSize: 11, padding: '5px 10px' }}>Not you?</button>
+        </div>
+      ) : manualIdentity ? (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={S.label}>Your name</div>
+            <button onClick={() => setManualIdentity(false)} style={{ background: 'none', border: 'none', color: '#0f4c75', fontSize: 11, cursor: 'pointer' }}>← pick from list</button>
+          </div>
+          <input value={crewName} onChange={e => handleCrewNameChange(e.target.value)} placeholder="e.g. Mike S." style={{ ...S.input, marginBottom: 10 }} />
+          <div style={S.label}>WhatsApp number <span style={{ fontWeight: 400, textTransform: 'none', color: '#9ca3af' }}>— for reply notifications</span></div>
+          <input type="tel" value={crewWhatsApp} onChange={e => handleCrewPhoneChange(e.target.value)} placeholder="e.g. 604-555-1234" style={S.input} />
+        </>
+      ) : (
+        <>
+          <div style={S.label}>Who are you?</div>
+          <select
+            value=""
+            onChange={e => { const v = e.target.value; if (v === 'manual') setManualIdentity(true); else if (v) selectIdentity(Number(v)); }}
+            style={{ ...S.input, cursor: 'pointer' }}
+          >
+            <option value="" disabled>Select your name…</option>
+            {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            <option value="manual">Someone else…</option>
+          </select>
+        </>
+      )}
+    </div>
+  );
+
   function handleNewPhotoChange(file: File | null) {
     setNewPhoto(file);
     if (file) {
@@ -229,18 +316,18 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
     finally { setLoadingThread(false); }
   }
 
-  async function createConversation(useAi: boolean) {
-    if (!newTitle.trim() || !newMessage.trim()) return;
+  async function createConversation() {
+    if (!canSubmitNew) return;
     setCreating(true);
     try {
       const form = new FormData();
-      form.append('title', newTitle.trim());
+      form.append('title', derivedTitle);            // label = category, or the "Other" describe text
       form.append('context_type', contextType);
       form.append('first_message', newMessage.trim());
-      form.append('use_ai', useAi ? '1' : '0');
       if (newTag) form.append('tag', newTag);
       if (crewName.trim()) form.append('crew_name', crewName.trim());
       if (crewWhatsApp.trim()) form.append('crew_whatsapp', crewWhatsApp.trim());
+      if (userId != null) form.append('created_by_user_id', String(userId));
       form.append('property_name', propertyName);
       form.append('tagged_user_ids', Array.from(selectedNotify).join(','));
       if (newPhoto) form.append('photo', newPhoto);
@@ -252,26 +339,18 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
       // Open the new thread
       const newConv: Conversation = {
         id: d.conv_id, opp_id: oppId, context_type: contextType,
-        title: newTitle.trim(), tag: newTag, status: 'open',
-        created_by: crewName || null, message_count: useAi ? 2 : 1,
+        title: derivedTitle, tag: newTag, status: 'open',
+        created_by: crewName || null, message_count: 1,
         last_message: newMessage.trim(), created_at: new Date().toISOString(),
         resolved_at: null,
       };
       setActiveConv(newConv);
-      const msgs: Message[] = [{
+      setMessages([{
         id: 0, conversation_id: d.conv_id, role: 'crew', crew_name: crewName || null,
         content: newMessage.trim(), has_photo: newPhoto ? 1 : 0, photo_r2_key: null,
         created_at: new Date().toISOString(),
-      }];
-      if (d.ai_response) {
-        msgs.push({
-          id: 1, conversation_id: d.conv_id, role: 'ai', crew_name: 'Field Advisor',
-          content: d.ai_response, has_photo: 0, photo_r2_key: null,
-          created_at: new Date().toISOString(),
-        });
-      }
-      setMessages(msgs);
-      setNewTitle(''); setNewTag(null); setNewMessage(''); handleNewPhotoChange(null);
+      }]);
+      setNewTag(null); setNewOtherText(''); setNewMessage(''); handleNewPhotoChange(null);
       setView('thread');
     } catch (e) {
       alert('Could not create conversation. Please try again.');
@@ -280,20 +359,18 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
     }
   }
 
-  async function sendMessage(useAi: boolean) {
+  async function sendMessage() {
     if (!msgText.trim() || !activeConv) return;
-    useAi ? setAiLoading(true) : setSending(true);
+    setSending(true);
     try {
       const form = new FormData();
       form.append('content', msgText.trim());
-      form.append('use_ai', useAi ? '1' : '0');
       if (crewName.trim()) form.append('crew_name', crewName.trim());
       if (msgPhoto) form.append('photo', msgPhoto);
 
       const res = await fetch(`${API}/field/conversations/${oppId}/${activeConv.id}/messages`, {
         method: 'POST', body: form,
       });
-      const d = await res.json();
       if (!res.ok) throw new Error('Failed');
 
       const crewMsg: Message = {
@@ -302,22 +379,13 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
         has_photo: msgPhoto ? 1 : 0, photo_r2_key: null,
         created_at: new Date().toISOString(),
       };
-      const newMsgs = [...messages, crewMsg];
-      if (d.ai_response) {
-        newMsgs.push({
-          id: Date.now() + 1, conversation_id: activeConv.id, role: 'ai',
-          crew_name: 'Field Advisor', content: d.ai_response,
-          has_photo: 0, photo_r2_key: null, created_at: new Date().toISOString(),
-        });
-      }
-      setMessages(newMsgs);
+      setMessages([...messages, crewMsg]);
       setMsgText('');
       handleMsgPhotoChange(null);
     } catch {
       alert('Could not send message. Please try again.');
     } finally {
       setSending(false);
-      setAiLoading(false);
     }
   }
 
@@ -345,27 +413,8 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
 
     return (
       <div>
-        {/* Crew name + phone */}
-        <div style={S.section}>
-          <div style={S.label}>Your name</div>
-          <input
-            value={crewName}
-            onChange={e => handleCrewNameChange(e.target.value)}
-            placeholder="e.g. Mike S."
-            style={{ ...S.input, marginBottom: 10 }}
-          />
-          <div style={S.label}>
-            WhatsApp number
-            <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 4, color: '#9ca3af' }}>— get notified when manager replies</span>
-          </div>
-          <input
-            type="tel"
-            value={crewWhatsApp}
-            onChange={e => handleCrewPhoneChange(e.target.value)}
-            placeholder="e.g. 604-555-1234"
-            style={S.input}
-          />
-        </div>
+        {/* Who are you? — directory identity */}
+        {identityBlock}
 
         {/* New conversation button */}
         <button onClick={() => setView('new')} style={S.newBtn}>
@@ -409,38 +458,13 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
       <div>
         <button onClick={() => setView('list')} style={S.backBtn}>← Back</button>
 
+        {identityBlock}
+
         <div style={S.section}>
           <div style={S.sectionTitle}>💬 New Conversation</div>
 
-          <div style={S.label}>Your name</div>
-          <input
-            value={crewName}
-            onChange={e => handleCrewNameChange(e.target.value)}
-            placeholder="e.g. Mike S."
-            style={{ ...S.input, marginBottom: 10 }}
-          />
-          <div style={S.label}>
-            WhatsApp number
-            <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 4, color: '#9ca3af' }}>— optional, for reply notifications</span>
-          </div>
-          <input
-            type="tel"
-            value={crewWhatsApp}
-            onChange={e => handleCrewPhoneChange(e.target.value)}
-            placeholder="e.g. 604-555-1234"
-            style={{ ...S.input, marginBottom: 12 }}
-          />
-
-          <div style={S.label}>Topic / title *</div>
-          <input
-            value={newTitle}
-            onChange={e => setNewTitle(e.target.value)}
-            placeholder="e.g. Turf yellowing south section"
-            style={{ ...S.input, marginBottom: 12 }}
-          />
-
-          <div style={S.label}>Category (optional)</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+          <div style={S.label}>Category *</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: newTag === 'Other' ? 8 : 12 }}>
             {TAGS.map(t => {
               const c = TAG_COLORS[t];
               const sel = newTag === t;
@@ -458,6 +482,15 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
               );
             })}
           </div>
+          {newTag === 'Other' && (
+            <input
+              value={newOtherText}
+              onChange={e => setNewOtherText(e.target.value)}
+              placeholder="Describe the topic…"
+              style={{ ...S.input, marginBottom: 12 }}
+              autoFocus
+            />
+          )}
 
           <div style={S.label}>First message *</div>
           <textarea
@@ -484,56 +517,70 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
             <button onClick={() => cameraRef.current?.click()} style={S.photoBtn}>📷 Photo</button>
           </div>
 
-          {/* Notify section */}
-          {notifiableUsers.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ ...S.label, marginBottom: 8 }}>
-                Notify
-                <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 4, color: '#9ca3af' }}>— who should see this issue?</span>
+          {/* Notify section — tiered: division defaults (pre-checked) → other division members → rest of company */}
+          {notifiableUsers.length > 0 && (() => {
+            const inDiv = notifiableUsers.filter(u => u.in_division);
+            const rest  = notifiableUsers.filter(u => !u.in_division);
+            const primary = inDiv.length > 0 ? inDiv : notifiableUsers;
+            const toggle = (id: number) => setSelectedNotify(prev => {
+              const next = new Set(prev);
+              if (next.has(id)) next.delete(id); else next.add(id);
+              return next;
+            });
+            const row = (u: NotifiableUser) => {
+              const checked = selectedNotify.has(u.id);
+              return (
+                <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(u.id)}
+                    style={{ width: 18, height: 18, accentColor: '#0f4c75', cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: 14, color: '#374151', fontWeight: checked ? 600 : 400 }}>
+                    📱 {u.name}
+                    {u.is_default && <span style={{ color: '#16a34a', fontSize: 11, marginLeft: 6 }}>default</span>}
+                  </span>
+                </label>
+              );
+            };
+            return (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ ...S.label, marginBottom: 8 }}>
+                  Notify
+                  <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 4, color: '#9ca3af' }}>— who should see this issue?</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {primary.map(row)}
+                </div>
+                {inDiv.length > 0 && rest.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    {!showMoreNotify ? (
+                      <button type="button" onClick={() => setShowMoreNotify(true)}
+                        style={{ background: 'none', border: 'none', color: '#0f4c75', fontSize: 13, cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}>
+                        + Add someone else
+                      </button>
+                    ) : (
+                      <>
+                        <div style={{ ...S.label, marginTop: 8, marginBottom: 8 }}>Rest of company</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {rest.map(row)}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {notifiableUsers.map(u => {
-                  const checked = selectedNotify.has(u.id);
-                  return (
-                    <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => {
-                          setSelectedNotify(prev => {
-                            const next = new Set(prev);
-                            if (checked) next.delete(u.id); else next.add(u.id);
-                            return next;
-                          });
-                        }}
-                        style={{ width: 18, height: 18, accentColor: '#0f4c75', cursor: 'pointer' }}
-                      />
-                      <span style={{ fontSize: 14, color: '#374151', fontWeight: checked ? 600 : 400 }}>
-                        📱 {u.name}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              onClick={() => createConversation(false)}
-              disabled={creating || !newTitle.trim() || !newMessage.trim()}
-              style={{ ...S.btn, flex: 1, background: '#0f4c75' }}
-            >
-              {creating ? 'Saving…' : 'Send'}
-            </button>
-            <button
-              onClick={() => createConversation(true)}
-              disabled={creating || !newTitle.trim() || !newMessage.trim()}
-              style={{ ...S.btn, flex: 1.4, background: '#1d4ed8' }}
-            >
-              {creating ? 'Asking AI…' : '🤖 Send & Ask AI'}
-            </button>
-          </div>
+          <button
+            onClick={() => createConversation()}
+            disabled={creating || !canSubmitNew}
+            style={{ ...S.btn, width: '100%', background: '#0f4c75' }}
+          >
+            {creating ? 'Saving…' : 'Send'}
+          </button>
         </div>
       </div>
     );
@@ -651,18 +698,11 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
           <div style={{ display: 'flex', gap: 6 }}>
             <button onClick={() => msgCamRef.current?.click()} style={{ ...S.photoBtn, padding: '8px 10px' }}>📷</button>
             <button
-              onClick={() => sendMessage(false)}
-              disabled={sending || aiLoading || !msgText.trim()}
+              onClick={() => sendMessage()}
+              disabled={sending || !msgText.trim()}
               style={{ ...S.btn, flex: 1, background: '#374151', fontSize: 12 }}
             >
               {sending ? 'Sending…' : 'Send'}
-            </button>
-            <button
-              onClick={() => sendMessage(true)}
-              disabled={sending || aiLoading || !msgText.trim()}
-              style={{ ...S.btn, flex: 1.5, background: '#1d4ed8', fontSize: 12 }}
-            >
-              {aiLoading ? 'Asking AI…' : '🤖 Ask AI'}
             </button>
           </div>
         </div>

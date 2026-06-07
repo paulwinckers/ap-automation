@@ -85,18 +85,33 @@ async def _require_admin(user: dict = Depends(_get_current_user)) -> dict:
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
+# Divisions a user can belong to (many-per-user). is_default = pre-checked in the
+# notify list for that division's conversations.
+VALID_DIVISIONS = (
+    "Construction",
+    "Residential Maintenance",
+    "Commercial Maintenance",
+    "Irrigation",
+)
+
+class DivisionMembership(BaseModel):
+    division:   str
+    is_default: bool = False
+
 class UserCreate(BaseModel):
-    email:    str
-    name:     str
-    password: str
-    role:     str = "staff"
-    phone:    Optional[str] = None
+    email:     str
+    name:      str
+    password:  str
+    role:      str = "staff"
+    phone:     Optional[str] = None
+    divisions: Optional[list[DivisionMembership]] = None
 
 class UserUpdate(BaseModel):
-    name:   Optional[str] = None
-    role:   Optional[str] = None
-    active: Optional[bool] = None
-    phone:  Optional[str] = None
+    name:      Optional[str] = None
+    role:      Optional[str] = None
+    active:    Optional[bool] = None
+    phone:     Optional[str] = None
+    divisions: Optional[list[DivisionMembership]] = None
 
 class PasswordReset(BaseModel):
     password: str
@@ -181,6 +196,34 @@ async def setup_first_admin(body: UserCreate, db: Database = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Setup error: {exc}") from exc
 
 
+async def _set_user_divisions(db: Database, user_id: int, divisions: list[DivisionMembership]):
+    """Replace a user's division memberships with the provided list."""
+    await db._x("DELETE FROM user_divisions WHERE user_id = ?", [user_id])
+    for d in divisions:
+        if d.division not in VALID_DIVISIONS:
+            continue
+        await db._x(
+            """INSERT INTO user_divisions (user_id, division, is_default)
+               VALUES (?, ?, ?)
+               ON CONFLICT(user_id, division) DO UPDATE SET is_default = excluded.is_default""",
+            [user_id, d.division, 1 if d.is_default else 0],
+        )
+
+
+async def _divisions_by_user(db: Database) -> dict[int, list[dict]]:
+    """Return {user_id: [{division, is_default}, ...]} for all users."""
+    try:
+        rows = await db._q("SELECT user_id, division, is_default FROM user_divisions")
+    except Exception:
+        rows = []
+    out: dict[int, list[dict]] = {}
+    for r in rows or []:
+        out.setdefault(r["user_id"], []).append(
+            {"division": r["division"], "is_default": bool(r["is_default"])}
+        )
+    return out
+
+
 @router.get("/users")
 async def list_users(
     _: dict = Depends(_require_admin),
@@ -188,6 +231,9 @@ async def list_users(
 ):
     """List all users (admin only)."""
     rows = await db._q("SELECT id, email, name, phone, role, active, created_at, last_login FROM users ORDER BY name")
+    div_map = await _divisions_by_user(db)
+    for r in rows or []:
+        r["divisions"] = div_map.get(r["id"], [])
     return {"users": rows}
 
 
@@ -210,6 +256,8 @@ async def create_user(
         "INSERT INTO users (email, name, password_hash, role, phone) VALUES (?, ?, ?, ?, ?)",
         [body.email.lower(), body.name, pw_hash, body.role, body.phone or None],
     )
+    if body.divisions is not None:
+        await _set_user_divisions(db, uid, body.divisions)
     logger.info(f"User created: {body.email} (role={body.role})")
     return {"id": uid, "email": body.email, "name": body.name, "role": body.role, "phone": body.phone}
 
@@ -239,6 +287,8 @@ async def update_user(
         "UPDATE users SET name = ?, role = ?, active = ?, phone = ? WHERE id = ?",
         [new_name, new_role, new_active, new_phone or None, user_id],
     )
+    if body.divisions is not None:
+        await _set_user_divisions(db, user_id, body.divisions)
     return {"id": user_id, "name": new_name, "role": new_role, "active": bool(new_active), "phone": new_phone}
 
 

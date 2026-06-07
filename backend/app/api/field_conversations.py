@@ -286,13 +286,55 @@ async def _ask_ai(title: str, tag: Optional[str], messages: list[dict]) -> str:
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+# Maps a conversation context to the division whose members are surfaced/defaulted
+# in the notify list. Maintenance spans several divisions, so it's left unmapped for
+# now (legacy behaviour: everyone selectable + pre-checked).
+_CONTEXT_DIVISION = {"construction": "Construction"}
+
+
 @router.get("/notifiable-users")
-async def notifiable_users(db: Database = Depends(get_db)):
-    """Public — return active users with phones so field crew can pick who to notify."""
+async def notifiable_users(context_type: str = "", db: Database = Depends(get_db)):
+    """
+    Public — active users with phones, for the field notify picker.
+    For construction, each user is flagged with Construction-division membership
+    (`in_division`) and whether they're a default recipient (`is_default`).
+    """
     rows = await db._q(
         "SELECT id, name FROM users WHERE active = 1 AND phone IS NOT NULL AND phone != '' ORDER BY name",
+    ) or []
+
+    target = _CONTEXT_DIVISION.get((context_type or "").lower())
+    if not target:
+        # Non-construction (e.g. maintenance): preserve legacy behaviour — all selectable & default-checked
+        return {"users": [
+            {"id": r["id"], "name": r["name"], "in_division": True, "is_default": True}
+            for r in rows
+        ]}
+
+    try:
+        drows = await db._q(
+            "SELECT user_id, is_default FROM user_divisions WHERE division = ?", [target],
+        )
+    except Exception:
+        drows = []
+    members = {d["user_id"]: bool(d["is_default"]) for d in (drows or [])}
+    return {"users": [
+        {
+            "id": r["id"], "name": r["name"],
+            "in_division": r["id"] in members,
+            "is_default":  members.get(r["id"], False),
+        }
+        for r in rows
+    ]}
+
+
+@router.get("/people")
+async def people(db: Database = Depends(get_db)):
+    """Public — active users for the 'who are you?' identity picker (name + phone)."""
+    rows = await db._q(
+        "SELECT id, name, phone FROM users WHERE active = 1 ORDER BY name",
     )
-    return {"users": rows or []}
+    return {"people": rows or []}
 
 
 @router.get("/all/dashboard")
@@ -360,21 +402,24 @@ async def create_conversation(
     property_name:    Optional[str]        = Form(default=None),
     use_ai:           int                  = Form(default=0),
     tagged_user_ids:  str                  = Form(default=""),  # comma-separated user IDs
+    created_by_user_id: Optional[int]      = Form(default=None),  # directory-identity user id
     photo:            Optional[UploadFile] = File(default=None),
     db:               Database             = Depends(get_db),
 ):
     """Create a new conversation thread with an initial crew message."""
     tag = tag if tag in VALID_TAGS else None
     wa  = crew_whatsapp.strip() if crew_whatsapp and crew_whatsapp.strip() else None
+    # Title falls back to the category (or "Issue") so a row is never label-less
+    final_title = (title or "").strip() or (tag or "Issue")
 
     # 1. Create conversation record
     prop = (property_name or f"Opp #{opp_id}").strip()
     conv_id = await db._x(
         """INSERT INTO field_conversations
-             (opp_id, context_type, title, tag, created_by, crew_whatsapp,
+             (opp_id, context_type, title, tag, created_by, created_by_user_id, crew_whatsapp,
               message_count, last_message, property_name, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, datetime('now'))""",
-        [opp_id, context_type, title.strip(), tag, crew_name, wa, first_message.strip()[:120], prop],
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, datetime('now'))""",
+        [opp_id, context_type, final_title, tag, crew_name, created_by_user_id, wa, first_message.strip()[:120], prop],
     )
 
     # 2. Upload photo if provided
@@ -393,7 +438,7 @@ async def create_conversation(
     if use_ai:
         first_content = await _build_content(first_message.strip(), photo_r2_key)
         ai_response = await _ask_ai(
-            title=title,
+            title=final_title,
             tag=tag,
             messages=[{"role": "user", "content": first_content}],
         )
@@ -426,7 +471,7 @@ async def create_conversation(
         asyncio.get_event_loop().run_in_executor(
             None, _notify_watchers,
             watchers, opp_id, context_type, prop_name,
-            title.strip(), crew_name or "", first_message.strip(), True, tag, conv_id,
+            final_title, crew_name or "", first_message.strip(), True, tag, conv_id,
         )
     elif selected_ids is None:
         # Fallback only when no selection was made AND no DB watchers exist yet
@@ -445,7 +490,7 @@ async def create_conversation(
             asyncio.get_event_loop().run_in_executor(
                 None, _notify_watchers,
                 fallback, opp_id, context_type, prop_name,
-                title.strip(), crew_name or "", first_message.strip(), True, tag, conv_id,
+                final_title, crew_name or "", first_message.strip(), True, tag, conv_id,
             )
 
     return {"conv_id": conv_id, "ai_response": ai_response}

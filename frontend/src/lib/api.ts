@@ -798,6 +798,19 @@ export async function getActivitiesDashboard(showCompleted = false, includeEmail
 
 // ── User management (admin only) ─────────────────────────────────────────────
 
+// Divisions a user can belong to (many-per-user). Keep in sync with backend VALID_DIVISIONS.
+export const DIVISIONS = [
+  'Construction',
+  'Residential Maintenance',
+  'Commercial Maintenance',
+  'Irrigation',
+] as const;
+
+export interface DivisionMembership {
+  division: string;
+  is_default: boolean;
+}
+
 export interface UserRecord {
   id: number;
   email: string;
@@ -807,6 +820,7 @@ export interface UserRecord {
   active: boolean | number;
   created_at: string;
   last_login: string | null;
+  divisions?: DivisionMembership[];
 }
 
 export async function listUsers(): Promise<UserRecord[]> {
@@ -816,12 +830,14 @@ export async function listUsers(): Promise<UserRecord[]> {
 
 export async function createUser(data: {
   email: string; name: string; password: string; role: string; phone?: string;
+  divisions?: DivisionMembership[];
 }): Promise<UserRecord> {
   return request('POST', '/auth/users', data);
 }
 
 export async function updateUser(id: number, data: {
   name?: string; role?: string; active?: boolean; phone?: string | null;
+  divisions?: DivisionMembership[];
 }): Promise<UserRecord> {
   return request('PUT', `/auth/users/${id}`, data);
 }

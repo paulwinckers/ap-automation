@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import {
   listUsers, createUser, updateUser, resetUserPassword, changeMyPassword,
-  UserRecord,
+  UserRecord, DivisionMembership, DIVISIONS,
 } from '../lib/api';
 
 const CARD: React.CSSProperties = {
@@ -40,6 +40,65 @@ function RoleBadge({ role }: { role: string }) {
   );
 }
 
+// Multi-select divisions with a per-division "default notify" toggle.
+function DivisionPicker({ value, onChange }: { value: DivisionMembership[]; onChange: (v: DivisionMembership[]) => void }) {
+  const byDiv = new Map(value.map(d => [d.division, d]));
+  const toggle = (division: string) => {
+    const next = new Map(byDiv);
+    if (next.has(division)) next.delete(division);
+    else next.set(division, { division, is_default: false });
+    onChange(Array.from(next.values()));
+  };
+  const toggleDefault = (division: string) => {
+    const next = new Map(byDiv);
+    const cur = next.get(division);
+    if (cur) next.set(division, { ...cur, is_default: !cur.is_default });
+    onChange(Array.from(next.values()));
+  };
+  return (
+    <div>
+      <div style={{ color: '#94a3b8', fontSize: 11, fontWeight: 700, marginBottom: 5 }}>DIVISIONS</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {DIVISIONS.map(div => {
+          const member = byDiv.get(div);
+          return (
+            <div key={div} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', minWidth: 200 }}>
+                <input type="checkbox" checked={!!member} onChange={() => toggle(div)}
+                  style={{ width: 16, height: 16, accentColor: '#2563eb', cursor: 'pointer' }} />
+                <span style={{ color: member ? '#e2e8f0' : '#64748b', fontSize: 13 }}>{div}</span>
+              </label>
+              {member && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={member.is_default} onChange={() => toggleDefault(div)}
+                    style={{ width: 14, height: 14, accentColor: '#16a34a', cursor: 'pointer' }} />
+                  <span style={{ color: member.is_default ? '#4ade80' : '#64748b', fontSize: 11 }}>default notify</span>
+                </label>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DivisionChips({ divisions }: { divisions?: DivisionMembership[] }) {
+  if (!divisions || divisions.length === 0) return null;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+      {divisions.map(d => (
+        <span key={d.division} style={{
+          background: d.is_default ? '#14532d' : '#334155', color: d.is_default ? '#bbf7d0' : '#cbd5e1',
+          fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 99,
+        }}>
+          {d.division}{d.is_default ? ' ★' : ''}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function UserAdmin() {
   const [users,   setUsers]   = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +111,7 @@ export default function UserAdmin() {
   const [newPass,  setNewPass]  = useState('');
   const [newRole,  setNewRole]  = useState<'staff' | 'admin'>('staff');
   const [newPhone, setNewPhone] = useState('');
+  const [newDivisions, setNewDivisions] = useState<DivisionMembership[]>([]);
   const [adding,   setAdding]   = useState(false);
   const [addErr,   setAddErr]   = useState('');
 
@@ -60,6 +120,7 @@ export default function UserAdmin() {
   const [editName,  setEditName]  = useState('');
   const [editRole,  setEditRole]  = useState<'staff' | 'admin'>('staff');
   const [editPhone, setEditPhone] = useState('');
+  const [editDivisions, setEditDivisions] = useState<DivisionMembership[]>([]);
   const [saving,    setSaving]    = useState(false);
 
   // Reset password
@@ -85,8 +146,8 @@ export default function UserAdmin() {
     if (newPass.length < 8) { setAddErr('Password must be at least 8 characters.'); return; }
     setAddErr(''); setAdding(true);
     try {
-      await createUser({ email: newEmail.trim(), name: newName.trim(), password: newPass, role: newRole, phone: newPhone.trim() || undefined });
-      setNewName(''); setNewEmail(''); setNewPass(''); setNewRole('staff'); setNewPhone('');
+      await createUser({ email: newEmail.trim(), name: newName.trim(), password: newPass, role: newRole, phone: newPhone.trim() || undefined, divisions: newDivisions });
+      setNewName(''); setNewEmail(''); setNewPass(''); setNewRole('staff'); setNewPhone(''); setNewDivisions([]);
       setShowAdd(false);
       await load();
     } catch (e) {
@@ -99,7 +160,7 @@ export default function UserAdmin() {
   async function handleSaveEdit(userId: number) {
     setSaving(true);
     try {
-      await updateUser(userId, { name: editName, role: editRole, phone: editPhone.trim() || null });
+      await updateUser(userId, { name: editName, role: editRole, phone: editPhone.trim() || null, divisions: editDivisions });
       setEditId(null);
       await load();
     } catch (e) {
@@ -139,6 +200,7 @@ export default function UserAdmin() {
     setEditName(user.name);
     setEditRole(user.role);
     setEditPhone(user.phone || '');
+    setEditDivisions(user.divisions || []);
     setResetId(null);
   }
 
@@ -242,6 +304,9 @@ export default function UserAdmin() {
                 </select>
               </label>
             </div>
+            <div style={{ marginBottom: 16 }}>
+              <DivisionPicker value={newDivisions} onChange={setNewDivisions} />
+            </div>
             <button type="submit" disabled={adding} style={BTN('#16a34a', adding)}>
               {adding ? 'Creating…' : 'Create user'}
             </button>
@@ -261,6 +326,8 @@ export default function UserAdmin() {
             editName={editName}
             editRole={editRole}
             editPhone={editPhone}
+            editDivisions={editDivisions}
+            onEditDivisions={setEditDivisions}
             saving={saving}
             resetId={resetId}
             resetPass={resetPass}
@@ -288,6 +355,8 @@ export default function UserAdmin() {
               editName={editName}
               editRole={editRole}
               editPhone={editPhone}
+              editDivisions={editDivisions}
+              onEditDivisions={setEditDivisions}
               saving={saving}
               resetId={resetId}
               resetPass={resetPass}
@@ -362,6 +431,8 @@ interface UserTableProps {
   editName: string;
   editRole: 'staff' | 'admin';
   editPhone: string;
+  editDivisions: DivisionMembership[];
+  onEditDivisions: (v: DivisionMembership[]) => void;
   saving: boolean;
   resetId: number | null;
   resetPass: string;
@@ -382,7 +453,7 @@ interface UserTableProps {
 
 function UserTable({
   users, title, dimmed = false,
-  editId, editName, editRole, editPhone, saving,
+  editId, editName, editRole, editPhone, editDivisions, onEditDivisions, saving,
   resetId, resetPass, resetting, resetErr,
   onStartEdit, onEditName, onEditRole, onEditPhone, onSaveEdit, onCancelEdit,
   onToggleActive, onStartReset, onResetPass, onResetPassChange, onCancelReset,
@@ -413,6 +484,7 @@ function UserTable({
                 {user.phone && (
                   <div style={{ color: '#475569', fontSize: 12, marginTop: 1 }}>📱 {user.phone}</div>
                 )}
+                <DivisionChips divisions={user.divisions} />
               </div>
 
               {/* Last login */}
@@ -461,6 +533,9 @@ function UserTable({
                       <option value="admin">Admin</option>
                     </select>
                   </label>
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <DivisionPicker value={editDivisions} onChange={onEditDivisions} />
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => onSaveEdit(user.id)} disabled={saving} style={BTN('#2563eb', saving)}>

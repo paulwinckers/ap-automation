@@ -574,6 +574,21 @@ CREATE TABLE IF NOT EXISTS conversation_watchers (
 );
 CREATE INDEX IF NOT EXISTS idx_conv_watchers ON conversation_watchers(conversation_id);
 
+-- Link a conversation to a real user (directory identity picker)
+ALTER TABLE field_conversations ADD COLUMN created_by_user_id INTEGER;
+
+-- ── User Divisions — many-per-user (a user can cross divisions) ────────────────
+-- Divisions: Construction | Residential Maintenance | Commercial Maintenance | Irrigation
+-- is_default = pre-checked in the notify list for that division's conversations.
+CREATE TABLE IF NOT EXISTS user_divisions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    division   TEXT    NOT NULL,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(user_id, division)
+);
+CREATE INDEX IF NOT EXISTS idx_user_divisions ON user_divisions(user_id);
+
 -- ── Reconciliation — mark-as-reconciled columns (migration) ─────────────────
 ALTER TABLE vendor_statements ADD COLUMN reconciled INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE vendor_statements ADD COLUMN reconciled_at TEXT;
