@@ -391,6 +391,44 @@ export interface MonthlyPlan {
   summary: PlanSummary;
 }
 
+export interface MaterialItem {
+  work_ticket_item_id: number;
+  work_ticket_id: number;
+  service_name: string;
+  item_name: string;
+  item_type: string;
+  category: string;
+  quantity: number;
+  uom: string;
+  unit_cost: number;
+  total_cost_est: number;
+  do_not_purchase: boolean;
+  notes: string;
+}
+
+export interface PurchaseOrder {
+  receipt_id: number;
+  po_number: number | null;
+  work_ticket_id: number;
+  vendor_name: string;
+  status: string;
+  received_date: string;
+  total_cost: number;
+  note: string;
+  items: Array<{ item_name: string; quantity: number; uom: string; unit_cost: number }>;
+}
+
+export interface JobMaterials {
+  opportunity_id: number;
+  ticket_count: number;
+  items: MaterialItem[];
+  pos: PurchaseOrder[];
+}
+
+export async function getJobMaterials(opportunityId: number): Promise<JobMaterials> {
+  return request('GET', `/construction/plan/jobs/${opportunityId}/materials`);
+}
+
 export async function getMonthlyPlan(month: string): Promise<MonthlyPlan> {
   // Always bypass browser/CDN cache — plan data includes live Aspire work tickets
   const token = localStorage.getItem('ap_token');
