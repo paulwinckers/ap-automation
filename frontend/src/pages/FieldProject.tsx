@@ -150,9 +150,18 @@ interface TicketMaterialItem {
   total_cost_est: number;
   do_not_purchase: boolean;
 }
+interface TicketWithMaterials {
+  WorkTicketID: number;
+  WorkTicketNumber: string | number;
+  ServiceName: string;
+  has_po: boolean;
+  pos: MaterialPO[];
+  items: TicketMaterialItem[];
+}
 interface MaterialsData {
   pos:                MaterialPO[];
   tickets_without_po: { WorkTicketID: number; ServiceName: string; WorkTicketNumber: string | number; items: TicketMaterialItem[] }[];
+  tickets:            TicketWithMaterials[];  // new unified structure
 }
 
 interface ProjectData {
@@ -1622,193 +1631,155 @@ export default function FieldProject() {
                 </div>
               )}
 
-              {!materialsLoading && materialsData && (
-                <>
-                  {/* PO list */}
-                  {materialsData.pos.length === 0 && materialsData.tickets_without_po.length === 0 && (
-                    <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '24px 0' }}>
-                      No purchase orders found for this job
-                    </div>
-                  )}
+              {!materialsLoading && materialsData && (() => {
+                const tickets = materialsData.tickets || [];
+                const hasAny  = tickets.some(t => t.items.filter(i => !i.do_not_purchase).length > 0 || t.has_po);
 
-                  {materialsData.pos.length > 0 && (
-                    <div style={{ marginBottom: 20 }}>
-                      {materialsData.pos.map((po) => (
-                        <div key={po.receipt_id} style={{
-                          border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', marginBottom: 10,
-                        }}>
-                          {/* PO header */}
-                          <div style={{
-                            background: '#f8fafc', padding: '10px 14px',
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-                          }}>
+                const poStatusStyle = (status: string) => {
+                  const s = status.toLowerCase();
+                  if (s.includes('posted') || s.includes('approved') || s.includes('received'))
+                    return { bg: '#dcfce7', color: '#15803d' };
+                  if (s.includes('new'))
+                    return { bg: '#fef3c7', color: '#92400e' };
+                  if (s.includes('void'))
+                    return { bg: '#fee2e2', color: '#dc2626' };
+                  return { bg: '#f1f5f9', color: '#475569' };
+                };
+
+                if (!hasAny) return (
+                  <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, padding: '24px 0' }}>
+                    No materials or purchase orders found for this job
+                  </div>
+                );
+
+                return (
+                  <>
+                    {tickets.map(ticket => {
+                      const purchasable = ticket.items.filter(i => !i.do_not_purchase);
+                      if (purchasable.length === 0 && !ticket.has_po) return null;
+
+                      const poUrl = (itemDesc?: string, itemQty?: number, itemUom?: string, itemCost?: number) => {
+                        const base = `/field/purchase-order?oppId=${data.opportunity_id}&oppName=${encodeURIComponent(data.opportunity_name)}&propName=${encodeURIComponent(data.property_name || '')}&wtId=${ticket.WorkTicketID}&wtNum=${ticket.WorkTicketNumber}&svcName=${encodeURIComponent(ticket.ServiceName || '')}`;
+                        if (itemDesc) return base
+                          + `&itemDesc=${encodeURIComponent(itemDesc)}`
+                          + `&itemQty=${itemQty ?? 1}`
+                          + `&itemUom=${encodeURIComponent(itemUom || '')}`
+                          + `&itemCost=${itemCost ?? 0}`;
+                        return base;
+                      };
+
+                      return (
+                        <div key={ticket.WorkTicketID} style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', marginBottom: 12 }}>
+                          {/* Ticket header */}
+                          <div style={{ background: '#f8fafc', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div>
                               <div style={{ fontWeight: 700, fontSize: 13, color: '#111827' }}>
-                                PO #{po.display_number ?? po.receipt_id}
+                                {ticket.ServiceName || `Ticket #${ticket.WorkTicketNumber}`}
                               </div>
-                              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-                                {po.service_name && <span>{po.service_name} · </span>}
-                                {po.vendor_name}
-                                {po.received_date && <span> · {po.received_date}</span>}
+                              <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                                #{ticket.WorkTicketNumber} · {purchasable.length} item{purchasable.length !== 1 ? 's' : ''}
+                                {purchasable.length > 0 && ` · $${purchasable.reduce((s, i) => s + i.total_cost_est, 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} est.`}
                               </div>
                             </div>
-                            <div style={{ textAlign: 'right' }}>
-                              <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>
-                                {po.total ? `$${Number(po.total).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
-                              </div>
-                              {po.status && (
-                                <span style={{
-                                  fontSize: 10, fontWeight: 600, marginTop: 3, display: 'inline-block',
-                                  padding: '1px 7px', borderRadius: 8,
-                                  background: po.status.toLowerCase().includes('approved') ? '#dcfce7' : po.status.toLowerCase().includes('new') ? '#fef3c7' : '#f1f5f9',
-                                  color: po.status.toLowerCase().includes('approved') ? '#15803d' : po.status.toLowerCase().includes('new') ? '#92400e' : '#475569',
-                                }}>
-                                  {po.status}
-                                </span>
+                            {/* PO badges or Create PO */}
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                              {ticket.pos.map(po => {
+                                const st = poStatusStyle(po.status);
+                                return (
+                                  <div key={po.receipt_id} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                    <span style={{ fontSize: 10, color: '#6b7280' }}>PO#{po.display_number ?? po.receipt_id} · {po.vendor_name}</span>
+                                    <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 8, background: st.bg, color: st.color }}>{po.status}</span>
+                                  </div>
+                                );
+                              })}
+                              {!ticket.has_po && (
+                                <a href={poUrl()} style={{ padding: '5px 10px', background: '#16a34a', color: '#fff', borderRadius: 8, fontSize: 11, fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                                  ＋ Create PO
+                                </a>
                               )}
                             </div>
                           </div>
 
-                          {/* Note snippet */}
-                          {po.note && (
-                            <div style={{ padding: '6px 14px', fontSize: 11, color: '#6b7280', borderTop: '1px solid #f1f5f9', background: '#fff' }}>
-                              {po.note}
-                            </div>
+                          {/* Material items — each row is clickable to pre-fill a PO */}
+                          {purchasable.length > 0 && (
+                            <>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 48px 52px 70px 90px', padding: '5px 14px', background: '#f1f5f9', fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                <div>Item</div>
+                                <div style={{ textAlign: 'right' }}>Qty</div>
+                                <div style={{ paddingLeft: 6 }}>UOM</div>
+                                <div style={{ textAlign: 'right' }}>Est. Total</div>
+                                <div style={{ textAlign: 'center' }}>PO</div>
+                              </div>
+                              {purchasable.map((it, idx) => (
+                                <a
+                                  key={idx}
+                                  href={ticket.has_po ? undefined : poUrl(it.item_name, it.quantity, it.uom, it.unit_cost)}
+                                  style={{
+                                    display: 'grid', gridTemplateColumns: '1fr 48px 52px 70px 90px',
+                                    padding: '9px 14px',
+                                    background: idx % 2 === 0 ? '#fff' : '#f9fafb',
+                                    borderTop: '1px solid #f1f5f9',
+                                    alignItems: 'center',
+                                    textDecoration: 'none',
+                                    cursor: ticket.has_po ? 'default' : 'pointer',
+                                  }}
+                                  onMouseEnter={e => { if (!ticket.has_po) (e.currentTarget as HTMLElement).style.background = '#eff6ff'; }}
+                                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = idx % 2 === 0 ? '#fff' : '#f9fafb'; }}
+                                >
+                                  <div>
+                                    <div style={{ fontSize: 12, color: '#111827', fontWeight: 500 }}>{it.item_name}</div>
+                                    {it.item_type !== 'Material' && (
+                                      <span style={{ fontSize: 10, color: '#7c3aed', background: '#faf5ff', padding: '0 5px', borderRadius: 4 }}>{it.item_type}</span>
+                                    )}
+                                  </div>
+                                  <div style={{ textAlign: 'right', fontSize: 12, color: '#374151' }}>
+                                    {it.quantity % 1 === 0 ? it.quantity.toFixed(0) : it.quantity.toFixed(2)}
+                                  </div>
+                                  <div style={{ paddingLeft: 6, fontSize: 12, color: '#6b7280' }}>{it.uom}</div>
+                                  <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: '#111827' }}>
+                                    {it.total_cost_est > 0 ? `$${it.total_cost_est.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                                  </div>
+                                  {/* PO status column */}
+                                  <div style={{ textAlign: 'center' }}>
+                                    {ticket.has_po ? (
+                                      ticket.pos.map(po => {
+                                        const st = poStatusStyle(po.status);
+                                        return <span key={po.receipt_id} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 8, background: st.bg, color: st.color }}>{po.status}</span>;
+                                      })
+                                    ) : (
+                                      <span style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600 }}>No PO · tap to order</span>
+                                    )}
+                                  </div>
+                                </a>
+                              ))}
+                            </>
                           )}
 
-
-                          {/* Line items (if Aspire returns them) */}
-                          {po.items.length > 0 && (
-                            <div style={{ borderTop: '1px solid #f1f5f9' }}>
-                              {/* Table header */}
-                              <div style={{
-                                display: 'grid', gridTemplateColumns: '1fr 56px 64px 64px',
-                                padding: '5px 14px', background: '#f8fafc',
-                                fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em',
-                              }}>
-                                <div>Item</div><div style={{ textAlign: 'right' }}>Qty</div>
-                                <div style={{ textAlign: 'right' }}>Unit</div>
-                                <div style={{ textAlign: 'right' }}>Total</div>
-                              </div>
-                              {po.items.map((item, idx) => (
+                          {/* Existing receipt line items (what was actually ordered) */}
+                          {ticket.has_po && ticket.pos.length > 0 && ticket.pos.some(p => p.items.length > 0) && (
+                            <div style={{ borderTop: '2px solid #e5e7eb', background: '#fafafa', padding: '8px 14px 4px' }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>Ordered (Receipt Items)</div>
+                              {ticket.pos.flatMap(po => po.items).map((item, idx) => (
                                 <div key={idx} style={{
-                                  display: 'grid', gridTemplateColumns: '1fr 56px 64px 64px',
-                                  padding: '6px 14px',
-                                  background: idx % 2 === 0 ? '#fff' : '#f9fafb',
-                                  fontSize: 12, color: '#374151',
-                                  borderTop: '1px solid #f1f5f9',
+                                  display: 'grid', gridTemplateColumns: '1fr 48px 64px 70px',
+                                  padding: '5px 0', borderTop: idx > 0 ? '1px solid #f1f5f9' : undefined,
+                                  fontSize: 12,
                                 }}>
-                                  <div style={{ paddingRight: 8 }}>{item.description}</div>
+                                  <div style={{ color: '#374151' }}>{item.description}</div>
                                   <div style={{ textAlign: 'right', color: '#6b7280' }}>{item.quantity}</div>
-                                  <div style={{ textAlign: 'right', color: '#6b7280' }}>
-                                    {item.unit_cost ? `$${Number(item.unit_cost).toFixed(2)}` : '—'}
-                                  </div>
-                                  <div style={{ textAlign: 'right', fontWeight: 600 }}>
-                                    {item.total ? `$${Number(item.total).toFixed(2)}` : '—'}
-                                  </div>
+                                  <div style={{ textAlign: 'right', color: '#6b7280' }}>${item.unit_cost?.toFixed(2)}</div>
+                                  <div style={{ textAlign: 'right', fontWeight: 600, color: '#111827' }}>${item.total?.toLocaleString('en-CA', { minimumFractionDigits: 2 })}</div>
                                 </div>
                               ))}
                             </div>
                           )}
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      );
+                    })}
+                  </>
+                );
+              })()}
 
-                  {/* Tickets without any PO */}
-                  {materialsData.tickets_without_po.length > 0 && (
-                    <>
-                      <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                        Tickets Without PO
-                      </div>
-                      <div style={{ marginBottom: 20 }}>
-                        {materialsData.tickets_without_po.map((t, i) => {
-                          const purchasable = (t.items || []).filter(it => !it.do_not_purchase);
-                          const totalEst = purchasable.reduce((s, it) => s + it.total_cost_est, 0);
-                          return (
-                            <div key={t.WorkTicketID} style={{
-                              border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden',
-                              marginBottom: 10,
-                            }}>
-                              {/* Ticket header + Create PO */}
-                              <div style={{
-                                padding: '11px 14px', background: '#f8fafc',
-                                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                              }}>
-                                <div>
-                                  <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>
-                                    {t.ServiceName || `Ticket #${t.WorkTicketNumber}`}
-                                  </div>
-                                  <div style={{ fontSize: 11, color: '#9ca3af' }}>
-                                    #{t.WorkTicketNumber}
-                                    {purchasable.length > 0 && (
-                                      <span style={{ marginLeft: 8 }}>
-                                        · {purchasable.length} item{purchasable.length !== 1 ? 's' : ''}
-                                        {totalEst > 0 && ` · $${totalEst.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} est.`}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                                <a
-                                  href={`/field/purchase-order?oppId=${data.opportunity_id}&oppName=${encodeURIComponent(data.opportunity_name)}&propName=${encodeURIComponent(data.property_name || '')}&wtId=${t.WorkTicketID}&wtNum=${t.WorkTicketNumber}&svcName=${encodeURIComponent(t.ServiceName || '')}`}
-                                  style={{
-                                    padding: '7px 12px', background: '#16a34a', color: '#fff',
-                                    borderRadius: 8, fontSize: 12, fontWeight: 700,
-                                    textDecoration: 'none', whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  ＋ Create PO
-                                </a>
-                              </div>
-
-                              {/* Material items */}
-                              {purchasable.length > 0 && (
-                                <div style={{ borderTop: '1px solid #f1f5f9' }}>
-                                  {/* Column headers */}
-                                  <div style={{
-                                    display: 'grid', gridTemplateColumns: '1fr 48px 52px 70px',
-                                    padding: '5px 14px', background: '#f8fafc',
-                                    fontSize: 10, fontWeight: 700, color: '#94a3b8',
-                                    textTransform: 'uppercase', letterSpacing: '0.04em',
-                                  }}>
-                                    <div>Item</div>
-                                    <div style={{ textAlign: 'right' }}>Qty</div>
-                                    <div style={{ textAlign: 'left', paddingLeft: 6 }}>UOM</div>
-                                    <div style={{ textAlign: 'right' }}>Est. Total</div>
-                                  </div>
-                                  {purchasable.map((it, idx) => (
-                                    <div key={idx} style={{
-                                      display: 'grid', gridTemplateColumns: '1fr 48px 52px 70px',
-                                      padding: '7px 14px',
-                                      background: idx % 2 === 0 ? '#fff' : '#f9fafb',
-                                      borderTop: '1px solid #f1f5f9',
-                                      alignItems: 'center',
-                                    }}>
-                                      <div>
-                                        <div style={{ fontSize: 12, color: '#111827', fontWeight: 500 }}>{it.item_name}</div>
-                                        {it.item_type !== 'Material' && (
-                                          <span style={{ fontSize: 10, color: '#7c3aed', background: '#faf5ff', padding: '0 5px', borderRadius: 4 }}>{it.item_type}</span>
-                                        )}
-                                      </div>
-                                      <div style={{ textAlign: 'right', fontSize: 12, color: '#374151' }}>
-                                        {it.quantity % 1 === 0 ? it.quantity.toFixed(0) : it.quantity.toFixed(2)}
-                                      </div>
-                                      <div style={{ paddingLeft: 6, fontSize: 12, color: '#6b7280' }}>{it.uom}</div>
-                                      <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: '#111827' }}>
-                                        {it.total_cost_est > 0 ? `$${it.total_cost_est.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
             </>
           )}
 

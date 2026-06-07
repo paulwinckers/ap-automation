@@ -49,13 +49,18 @@ const EMPTY_ITEM: POLineItem = { description: '', qty: 1, unit_cost: 0, uom: '' 
 export default function FieldPurchaseOrder() {
   const [searchParams] = useSearchParams();
 
-  // Pre-fill from query params (set by "Create PO" button on project page)
+  // Pre-fill from query params (set by "Create PO" / item click on project page)
   const preOppId   = searchParams.get('oppId');
   const preOppName = searchParams.get('oppName');
   const prePropName= searchParams.get('propName');
   const preWtId    = searchParams.get('wtId');
   const preWtNum   = searchParams.get('wtNum');
   const preSvcName = searchParams.get('svcName');
+  // Item-level pre-fill (when user clicks a specific material line)
+  const preItemDesc = searchParams.get('itemDesc');
+  const preItemQty  = searchParams.get('itemQty');
+  const preItemUom  = searchParams.get('itemUom');
+  const preItemCost = searchParams.get('itemCost');
 
   const prefilled = !!(preOppId && preWtId);
 
@@ -108,7 +113,11 @@ export default function FieldPurchaseOrder() {
   const [selectedVendor, setSelectedVendor] = useState<POVendor | null>(null);
 
   // Line items
-  const [items, setItems] = useState<POLineItem[]>([{ ...EMPTY_ITEM }]);
+  const [items, setItems] = useState<POLineItem[]>([
+    preItemDesc
+      ? { description: preItemDesc, qty: preItemQty ? Number(preItemQty) : 1, unit_cost: preItemCost ? Number(preItemCost) : 0, uom: preItemUom || '' }
+      : { ...EMPTY_ITEM }
+  ]);
   const [ticketItems, setTicketItems]     = useState<POTicketItem[]>([]);
   const [ticketItemsLoading, setTicketItemsLoading] = useState(false);
   const [uomTypes, setUomTypes]           = useState<POUomType[]>([]);

@@ -2001,9 +2001,26 @@ async def get_project_materials(opp_id: int):
             "items":          items,
         })
 
+    # ── Restructured response: all tickets with items + their POs ────────────
+    # Each ticket carries its items and any POs so the frontend can show
+    # "No PO" or the PO status alongside every material line.
+    tickets_combined = []
+    for wt_id, ticket_info in ticket_map.items():
+        ticket_pos = [p for p in pos if p.get("work_ticket_id") == wt_id]
+        ticket_items = items_by_ticket.get(wt_id, [])
+        tickets_combined.append({
+            "WorkTicketID":     ticket_info["WorkTicketID"],
+            "WorkTicketNumber": ticket_info["WorkTicketNumber"],
+            "ServiceName":      ticket_info["ServiceName"],
+            "has_po":           wt_id in tickets_with_po,
+            "pos":              ticket_pos,
+            "items":            ticket_items,
+        })
+
     return {
-        "pos":                pos,
-        "tickets_without_po": tickets_without_po,
+        "pos":                pos,                   # legacy — kept for any existing consumers
+        "tickets_without_po": tickets_without_po,    # legacy
+        "tickets":            tickets_combined,      # new: all tickets with items + PO status
     }
 
 
