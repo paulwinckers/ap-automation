@@ -1703,17 +1703,28 @@ export default function FieldProject() {
                                 {purchasable.length > 0 && ` · $${purchasable.reduce((s, i) => s + i.total_cost_est, 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} est.`}
                               </div>
                             </div>
-                            {/* PO badges or Create PO */}
+                            {/* PO summary or Create PO */}
                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5 }}>
-                              {ticket.pos.map(po => {
-                                const st = poStatusStyle(po.status);
+                              {ticket.has_po && (() => {
+                                // Aggregate: "worst" status wins (New > Approved > Posted)
+                                const statuses = ticket.pos.map(p => p.status);
+                                const hasNew      = statuses.some(s => /new/i.test(s));
+                                const hasApproved = statuses.some(s => /approved/i.test(s));
+                                const summary     = hasNew ? 'New' : hasApproved ? 'Approved' : (statuses[0] || '');
+                                const st          = poStatusStyle(summary);
+                                const poTotal     = ticket.pos.reduce((s, p) => s + (p.total || 0), 0);
                                 return (
-                                  <div key={po.receipt_id} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                                    <span style={{ fontSize: 10, color: '#6b7280' }}>PO#{po.display_number ?? po.receipt_id} · {po.vendor_name}</span>
-                                    <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 8, background: st.bg, color: st.color }}>{po.status}</span>
+                                  <div style={{ textAlign: 'right' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <span style={{ fontSize: 11, color: '#6b7280' }}>
+                                        {ticket.pos.length} PO{ticket.pos.length !== 1 ? 's' : ''}
+                                        {poTotal > 0 && ` · $${poTotal.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                      </span>
+                                      <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 8, background: st.bg, color: st.color }}>{summary}</span>
+                                    </div>
                                   </div>
                                 );
-                              })}
+                              })()}
                               {!ticket.has_po && selectedPurchasable.length > 0 && (
                                 <a href={poUrl(selectedPurchasable)} style={{
                                   padding: '6px 12px', background: '#16a34a', color: '#fff',
@@ -1724,7 +1735,7 @@ export default function FieldProject() {
                                 </a>
                               )}
                               {!ticket.has_po && selectedPurchasable.length === 0 && (
-                                <span style={{ fontSize: 11, color: '#9ca3af' }}>Select items below</span>
+                                <span style={{ fontSize: 11, color: '#9ca3af' }}>Select items to order</span>
                               )}
                             </div>
                           </div>
@@ -1732,8 +1743,8 @@ export default function FieldProject() {
                           {/* Material items with checkboxes */}
                           {purchasable.length > 0 && (
                             <>
-                              {/* Column headers — checkbox in first col for select-all */}
-                              <div style={{ display: 'grid', gridTemplateColumns: '32px 1fr 48px 52px 70px 80px', padding: '5px 14px 5px 10px', background: '#f1f5f9', fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', alignItems: 'center' }}>
+                              {/* Column headers */}
+                              <div style={{ display: 'grid', gridTemplateColumns: `${ticket.has_po ? '0px' : '32px'} 1fr 48px 52px 70px ${ticket.has_po ? '0px' : '80px'}`, padding: '5px 14px 5px 10px', background: '#f1f5f9', fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', alignItems: 'center' }}>
                                 {!ticket.has_po ? (
                                   <input
                                     type="checkbox"
@@ -1747,7 +1758,7 @@ export default function FieldProject() {
                                 <div style={{ textAlign: 'right' }}>Qty</div>
                                 <div style={{ paddingLeft: 6 }}>UOM</div>
                                 <div style={{ textAlign: 'right' }}>Est. Total</div>
-                                <div style={{ textAlign: 'center' }}>PO Status</div>
+                                {!ticket.has_po && <div style={{ textAlign: 'center' }}>Order</div>}
                               </div>
 
                               {purchasable.map((it, idx) => {
@@ -1758,7 +1769,7 @@ export default function FieldProject() {
                                     key={idx}
                                     onClick={() => { if (!ticket.has_po) toggleItem(ticket.WorkTicketID, idx); }}
                                     style={{
-                                      display: 'grid', gridTemplateColumns: '32px 1fr 48px 52px 70px 80px',
+                                      display: 'grid', gridTemplateColumns: `${ticket.has_po ? '0px' : '32px'} 1fr 48px 52px 70px ${ticket.has_po ? '0px' : '80px'}`,
                                       padding: '9px 14px 9px 10px',
                                       background: bg,
                                       borderTop: '1px solid #f1f5f9',
@@ -1792,19 +1803,14 @@ export default function FieldProject() {
                                     <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: '#111827' }}>
                                       {it.total_cost_est > 0 ? `$${it.total_cost_est.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
                                     </div>
-                                    {/* PO status */}
-                                    <div style={{ textAlign: 'center' }}>
-                                      {ticket.has_po ? (
-                                        ticket.pos.map(po => {
-                                          const st = poStatusStyle(po.status);
-                                          return <span key={po.receipt_id} style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 8, background: st.bg, color: st.color }}>{po.status}</span>;
-                                        })
-                                      ) : (
+                                    {/* Order status — only shown when ticket has no PO */}
+                                    {!ticket.has_po && (
+                                      <div style={{ textAlign: 'center' }}>
                                         <span style={{ fontSize: 10, color: isChecked ? '#16a34a' : '#f59e0b', fontWeight: 600 }}>
                                           {isChecked ? '✓ Selected' : 'No PO'}
                                         </span>
-                                      )}
-                                    </div>
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })}
