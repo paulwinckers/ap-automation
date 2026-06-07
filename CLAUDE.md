@@ -40,9 +40,19 @@ npx wrangler d1 execute ap-automation-db --file=schema.sql
 Local dev uses `backend/local.db` (SQLite file) — no D1 needed locally.
 
 ### Deployment
-Push to `main` triggers GitHub Actions:
-- `.github/workflows/deploy-backend.yml` — Docker build → Cloudflare Container Registry
-- `.github/workflows/deploy-frontend.yml` — Vite build → Cloudflare Pages
+The GitHub Actions deploy workflows were removed in April 2026 — **pushing to `main` does
+not deploy anything.**
+
+**Frontend (Cloudflare Pages `darios-ap`) — manual via Wrangler:**
+```bash
+cd frontend && npm run build      # tsc && vite build → frontend/dist
+npx wrangler@latest pages deploy frontend/dist --project-name=darios-ap
+```
+Requires Cloudflare auth (`wrangler login` or `CLOUDFLARE_API_TOKEN`). The deploy command
+prints a per-deployment URL; production is https://darios-ap.pages.dev.
+
+**Backend:** Docker image; production API runs at the Railway URL hard-coded in
+`frontend/src/lib/api.ts`. The exact deploy trigger is unconfirmed — verify before relying on it.
 
 There is no test suite yet.
 

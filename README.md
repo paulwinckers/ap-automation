@@ -98,7 +98,20 @@ npm run dev
 ```
 
 ### 5. Deploy
-Push to `main` branch — GitHub Actions deploys automatically.
+
+**Frontend (Cloudflare Pages) — manual via Wrangler.** Pushing to `main` does *not*
+deploy; the GitHub Actions workflows were removed in April 2026. To ship the frontend:
+
+```bash
+cd frontend
+npm run build                                                      # tsc && vite build → frontend/dist
+npx wrangler@latest pages deploy frontend/dist --project-name=darios-ap
+```
+
+Requires Cloudflare auth (`wrangler login`, or a `CLOUDFLARE_API_TOKEN` in the environment).
+
+**Backend:** deployed separately (Docker image; production API at the Railway URL hard-coded
+in `frontend/src/lib/api.ts`). Confirm the exact backend deploy trigger before relying on it.
 
 ## Environment Variables
 
