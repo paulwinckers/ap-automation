@@ -141,9 +141,18 @@ interface MaterialPO {
   _item_keys?:    string[];  // debug: actual field names from Aspire
 }
 
+interface TicketMaterialItem {
+  item_name: string;
+  item_type: string;
+  quantity: number;
+  uom: string;
+  unit_cost: number;
+  total_cost_est: number;
+  do_not_purchase: boolean;
+}
 interface MaterialsData {
   pos:                MaterialPO[];
-  tickets_without_po: { WorkTicketID: number; ServiceName: string; WorkTicketNumber: string | number }[];
+  tickets_without_po: { WorkTicketID: number; ServiceName: string; WorkTicketNumber: string | number; items: TicketMaterialItem[] }[];
 }
 
 interface ProjectData {
@@ -1712,32 +1721,89 @@ export default function FieldProject() {
                       <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
                         Tickets Without PO
                       </div>
-                      <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', marginBottom: 20 }}>
-                        {materialsData.tickets_without_po.map((t, i) => (
-                          <div key={t.WorkTicketID} style={{
-                            padding: '11px 14px',
-                            background: i % 2 === 0 ? '#fff' : '#f9fafb',
-                            borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                          }}>
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>
-                                {t.ServiceName || `Ticket #${t.WorkTicketNumber}`}
+                      <div style={{ marginBottom: 20 }}>
+                        {materialsData.tickets_without_po.map((t, i) => {
+                          const purchasable = (t.items || []).filter(it => !it.do_not_purchase);
+                          const totalEst = purchasable.reduce((s, it) => s + it.total_cost_est, 0);
+                          return (
+                            <div key={t.WorkTicketID} style={{
+                              border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden',
+                              marginBottom: 10,
+                            }}>
+                              {/* Ticket header + Create PO */}
+                              <div style={{
+                                padding: '11px 14px', background: '#f8fafc',
+                                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              }}>
+                                <div>
+                                  <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>
+                                    {t.ServiceName || `Ticket #${t.WorkTicketNumber}`}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                                    #{t.WorkTicketNumber}
+                                    {purchasable.length > 0 && (
+                                      <span style={{ marginLeft: 8 }}>
+                                        · {purchasable.length} item{purchasable.length !== 1 ? 's' : ''}
+                                        {totalEst > 0 && ` · $${totalEst.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} est.`}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <a
+                                  href={`/field/purchase-order?oppId=${data.opportunity_id}&oppName=${encodeURIComponent(data.opportunity_name)}&propName=${encodeURIComponent(data.property_name || '')}&wtId=${t.WorkTicketID}&wtNum=${t.WorkTicketNumber}&svcName=${encodeURIComponent(t.ServiceName || '')}`}
+                                  style={{
+                                    padding: '7px 12px', background: '#16a34a', color: '#fff',
+                                    borderRadius: 8, fontSize: 12, fontWeight: 700,
+                                    textDecoration: 'none', whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  ＋ Create PO
+                                </a>
                               </div>
-                              <div style={{ fontSize: 11, color: '#9ca3af' }}>#{t.WorkTicketNumber}</div>
+
+                              {/* Material items */}
+                              {purchasable.length > 0 && (
+                                <div style={{ borderTop: '1px solid #f1f5f9' }}>
+                                  {/* Column headers */}
+                                  <div style={{
+                                    display: 'grid', gridTemplateColumns: '1fr 48px 52px 70px',
+                                    padding: '5px 14px', background: '#f8fafc',
+                                    fontSize: 10, fontWeight: 700, color: '#94a3b8',
+                                    textTransform: 'uppercase', letterSpacing: '0.04em',
+                                  }}>
+                                    <div>Item</div>
+                                    <div style={{ textAlign: 'right' }}>Qty</div>
+                                    <div style={{ textAlign: 'left', paddingLeft: 6 }}>UOM</div>
+                                    <div style={{ textAlign: 'right' }}>Est. Total</div>
+                                  </div>
+                                  {purchasable.map((it, idx) => (
+                                    <div key={idx} style={{
+                                      display: 'grid', gridTemplateColumns: '1fr 48px 52px 70px',
+                                      padding: '7px 14px',
+                                      background: idx % 2 === 0 ? '#fff' : '#f9fafb',
+                                      borderTop: '1px solid #f1f5f9',
+                                      alignItems: 'center',
+                                    }}>
+                                      <div>
+                                        <div style={{ fontSize: 12, color: '#111827', fontWeight: 500 }}>{it.item_name}</div>
+                                        {it.item_type !== 'Material' && (
+                                          <span style={{ fontSize: 10, color: '#7c3aed', background: '#faf5ff', padding: '0 5px', borderRadius: 4 }}>{it.item_type}</span>
+                                        )}
+                                      </div>
+                                      <div style={{ textAlign: 'right', fontSize: 12, color: '#374151' }}>
+                                        {it.quantity % 1 === 0 ? it.quantity.toFixed(0) : it.quantity.toFixed(2)}
+                                      </div>
+                                      <div style={{ paddingLeft: 6, fontSize: 12, color: '#6b7280' }}>{it.uom}</div>
+                                      <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: '#111827' }}>
+                                        {it.total_cost_est > 0 ? `$${it.total_cost_est.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                            <a
-                              href={`/field/purchase-order?oppId=${data.opportunity_id}&oppName=${encodeURIComponent(data.opportunity_name)}&propName=${encodeURIComponent(data.property_name || '')}&wtId=${t.WorkTicketID}&wtNum=${t.WorkTicketNumber}&svcName=${encodeURIComponent(t.ServiceName || '')}`}
-                              style={{
-                                padding: '7px 12px', background: '#16a34a', color: '#fff',
-                                borderRadius: 8, fontSize: 12, fontWeight: 700,
-                                textDecoration: 'none', whiteSpace: 'nowrap',
-                              }}
-                            >
-                              ＋ Create PO
-                            </a>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </>
                   )}

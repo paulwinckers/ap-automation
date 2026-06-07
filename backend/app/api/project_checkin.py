@@ -1850,21 +1850,66 @@ async def get_project_materials(opp_id: int):
     if not ticket_ids:
         return {"pos": [], "tickets_without_po": []}
 
-    # 2. Fetch Receipts for those work tickets (chunked OR filter)
-    all_receipts: list[dict] = []
-    chunk_size = 8  # keep filter URL short to avoid 400
-    for i in range(0, len(ticket_ids), chunk_size):
-        chunk = ticket_ids[i : i + chunk_size]
-        or_filter = " or ".join(f"WorkTicketID eq {tid}" for tid in chunk)
-        try:
-            res = await _aspire._get("Receipts", {
-                "$filter":  f"({or_filter})",
-                "$top":     "200",
-                "$orderby": "ReceiptID desc",
-            })
-            all_receipts.extend(_aspire._extract_list(res))
-        except Exception as e:
-            logger.warning(f"Receipts fetch for opp {opp_id} chunk {chunk} failed (non-fatal): {e}")
+    # 2. Fetch Receipts AND WorkTicketItems in parallel
+    import asyncio as _aio
+
+    async def _fetch_receipts_all() -> list[dict]:
+        out: list[dict] = []
+        for i in range(0, len(ticket_ids), 8):
+            chunk = ticket_ids[i : i + 8]
+            or_filter = " or ".join(f"WorkTicketID eq {tid}" for tid in chunk)
+            try:
+                res = await _aspire._get("Receipts", {
+                    "$filter":  f"({or_filter})",
+                    "$top":     "200",
+                    "$orderby": "ReceiptID desc",
+                })
+                out.extend(_aspire._extract_list(res))
+            except Exception as e:
+                logger.warning(f"Receipts fetch chunk {chunk} failed: {e}")
+        return out
+
+    async def _fetch_wt_items_all() -> list[dict]:
+        """WorkTicketItems — material/sub/other line items from the estimate."""
+        out: list[dict] = []
+        PURCHASABLE = {"material", "sub", "other"}
+        for i in range(0, len(ticket_ids), 8):
+            chunk = ticket_ids[i : i + 8]
+            or_filter = " or ".join(f"WorkTicketID eq {tid}" for tid in chunk)
+            try:
+                res = await _aspire._get("WorkTicketItems", {
+                    "$filter": f"({or_filter})",
+                    "$top":    "500",
+                })
+                for item in _aspire._extract_list(res):
+                    if (item.get("ItemType") or "").lower() in PURCHASABLE:
+                        qty  = float(item.get("ItemQuantityExtended") or 0)
+                        unit = float(item.get("ItemCost") or 0)
+                        out.append({
+                            "work_ticket_id": item.get("WorkTicketID"),
+                            "item_name":      item.get("ItemName") or "",
+                            "item_type":      item.get("ItemType") or "",
+                            "quantity":       qty,
+                            "uom":            item.get("AllocationUnitTypeName") or "",
+                            "unit_cost":      unit,
+                            "total_cost_est": round(qty * unit, 2),
+                            "do_not_purchase": item.get("DoNotPurchase") or False,
+                        })
+            except Exception as e:
+                logger.warning(f"WorkTicketItems fetch chunk {chunk} failed: {e}")
+        return out
+
+    all_receipts, all_wt_items = await _aio.gather(
+        _fetch_receipts_all(),
+        _fetch_wt_items_all(),
+    )
+
+    # Group WorkTicketItems by ticket ID
+    items_by_ticket: dict[int, list[dict]] = {}
+    for it in all_wt_items:
+        tid = it.get("work_ticket_id")
+        if tid:
+            items_by_ticket.setdefault(tid, []).append(it)
 
     # 3. Deduplicate
     seen_ids: set[int] = set()
@@ -1880,7 +1925,8 @@ async def get_project_materials(opp_id: int):
         r.get("WorkTicketID") for r in deduped if r.get("WorkTicketID")
     }
     tickets_without_po = [
-        v for k, v in ticket_map.items() if k not in tickets_with_po
+        {**v, "items": items_by_ticket.get(k, [])}
+        for k, v in ticket_map.items() if k not in tickets_with_po
     ]
 
     import re as _re
