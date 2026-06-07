@@ -532,7 +532,7 @@ export default function FieldProject() {
   // Checkbox selections: { [workTicketId]: Set<itemIndex> }
   const [selectedItems,    setSelectedItems]    = useState<Record<number, Set<number>>>({});
   // Materials sub-tab: 'materials' or 'equipment'
-  const [materialsSubTab,  setMaterialsSubTab]  = useState<'materials' | 'equipment'>('materials');
+  const [materialsSubTab,  setMaterialsSubTab]  = useState<'materials' | 'equipment' | 'subs'>('materials');
 
   const toggleItem = (ticketId: number, idx: number) => {
     setSelectedItems(prev => {
@@ -854,7 +854,7 @@ export default function FieldProject() {
             { key: 'scope',         label: '📐 Scope' },
             { key: 'tickets',       label: `📋 Tickets (${data.tickets.length})` },
             { key: 'update',        label: '✏️ Update' },
-            { key: 'materials',     label: '📦 Materials' },
+            { key: 'materials',     label: '🧰 Resources' },
             { key: 'history',       label: `📝 History (${(data.activities || []).filter(a => (a.ActivityType || '').toLowerCase() !== 'email').length + responded + (data.advisor_log || []).length})` },
             { key: 'conversations', label: '💬 Chat' },
           ] as const).map(({ key, label }) => (
@@ -1630,7 +1630,7 @@ export default function FieldProject() {
               {/* Sub-tab toggle */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
                 <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: 8, padding: 3, gap: 2 }}>
-                  {(['materials', 'equipment'] as const).map(t => (
+                  {(['materials', 'equipment', 'subs'] as const).map(t => (
                     <button key={t} onClick={() => setMaterialsSubTab(t)} style={{
                       padding: '5px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
                       border: 'none', cursor: 'pointer',
@@ -1638,7 +1638,7 @@ export default function FieldProject() {
                       color: materialsSubTab === t ? '#111827' : '#6b7280',
                       boxShadow: materialsSubTab === t ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
                     }}>
-                      {t === 'materials' ? '📦 Materials' : '🚜 Equipment'}
+                      {t === 'materials' ? '📦 Materials' : t === 'equipment' ? '🚜 Equipment' : '👷 Sub Trades'}
                     </button>
                   ))}
                 </div>
@@ -1688,12 +1688,16 @@ export default function FieldProject() {
                     {tickets.map(ticket => {
                       // Filter by active sub-tab
                       const EQUIP_TYPES = new Set(['equipment', 'rental equipment']);
+                      const SUB_TYPES   = new Set(['sub', 'subcontractor']);
+                      const classify = (i: TicketMaterialItem) => {
+                        const t = (i.item_type || '').toLowerCase();
+                        const c = (i.category || '').toLowerCase();
+                        if (EQUIP_TYPES.has(t) || EQUIP_TYPES.has(c)) return 'equipment';
+                        if (SUB_TYPES.has(t)) return 'subs';
+                        return 'materials';
+                      };
                       const allPurchasable = ticket.items.filter(i => !i.do_not_purchase);
-                      const purchasable = allPurchasable.filter(i =>
-                        materialsSubTab === 'equipment'
-                          ? EQUIP_TYPES.has((i.item_type || '').toLowerCase()) || EQUIP_TYPES.has((i.category || '').toLowerCase())
-                          : !EQUIP_TYPES.has((i.item_type || '').toLowerCase()) && !EQUIP_TYPES.has((i.category || '').toLowerCase())
-                      );
+                      const purchasable = allPurchasable.filter(i => classify(i) === materialsSubTab);
                       // Skip ticket if nothing to show in this sub-tab
                       if (purchasable.length === 0 && !(materialsSubTab === 'materials' && ticket.has_po)) return null;
 
