@@ -143,7 +143,8 @@ interface MaterialPO {
 
 interface TicketMaterialItem {
   item_name: string;
-  item_type: string;
+  item_type: string;   // Material | Sub | Other | Equipment
+  category: string;
   quantity: number;
   uom: string;
   unit_cost: number;
@@ -530,6 +531,8 @@ export default function FieldProject() {
   const [materialsError,   setMaterialsError]   = useState('');
   // Checkbox selections: { [workTicketId]: Set<itemIndex> }
   const [selectedItems,    setSelectedItems]    = useState<Record<number, Set<number>>>({});
+  // Materials sub-tab: 'materials' or 'equipment'
+  const [materialsSubTab,  setMaterialsSubTab]  = useState<'materials' | 'equipment'>('materials');
 
   const toggleItem = (ticketId: number, idx: number) => {
     setSelectedItems(prev => {
@@ -1624,9 +1627,20 @@ export default function FieldProject() {
           {/* ── Materials tab ─────────────────────────────────────────── */}
           {tab === 'materials' && (
             <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <div style={{ fontWeight: 700, fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Purchase Orders / Materials
+              {/* Sub-tab toggle */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: 8, padding: 3, gap: 2 }}>
+                  {(['materials', 'equipment'] as const).map(t => (
+                    <button key={t} onClick={() => setMaterialsSubTab(t)} style={{
+                      padding: '5px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+                      border: 'none', cursor: 'pointer',
+                      background: materialsSubTab === t ? '#fff' : 'transparent',
+                      color: materialsSubTab === t ? '#111827' : '#6b7280',
+                      boxShadow: materialsSubTab === t ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                    }}>
+                      {t === 'materials' ? '📦 Materials' : '🚜 Equipment'}
+                    </button>
+                  ))}
                 </div>
                 <button
                   onClick={() => loadMaterials(true)}
@@ -1672,8 +1686,16 @@ export default function FieldProject() {
                 return (
                   <>
                     {tickets.map(ticket => {
-                      const purchasable = ticket.items.filter(i => !i.do_not_purchase);
-                      if (purchasable.length === 0 && !ticket.has_po) return null;
+                      // Filter by active sub-tab
+                      const EQUIP_TYPES = new Set(['equipment', 'rental equipment']);
+                      const allPurchasable = ticket.items.filter(i => !i.do_not_purchase);
+                      const purchasable = allPurchasable.filter(i =>
+                        materialsSubTab === 'equipment'
+                          ? EQUIP_TYPES.has((i.item_type || '').toLowerCase()) || EQUIP_TYPES.has((i.category || '').toLowerCase())
+                          : !EQUIP_TYPES.has((i.item_type || '').toLowerCase()) && !EQUIP_TYPES.has((i.category || '').toLowerCase())
+                      );
+                      // Skip ticket if nothing to show in this sub-tab
+                      if (purchasable.length === 0 && !(materialsSubTab === 'materials' && ticket.has_po)) return null;
 
                       const base = `/field/purchase-order?oppId=${data.opportunity_id}&oppName=${encodeURIComponent(data.opportunity_name)}&propName=${encodeURIComponent(data.property_name || '')}&wtId=${ticket.WorkTicketID}&wtNum=${ticket.WorkTicketNumber}&svcName=${encodeURIComponent(ticket.ServiceName || '')}`;
                       const poUrl = (its: TicketMaterialItem[]) => {
@@ -1756,9 +1778,9 @@ export default function FieldProject() {
                                 ) : <div />}
                                 <div>Item</div>
                                 <div style={{ textAlign: 'right' }}>Qty</div>
-                                <div style={{ paddingLeft: 6 }}>UOM</div>
-                                <div style={{ textAlign: 'right' }}>Est. Total</div>
-                                {!ticket.has_po && <div style={{ textAlign: 'center' }}>Order</div>}
+                                <div style={{ paddingLeft: 6 }}>{materialsSubTab === 'equipment' ? 'Duration' : 'UOM'}</div>
+                                <div style={{ textAlign: 'right' }}>Est. Cost</div>
+                                {!ticket.has_po && <div style={{ textAlign: 'center' }}>PO</div>}
                               </div>
 
                               {purchasable.map((it, idx) => {
@@ -1792,8 +1814,8 @@ export default function FieldProject() {
                                     {/* Item name */}
                                     <div>
                                       <div style={{ fontSize: 12, color: '#111827', fontWeight: 500 }}>{it.item_name}</div>
-                                      {it.item_type !== 'Material' && (
-                                        <span style={{ fontSize: 10, color: '#7c3aed', background: '#faf5ff', padding: '0 5px', borderRadius: 4 }}>{it.item_type}</span>
+                                      {it.category && it.category !== it.item_type && (
+                                        <div style={{ fontSize: 10, color: '#9ca3af' }}>{it.category}</div>
                                       )}
                                     </div>
                                     <div style={{ textAlign: 'right', fontSize: 12, color: '#374151' }}>

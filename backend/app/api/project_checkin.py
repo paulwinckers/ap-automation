@@ -1870,9 +1870,9 @@ async def get_project_materials(opp_id: int):
         return out
 
     async def _fetch_wt_items_all() -> list[dict]:
-        """WorkTicketItems — material/sub/other line items from the estimate."""
+        """WorkTicketItems — material/sub/other/equipment line items from the estimate."""
         out: list[dict] = []
-        PURCHASABLE = {"material", "sub", "other"}
+        PURCHASABLE = {"material", "sub", "other", "equipment"}
         for i in range(0, len(ticket_ids), 8):
             chunk = ticket_ids[i : i + 8]
             or_filter = " or ".join(f"WorkTicketID eq {tid}" for tid in chunk)
@@ -1882,19 +1882,22 @@ async def get_project_materials(opp_id: int):
                     "$top":    "500",
                 })
                 for item in _aspire._extract_list(res):
-                    if (item.get("ItemType") or "").lower() in PURCHASABLE:
-                        qty  = float(item.get("ItemQuantityExtended") or 0)
-                        unit = float(item.get("ItemCost") or 0)
-                        out.append({
-                            "work_ticket_id": item.get("WorkTicketID"),
-                            "item_name":      item.get("ItemName") or "",
-                            "item_type":      item.get("ItemType") or "",
-                            "quantity":       qty,
-                            "uom":            item.get("AllocationUnitTypeName") or "",
-                            "unit_cost":      unit,
-                            "total_cost_est": round(qty * unit, 2),
-                            "do_not_purchase": item.get("DoNotPurchase") or False,
-                        })
+                    item_type = (item.get("ItemType") or "").lower()
+                    if item_type not in PURCHASABLE:
+                        continue
+                    qty  = float(item.get("ItemQuantityExtended") or 0)
+                    unit = float(item.get("ItemCost") or 0)
+                    out.append({
+                        "work_ticket_id": item.get("WorkTicketID"),
+                        "item_name":      item.get("ItemName") or "",
+                        "item_type":      item.get("ItemType") or "",
+                        "category":       item.get("CatalogItemCategoryName") or "",
+                        "quantity":       qty,
+                        "uom":            item.get("AllocationUnitTypeName") or "",
+                        "unit_cost":      unit,
+                        "total_cost_est": round(qty * unit, 2),
+                        "do_not_purchase": item.get("DoNotPurchase") or False,
+                    })
             except Exception as e:
                 logger.warning(f"WorkTicketItems fetch chunk {chunk} failed: {e}")
         return out
