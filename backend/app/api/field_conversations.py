@@ -13,6 +13,7 @@ Routes:
 """
 import asyncio
 import base64
+import json
 import logging
 import uuid
 from typing import Optional
@@ -68,7 +69,12 @@ def _format_whatsapp_number(raw: str) -> str:
 
 
 def _twilio_send(body: str, to: str) -> None:
-    """Fire a single WhatsApp message via Twilio (call from executor)."""
+    """Fire a single freeform WhatsApp message via Twilio (call from executor).
+
+    NOTE: freeform only delivers inside the 24h customer-care window. For
+    business-initiated notifications on a production sender, use a template
+    (see _twilio_send_template). This stays as the sandbox / in-window fallback.
+    """
     sid   = settings.TWILIO_ACCOUNT_SID
     token = settings.TWILIO_AUTH_TOKEN
     frm   = settings.TWILIO_WHATSAPP_FROM
@@ -80,6 +86,38 @@ def _twilio_send(body: str, to: str) -> None:
         logger.info(f"WhatsApp sent → {to}")
     except Exception as e:
         logger.warning(f"WhatsApp failed → {to}: {e}")
+
+
+def _tpl_var(s: str) -> str:
+    """Sanitise a value for a WhatsApp template variable — Meta forbids newlines,
+    tabs and runs of >4 spaces inside variables, so collapse all whitespace."""
+    return " ".join((s or "").split()) or "-"
+
+
+def _twilio_send_template(content_sid: str, variables: dict, to: str) -> bool:
+    """
+    Send a WhatsApp **template** message via Twilio's Content API. Required for
+    business-initiated messages on a production sender (works outside the 24h window).
+    Returns True if a send was attempted (config present), False if it should fall back.
+    """
+    sid   = settings.TWILIO_ACCOUNT_SID
+    token = settings.TWILIO_AUTH_TOKEN
+    frm   = settings.TWILIO_WHATSAPP_FROM
+    if not (sid and token and frm and content_sid and to and to.strip()):
+        return False
+    try:
+        from twilio.rest import Client as TwilioClient
+        TwilioClient(sid, token).messages.create(
+            content_sid=content_sid,
+            content_variables=json.dumps({str(k): _tpl_var(str(v)) for k, v in variables.items()}),
+            from_=frm,
+            to=to,
+        )
+        logger.info(f"WhatsApp template {content_sid} sent → {to}")
+        return True
+    except Exception as e:
+        logger.warning(f"WhatsApp template failed → {to}: {e}")
+        return False
 
 
 def _deep_link(context_type: str, opp_id: int, conv_id: int | None = None) -> str:
@@ -106,13 +144,24 @@ def _notify_crew_whatsapp(
     """Notify the crew lead that a manager or AI has replied."""
     wa_to = _format_whatsapp_number(crew_whatsapp)
     preview = reply_content.strip()[:150] + ("…" if len(reply_content.strip()) > 150 else "")
+    link = _deep_link(context_type, opp_id, conv_id)
+
+    # Production: send the approved template (works outside the 24h window).
+    if settings.TWILIO_TEMPLATE_ISSUE_REPLY:
+        if _twilio_send_template(
+            settings.TWILIO_TEMPLATE_ISSUE_REPLY,
+            {"1": property_name, "2": title, "3": sender_name, "4": preview, "5": link},
+            wa_to,
+        ):
+            return
+
     body = (
         f"💬 *Reply on your issue*\n"
         f"Property: {property_name}\n"
         f"Topic: {title}\n"
         f"From: {sender_name}\n\n"
         f"{preview}\n\n"
-        f"🔗 View thread: {_deep_link(context_type, opp_id, conv_id)}"
+        f"🔗 View thread: {link}"
     )
     _twilio_send(body, wa_to)
 
@@ -157,7 +206,20 @@ def _notify_watchers(
             f"🔗 {link}"
         )
 
+    # Production: prefer the approved template per message type (works outside the 24h window).
+    template_sid = (
+        settings.TWILIO_TEMPLATE_NEW_ISSUE if is_new
+        else settings.TWILIO_TEMPLATE_CREW_FOLLOWUP
+    )
+    template_vars = (
+        {"1": property_name, "2": crew_label, "3": f"{title}{tag_label}", "4": preview, "5": link}
+        if is_new
+        else {"1": property_name, "2": title, "3": crew_label, "4": preview, "5": link}
+    )
+
     for w in watchers:
+        if template_sid and _twilio_send_template(template_sid, template_vars, w["whatsapp"]):
+            continue
         _twilio_send(body, w["whatsapp"])
 
 

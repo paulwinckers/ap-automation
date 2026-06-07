@@ -79,9 +79,14 @@ class Settings(BaseSettings):
     # Twilio WhatsApp notifications
     TWILIO_ACCOUNT_SID:   str = ""   # AC...
     TWILIO_AUTH_TOKEN:    str = ""
-    TWILIO_WHATSAPP_FROM:            str = ""   # e.g. whatsapp:+14155238886
+    TWILIO_WHATSAPP_FROM:            str = ""   # sandbox: whatsapp:+14155238886 — prod: whatsapp:+<approved number>
     TWILIO_WHATSAPP_TO:              str = ""   # maintenance recipients (comma-separated)
     TWILIO_WHATSAPP_TO_CONSTRUCTION: str = ""   # construction recipients (falls back to TWILIO_WHATSAPP_TO if blank)
+    # Approved WhatsApp template Content SIDs (HX...) for production business-initiated sends.
+    # When blank, the notify functions fall back to freeform (sandbox / in-window only).
+    TWILIO_TEMPLATE_NEW_ISSUE:     str = ""   # vars: 1=property 2=crew 3=topic 4=preview 5=link
+    TWILIO_TEMPLATE_CREW_FOLLOWUP: str = ""   # vars: 1=property 2=topic 3=from 4=preview 5=link
+    TWILIO_TEMPLATE_ISSUE_REPLY:   str = ""   # vars: 1=property 2=topic 3=from 4=preview 5=link
 
     # Web push (VAPID) — generate with scripts/generate_vapid_keys.py, then set in Railway
     VAPID_PRIVATE_KEY: str = ""   # base64url raw EC private key (32 bytes)
