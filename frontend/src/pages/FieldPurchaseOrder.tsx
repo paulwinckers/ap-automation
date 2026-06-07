@@ -64,6 +64,10 @@ export default function FieldPurchaseOrder() {
   const preItemCount = parseInt(searchParams.get('items') || '0', 10);
 
   const prefilled = !!(preOppId && preWtId);
+  // Items arrived already selected (multi-select checkboxes or single-row click) — they're
+  // loaded into the form below, so the "Load these items into PO" banner must NOT also show
+  // (it would re-add / double-allocate the items).
+  const itemsPrefilled = preItemCount > 0 || !!preItemDesc;
 
   const [step, setStep] = useState<Step>(prefilled ? 3 : 1);
 
@@ -183,7 +187,9 @@ export default function FieldPurchaseOrder() {
 
     getAspireEmployees().then(r => setEmployees(r)).catch(() => {});
     getPOUomTypes().then(r => setUomTypes(r)).catch(() => {});
-    if (prefilled && preWtId) {
+    if (prefilled && preWtId && !itemsPrefilled) {
+      // Only fetch the ticket's items for the "Load items" banner when the user did NOT
+      // arrive with items already selected (otherwise they'd be offered to load twice).
       fetchTicketItems(Number(preWtId));
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -607,8 +613,8 @@ export default function FieldPurchaseOrder() {
         {selectedJob && <span style={{ color: '#64748b', fontSize: 12 }}> · {selectedJob.opportunity_name}</span>}
       </div>
 
-      {/* Load from ticket banner */}
-      {selectedTicket && (
+      {/* Load from ticket banner — hidden when items already arrived pre-selected */}
+      {selectedTicket && !itemsPrefilled && (
         <div style={{ ...card, background: '#1e3a5f', border: '1px solid #3b82f6', padding: '12px 14px', marginBottom: 8 }}>
           {ticketItemsLoading && (
             <div style={{ color: '#93c5fd', fontSize: 13 }}>Loading ticket materials…</div>
