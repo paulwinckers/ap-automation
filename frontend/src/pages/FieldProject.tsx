@@ -322,30 +322,6 @@ function HoursBar({ est, act }: { est: number | null; act: number | null }) {
  *  Keeps the longest edge ≤ maxPx and re-encodes as JPEG at the given quality.
  *  Handles HEIC/HEIF from iOS: the browser decodes the pixel data via Image,
  *  then Canvas re-encodes it as JPEG — so the output is always a valid JPEG. */
-async function compressPhoto(file: File, maxPx = 1600, quality = 0.85): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      const scale = Math.min(1, maxPx / Math.max(img.naturalWidth, img.naturalHeight));
-      const w = Math.round(img.naturalWidth  * scale);
-      const h = Math.round(img.naturalHeight * scale);
-      const canvas = document.createElement('canvas');
-      canvas.width  = w;
-      canvas.height = h;
-      canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
-      canvas.toBlob(
-        blob => (blob ? resolve(blob) : reject(new Error('Canvas toBlob returned null'))),
-        'image/jpeg',
-        quality,
-      );
-    };
-    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Image failed to load')); };
-    img.src = objectUrl;
-  });
-}
-
 /** Compress an image File to max 1920px JPEG — returns a new File so the filename is preserved. */
 function compressImage(f: File, maxPx = 1920, quality = 0.82): Promise<File> {
   return new Promise(resolve => {
@@ -388,8 +364,6 @@ export default function FieldProject() {
   // File input refs (label+hidden-input unreliable on some mobile browsers)
   const photoCameraRef       = useRef<HTMLInputElement>(null);  // capture="environment"
   const photoGalleryRef      = useRef<HTMLInputElement>(null);  // gallery picker
-  const photoInputRef        = useRef<HTMLInputElement>(null);  // kept for advisor use
-  const advisorPhotoInputRef = useRef<HTMLInputElement>(null);
 
   // Form
   const [approachNotes,  setApproachNotes]  = useState('');
@@ -454,76 +428,6 @@ export default function FieldProject() {
   const [tab, setTab] = useState<ProjectTab>(
     _urlTab && validTabs.includes(_urlTab as ProjectTab) ? (_urlTab as ProjectTab) : 'scope'
   );
-
-  // Field Advisor
-  const [advisorQuestion,    setAdvisorQuestion]    = useState('');
-  const [advisorPhoto,       setAdvisorPhoto]       = useState<File | null>(null);
-  const [advisorPreview,     setAdvisorPreview]     = useState('');
-  const [advisorAnswer,      setAdvisorAnswer]      = useState('');
-  const [advisorLoading,     setAdvisorLoading]     = useState(false);
-  const [advisorPhotoR2Key,   setAdvisorPhotoR2Key]   = useState<string | null>(null);
-  const [advisorHasPhoto,     setAdvisorHasPhoto]     = useState(0);
-  const [advisorSaved,        setAdvisorSaved]        = useState(false);
-  const [advisorSaving,       setAdvisorSaving]       = useState(false);
-  const [advisorPhotoDropped, setAdvisorPhotoDropped] = useState(false);
-  // Snapshot of the question at the time of the ask (for saving later)
-  const advisorQuestionRef = useRef('');
-
-  const askAdvisor = async () => {
-    if (!advisorQuestion.trim() && !advisorPhoto) return;
-    setAdvisorLoading(true);
-    setAdvisorAnswer('');
-    setAdvisorSaved(false);
-    setAdvisorPhotoDropped(false);
-    setAdvisorPhotoR2Key(null);
-    advisorQuestionRef.current = advisorQuestion.trim() || 'What do you observe in this photo and what should I know?';
-    try {
-      const fd = new FormData();
-      fd.append('question', advisorQuestionRef.current);
-      if (advisorPhoto) {
-        // Compress to max 1600px / JPEG 85% — keeps large phone photos well under
-        // the 5 MB backend limit, and handles HEIC by re-encoding via Canvas.
-        try {
-          const compressed = await compressPhoto(advisorPhoto);
-          fd.append('photo', compressed, 'photo.jpg');
-        } catch {
-          fd.append('photo', advisorPhoto); // fallback: send original
-        }
-      }
-      const r = await fetch(`${API}/checkin/project/${oppId}/field-advisor`, { method: 'POST', body: fd });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error((j as any).detail || 'AI request failed');
-      setAdvisorAnswer((j as any).answer || '');
-      setAdvisorPhotoR2Key((j as any).photo_r2_key ?? null);
-      setAdvisorHasPhoto((j as any).has_photo ?? 0);
-      // Warn if a photo was attached but the server didn't receive it
-      if (advisorPhoto && (j as any).photo_received === false) {
-        setAdvisorPhotoDropped(true);
-      }
-    } catch (e: any) {
-      setAdvisorAnswer(`⚠️ ${e.message || 'Something went wrong'}`);
-    } finally {
-      setAdvisorLoading(false);
-    }
-  };
-
-  const saveAdvisorToFile = async () => {
-    setAdvisorSaving(true);
-    try {
-      const fd = new FormData();
-      fd.append('question',     advisorQuestionRef.current);
-      fd.append('answer',       advisorAnswer);
-      fd.append('has_photo',    String(advisorHasPhoto));
-      if (advisorPhotoR2Key) fd.append('photo_r2_key', advisorPhotoR2Key);
-      const r = await fetch(`${API}/checkin/project/${oppId}/field-advisor/save`, { method: 'POST', body: fd });
-      if (!r.ok) throw new Error('Save failed');
-      setAdvisorSaved(true);
-    } catch {
-      alert('Could not save — please try again');
-    } finally {
-      setAdvisorSaving(false);
-    }
-  };
 
   // Per-ticket remaining hours on the Update tab: WorkTicketID → hours string
   const [ticketHours, setTicketHours] = useState<Record<number, string>>({});
@@ -889,11 +793,11 @@ export default function FieldProject() {
         <div style={{ display: 'flex', borderBottom: '1px solid #f1f5f9', overflowX: 'auto' }}>
           {([
             { key: 'scope',         label: '📐 Scope' },
+            { key: 'conversations', label: '💬 Chat & AI' },
             { key: 'tickets',       label: `📋 Tickets (${data.tickets.length})` },
             { key: 'update',        label: '✏️ Update' },
             { key: 'materials',     label: '🧰 Resources' },
             { key: 'history',       label: `📝 History (${(data.activities || []).filter(a => (a.ActivityType || '').toLowerCase() !== 'email').length + responded + (data.advisor_log || []).length})` },
-            { key: 'conversations', label: '💬 Chat' },
           ] as const).map(({ key, label }) => (
             <button
               key={key}
@@ -1394,18 +1298,6 @@ export default function FieldProject() {
                 Site Update
               </div>
 
-              {/* ── Project Summary ── */}
-              {data.project_summary && (
-                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '14px 16px', marginBottom: 18 }}>
-                  <div style={{ fontWeight: 700, fontSize: 11, color: '#475569', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    🗂 Project Status
-                  </div>
-                  {data.project_summary.split('\n').filter(l => l.trim()).map((line, i) => (
-                    <div key={i} style={{ fontSize: 13, color: '#1e293b', lineHeight: 1.6, paddingBottom: 3 }}>{line.trim()}</div>
-                  ))}
-                </div>
-              )}
-
               <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
                 Answer the prompts below, then add any notes.
               </div>
@@ -1470,99 +1362,6 @@ export default function FieldProject() {
                   </div>
                 );
               })}
-
-              {/* ── Field Advisor ── */}
-              <div style={{ marginBottom: 16, border: '1.5px solid #c7d2fe', borderRadius: 10, overflow: 'hidden' }}>
-                <div style={{ background: '#eef2ff', padding: '10px 14px' }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: '#4338ca' }}>🤖 Field Advisor</div>
-                  <div style={{ fontSize: 12, color: '#6366f1', marginTop: 2 }}>
-                    Snap a photo of a site problem and describe it — get instant AI guidance
-                  </div>
-                </div>
-                <div style={{ background: '#fff', padding: '12px 14px' }}>
-                  {/* Photo picker */}
-                  <button
-                    type="button"
-                    onClick={() => advisorPhotoInputRef.current?.click()}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: '#f5f3ff', border: '1.5px dashed #a5b4fc', borderRadius: 8, padding: '9px 12px', fontSize: 12, color: '#6366f1', marginBottom: 10, width: '100%', textAlign: 'left', fontFamily: 'inherit' }}
-                  >
-                    <span style={{ fontSize: 18 }}>📸</span>
-                    <span>{advisorPhoto ? advisorPhoto.name : 'Attach site photo (optional)'}</span>
-                  </button>
-                  <input
-                    ref={advisorPhotoInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={e => {
-                      const f = e.target.files?.[0] ?? null;
-                      if (advisorPreview) URL.revokeObjectURL(advisorPreview);
-                      setAdvisorPhoto(f);
-                      setAdvisorPreview(f ? URL.createObjectURL(f) : '');
-                    }}
-                    style={{ display: 'none' }}
-                  />
-                  {advisorPreview && (
-                    <div style={{ marginBottom: 10, position: 'relative', display: 'inline-block' }}>
-                      <img src={advisorPreview} alt="" style={{ width: 100, height: 100, objectFit: 'cover', borderRadius: 8, border: '2px solid #c7d2fe' }} />
-                      <button type="button"
-                        onClick={() => { URL.revokeObjectURL(advisorPreview); setAdvisorPhoto(null); setAdvisorPreview(''); }}
-                        style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%', background: '#ef4444', color: '#fff', border: 'none', fontSize: 12, cursor: 'pointer', padding: 0, lineHeight: '20px', textAlign: 'center' }}>×</button>
-                    </div>
-                  )}
-                  {/* Question input */}
-                  <textarea
-                    placeholder="Describe the issue — e.g. 'slope eroding near retaining wall, what should we do?'"
-                    value={advisorQuestion}
-                    onChange={e => setAdvisorQuestion(e.target.value)}
-                    rows={2}
-                    style={{ width: '100%', boxSizing: 'border-box', fontSize: 13, border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', resize: 'vertical', fontFamily: 'inherit', marginBottom: 10, color: '#374151', background: '#f9fafb' }}
-                  />
-                  <button type="button" onClick={askAdvisor}
-                    disabled={advisorLoading || (!advisorQuestion.trim() && !advisorPhoto)}
-                    style={{ width: '100%', padding: '10px', background: (!advisorLoading && (advisorQuestion.trim() || advisorPhoto)) ? '#4f46e5' : '#94a3b8', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: advisorLoading || (!advisorQuestion.trim() && !advisorPhoto) ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
-                    {advisorLoading ? '🤔 Thinking…' : '✨ Ask Field Advisor'}
-                  </button>
-                  {advisorPhotoDropped && (
-                    <div style={{ marginTop: 10, padding: '8px 12px', background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 8, fontSize: 12, color: '#92400e' }}>
-                      ⚠️ The photo was attached but the server didn't receive it — the answer below is text-only. Try again or use a smaller image.
-                    </div>
-                  )}
-                  {advisorAnswer && (
-                    <div style={{ marginTop: 12 }}>
-                      <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 8, padding: '12px 14px', fontSize: 13, color: '#1e1b4b', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
-                        {advisorAnswer}
-                      </div>
-                      {/* Save prompt — only show when answer is a real response (not an error) */}
-                      {!advisorAnswer.startsWith('⚠️') && (
-                        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                          {advisorSaved ? (
-                            <span style={{ fontSize: 12, color: '#16a34a', fontWeight: 600 }}>✓ Saved to project file</span>
-                          ) : (
-                            <>
-                              <span style={{ fontSize: 12, color: '#6b7280' }}>Save to project file?</span>
-                              <button
-                                type="button"
-                                onClick={saveAdvisorToFile}
-                                disabled={advisorSaving}
-                                style={{ padding: '4px 12px', fontSize: 12, fontWeight: 600, background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 6, cursor: advisorSaving ? 'wait' : 'pointer' }}
-                              >
-                                {advisorSaving ? 'Saving…' : '💾 Yes, save'}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setAdvisorAnswer('')}
-                                style={{ padding: '4px 10px', fontSize: 12, background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer' }}
-                              >
-                                No thanks
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
 
               {/* Per-ticket remaining hours — only scheduled/active tickets */}
               {(() => {

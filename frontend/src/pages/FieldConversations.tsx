@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import FieldAdvisor from './FieldAdvisor';
 
 const API = import.meta.env.VITE_API_URL ?? '';
 
@@ -116,6 +117,8 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
   });
   const [manualIdentity, setManualIdentity] = useState(false);
   const [view, setView]                   = useState<'list' | 'new' | 'thread'>('list');
+  // List-view sub-mode: human conversations vs the Ask-AI advisor (construction only)
+  const [chatMode, setChatMode]           = useState<'conversations' | 'ai'>('conversations');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loadingList, setLoadingList]     = useState(true);
   const [showResolved, setShowResolved]   = useState(false);
@@ -359,6 +362,53 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
     }
   }
 
+  // Share an AI finding into a NEW conversation, notifying the division defaults.
+  async function handleShareToChat(p: { question: string; answer: string; photoR2Key: string | null; hasPhoto: number }) {
+    // Resolve default recipients (construction: Keeland & Dustin); fall back to all
+    let recipientIds: number[] = [];
+    try {
+      const r = await fetch(`${API}/field/conversations/notifiable-users?context_type=${contextType}`);
+      const d = await r.json();
+      const users: NotifiableUser[] = d.users || [];
+      const defaults = users.filter(u => u.is_default);
+      recipientIds = (defaults.length > 0 ? defaults : users).map(u => u.id);
+    } catch {}
+
+    const title = `🤖 ${p.question}`.slice(0, 80);
+    const firstMessage = `🤖 Field Advisor\n\nQ: ${p.question}\n\n${p.answer}`;
+
+    const form = new FormData();
+    form.append('title', title);
+    form.append('context_type', contextType);
+    form.append('first_message', firstMessage);
+    form.append('tag', 'Other');
+    if (crewName.trim()) form.append('crew_name', crewName.trim());
+    if (crewWhatsApp.trim()) form.append('crew_whatsapp', crewWhatsApp.trim());
+    if (userId != null) form.append('created_by_user_id', String(userId));
+    form.append('property_name', propertyName);
+    form.append('tagged_user_ids', recipientIds.join(','));
+
+    const res = await fetch(`${API}/field/conversations/${oppId}`, { method: 'POST', body: form });
+    const d = await res.json();
+    if (!res.ok) throw new Error('Failed to share');
+
+    const newConv: Conversation = {
+      id: d.conv_id, opp_id: oppId, context_type: contextType,
+      title, tag: 'Other', status: 'open',
+      created_by: crewName || null, message_count: 1,
+      last_message: firstMessage, created_at: new Date().toISOString(),
+      resolved_at: null,
+    };
+    setActiveConv(newConv);
+    setMessages([{
+      id: 0, conversation_id: d.conv_id, role: 'crew', crew_name: crewName || null,
+      content: firstMessage, has_photo: 0, photo_r2_key: null,
+      created_at: new Date().toISOString(),
+    }]);
+    setChatMode('conversations');
+    setView('thread');
+  }
+
   async function sendMessage() {
     if (!msgText.trim() || !activeConv) return;
     setSending(true);
@@ -413,6 +463,26 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
 
     return (
       <div>
+        {/* Conversations | Ask AI toggle (construction only) */}
+        {contextType === 'construction' && (
+          <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: 8, padding: 3, gap: 2, marginBottom: 12 }}>
+            {([['conversations', '💬 Conversations'], ['ai', '🤖 Ask AI']] as const).map(([m, label]) => (
+              <button key={m} onClick={() => setChatMode(m)} style={{
+                flex: 1, padding: '7px 0', fontSize: 13, fontWeight: 600, borderRadius: 6,
+                border: 'none', cursor: 'pointer',
+                background: chatMode === m ? '#fff' : 'transparent',
+                color: chatMode === m ? '#111827' : '#6b7280',
+                boxShadow: chatMode === m ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                fontFamily: 'inherit',
+              }}>{label}</button>
+            ))}
+          </div>
+        )}
+
+        {chatMode === 'ai' ? (
+          <FieldAdvisor oppId={oppId} onShare={handleShareToChat} />
+        ) : (
+        <>
         {/* Who are you? — directory identity */}
         {identityBlock}
 
@@ -447,6 +517,8 @@ export default function FieldConversations({ oppId, contextType, propertyName, i
             </button>
             {showResolved && resolved.map(c => <ConvCard key={c.id} conv={c} onClick={() => openThread(c)} />)}
           </>
+        )}
+        </>
         )}
       </div>
     );
