@@ -528,6 +528,23 @@ export default function FieldProject() {
   const [materialsData,    setMaterialsData]    = useState<MaterialsData | null>(null);
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [materialsError,   setMaterialsError]   = useState('');
+  // Checkbox selections: { [workTicketId]: Set<itemIndex> }
+  const [selectedItems,    setSelectedItems]    = useState<Record<number, Set<number>>>({});
+
+  const toggleItem = (ticketId: number, idx: number) => {
+    setSelectedItems(prev => {
+      const current = new Set(prev[ticketId] || []);
+      if (current.has(idx)) current.delete(idx); else current.add(idx);
+      return { ...prev, [ticketId]: new Set(current) };
+    });
+  };
+  const toggleAll = (ticketId: number, purchasable: TicketMaterialItem[]) => {
+    setSelectedItems(prev => {
+      const current = prev[ticketId] || new Set<number>();
+      const allSelected = purchasable.every((_, i) => current.has(i));
+      return { ...prev, [ticketId]: allSelected ? new Set() : new Set(purchasable.map((_, i) => i)) };
+    });
+  };
 
   // ── Change Order modal ─────────────────────────────────────────────────────
   const [coOpen,        setCoOpen]        = useState(false);
@@ -1658,15 +1675,20 @@ export default function FieldProject() {
                       const purchasable = ticket.items.filter(i => !i.do_not_purchase);
                       if (purchasable.length === 0 && !ticket.has_po) return null;
 
-                      const poUrl = (itemDesc?: string, itemQty?: number, itemUom?: string, itemCost?: number) => {
-                        const base = `/field/purchase-order?oppId=${data.opportunity_id}&oppName=${encodeURIComponent(data.opportunity_name)}&propName=${encodeURIComponent(data.property_name || '')}&wtId=${ticket.WorkTicketID}&wtNum=${ticket.WorkTicketNumber}&svcName=${encodeURIComponent(ticket.ServiceName || '')}`;
-                        if (itemDesc) return base
-                          + `&itemDesc=${encodeURIComponent(itemDesc)}`
-                          + `&itemQty=${itemQty ?? 1}`
-                          + `&itemUom=${encodeURIComponent(itemUom || '')}`
-                          + `&itemCost=${itemCost ?? 0}`;
-                        return base;
+                      const base = `/field/purchase-order?oppId=${data.opportunity_id}&oppName=${encodeURIComponent(data.opportunity_name)}&propName=${encodeURIComponent(data.property_name || '')}&wtId=${ticket.WorkTicketID}&wtNum=${ticket.WorkTicketNumber}&svcName=${encodeURIComponent(ticket.ServiceName || '')}`;
+                      const poUrl = (its: TicketMaterialItem[]) => {
+                        if (its.length === 0) return base;
+                        const capped = its.slice(0, 5);
+                        return base
+                          + `&items=${capped.length}`
+                          + capped.map((it, i) =>
+                              `&item${i}Desc=${encodeURIComponent(it.item_name)}&item${i}Qty=${it.quantity}&item${i}Uom=${encodeURIComponent(it.uom)}&item${i}Cost=${it.unit_cost}`
+                            ).join('');
                       };
+
+                      const sel = selectedItems[ticket.WorkTicketID] || new Set<number>();
+                      const selectedPurchasable = purchasable.filter((_, i) => sel.has(i));
+                      const allChecked = purchasable.length > 0 && purchasable.every((_, i) => sel.has(i));
 
                       return (
                         <div key={ticket.WorkTicketID} style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', marginBottom: 12 }}>
@@ -1682,7 +1704,7 @@ export default function FieldProject() {
                               </div>
                             </div>
                             {/* PO badges or Create PO */}
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5 }}>
                               {ticket.pos.map(po => {
                                 const st = poStatusStyle(po.status);
                                 return (
@@ -1692,66 +1714,100 @@ export default function FieldProject() {
                                   </div>
                                 );
                               })}
-                              {!ticket.has_po && (
-                                <a href={poUrl()} style={{ padding: '5px 10px', background: '#16a34a', color: '#fff', borderRadius: 8, fontSize: 11, fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}>
-                                  ＋ Create PO
+                              {!ticket.has_po && selectedPurchasable.length > 0 && (
+                                <a href={poUrl(selectedPurchasable)} style={{
+                                  padding: '6px 12px', background: '#16a34a', color: '#fff',
+                                  borderRadius: 8, fontSize: 12, fontWeight: 700,
+                                  textDecoration: 'none', whiteSpace: 'nowrap',
+                                }}>
+                                  ＋ Create PO ({selectedPurchasable.length} item{selectedPurchasable.length !== 1 ? 's' : ''})
                                 </a>
+                              )}
+                              {!ticket.has_po && selectedPurchasable.length === 0 && (
+                                <span style={{ fontSize: 11, color: '#9ca3af' }}>Select items below</span>
                               )}
                             </div>
                           </div>
 
-                          {/* Material items — each row is clickable to pre-fill a PO */}
+                          {/* Material items with checkboxes */}
                           {purchasable.length > 0 && (
                             <>
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 48px 52px 70px 90px', padding: '5px 14px', background: '#f1f5f9', fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                              {/* Column headers — checkbox in first col for select-all */}
+                              <div style={{ display: 'grid', gridTemplateColumns: '32px 1fr 48px 52px 70px 80px', padding: '5px 14px 5px 10px', background: '#f1f5f9', fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', alignItems: 'center' }}>
+                                {!ticket.has_po ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={allChecked}
+                                    onChange={() => toggleAll(ticket.WorkTicketID, purchasable)}
+                                    style={{ cursor: 'pointer', accentColor: '#16a34a', width: 15, height: 15 }}
+                                    title="Select all"
+                                  />
+                                ) : <div />}
                                 <div>Item</div>
                                 <div style={{ textAlign: 'right' }}>Qty</div>
                                 <div style={{ paddingLeft: 6 }}>UOM</div>
                                 <div style={{ textAlign: 'right' }}>Est. Total</div>
-                                <div style={{ textAlign: 'center' }}>PO</div>
+                                <div style={{ textAlign: 'center' }}>PO Status</div>
                               </div>
-                              {purchasable.map((it, idx) => (
-                                <a
-                                  key={idx}
-                                  href={ticket.has_po ? undefined : poUrl(it.item_name, it.quantity, it.uom, it.unit_cost)}
-                                  style={{
-                                    display: 'grid', gridTemplateColumns: '1fr 48px 52px 70px 90px',
-                                    padding: '9px 14px',
-                                    background: idx % 2 === 0 ? '#fff' : '#f9fafb',
-                                    borderTop: '1px solid #f1f5f9',
-                                    alignItems: 'center',
-                                    textDecoration: 'none',
-                                    cursor: ticket.has_po ? 'default' : 'pointer',
-                                  }}
-                                  onMouseEnter={e => { if (!ticket.has_po) (e.currentTarget as HTMLElement).style.background = '#eff6ff'; }}
-                                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = idx % 2 === 0 ? '#fff' : '#f9fafb'; }}
-                                >
-                                  <div>
-                                    <div style={{ fontSize: 12, color: '#111827', fontWeight: 500 }}>{it.item_name}</div>
-                                    {it.item_type !== 'Material' && (
-                                      <span style={{ fontSize: 10, color: '#7c3aed', background: '#faf5ff', padding: '0 5px', borderRadius: 4 }}>{it.item_type}</span>
-                                    )}
+
+                              {purchasable.map((it, idx) => {
+                                const isChecked = sel.has(idx);
+                                const bg = isChecked ? '#f0fdf4' : (idx % 2 === 0 ? '#fff' : '#f9fafb');
+                                return (
+                                  <div
+                                    key={idx}
+                                    onClick={() => { if (!ticket.has_po) toggleItem(ticket.WorkTicketID, idx); }}
+                                    style={{
+                                      display: 'grid', gridTemplateColumns: '32px 1fr 48px 52px 70px 80px',
+                                      padding: '9px 14px 9px 10px',
+                                      background: bg,
+                                      borderTop: '1px solid #f1f5f9',
+                                      alignItems: 'center',
+                                      cursor: ticket.has_po ? 'default' : 'pointer',
+                                      transition: 'background 0.1s',
+                                    }}
+                                  >
+                                    {/* Checkbox */}
+                                    <div onClick={e => e.stopPropagation()}>
+                                      {!ticket.has_po && (
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={() => toggleItem(ticket.WorkTicketID, idx)}
+                                          style={{ cursor: 'pointer', accentColor: '#16a34a', width: 15, height: 15 }}
+                                        />
+                                      )}
+                                    </div>
+                                    {/* Item name */}
+                                    <div>
+                                      <div style={{ fontSize: 12, color: '#111827', fontWeight: 500 }}>{it.item_name}</div>
+                                      {it.item_type !== 'Material' && (
+                                        <span style={{ fontSize: 10, color: '#7c3aed', background: '#faf5ff', padding: '0 5px', borderRadius: 4 }}>{it.item_type}</span>
+                                      )}
+                                    </div>
+                                    <div style={{ textAlign: 'right', fontSize: 12, color: '#374151' }}>
+                                      {it.quantity % 1 === 0 ? it.quantity.toFixed(0) : it.quantity.toFixed(2)}
+                                    </div>
+                                    <div style={{ paddingLeft: 6, fontSize: 12, color: '#6b7280' }}>{it.uom}</div>
+                                    <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: '#111827' }}>
+                                      {it.total_cost_est > 0 ? `$${it.total_cost_est.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                                    </div>
+                                    {/* PO status */}
+                                    <div style={{ textAlign: 'center' }}>
+                                      {ticket.has_po ? (
+                                        ticket.pos.map(po => {
+                                          const st = poStatusStyle(po.status);
+                                          return <span key={po.receipt_id} style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 8, background: st.bg, color: st.color }}>{po.status}</span>;
+                                        })
+                                      ) : (
+                                        <span style={{ fontSize: 10, color: isChecked ? '#16a34a' : '#f59e0b', fontWeight: 600 }}>
+                                          {isChecked ? '✓ Selected' : 'No PO'}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div style={{ textAlign: 'right', fontSize: 12, color: '#374151' }}>
-                                    {it.quantity % 1 === 0 ? it.quantity.toFixed(0) : it.quantity.toFixed(2)}
-                                  </div>
-                                  <div style={{ paddingLeft: 6, fontSize: 12, color: '#6b7280' }}>{it.uom}</div>
-                                  <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: '#111827' }}>
-                                    {it.total_cost_est > 0 ? `$${it.total_cost_est.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
-                                  </div>
-                                  {/* PO status column */}
-                                  <div style={{ textAlign: 'center' }}>
-                                    {ticket.has_po ? (
-                                      ticket.pos.map(po => {
-                                        const st = poStatusStyle(po.status);
-                                        return <span key={po.receipt_id} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 8, background: st.bg, color: st.color }}>{po.status}</span>;
-                                      })
-                                    ) : (
-                                      <span style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600 }}>No PO · tap to order</span>
-                                    )}
-                                  </div>
-                                </a>
-                              ))}
+                                );
+                              })}
                             </>
                           )}
 

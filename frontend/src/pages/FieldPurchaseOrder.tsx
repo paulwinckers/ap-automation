@@ -56,11 +56,12 @@ export default function FieldPurchaseOrder() {
   const preWtId    = searchParams.get('wtId');
   const preWtNum   = searchParams.get('wtNum');
   const preSvcName = searchParams.get('svcName');
-  // Item-level pre-fill (when user clicks a specific material line)
-  const preItemDesc = searchParams.get('itemDesc');
-  const preItemQty  = searchParams.get('itemQty');
-  const preItemUom  = searchParams.get('itemUom');
-  const preItemCost = searchParams.get('itemCost');
+  // Item-level pre-fill (single item click OR multi-item checkbox selection)
+  const preItemDesc  = searchParams.get('itemDesc');
+  const preItemQty   = searchParams.get('itemQty');
+  const preItemUom   = searchParams.get('itemUom');
+  const preItemCost  = searchParams.get('itemCost');
+  const preItemCount = parseInt(searchParams.get('items') || '0', 10);
 
   const prefilled = !!(preOppId && preWtId);
 
@@ -113,11 +114,22 @@ export default function FieldPurchaseOrder() {
   const [selectedVendor, setSelectedVendor] = useState<POVendor | null>(null);
 
   // Line items
-  const [items, setItems] = useState<POLineItem[]>([
-    preItemDesc
-      ? { description: preItemDesc, qty: preItemQty ? Number(preItemQty) : 1, unit_cost: preItemCost ? Number(preItemCost) : 0, uom: preItemUom || '' }
-      : { ...EMPTY_ITEM }
-  ]);
+  const [items, setItems] = useState<POLineItem[]>(() => {
+    // Multi-item pre-fill from checkbox selection
+    if (preItemCount > 0) {
+      return Array.from({ length: Math.min(preItemCount, 5) }, (_, i) => ({
+        description: searchParams.get(`item${i}Desc`) || '',
+        qty:         Number(searchParams.get(`item${i}Qty`) || 1),
+        unit_cost:   Number(searchParams.get(`item${i}Cost`) || 0),
+        uom:         searchParams.get(`item${i}Uom`) || '',
+      }));
+    }
+    // Single-item pre-fill from individual row click
+    if (preItemDesc) {
+      return [{ description: preItemDesc, qty: preItemQty ? Number(preItemQty) : 1, unit_cost: preItemCost ? Number(preItemCost) : 0, uom: preItemUom || '' }];
+    }
+    return [{ ...EMPTY_ITEM }];
+  });
   const [ticketItems, setTicketItems]     = useState<POTicketItem[]>([]);
   const [ticketItemsLoading, setTicketItemsLoading] = useState(false);
   const [uomTypes, setUomTypes]           = useState<POUomType[]>([]);
