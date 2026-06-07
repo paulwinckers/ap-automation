@@ -328,60 +328,6 @@ async def notifiable_users(context_type: str = "", db: Database = Depends(get_db
     ]}
 
 
-@router.get("/whatsapp-diag")
-async def whatsapp_diag(to: str = "", check_sid: str = ""):
-    """
-    TEMP diagnostic — reports Twilio/WhatsApp config status and (optionally) attempts a
-    real test send to ?to=<number>. Returns Twilio's actual status/error so we can see
-    why messages aren't delivering. Does NOT leak secrets. Remove after debugging.
-    """
-    sid   = settings.TWILIO_ACCOUNT_SID
-    token = settings.TWILIO_AUTH_TOKEN
-    frm   = settings.TWILIO_WHATSAPP_FROM
-    out: dict = {
-        "account_sid_set":      bool(sid),
-        "account_sid_prefix":   (sid[:4] + "…") if sid else None,
-        "auth_token_set":       bool(token),
-        "whatsapp_from":        frm or "(unset)",
-        "to_construction_set":  bool(settings.TWILIO_WHATSAPP_TO_CONSTRUCTION),
-        "to_maintenance_set":   bool(settings.TWILIO_WHATSAPP_TO),
-        "twilio_installed":     False,
-    }
-    try:
-        import twilio as _tw
-        out["twilio_installed"] = True
-        out["twilio_version"]   = getattr(_tw, "__version__", "?")
-    except Exception as e:
-        out["twilio_import_error"] = str(e)
-
-    # Fetch the final delivery status of a previously-sent message by SID
-    if check_sid.strip() and sid and token:
-        try:
-            from twilio.rest import Client as TwilioClient
-            m = TwilioClient(sid, token).messages(check_sid.strip()).fetch()
-            out["message_status"] = {
-                "status": m.status, "error_code": m.error_code, "error_message": m.error_message,
-            }
-        except Exception as e:
-            out["message_status"] = {"error": str(e)}
-
-    if to.strip():
-        wa_to = _format_whatsapp_number(to)
-        out["test_to"] = wa_to
-        if not (sid and token and frm):
-            out["send_result"] = "skipped — missing SID/token/from"
-        else:
-            try:
-                from twilio.rest import Client as TwilioClient
-                msg = TwilioClient(sid, token).messages.create(
-                    body="✅ Darios AP — WhatsApp test message", from_=frm, to=wa_to,
-                )
-                out["send_result"] = {"status": msg.status, "sid": msg.sid, "error_code": msg.error_code}
-            except Exception as e:
-                out["send_result"] = {"error": str(e)}
-    return out
-
-
 @router.get("/people")
 async def people(db: Database = Depends(get_db)):
     """Public — active users for the 'who are you?' identity picker (name + phone)."""
