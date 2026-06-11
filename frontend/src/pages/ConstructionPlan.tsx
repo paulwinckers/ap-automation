@@ -12,6 +12,7 @@ import {
   MonthlyPlan, PlanJob, PlanSuggestion, ConstructionLead, CheckinStatus,
   JobMaterials, MaterialItem, PurchaseOrder,
 } from '../lib/api';
+import JobPrepChecklist from './JobPrepChecklist';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -713,6 +714,9 @@ export default function ConstructionPlan() {
   const [showLeads,     setShowLeads]     = useState(false);
   const [showCheckin,   setShowCheckin]   = useState(false);
   const [materialsFor,  setMaterialsFor]  = useState<number | null>(null);
+  const [prepFor,       setPrepFor]       = useState<number | null>(null);
+  // Live prep counts per opp (overrides server value as the user checks items)
+  const [prepProgress,  setPrepProgress]  = useState<Record<number, { done: number; total: number }>>({});
   const activeMonthRef = useRef(month);
 
   const load = useCallback(async () => {
@@ -894,7 +898,7 @@ export default function ConstructionPlan() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
-                  {['Property / Job', 'Status', '% This Month', 'Hours', 'Revenue', 'Risk', 'Materials', ''].map((h, i) => (
+                  {['Property / Job', 'Status', '% This Month', 'Hours', 'Revenue', 'Risk', 'Prep', 'Materials', ''].map((h, i) => (
                     <th key={i} style={{
                       padding: '10px 16px', textAlign: i >= 2 ? 'center' : 'left',
                       fontSize: 11, fontWeight: 700, color: '#6b7280',
@@ -990,6 +994,31 @@ export default function ConstructionPlan() {
                       <RiskBadge risk={j.risk} />
                     </td>
 
+                    {/* Prep checklist toggle */}
+                    <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
+                      {(() => {
+                        const p = prepProgress[j.opportunity_id]
+                          ?? { done: j.prep_done ?? 0, total: j.prep_total ?? 6 };
+                        const ready = p.total > 0 && p.done === p.total;
+                        const open  = prepFor === j.opportunity_id;
+                        return (
+                          <button
+                            onClick={() => setPrepFor(open ? null : j.opportunity_id)}
+                            title="Preparedness checklist"
+                            style={{
+                              padding: '3px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6,
+                              border: '1px solid ' + (ready ? '#86efac' : open ? '#2563eb' : '#e5e7eb'),
+                              background: ready ? '#dcfce7' : open ? '#eff6ff' : '#f8fafc',
+                              color: ready ? '#15803d' : open ? '#1d4ed8' : '#6b7280',
+                              cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {ready ? '✓ Ready' : `${p.done}/${p.total}`} {open ? '▲' : '▼'}
+                          </button>
+                        );
+                      })()}
+                    </td>
+
                     {/* Materials toggle */}
                     <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
                       <button
@@ -1029,8 +1058,33 @@ export default function ConstructionPlan() {
                   {/* Materials panel — lazy loaded, spans all columns */}
                   {materialsFor === j.opportunity_id && (
                     <tr>
-                      <td colSpan={9} style={{ padding: 0, background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
+                      <td colSpan={10} style={{ padding: 0, background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
                         <MaterialsPanel opportunityId={j.opportunity_id} />
+                      </td>
+                    </tr>
+                  )}
+                  {/* Preparedness checklist panel + link to the Construction Project page */}
+                  {prepFor === j.opportunity_id && (
+                    <tr>
+                      <td colSpan={10} style={{ padding: '14px 16px', background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
+                        <div style={{ maxWidth: 520 }}>
+                          <JobPrepChecklist
+                            oppId={j.opportunity_id}
+                            onProgress={(done, total) =>
+                              setPrepProgress(prev => ({ ...prev, [j.opportunity_id]: { done, total } }))
+                            }
+                          />
+                          <a
+                            href={`/field/project/${j.opportunity_id}`}
+                            style={{
+                              display: 'inline-block', marginTop: 12, padding: '8px 14px',
+                              background: '#16a34a', color: '#fff', borderRadius: 8,
+                              fontSize: 13, fontWeight: 700, textDecoration: 'none',
+                            }}
+                          >
+                            Open Construction Project →
+                          </a>
+                        </div>
                       </td>
                     </tr>
                   )}

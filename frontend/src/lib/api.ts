@@ -354,6 +354,31 @@ export interface PlanJob {
   committed_by: string;
   committed_at: string;
   risk: 'on_track' | 'at_risk' | 'over_budget' | 'complete';
+  prep_done?: number;   // preparedness checklist items checked
+  prep_total?: number;  // total preparedness checklist items
+}
+
+export interface PrepItem {
+  key: string;
+  label: string;
+  checked: boolean;
+  checked_by: string | null;
+  checked_at: string | null;
+}
+export interface JobChecklist {
+  opportunity_id: number;
+  items: PrepItem[];
+  done: number;
+  total: number;
+}
+
+export async function getJobChecklist(oppId: number): Promise<JobChecklist> {
+  return request('GET', `/construction/plan/jobs/${oppId}/checklist`);
+}
+export async function toggleJobChecklist(
+  oppId: number, item_key: string, checked: boolean, checked_by?: string,
+): Promise<{ ok: boolean }> {
+  return request('POST', `/construction/plan/jobs/${oppId}/checklist`, { item_key, checked, checked_by });
 }
 
 export interface PlanSuggestion {

@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import FieldConversations from './FieldConversations';
+import JobPrepChecklist from './JobPrepChecklist';
 
 
 const API = import.meta.env.VITE_API_URL ?? '';
@@ -877,6 +878,11 @@ export default function FieldProject() {
                     No strategy captured yet. Tap <strong>＋ Add strategy</strong> to describe how the crew will complete this job — we'll start you off from the Aspire scope.
                   </div>
                 )}
+              </div>
+
+              {/* Preparedness checklist — shared with the planning board */}
+              <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: '14px 16px', marginBottom: 20 }}>
+                <JobPrepChecklist oppId={data.opportunity_id} />
               </div>
 
               {/* Scope summary */}

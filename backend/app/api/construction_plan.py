@@ -47,6 +47,22 @@ class JobIn(BaseModel):
     notes:            Optional[str] = None
     committed_by:     Optional[str] = None
 
+class PrepToggleIn(BaseModel):
+    item_key:   str
+    checked:    bool
+    checked_by: Optional[str] = None
+
+# Fixed preparedness checklist applied to every committed job (keyed by opportunity_id).
+PREP_ITEMS = [
+    {"key": "deposit_received",   "label": "Deposit received"},
+    {"key": "site_utility_check", "label": "Site utility check"},
+    {"key": "plants_determined",  "label": "Plants determined"},
+    {"key": "materials_ordered",  "label": "Materials ordered"},
+    {"key": "drawing_uploaded",   "label": "Drawing uploaded"},
+    {"key": "site_review",        "label": "Site review"},
+]
+PREP_TOTAL = len(PREP_ITEMS)
+
 
 # ── Aspire helpers ────────────────────────────────────────────────────────────
 async def _fetch_opp_actuals(opp_ids: list[int]) -> dict[int, dict]:
@@ -391,6 +407,25 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
                 committed_at=t.get("created_at") or "",
             )
 
+    # Preparedness checklist progress — one query for every job in the plan
+    prep_done: dict[int, int] = {}
+    if jobs:
+        ph = ",".join("?" for _ in jobs)
+        try:
+            prep_rows = await db._q(
+                f"""SELECT opportunity_id, COUNT(*) AS done
+                    FROM job_prep_checklist
+                    WHERE checked = 1 AND opportunity_id IN ({ph})
+                    GROUP BY opportunity_id""",
+                list(jobs.keys()),
+            )
+            prep_done = {r["opportunity_id"]: r["done"] for r in prep_rows}
+        except Exception:
+            prep_done = {}  # table may not exist yet on older deployments
+    for oid, j in jobs.items():
+        j["prep_done"]  = prep_done.get(oid, 0)
+        j["prep_total"] = PREP_TOTAL
+
     job_list = list(jobs.values())
     risk_order = {"over_budget": 0, "at_risk": 1, "on_track": 2, "complete": 3}
     job_list.sort(key=lambda j: (risk_order.get(j["risk"], 9), j["property_name"]))
@@ -474,6 +509,51 @@ async def remove_job(month: str, opp_id: int, db: Database = Depends(get_db)):
         [month, opp_id],
     )
     return {"ok": True, "month": month, "opportunity_id": opp_id}
+
+
+@router.get("/jobs/{opportunity_id}/checklist")
+async def get_checklist(opportunity_id: int, db: Database = Depends(get_db)):
+    """Preparedness checklist for a job — fixed items merged with saved checked state."""
+    try:
+        rows = await db._q(
+            "SELECT item_key, checked, checked_by, checked_at FROM job_prep_checklist WHERE opportunity_id = ?",
+            [opportunity_id],
+        )
+    except Exception:
+        rows = []  # table may not exist yet on older deployments
+    state = {r["item_key"]: r for r in rows}
+    items = []
+    done = 0
+    for it in PREP_ITEMS:
+        r = state.get(it["key"]) or {}
+        checked = bool(r.get("checked"))
+        if checked:
+            done += 1
+        items.append({
+            "key":        it["key"],
+            "label":      it["label"],
+            "checked":    checked,
+            "checked_by": r.get("checked_by"),
+            "checked_at": r.get("checked_at"),
+        })
+    return {"opportunity_id": opportunity_id, "items": items, "done": done, "total": PREP_TOTAL}
+
+
+@router.post("/jobs/{opportunity_id}/checklist")
+async def toggle_checklist(opportunity_id: int, body: PrepToggleIn, db: Database = Depends(get_db)):
+    """Check / uncheck one preparedness item for a job."""
+    if body.item_key not in {it["key"] for it in PREP_ITEMS}:
+        raise HTTPException(status_code=400, detail=f"Unknown checklist item: {body.item_key}")
+    await db._x(
+        """INSERT INTO job_prep_checklist (opportunity_id, item_key, checked, checked_by, checked_at)
+           VALUES (?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(opportunity_id, item_key) DO UPDATE SET
+             checked    = excluded.checked,
+             checked_by = excluded.checked_by,
+             checked_at = datetime('now')""",
+        [opportunity_id, body.item_key, 1 if body.checked else 0, body.checked_by],
+    )
+    return {"ok": True, "opportunity_id": opportunity_id, "item_key": body.item_key, "checked": body.checked}
 
 
 @router.get("/jobs/{opportunity_id}/diagnose")

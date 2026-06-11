@@ -589,6 +589,18 @@ CREATE TABLE IF NOT EXISTS user_divisions (
 );
 CREATE INDEX IF NOT EXISTS idx_user_divisions ON user_divisions(user_id);
 
+-- ── Job Preparedness Checklist — per-opportunity prep items on the planning board ──
+-- Fixed item set lives in code (construction_plan.PREP_ITEMS); this stores checked state.
+CREATE TABLE IF NOT EXISTS job_prep_checklist (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id INTEGER NOT NULL,
+    item_key       TEXT    NOT NULL,
+    checked        INTEGER NOT NULL DEFAULT 0,
+    checked_by     TEXT,
+    checked_at     TEXT,
+    UNIQUE(opportunity_id, item_key)
+);
+
 -- ── Reconciliation — mark-as-reconciled columns (migration) ─────────────────
 ALTER TABLE vendor_statements ADD COLUMN reconciled INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE vendor_statements ADD COLUMN reconciled_at TEXT;
