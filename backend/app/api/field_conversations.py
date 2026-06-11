@@ -390,27 +390,6 @@ async def notifiable_users(context_type: str = "", db: Database = Depends(get_db
     ]}
 
 
-@router.get("/db-diag")
-async def db_diag(db: Database = Depends(get_db)):
-    """TEMP — probe the D1 connection and surface the real error. Remove after debugging."""
-    import os
-    out = {
-        "cf_account_id_set":     bool(os.environ.get("CF_ACCOUNT_ID")),
-        "cf_d1_database_id_set": bool(os.environ.get("CF_D1_DATABASE_ID")),
-        "cf_api_token_set":      bool(os.environ.get("CF_API_TOKEN")),
-        "cf_api_token_len":      len(os.environ.get("CF_API_TOKEN") or ""),
-    }
-    try:
-        rows = await db._q("SELECT 1 AS ok")
-        out["db_ok"] = True
-        out["result"] = rows
-    except Exception as e:
-        out["db_ok"] = False
-        out["error_type"] = type(e).__name__
-        out["error"] = str(e)[:600]
-    return out
-
-
 @router.get("/people")
 async def people(db: Database = Depends(get_db)):
     """Public — active users for the 'who are you?' identity picker (name + phone)."""
