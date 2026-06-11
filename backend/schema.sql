@@ -601,6 +601,15 @@ CREATE TABLE IF NOT EXISTS job_prep_checklist (
     UNIQUE(opportunity_id, item_key)
 );
 
+-- ── Job Planning — per-job lead assignment + customer-confirmed schedule ──────────
+CREATE TABLE IF NOT EXISTS job_planning (
+    opportunity_id     INTEGER PRIMARY KEY,
+    lead_name          TEXT,
+    schedule_confirmed INTEGER NOT NULL DEFAULT 0,
+    updated_by         TEXT,
+    updated_at         TEXT
+);
+
 -- ── Reconciliation — mark-as-reconciled columns (migration) ─────────────────
 ALTER TABLE vendor_statements ADD COLUMN reconciled INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE vendor_statements ADD COLUMN reconciled_at TEXT;

@@ -356,6 +356,8 @@ export interface PlanJob {
   risk: 'on_track' | 'at_risk' | 'over_budget' | 'complete';
   prep_done?: number;   // preparedness checklist items checked
   prep_total?: number;  // total preparedness checklist items
+  lead_name?: string;          // assigned construction lead
+  schedule_confirmed?: boolean; // customer-confirmed schedule
 }
 
 export interface PrepItem {
@@ -379,6 +381,13 @@ export async function toggleJobChecklist(
   oppId: number, item_key: string, checked: boolean, checked_by?: string,
 ): Promise<{ ok: boolean }> {
   return request('POST', `/construction/plan/jobs/${oppId}/checklist`, { item_key, checked, checked_by });
+}
+
+export async function setJobPlanning(
+  oppId: number,
+  patch: { lead_name?: string; schedule_confirmed?: boolean; updated_by?: string },
+): Promise<{ ok: boolean }> {
+  return request('PUT', `/construction/plan/jobs/${oppId}/planning`, patch);
 }
 
 export interface PlanSuggestion {

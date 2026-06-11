@@ -8,7 +8,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   getMonthlyPlan, setMonthlyGoal, addJobToMonth, removeJobFromMonth, getPlanSuggestions,
   listConstructionLeads, upsertConstructionLead, deleteConstructionLead,
-  sendCheckins, getCheckinStatus, getJobMaterials,
+  sendCheckins, getCheckinStatus, getJobMaterials, setJobPlanning,
   MonthlyPlan, PlanJob, PlanSuggestion, ConstructionLead, CheckinStatus,
   JobMaterials, MaterialItem, PurchaseOrder,
 } from '../lib/api';
@@ -717,6 +717,14 @@ export default function ConstructionPlan() {
   const [prepFor,       setPrepFor]       = useState<number | null>(null);
   // Live prep counts per opp (overrides server value as the user checks items)
   const [prepProgress,  setPrepProgress]  = useState<Record<number, { done: number; total: number }>>({});
+  // Construction leads (for the per-job Lead dropdown)
+  const [leads, setLeads] = useState<ConstructionLead[]>([]);
+  // Optimistic per-job planning state (lead / schedule confirmed)
+  const [planningOverride, setPlanningOverride] = useState<Record<number, { lead_name?: string; schedule_confirmed?: boolean }>>({});
+  // Work queue — construction jobs not yet in this month's plan (pipeline)
+  const [queue, setQueue]               = useState<PlanSuggestion[]>([]);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueOpen, setQueueOpen]       = useState(true);
   const activeMonthRef = useRef(month);
 
   const load = useCallback(async () => {
@@ -747,6 +755,35 @@ export default function ConstructionPlan() {
   const handleRemove = async (oppId: number) => {
     await removeJobFromMonth(month, oppId);
     load();
+  };
+
+  // Load construction leads once (Lead dropdown options)
+  useEffect(() => { listConstructionLeads().then(setLeads).catch(() => {}); }, []);
+
+  // Work queue — pipeline of jobs not yet in this month's plan
+  const loadQueue = useCallback(async () => {
+    setQueueLoading(true);
+    try { const r = await getPlanSuggestions(month); setQueue(r.suggestions || []); }
+    catch { setQueue([]); }
+    finally { setQueueLoading(false); }
+  }, [month]);
+  useEffect(() => { loadQueue(); }, [loadQueue]);
+
+  const planUserName = (): string => {
+    try { return JSON.parse(localStorage.getItem('ap_user') || '{}').name || ''; } catch { return ''; }
+  };
+
+  const updatePlanning = async (oppId: number, patch: { lead_name?: string; schedule_confirmed?: boolean }) => {
+    setPlanningOverride(prev => ({ ...prev, [oppId]: { ...prev[oppId], ...patch } }));
+    try { await setJobPlanning(oppId, { ...patch, updated_by: planUserName() || undefined }); }
+    catch { alert('Could not save — please try again'); load(); }
+  };
+
+  const addFromQueue = async (s: PlanSuggestion) => {
+    await addJobToMonth(month, {
+      opportunity_id: s.opportunity_id, opportunity_name: s.opportunity_name, property_name: s.property_name,
+    });
+    await Promise.all([load(), loadQueue()]);
   };
 
   const { goal, jobs, summary } = plan || { goal: { month, revenue_goal: null, hours_goal: null, notes: null }, jobs: [], summary: { job_count: 0, scheduled_count: 0, manual_count: 0, days_left: 0, hrs_est: 0, hrs_act: 0, hrs_est_month: 0, hrs_act_month: 0, revenue_est: 0, revenue_act: 0, revenue_act_month: 0, revenue_est_month: 0 } };
@@ -934,6 +971,43 @@ export default function ConstructionPlan() {
                         {j.opportunity_name}
                         {j.opp_number ? ` · #${j.opp_number}` : ''}
                       </div>
+                      {/* Per-job planning: lead + customer-confirmed schedule */}
+                      {(() => {
+                        const lead      = planningOverride[j.opportunity_id]?.lead_name ?? j.lead_name ?? '';
+                        const confirmed = planningOverride[j.opportunity_id]?.schedule_confirmed ?? j.schedule_confirmed ?? false;
+                        return (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 7, flexWrap: 'wrap' }}>
+                            <select
+                              value={lead}
+                              onChange={e => updatePlanning(j.opportunity_id, { lead_name: e.target.value })}
+                              style={{
+                                fontSize: 11, padding: '3px 6px', borderRadius: 6, fontFamily: 'inherit',
+                                border: '1px solid ' + (lead ? '#c7d2fe' : '#e5e7eb'),
+                                background: lead ? '#eef2ff' : '#fff',
+                                color: lead ? '#3730a3' : '#9ca3af', maxWidth: 160,
+                              }}
+                            >
+                              <option value="">Assign lead…</option>
+                              {leads.map(l => {
+                                const nm = l.display_name || l.aspire_name;
+                                return <option key={l.id} value={nm}>{nm}</option>;
+                              })}
+                            </select>
+                            <button
+                              onClick={() => updatePlanning(j.opportunity_id, { schedule_confirmed: !confirmed })}
+                              title="Schedule confirmed with customer"
+                              style={{
+                                fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 20, cursor: 'pointer',
+                                border: '1px solid ' + (confirmed ? '#86efac' : '#e5e7eb'),
+                                background: confirmed ? '#dcfce7' : '#f8fafc',
+                                color: confirmed ? '#15803d' : '#6b7280',
+                              }}
+                            >
+                              {confirmed ? '✅ Customer confirmed' : '📅 Confirm schedule'}
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </td>
 
                     {/* Status */}
@@ -1103,6 +1177,58 @@ export default function ConstructionPlan() {
             </strong>
           </div>
         )}
+
+        {/* ── Work Queue — construction jobs not yet in this month's plan ────────── */}
+        <div style={{ marginTop: 32 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a' }}>
+              📋 Work Queue
+              <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: '#6b7280' }}>
+                {queueLoading ? 'loading…' : `${queue.length} job${queue.length !== 1 ? 's' : ''} not yet in the plan`}
+              </span>
+            </h2>
+            <button
+              onClick={() => setQueueOpen(o => !o)}
+              style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', color: '#6b7280', cursor: 'pointer' }}
+            >
+              {queueOpen ? 'Hide' : 'Show'}
+            </button>
+          </div>
+
+          {queueOpen && (
+            queue.length === 0 && !queueLoading ? (
+              <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', padding: '20px 16px', textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>
+                Nothing in the queue — every active construction job is already in the plan.
+              </div>
+            ) : (
+              <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                {queue.map((s, i) => (
+                  <div key={s.opportunity_id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: i ? '1px solid #f3f4f6' : 'none' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>
+                        {s.property_name || s.opportunity_name}
+                        {s.has_scheduled && (
+                          <span style={{ marginLeft: 8, background: '#eff6ff', color: '#1d4ed8', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8 }}>
+                            📅 {s.ticket_count} scheduled
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+                        {s.opportunity_name}{s.status ? ` · ${s.status}` : ''}{s.won_dollars ? ` · ${fmt$(s.won_dollars)}` : ''}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => addFromQueue(s)}
+                      style={{ padding: '6px 12px', background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    >
+                      + Add to plan
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </div>
       </div>
 
       {/* Modals */}

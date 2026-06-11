@@ -224,6 +224,15 @@ async def lifespan(app: FastAPI):
                 UNIQUE(opportunity_id, item_key)
             )
         """,
+        "job_planning": """
+            CREATE TABLE IF NOT EXISTS job_planning (
+                opportunity_id     INTEGER PRIMARY KEY,
+                lead_name          TEXT,
+                schedule_confirmed INTEGER NOT NULL DEFAULT 0,
+                updated_by         TEXT,
+                updated_at         TEXT
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:

@@ -52,6 +52,11 @@ class PrepToggleIn(BaseModel):
     checked:    bool
     checked_by: Optional[str] = None
 
+class PlanningIn(BaseModel):
+    lead_name:          Optional[str]  = None   # assign a construction lead (None = leave unchanged)
+    schedule_confirmed: Optional[bool] = None   # customer-confirmed schedule (None = leave unchanged)
+    updated_by:         Optional[str]  = None
+
 # Fixed preparedness checklist applied to every committed job (keyed by opportunity_id).
 PREP_ITEMS = [
     {"key": "deposit_received",   "label": "Deposit received"},
@@ -422,9 +427,27 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             prep_done = {r["opportunity_id"]: r["done"] for r in prep_rows}
         except Exception:
             prep_done = {}  # table may not exist yet on older deployments
+
+    # Lead assignment + customer-confirmed schedule — one query for all jobs in the plan
+    planning: dict[int, dict] = {}
+    if jobs:
+        ph2 = ",".join("?" for _ in jobs)
+        try:
+            plan_rows = await db._q(
+                f"""SELECT opportunity_id, lead_name, schedule_confirmed
+                    FROM job_planning WHERE opportunity_id IN ({ph2})""",
+                list(jobs.keys()),
+            )
+            planning = {r["opportunity_id"]: r for r in plan_rows}
+        except Exception:
+            planning = {}  # table may not exist yet on older deployments
+
     for oid, j in jobs.items():
         j["prep_done"]  = prep_done.get(oid, 0)
         j["prep_total"] = PREP_TOTAL
+        p = planning.get(oid) or {}
+        j["lead_name"]          = p.get("lead_name") or ""
+        j["schedule_confirmed"] = bool(p.get("schedule_confirmed"))
 
     job_list = list(jobs.values())
     risk_order = {"over_budget": 0, "at_risk": 1, "on_track": 2, "complete": 3}
@@ -554,6 +577,23 @@ async def toggle_checklist(opportunity_id: int, body: PrepToggleIn, db: Database
         [opportunity_id, body.item_key, 1 if body.checked else 0, body.checked_by],
     )
     return {"ok": True, "opportunity_id": opportunity_id, "item_key": body.item_key, "checked": body.checked}
+
+
+@router.put("/jobs/{opportunity_id}/planning")
+async def set_planning(opportunity_id: int, body: PlanningIn, db: Database = Depends(get_db)):
+    """Assign the lead and/or set the customer-confirmed schedule flag for a job."""
+    sc = None if body.schedule_confirmed is None else (1 if body.schedule_confirmed else 0)
+    await db._x(
+        """INSERT INTO job_planning (opportunity_id, lead_name, schedule_confirmed, updated_by, updated_at)
+           VALUES (?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(opportunity_id) DO UPDATE SET
+             lead_name          = COALESCE(excluded.lead_name, job_planning.lead_name),
+             schedule_confirmed = COALESCE(excluded.schedule_confirmed, job_planning.schedule_confirmed),
+             updated_by         = excluded.updated_by,
+             updated_at         = datetime('now')""",
+        [opportunity_id, body.lead_name, sc, body.updated_by],
+    )
+    return {"ok": True, "opportunity_id": opportunity_id}
 
 
 @router.get("/jobs/{opportunity_id}/diagnose")
