@@ -1397,18 +1397,13 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             })
         return out
 
-    if tickets:
-        project_summary, smart_prompts, scope_summary, attachments = await asyncio.gather(
-            _generate_project_summary(opp_name_str, prop_str, opp, tickets),
-            _generate_smart_prompts(opp_name_str, prop_str, tickets),
-            _fetch_scope_notes(opp_id),
-            _fetch_opp_attachments(),
-        )
-    else:
-        scope_summary, attachments = await asyncio.gather(
-            _fetch_scope_notes(opp_id),
-            _fetch_opp_attachments(),
-        )
+    # Smart prompts + project summary were AI/LLM calls that are no longer shown in the
+    # UI — skip them to speed up every project load. smart_prompts/project_summary keep
+    # their empty defaults above (still returned for backward compatibility).
+    scope_summary, attachments = await asyncio.gather(
+        _fetch_scope_notes(opp_id),
+        _fetch_opp_attachments(),
+    )
 
     # Aspire activities for this opportunity
     # Comments are embedded in the Notes HTML (Aspire has no separate comments endpoint).
