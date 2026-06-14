@@ -1308,69 +1308,8 @@ export default function FieldProject() {
               </div>
 
               <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
-                Answer the prompts below, then add any notes.
+                Log today's progress and what's needed for the next visit.
               </div>
-
-              {/* ── Smart Prompts ── always visible; pre-populated from memory ── */}
-              {(data.smart_prompts || []).map(p => {
-                const selected  = promptSelections[p.id] || '';
-                const hasAnswer = !!selected;
-                const borderColor = p.type === 'over_hours' ? '#fca5a5' : p.type === 'upcoming' ? '#93c5fd' : '#d1d5db';
-                const headerBg    = p.type === 'over_hours' ? '#fff1f2' : p.type === 'upcoming' ? '#eff6ff' : '#f9fafb';
-                const labelColor  = p.type === 'over_hours' ? '#dc2626' : p.type === 'upcoming' ? '#1d4ed8' : '#374151';
-                return (
-                  <div key={p.id} style={{ marginBottom: 14, border: `1.5px solid ${borderColor}`, borderRadius: 10, overflow: 'hidden' }}>
-                    <div style={{ padding: '10px 14px', background: headerBg }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: labelColor, marginBottom: 2 }}>
-                        {hasAnswer ? '✓ ' : ''}{p.icon} {p.situation}
-                      </div>
-                      <div style={{ fontSize: 13, color: '#0f172a', fontWeight: 600 }}>{p.question}</div>
-                    </div>
-                    {/* Options — always clickable to change selection */}
-                    <div style={{ padding: '8px 10px 6px', background: '#fff', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {p.options.map(opt => {
-                        const isSelected = selected === opt;
-                        return (
-                          <button
-                            key={opt}
-                            type="button"
-                            onClick={() => {
-                              const newVal = isSelected ? '' : opt;
-                              setPromptSelections(prev => ({ ...prev, [p.id]: newVal }));
-                              if (newVal) savePromptMemory(p.id, newVal, p.actHours);
-                            }}
-                            style={{
-                              padding: '6px 11px', borderRadius: 20,
-                              border: isSelected ? '2px solid #16a34a' : '1.5px solid #d1d5db',
-                              background: isSelected ? '#dcfce7' : '#fff',
-                              color: isSelected ? '#15803d' : '#374151',
-                              fontSize: 12, fontWeight: isSelected ? 700 : 400,
-                              cursor: 'pointer', textAlign: 'left',
-                            }}
-                          >
-                            {isSelected ? '✓ ' : ''}{opt}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {/* Additional context note */}
-                    <div style={{ padding: '0 10px 10px', background: '#fff' }}>
-                      <textarea
-                        placeholder="Add additional context (optional)…"
-                        value={promptNotes[p.id] || ''}
-                        onChange={e => setPromptNotes(prev => ({ ...prev, [p.id]: e.target.value }))}
-                        rows={2}
-                        style={{
-                          width: '100%', boxSizing: 'border-box', fontSize: 12,
-                          border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 8px',
-                          resize: 'vertical', color: '#374151', fontFamily: 'inherit',
-                          background: '#f9fafb',
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
 
               {/* Per-ticket remaining hours — only scheduled/active tickets */}
               {(() => {
