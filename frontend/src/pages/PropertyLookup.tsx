@@ -27,6 +27,7 @@ interface PropertyResult {
   property_id: number;
   property_name: string;
   address?: string | null;
+  operation_notes?: string | null;
   contacts: ContactResult[];
 }
 
@@ -175,6 +176,16 @@ function PropertyCard({ prop }: { prop: PropertyResult }) {
       {/* Contacts */}
       {expanded && (
         <div>
+          {prop.operation_notes && (
+            <div style={{ margin: '12px 16px', padding: '12px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 11, color: '#15803d', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                🌿 Operation Notes
+              </div>
+              <div style={{ fontSize: 13, color: '#14532d', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                {prop.operation_notes}
+              </div>
+            </div>
+          )}
           {prop.contacts.length === 0 ? (
             <div style={{ padding: '12px 16px', fontSize: 13, color: '#9ca3af', fontStyle: 'italic' }}>
               No contacts linked to this property.

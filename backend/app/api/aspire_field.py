@@ -8,7 +8,9 @@ Photo strategy: direct attachment upload is 403 in Aspire, so photos are
 stored in R2 and their presigned URLs are written into the WorkTicket/
 Opportunity Notes field.
 """
+import html as _html
 import logging
+import re
 import uuid
 from datetime import date
 from typing import List, Optional
@@ -42,6 +44,19 @@ def _check_credentials():
 
 
 # ── Contact / Property lookup ─────────────────────────────────────────────────
+
+def _html_to_text(s: str) -> str:
+    """Convert Aspire's HTML note fields (e.g. ProductionNote) to readable plain text."""
+    if not s:
+        return ""
+    s = re.sub(r'(?i)<br\s*/?>', '\n', s)
+    s = re.sub(r'(?i)</(div|p|li|tr|h[1-6])>', '\n', s)
+    s = re.sub(r'<[^>]+>', '', s)          # strip remaining tags
+    s = _html.unescape(s)
+    s = re.sub(r'[ \t]+\n', '\n', s)       # trim trailing spaces per line
+    s = re.sub(r'\n{3,}', '\n\n', s)       # collapse blank-line runs
+    return s.strip()
+
 
 @router.get("/contact-lookup")
 async def contact_lookup(q: str = Query(..., min_length=2)):
@@ -158,6 +173,7 @@ async def contact_lookup(q: str = Query(..., min_length=2)):
                 "property_id":   pid,
                 "property_name": name,
                 "address":       address,
+                "operation_notes": _html_to_text(p.get("ProductionNote") or ""),
                 "contacts":      [],
             }
             prop_order.append(pid)
