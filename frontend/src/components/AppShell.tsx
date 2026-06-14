@@ -10,37 +10,42 @@ import { logout, currentUser } from '../lib/api';
 const SIDEBAR_FULL  = 220;
 const SIDEBAR_MINI  = 56;
 
-const ACCOUNTING_URL = 'https://darios-accounting.pages.dev';
-
+// Kept in sync with the Landing main menu (src/pages/Landing.tsx).
 const NAV = [
-  {
-    section: 'Field Ops',
-    items: [
-      { label: 'Crew Schedule', path: '/ops/crew-schedule', icon: '👥' },
-      { label: 'Time Tracking', path: '/ops/time-tracking', icon: '⏱️' },
-      { label: 'Contacts',      path: '/ops/contacts',      icon: '📞' },
-      { label: 'Key Box Admin', path: '/keys/admin',        icon: '🔑' },
-      { label: 'Safety Talks',  path: '/ops/safety-talks',       icon: '🦺' },
-      { label: 'Inspections',   path: '/ops/safety-inspections', icon: '🔍' },
-      { label: 'Documents',     path: '/ops/documents',           icon: '📋' },
-    ],
-  },
   {
     section: 'Field Staff',
     items: [
-      { label: 'Submit Receipt',  path: '/field',                icon: '🧾' },
-      { label: 'Purchase Order',  path: '/field/purchase-order', icon: '🛒', color: '#f59e0b' },
-      { label: 'New Opportunity', path: '/field/opportunity',    icon: '+',  color: '#22c55e' },
-      { label: 'New Issue',       path: '/field/issue',          icon: '⚠️' },
-      { label: 'Safety Talk',     path: '/field/safety',         icon: '🦺' },
-      { label: 'Key Box',         path: '/field/keys',           icon: '🗝️', color: '#fbbf24' },
+      { label: 'Submit Receipt',        path: '/field',                icon: '🧾' },
+      { label: 'Schedule',              path: '/field/work-ticket',    icon: '✅' },
+      { label: 'Construction Projects', path: '/field/project',        icon: '🏗️' },
+      { label: 'Maintenance',           path: '/field/maintenance',    icon: '🌿' },
+      { label: 'Purchase Order',        path: '/field/purchase-order', icon: '🛒', color: '#f59e0b' },
+      { label: 'New Opportunity',       path: '/field/opportunity',    icon: '+',  color: '#22c55e' },
+      { label: 'Safety Talk',           path: '/field/safety',         icon: '🦺' },
+      { label: 'Key Box',               path: '/field/keys',           icon: '🗝️', color: '#fbbf24' },
+      { label: 'Documents',             path: '/field/documents',      icon: '📋' },
+      { label: 'Site Inspection',       path: '/field/inspection',     icon: '🔍' },
     ],
   },
   {
-    section: 'Accounting',
+    section: 'Field Ops',
     items: [
-      { label: 'AP & Dashboards', href: ACCOUNTING_URL, icon: '💳' },
+      { label: 'Field Chat',    path: '/ops/issues',        icon: '💬' },
+      { label: 'Crew Schedule', path: '/ops/crew-schedule', icon: '👥' },
+      { label: 'Contacts',      path: '/ops/contacts',      icon: '📞' },
+      { label: 'Safety Talks',  path: '/ops/safety-talks',  icon: '🦺' },
+      { label: 'Key Box Admin', path: '/keys/admin',        icon: '🔑' },
+    ],
+  },
+  {
+    section: 'Accounting & Dashboards',
+    items: [
+      { label: 'Invoices',        path: '/ap',                 icon: '💳' },
       { label: 'Invoice Summary', path: '/ap/invoice-summary', icon: '📋' },
+      { label: 'Vendors',         path: '/vendors',            icon: '🏢' },
+      { label: 'Reconciliation',  path: '/reconcile',          icon: '🔄' },
+      { label: 'Dashboards',      path: '/dashboards',         icon: '📊' },
+      { label: 'Users',           path: '/users',              icon: '👤' },
     ],
   },
 ];
@@ -123,29 +128,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   transition: 'color 0.15s, background 0.15s',
                   whiteSpace: 'nowrap' as const,
                 });
-                if ('href' in item && item.href) {
-                  return (
-                    <a
-                      key={item.label}
-                      href={item.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={collapsed ? item.label : undefined}
-                      style={linkStyle(false)}
-                    >
-                      <span style={{ fontSize: 18, flexShrink: 0 }}>{item.icon}</span>
-                      {!collapsed && <span>{item.label}</span>}
-                    </a>
-                  );
-                }
-                const active = 'path' in item
-                  ? pathname.startsWith(item.path as string)
-                  : false;
+                const active = pathname.startsWith(item.path);
                 const ic = 'color' in item ? (item as { color?: string }).color : undefined;
                 return (
                   <Link
-                    key={'path' in item ? item.path : item.label}
-                    to={('path' in item ? item.path : '/') as string}
+                    key={item.path}
+                    to={item.path}
                     title={collapsed ? item.label : undefined}
                     style={linkStyle(active)}
                   >
