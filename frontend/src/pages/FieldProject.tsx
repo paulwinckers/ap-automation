@@ -368,6 +368,8 @@ export default function FieldProject() {
 
   // Form
   const [approachNotes,  setApproachNotes]  = useState('');
+  const [planTomorrow,   setPlanTomorrow]   = useState('');
+  const [toolsMaterials, setToolsMaterials] = useState('');
   const [remainingHours, setRemainingHours] = useState('');
   const [blockers,       setBlockers]       = useState('');
   const [submitting,     setSubmitting]     = useState(false);
@@ -701,7 +703,7 @@ export default function FieldProject() {
         ? (photosSaved > 0 ? ` · ${photosSaved} photo${photosSaved > 1 ? 's' : ''} saved` : ' · ⚠️ photos failed to upload')
         : '';
       setSubmitMsg(`✅ Update sent to the team.${photoMsg}`);
-      setApproachNotes(''); setRemainingHours(''); setBlockers(''); setPhotos([]);
+      setApproachNotes(''); setPlanTomorrow(''); setToolsMaterials(''); setRemainingHours(''); setBlockers(''); setPhotos([]);
       setTab('history');
       load(true);   // refresh history quietly
     } catch (err: any) {
@@ -1292,7 +1294,8 @@ export default function FieldProject() {
               const parts = [
                 hoursLine,
                 ...promptLines,
-                approachNotes.trim(),
+                planTomorrow.trim()   ? `📋 Plan for tomorrow:\n${planTomorrow.trim()}` : '',
+                toolsMaterials.trim() ? `🧰 Tools / materials required:\n${toolsMaterials.trim()}` : '',
               ].filter(Boolean);
               const combined = parts.join('\n\n');
               if (!combined.trim()) return;
@@ -1417,15 +1420,24 @@ export default function FieldProject() {
               })()}
 
               <div style={{ marginBottom: 14 }}>
-                <label style={LABEL}>
-                  Additional notes <span style={{ color: '#6b7280', fontWeight: 400 }}>(optional if prompts answered)</span>
-                </label>
+                <label style={LABEL}>Plan for tomorrow</label>
                 <textarea
-                  rows={4}
-                  placeholder="Any other details, plan for tomorrow, or context for the team…"
-                  value={approachNotes}
-                  onChange={e => setApproachNotes(e.target.value)}
-                  style={{ ...INPUT, resize: 'vertical', minHeight: 90 }}
+                  rows={3}
+                  placeholder="What's the plan for tomorrow on this job?"
+                  value={planTomorrow}
+                  onChange={e => setPlanTomorrow(e.target.value)}
+                  style={{ ...INPUT, resize: 'vertical', minHeight: 70 }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 14 }}>
+                <label style={LABEL}>Tools / Materials required</label>
+                <textarea
+                  rows={3}
+                  placeholder="Tools, equipment or materials needed for the next visit…"
+                  value={toolsMaterials}
+                  onChange={e => setToolsMaterials(e.target.value)}
+                  style={{ ...INPUT, resize: 'vertical', minHeight: 70 }}
                 />
               </div>
 
@@ -1501,7 +1513,7 @@ export default function FieldProject() {
 
               {(() => {
                 const hasPrompts = (data.smart_prompts || []).some(p => promptSelections[p.id]);
-                const canSubmit  = hasPrompts || approachNotes.trim();
+                const canSubmit  = hasPrompts || planTomorrow.trim() || toolsMaterials.trim();
                 return (
                   <button
                     type="submit"
