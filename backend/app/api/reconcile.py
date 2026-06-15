@@ -663,3 +663,65 @@ async def delete_vendor_link(statement_name: str, db: Database = Depends(get_db)
         return {"deleted": statement_name}
     finally:
         await db.close()
+
+
+# ── Pre-warm scheduler ─────────────────────────────────────────────────────────
+# Keeps the diff cache warm for the current + previous period so the Reconcile page
+# loads from cache instead of triggering a cold batch of live QBO calls.
+_prewarm_task: "asyncio.Task | None" = None
+
+
+async def _prewarm_period(period: str) -> None:
+    """Compute + cache diffs for every statement in one open period (best-effort)."""
+    db = Database()
+    try:
+        await db.connect()
+        svc = ReconciliationService()
+        period_row = await db.get_or_create_period(period, _period_label(period))
+        if period_row.get("status") == "closed":
+            return  # closed periods are snapshotted — nothing to warm
+        statements = await db.get_statements_for_period(period_row["id"])
+        if not statements:
+            return
+        from_date, to_date = _period_date_range(period)
+        tasks = [
+            _get_diff_for_statement(s, from_date, to_date, db, svc, force=True)
+            for s in statements
+        ]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info(f"Reconcile prewarm: refreshed {len(statements)} statement(s) for {period}")
+    except Exception as e:
+        logger.warning(f"Reconcile prewarm failed for {period}: {e}")
+    finally:
+        try:
+            await db.close()
+        except Exception:
+            pass
+
+
+async def _prewarm_loop() -> None:
+    """Warm the current + previous period's diffs every 3h (keeps the 4h cache fresh)."""
+    await asyncio.sleep(90)  # let startup settle before the first run
+    while True:
+        now = datetime.utcnow()
+        cur = now.strftime("%Y-%m")
+        y, m = now.year, now.month - 1
+        if m == 0:
+            y, m = y - 1, 12
+        prev = f"{y:04d}-{m:02d}"
+        for period in (cur, prev):
+            await _prewarm_period(period)
+        await asyncio.sleep(3 * 60 * 60)  # 3 hours — shorter than the 4h cache TTL
+
+
+def start_reconcile_prewarm() -> None:
+    global _prewarm_task
+    _prewarm_task = asyncio.ensure_future(_prewarm_loop())
+    logger.info("Reconcile prewarm scheduler started (current + previous period, every 3h)")
+
+
+def stop_reconcile_prewarm() -> None:
+    global _prewarm_task
+    if _prewarm_task:
+        _prewarm_task.cancel()
+        _prewarm_task = None

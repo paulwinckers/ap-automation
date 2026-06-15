@@ -13,6 +13,23 @@ import { useEffect, useRef, useState } from 'react';
 
 const API = import.meta.env.VITE_API_URL ?? 'https://ap-automation-production.up.railway.app';
 
+// fetch with an abort timeout so a hung backend (e.g. mid-deploy) fails fast instead
+// of leaving the page spinning on "Loading…" forever.
+async function fetchT(url: string, opts: RequestInit = {}, ms = 30000): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error('Timed out reaching the server — tap the month again to retry.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Period {
@@ -170,8 +187,8 @@ export default function Reconcile() {
     setDiffsError(null);
     try {
       // Ensure period exists
-      await fetch(`${API}/reconcile/periods/${period}`, { method: 'POST' });
-      const res = await fetch(`${API}/reconcile/periods/${period}/statements`);
+      await fetchT(`${API}/reconcile/periods/${period}`, { method: 'POST' });
+      const res = await fetchT(`${API}/reconcile/periods/${period}/statements`);
       const data = await res.json();
       // Guard against stale responses — if the user switched periods while this
       // request was in-flight, discard the result to prevent overwriting newer data
@@ -201,7 +218,7 @@ export default function Reconcile() {
     setLoadingDiffs(true);
     setDiffsError(null);
     try {
-      const res = await fetch(`${API}/reconcile/periods/${period}/diffs`);
+      const res = await fetchT(`${API}/reconcile/periods/${period}/diffs`, {}, 60000);
       if (!res.ok) {
         const errText = await res.text().catch(() => res.statusText);
         let detail = errText;
