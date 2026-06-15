@@ -20,11 +20,7 @@ from fastapi.responses import JSONResponse
 
 from app.api import invoices, vendors, health
 from app.api.vendor_import import router as vendor_import_router
-from app.api.reconcile import (
-    router as reconcile_router,
-    start_reconcile_prewarm,
-    stop_reconcile_prewarm,
-)
+from app.api.reconcile import router as reconcile_router
 from app.api.dashboard import router as dashboard_router
 from app.api.aspire_field import router as aspire_field_router
 from app.api.crew_schedule import router as crew_schedule_router
@@ -281,14 +277,11 @@ async def lifespan(app: FastAPI):
     start_construction_scheduler()
     # Start issues digest nightly scheduler (fires 7 PM Pacific)
     start_digest_scheduler()
-    # Keep vendor-reconciliation diffs warm (current + previous period)
-    start_reconcile_prewarm()
     yield
     # Stop on shutdown
     await email_intake.stop()
     stop_construction_scheduler()
     stop_digest_scheduler()
-    stop_reconcile_prewarm()
 
 
 app = FastAPI(
