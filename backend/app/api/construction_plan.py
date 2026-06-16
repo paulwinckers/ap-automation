@@ -83,21 +83,28 @@ async def _fetch_opp_actuals(opp_ids: list[int]) -> dict[int, dict]:
 
     async def _fetch_chunk(chunk: list[int]) -> list[dict]:
         or_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
-        try:
-            res = await _aspire._get("Opportunities", {
-                "$filter": f"({or_filter})",
-                "$select": (
-                    "OpportunityID,OpportunityName,PropertyName,OpportunityNumber,"
-                    "DivisionName,WonDollars,ActualEarnedRevenue,EstimatedDollars,"
-                    "EstimatedLaborHours,ActualLaborHours,PercentComplete,"
-                    "OpportunityStatusName,StartDate,EndDate"
-                ),
-                "$top": "200",
-            })
-            return _aspire._extract_list(res)
-        except Exception as e:
-            logger.warning(f"Aspire actuals fetch failed: {e}")
-            return []
+        params = {
+            "$filter": f"({or_filter})",
+            "$select": (
+                "OpportunityID,OpportunityName,PropertyName,OpportunityNumber,"
+                "DivisionName,WonDollars,ActualEarnedRevenue,EstimatedDollars,"
+                "EstimatedLaborHours,ActualLaborHours,PercentComplete,"
+                "OpportunityStatusName,StartDate,EndDate"
+            ),
+            "$top": "200",
+        }
+        # Retry transient Aspire failures — a single failed chunk would otherwise blank
+        # the name/status of every opp in it (rows fall back to "Job #1234" / "—").
+        for attempt in range(3):
+            try:
+                res = await _aspire._get("Opportunities", params)
+                return _aspire._extract_list(res)
+            except Exception as e:
+                if attempt == 2:
+                    logger.warning(f"Aspire actuals fetch failed after 3 tries: {e}")
+                    return []
+                await _asyncio.sleep(0.4 * (attempt + 1))
+        return []
 
     results = await _asyncio.gather(*[_fetch_chunk(c) for c in chunks])
     out: dict[int, dict] = {}
@@ -153,7 +160,8 @@ async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
     if not opp_ids:
         return {}
 
-    opp_div: dict[int, str] = {}
+    opp_div: dict[int, str]  = {}
+    opp_meta: dict[int, dict] = {}   # name/property/number/status — reliable name source
     branch = (settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction").lower()
     for i in range(0, len(opp_ids), 15):
         chunk = opp_ids[i:i+15]
@@ -161,13 +169,14 @@ async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
         try:
             res2 = await _aspire._get("Opportunities", {
                 "$filter": f"({or_f})",
-                "$select": "OpportunityID,DivisionName",
+                "$select": "OpportunityID,DivisionName,OpportunityName,PropertyName,OpportunityNumber,OpportunityStatusName",
                 "$top": "200",
             })
             for o in _aspire._extract_list(res2):
                 oid = o.get("OpportunityID")
                 if oid:
-                    opp_div[oid] = (o.get("DivisionName") or "").lower()
+                    opp_div[oid]  = (o.get("DivisionName") or "").lower()
+                    opp_meta[oid] = o
         except Exception:
             pass
 
@@ -175,6 +184,10 @@ async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
     for t in tickets:
         oid = t.get("OpportunityID")
         if oid and branch in opp_div.get(oid, ""):
+            # Attach opp name/property so the plan can fall back to it if the live
+            # actuals fetch flakes for this opp (keeps rows from showing "Job #1234").
+            if oid in opp_meta:
+                t["_opp_meta"] = opp_meta[oid]
             out.setdefault(oid, []).append(t)
 
     logger.info(f"Plan: {len(out)} Construction opportunities with scheduled tickets in {month}")
@@ -378,12 +391,16 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
 
         rev_act = float(opp.get("ActualEarnedRevenue") or 0)
 
+        # Name/property/number/status fall back to the meta carried on the scheduled
+        # tickets when the live actuals fetch didn't return this opp.
+        meta = tickets[0].get("_opp_meta", {}) if tickets else {}
+
         return {
             "opportunity_id":    oid,
-            "opportunity_name":  opp.get("OpportunityName") or f"Job #{oid}",
-            "property_name":     opp.get("PropertyName") or "",
-            "opp_number":        opp.get("OpportunityNumber"),
-            "status":            opp.get("OpportunityStatusName") or "",
+            "opportunity_name":  opp.get("OpportunityName") or meta.get("OpportunityName") or f"Job #{oid}",
+            "property_name":     opp.get("PropertyName") or meta.get("PropertyName") or "",
+            "opp_number":        opp.get("OpportunityNumber") or meta.get("OpportunityNumber"),
+            "status":            opp.get("OpportunityStatusName") or meta.get("OpportunityStatusName") or "",
             "hrs_est":           hrs_est,           # total job estimated hours
             "hrs_act":           hrs_act,           # total job actual hours (lifetime)
             "hrs_est_month":         hrs_est_month,     # estimated hours from THIS month's tickets
