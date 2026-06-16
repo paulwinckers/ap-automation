@@ -859,7 +859,9 @@ export default function ConstructionPlan() {
             </span>
           </div>
           <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
-            <GoalBar label="Revenue" actual={summary.revenue_act_month} goal={goal.revenue_goal} unit="$" />
+            {/* Revenue bar tracks projected month revenue (sum of committed jobs) vs goal —
+                earned is shown in the detail line below and is 0 until tickets complete. */}
+            <GoalBar label="Revenue" actual={summary.revenue_est_month} goal={goal.revenue_goal} unit="$" />
             <GoalBar label="Hours" actual={summary.hrs_act_month} goal={goal.hours_goal} unit="h" />
           </div>
           {goal.notes && (
