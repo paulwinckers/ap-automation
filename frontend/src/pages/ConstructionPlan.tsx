@@ -937,9 +937,9 @@ export default function ConstructionPlan() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
-                  {['Property / Job', 'Status', '% This Month', 'Hours', 'Revenue', 'Risk', 'Prep', 'Materials', ''].map((h, i) => (
+                  {['Property / Job', '% This Month', 'Hours', 'Revenue', 'Risk', 'Prep', ''].map((h, i) => (
                     <th key={i} style={{
-                      padding: '10px 16px', textAlign: i >= 2 ? 'center' : 'left',
+                      padding: '10px 16px', textAlign: i === 0 ? 'left' : 'center',
                       fontSize: 11, fontWeight: 700, color: '#6b7280',
                       letterSpacing: '0.06em', textTransform: 'uppercase',
                       whiteSpace: 'nowrap',
@@ -957,9 +957,16 @@ export default function ConstructionPlan() {
                     {/* Property / Job */}
                     <td style={{ padding: '12px 16px', verticalAlign: 'top' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <span style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>
+                        {/* Property name → opens the Construction Job in our system */}
+                        <a
+                          href={`/field/project/${j.opportunity_id}`}
+                          title="Open Construction Job"
+                          style={{ fontWeight: 600, fontSize: 13, color: '#111827', textDecoration: 'none' }}
+                          onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+                          onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+                        >
                           {j.property_name || j.opportunity_name}
-                        </span>
+                        </a>
                         {j.source === 'scheduled' || j.source === 'both'
                           ? <span style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8 }}>
                               📅 {j.completed_tickets}/{j.ticket_count} done
@@ -970,7 +977,18 @@ export default function ConstructionPlan() {
                         }
                       </div>
                       <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-                        {j.opportunity_name}
+                        {/* Opportunity name → opens the opportunity in Aspire */}
+                        <a
+                          href={j.aspire_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open in Aspire"
+                          style={{ color: '#2563eb', textDecoration: 'none' }}
+                          onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+                          onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+                        >
+                          {j.opportunity_name} ↗
+                        </a>
                         {j.opp_number ? ` · #${j.opp_number}` : ''}
                       </div>
                       {/* Per-job planning: lead + customer-confirmed schedule */}
@@ -1010,14 +1028,6 @@ export default function ConstructionPlan() {
                           </div>
                         );
                       })()}
-                    </td>
-
-                    {/* Status */}
-                    <td style={{ padding: '12px 16px', verticalAlign: 'top' }}>
-                      <span style={{
-                        background: '#f1f5f9', color: '#475569',
-                        padding: '2px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600,
-                      }}>{j.status || '—'}</span>
                     </td>
 
                     {/* % complete this month */}
@@ -1095,22 +1105,6 @@ export default function ConstructionPlan() {
                       })()}
                     </td>
 
-                    {/* Materials toggle */}
-                    <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
-                      <button
-                        onClick={() => setMaterialsFor(materialsFor === j.opportunity_id ? null : j.opportunity_id)}
-                        style={{
-                          padding: '3px 10px', fontSize: 11, fontWeight: 600, borderRadius: 6,
-                          border: materialsFor === j.opportunity_id ? '1px solid #2563eb' : '1px solid #e5e7eb',
-                          background: materialsFor === j.opportunity_id ? '#eff6ff' : '#f8fafc',
-                          color: materialsFor === j.opportunity_id ? '#1d4ed8' : '#6b7280',
-                          cursor: 'pointer', whiteSpace: 'nowrap',
-                        }}
-                      >
-                        📦 {materialsFor === j.opportunity_id ? '▲' : '▼'}
-                      </button>
-                    </td>
-
                     {/* Remove — available on all jobs */}
                     <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
                       <button
@@ -1131,14 +1125,6 @@ export default function ConstructionPlan() {
                       >✕</button>
                     </td>
                   </tr>
-                  {/* Materials panel — lazy loaded, spans all columns */}
-                  {materialsFor === j.opportunity_id && (
-                    <tr>
-                      <td colSpan={10} style={{ padding: 0, background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
-                        <MaterialsPanel opportunityId={j.opportunity_id} />
-                      </td>
-                    </tr>
-                  )}
                   {/* Preparedness checklist panel + link to the Construction Project page */}
                   {prepFor === j.opportunity_id && (
                     <tr>

@@ -330,6 +330,7 @@ export interface PlanGoal {
 
 export interface PlanJob {
   opportunity_id: number;
+  aspire_url?: string;
   opportunity_name: string;
   hrs_est_month: number;       // estimated hours from THIS month's tickets
   hrs_act_month: number;       // actual hours from THIS month's tickets only

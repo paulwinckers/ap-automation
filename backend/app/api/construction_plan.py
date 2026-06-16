@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/construction/plan", tags=["construction-plan"])
 
 _aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)
+_ASPIRE_WEB_BASE = (settings.ASPIRE_WEB_URL or "https://cloud.youraspire.com/app").rstrip("/")
 
 # ── DB helper ─────────────────────────────────────────────────────────────────
 _db = Database()
@@ -355,18 +356,24 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         sched_dates = sorted(
             [t.get("ScheduledStartDate", "") for t in tickets if t.get("ScheduledStartDate")]
         )
-        # % complete = completed tickets this month / total tickets this month
+        # Completed tickets this month — kept for the "X/Y tickets" detail + risk flag
         completed_tickets = [
             t for t in tickets
             if (t.get("WorkTicketStatusName") or "").lower() in ("complete", "completed")
         ]
         n_total     = len(tickets)
         n_complete  = len(completed_tickets)
-        pct_month   = (n_complete / n_total * 100) if n_total else 0
 
         # ── Month-specific hours & revenue from scheduled tickets ──────────────
         hrs_est_month     = sum(float(t.get("HoursEst") or 0) for t in tickets)
         hrs_act_month     = sum(float(t.get("HoursAct") or 0) for t in tickets)
+
+        # % this month = actual (completed) hours / estimated hours for the month's tickets,
+        # capped at 100. Falls back to completed-ticket ratio when there are no estimated hours.
+        if hrs_est_month > 0:
+            pct_month = min(hrs_act_month / hrs_est_month * 100, 100)
+        else:
+            pct_month = (n_complete / n_total * 100) if n_total else 0
         # Earned revenue this month. Prefer /WorkTicketRevenues (month-recognised); when that's
         # empty — common for completed tickets — estimate from progress so a job with logged
         # hours still shows earned revenue (complete → full Revenue, else Revenue × hours-progress).
@@ -397,6 +404,7 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
 
         return {
             "opportunity_id":    oid,
+            "aspire_url":        f"{_ASPIRE_WEB_BASE}/opportunities/details/{oid}",
             "opportunity_name":  opp.get("OpportunityName") or meta.get("OpportunityName") or f"Job #{oid}",
             "property_name":     opp.get("PropertyName") or meta.get("PropertyName") or "",
             "opp_number":        opp.get("OpportunityNumber") or meta.get("OpportunityNumber"),
