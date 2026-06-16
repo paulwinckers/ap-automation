@@ -596,6 +596,8 @@ CREATE TABLE IF NOT EXISTS job_prep_checklist (
     opportunity_id INTEGER NOT NULL,
     item_key       TEXT    NOT NULL,
     checked        INTEGER NOT NULL DEFAULT 0,
+    status         TEXT,                 -- '' | 'na' | 'complete' | 'uploaded'
+    attachment_id  INTEGER,              -- job_attachments row when status='uploaded'
     checked_by     TEXT,
     checked_at     TEXT,
     UNIQUE(opportunity_id, item_key)

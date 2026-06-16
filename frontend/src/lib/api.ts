@@ -4,6 +4,7 @@
  */
 
 const BASE = import.meta.env.VITE_API_URL || 'https://ap-automation-production.up.railway.app';
+export const API_BASE = BASE;
 
 async function request<T>(
   method: string,
@@ -361,10 +362,14 @@ export interface PlanJob {
   schedule_confirmed?: boolean; // customer-confirmed schedule
 }
 
+export type PrepStatus = '' | 'na' | 'complete' | 'uploaded';
 export interface PrepItem {
   key: string;
   label: string;
-  checked: boolean;
+  status: PrepStatus;
+  attachment_id: number | null;
+  attachment_name: string | null;
+  attachment_url: string | null;   // relative path; prefix with API_BASE to open
   checked_by: string | null;
   checked_at: string | null;
 }
@@ -372,16 +377,26 @@ export interface JobChecklist {
   opportunity_id: number;
   items: PrepItem[];
   done: number;
-  total: number;
+  total: number;   // applicable items (excludes N/A)
 }
 
 export async function getJobChecklist(oppId: number): Promise<JobChecklist> {
   return request('GET', `/construction/plan/jobs/${oppId}/checklist`);
 }
-export async function toggleJobChecklist(
-  oppId: number, item_key: string, checked: boolean, checked_by?: string,
+export async function setChecklistStatus(
+  oppId: number, item_key: string, status: PrepStatus, attachment_id?: number | null, checked_by?: string,
 ): Promise<{ ok: boolean }> {
-  return request('POST', `/construction/plan/jobs/${oppId}/checklist`, { item_key, checked, checked_by });
+  return request('POST', `/construction/plan/jobs/${oppId}/checklist`,
+    { item_key, status, attachment_id: attachment_id ?? null, checked_by });
+}
+/** Upload a file into the job's shared Documents (job_attachments) — returns the new id. */
+export async function uploadJobAttachment(
+  oppId: number, file: File, attachmentType: string,
+): Promise<{ id: number; file_name: string }> {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('attachment_type', attachmentType);
+  return request('POST', `/checkin/project/${oppId}/job-attachments`, fd, true);
 }
 
 export async function setJobPlanning(

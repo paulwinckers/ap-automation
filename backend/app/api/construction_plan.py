@@ -49,9 +49,11 @@ class JobIn(BaseModel):
     committed_by:     Optional[str] = None
 
 class PrepToggleIn(BaseModel):
-    item_key:   str
-    checked:    bool
-    checked_by: Optional[str] = None
+    item_key:      str
+    status:        Optional[str] = None   # 'na' | 'complete' | 'uploaded' | '' (clear)
+    attachment_id: Optional[int] = None   # job_attachments id when status='uploaded'
+    checked:       Optional[bool] = None  # legacy fallback (True → 'complete')
+    checked_by:    Optional[str]  = None
 
 class PlanningIn(BaseModel):
     lead_name:          Optional[str]  = None   # assign a construction lead (None = leave unchanged)
@@ -459,21 +461,26 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
                 job["property_name"] = t["property_name"]
             jobs[oid] = job
 
-    # Preparedness checklist progress — one query for every job in the plan
-    prep_done: dict[int, int] = {}
+    # Preparedness checklist progress — one query for every job in the plan.
+    # done = items complete/uploaded; total = applicable items (PREP_TOTAL minus N/A).
+    prep_counts: dict[int, dict] = {}
     if jobs:
         ph = ",".join("?" for _ in jobs)
         try:
             prep_rows = await db._q(
-                f"""SELECT opportunity_id, COUNT(*) AS done
-                    FROM job_prep_checklist
-                    WHERE checked = 1 AND opportunity_id IN ({ph})
-                    GROUP BY opportunity_id""",
+                f"""SELECT opportunity_id, item_key, checked, status
+                    FROM job_prep_checklist WHERE opportunity_id IN ({ph})""",
                 list(jobs.keys()),
             )
-            prep_done = {r["opportunity_id"]: r["done"] for r in prep_rows}
+            for r in prep_rows:
+                c = prep_counts.setdefault(r["opportunity_id"], {"done": 0, "na": 0})
+                st = _item_status(r)
+                if st == "na":
+                    c["na"] += 1
+                elif st in ("complete", "uploaded"):
+                    c["done"] += 1
         except Exception:
-            prep_done = {}  # table may not exist yet on older deployments
+            prep_counts = {}  # table may not exist yet on older deployments
 
     # Lead assignment + customer-confirmed schedule — one query for all jobs in the plan
     planning: dict[int, dict] = {}
@@ -490,8 +497,9 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             planning = {}  # table may not exist yet on older deployments
 
     for oid, j in jobs.items():
-        j["prep_done"]  = prep_done.get(oid, 0)
-        j["prep_total"] = PREP_TOTAL
+        c = prep_counts.get(oid, {"done": 0, "na": 0})
+        j["prep_done"]  = c["done"]
+        j["prep_total"] = PREP_TOTAL - c["na"]   # exclude N/A items from the total
         p = planning.get(oid) or {}
         j["lead_name"]          = p.get("lead_name") or ""
         j["schedule_confirmed"] = bool(p.get("schedule_confirmed"))
@@ -581,49 +589,87 @@ async def remove_job(month: str, opp_id: int, db: Database = Depends(get_db)):
     return {"ok": True, "month": month, "opportunity_id": opp_id}
 
 
+def _item_status(r: dict) -> str:
+    """Normalised status for a checklist row: '', 'na', 'complete', 'uploaded'.
+    Legacy rows (checked=1, no status) read as 'complete'."""
+    status = (r.get("status") or "").lower()
+    if not status and r.get("checked"):
+        status = "complete"
+    return status
+
+
 @router.get("/jobs/{opportunity_id}/checklist")
 async def get_checklist(opportunity_id: int, db: Database = Depends(get_db)):
-    """Preparedness checklist for a job — fixed items merged with saved checked state."""
+    """Preparedness checklist — fixed items merged with saved status + any uploaded doc."""
     try:
         rows = await db._q(
-            "SELECT item_key, checked, checked_by, checked_at FROM job_prep_checklist WHERE opportunity_id = ?",
+            "SELECT item_key, checked, status, attachment_id, checked_by, checked_at "
+            "FROM job_prep_checklist WHERE opportunity_id = ?",
             [opportunity_id],
         )
     except Exception:
         rows = []  # table may not exist yet on older deployments
     state = {r["item_key"]: r for r in rows}
-    items = []
-    done = 0
+
+    # Resolve uploaded-doc filenames in one query
+    att_ids = [r["attachment_id"] for r in rows if r.get("attachment_id")]
+    att_map: dict[int, str] = {}
+    if att_ids:
+        ph = ",".join("?" for _ in att_ids)
+        try:
+            arows = await db._q(f"SELECT id, file_name FROM job_attachments WHERE id IN ({ph})", att_ids)
+            att_map = {a["id"]: a["file_name"] for a in arows}
+        except Exception:
+            att_map = {}
+
+    items, done, applicable = [], 0, 0
     for it in PREP_ITEMS:
         r = state.get(it["key"]) or {}
-        checked = bool(r.get("checked"))
-        if checked:
+        status = _item_status(r)
+        att_id = r.get("attachment_id")
+        if status != "na":
+            applicable += 1
+        if status in ("complete", "uploaded"):
             done += 1
         items.append({
-            "key":        it["key"],
-            "label":      it["label"],
-            "checked":    checked,
-            "checked_by": r.get("checked_by"),
-            "checked_at": r.get("checked_at"),
+            "key":             it["key"],
+            "label":           it["label"],
+            "status":          status,
+            "attachment_id":   att_id,
+            "attachment_name": att_map.get(att_id) if att_id else None,
+            "attachment_url":  f"/checkin/job-attachment/{att_id}/file" if att_id else None,
+            "checked_by":      r.get("checked_by"),
+            "checked_at":      r.get("checked_at"),
         })
-    return {"opportunity_id": opportunity_id, "items": items, "done": done, "total": PREP_TOTAL}
+    # total excludes N/A items
+    return {"opportunity_id": opportunity_id, "items": items, "done": done, "total": applicable}
 
 
 @router.post("/jobs/{opportunity_id}/checklist")
 async def toggle_checklist(opportunity_id: int, body: PrepToggleIn, db: Database = Depends(get_db)):
-    """Check / uncheck one preparedness item for a job."""
+    """Set a preparedness item's status (na / complete / uploaded / cleared)."""
     if body.item_key not in {it["key"] for it in PREP_ITEMS}:
         raise HTTPException(status_code=400, detail=f"Unknown checklist item: {body.item_key}")
+    status = (body.status or "").lower()
+    if not status and body.checked is not None:        # legacy checkbox callers
+        status = "complete" if body.checked else ""
+    if status not in ("", "na", "complete", "uploaded"):
+        raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+    checked = 1 if status in ("complete", "uploaded") else 0
+    att_id = body.attachment_id if status == "uploaded" else None
     await db._x(
-        """INSERT INTO job_prep_checklist (opportunity_id, item_key, checked, checked_by, checked_at)
-           VALUES (?, ?, ?, ?, datetime('now'))
+        """INSERT INTO job_prep_checklist
+             (opportunity_id, item_key, checked, status, attachment_id, checked_by, checked_at)
+           VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
            ON CONFLICT(opportunity_id, item_key) DO UPDATE SET
-             checked    = excluded.checked,
-             checked_by = excluded.checked_by,
-             checked_at = datetime('now')""",
-        [opportunity_id, body.item_key, 1 if body.checked else 0, body.checked_by],
+             checked       = excluded.checked,
+             status        = excluded.status,
+             attachment_id = excluded.attachment_id,
+             checked_by    = excluded.checked_by,
+             checked_at    = datetime('now')""",
+        [opportunity_id, body.item_key, checked, status or None, att_id, body.checked_by],
     )
-    return {"ok": True, "opportunity_id": opportunity_id, "item_key": body.item_key, "checked": body.checked}
+    return {"ok": True, "opportunity_id": opportunity_id, "item_key": body.item_key, "status": status}
 
 
 @router.put("/jobs/{opportunity_id}/planning")

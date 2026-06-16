@@ -219,6 +219,8 @@ async def lifespan(app: FastAPI):
                 opportunity_id INTEGER NOT NULL,
                 item_key       TEXT    NOT NULL,
                 checked        INTEGER NOT NULL DEFAULT 0,
+                status         TEXT,
+                attachment_id  INTEGER,
                 checked_by     TEXT,
                 checked_at     TEXT,
                 UNIQUE(opportunity_id, item_key)
@@ -257,6 +259,9 @@ async def lifespan(app: FastAPI):
         ("vendor_rules", "job_cost_forward_to", "ALTER TABLE vendor_rules ADD COLUMN job_cost_forward_to TEXT"),
         # field_conversations.created_by_user_id — link a conversation to a real user (directory identity)
         ("field_conversations", "created_by_user_id", "ALTER TABLE field_conversations ADD COLUMN created_by_user_id INTEGER"),
+        # job_prep_checklist — N/A/Complete/Upload-Doc status + linked attachment
+        ("job_prep_checklist", "status",        "ALTER TABLE job_prep_checklist ADD COLUMN status TEXT"),
+        ("job_prep_checklist", "attachment_id", "ALTER TABLE job_prep_checklist ADD COLUMN attachment_id INTEGER"),
     ]
     for tbl, col, sql in _COLUMN_MIGRATIONS:
         try:
