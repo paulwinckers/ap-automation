@@ -354,11 +354,25 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         # ── Month-specific hours & revenue from scheduled tickets ──────────────
         hrs_est_month     = sum(float(t.get("HoursEst") or 0) for t in tickets)
         hrs_act_month     = sum(float(t.get("HoursAct") or 0) for t in tickets)
-        # Revenue from /WorkTicketRevenues filtered to this month — accurate per-month earned
-        revenue_act_month = sum(
-            ticket_revenues.get(t.get("WorkTicketID"), 0.0)
-            for t in tickets if t.get("WorkTicketID")
-        )
+        # Earned revenue this month. Prefer /WorkTicketRevenues (month-recognised); when that's
+        # empty — common for completed tickets — estimate from progress so a job with logged
+        # hours still shows earned revenue (complete → full Revenue, else Revenue × hours-progress).
+        def _ticket_earned(t: dict) -> float:
+            wtr = ticket_revenues.get(t.get("WorkTicketID"), 0.0)
+            if wtr:
+                return wtr
+            rev = float(t.get("Revenue") or 0)
+            if rev <= 0:
+                return 0.0
+            status = (t.get("WorkTicketStatusName") or "").lower()
+            if status in ("complete", "completed") or t.get("CompleteDate"):
+                return rev
+            he = float(t.get("HoursEst") or 0)
+            ha = float(t.get("HoursAct") or 0)
+            if he > 0:
+                return rev * min(ha / he, 1.0)
+            return 0.0
+        revenue_act_month = sum(_ticket_earned(t) for t in tickets)
         # Budgeted revenue for this month's tickets (ticket-level Revenue field)
         revenue_est_month = sum(float(t.get("Revenue") or 0) for t in tickets)
 
@@ -405,12 +419,20 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             jobs[oid]["source"] = "both"
             jobs[oid]["notes"]  = t.get("notes") or ""
         else:
-            jobs[oid] = _make_job(
+            job = _make_job(
                 oid, source="manual",
                 notes=t.get("notes") or "",
                 committed_by=t.get("committed_by") or "",
                 committed_at=t.get("created_at") or "",
             )
+            # Resilience: if Aspire didn't return a name (e.g. during an Aspire/D1 hiccup),
+            # fall back to the name/property captured when the job was committed.
+            if not job["opportunity_name"] or job["opportunity_name"] == f"Job #{oid}":
+                if t.get("opportunity_name"):
+                    job["opportunity_name"] = t["opportunity_name"]
+            if not job["property_name"] and t.get("property_name"):
+                job["property_name"] = t["property_name"]
+            jobs[oid] = job
 
     # Preparedness checklist progress — one query for every job in the plan
     prep_done: dict[int, int] = {}
