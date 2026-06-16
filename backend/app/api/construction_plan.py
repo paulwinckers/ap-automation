@@ -694,17 +694,24 @@ async def set_planning(opportunity_id: int, body: PlanningIn, db: Database = Dep
     except Exception:
         pass
 
+    # Ensure a row exists (schedule_confirmed is NOT NULL, so seed it to 0), then update
+    # only the fields actually supplied — avoids overwriting unspecified fields and avoids
+    # inserting NULL into the NOT NULL schedule_confirmed column.
     await db._x(
-        """INSERT INTO job_planning (opportunity_id, lead_name, schedule_confirmed, stage, updated_by, updated_at)
-           VALUES (?, ?, ?, ?, ?, datetime('now'))
-           ON CONFLICT(opportunity_id) DO UPDATE SET
-             lead_name          = COALESCE(excluded.lead_name, job_planning.lead_name),
-             schedule_confirmed = COALESCE(excluded.schedule_confirmed, job_planning.schedule_confirmed),
-             stage              = COALESCE(excluded.stage, job_planning.stage),
-             updated_by         = excluded.updated_by,
-             updated_at         = datetime('now')""",
-        [opportunity_id, body.lead_name, sc, body.stage, body.updated_by],
+        "INSERT OR IGNORE INTO job_planning (opportunity_id, schedule_confirmed) VALUES (?, 0)",
+        [opportunity_id],
     )
+    sets, params = [], []
+    if body.lead_name is not None:
+        sets.append("lead_name = ?"); params.append(body.lead_name)
+    if sc is not None:
+        sets.append("schedule_confirmed = ?"); params.append(sc)
+    if body.stage is not None:
+        sets.append("stage = ?"); params.append(body.stage)
+    sets.append("updated_by = ?"); params.append(body.updated_by)
+    sets.append("updated_at = datetime('now')")
+    params.append(opportunity_id)
+    await db._x(f"UPDATE job_planning SET {', '.join(sets)} WHERE opportunity_id = ?", params)
 
     # Stage transition → notify (Twilio). Wired once the production WhatsApp sender +
     # templates are live and the per-transition recipient rules are defined.
