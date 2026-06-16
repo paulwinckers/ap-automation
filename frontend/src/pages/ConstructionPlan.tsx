@@ -812,9 +812,9 @@ export default function ConstructionPlan() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
-                  {['Property / Job', '% This Month', 'Hours', 'Revenue', 'Stage', 'Prep', ''].map((h, i) => (
+                  {['Property / Job', 'Lead', 'Confirmed', '% This Month', 'Hours', 'Revenue', 'Stage', 'Prep', ''].map((h, i) => (
                     <th key={i} style={{
-                      padding: '10px 16px', textAlign: i === 0 ? 'left' : 'center',
+                      padding: '8px 10px', textAlign: i === 0 ? 'left' : 'center',
                       fontSize: 11, fontWeight: 700, color: '#6b7280',
                       letterSpacing: '0.06em', textTransform: 'uppercase',
                       whiteSpace: 'nowrap',
@@ -830,7 +830,7 @@ export default function ConstructionPlan() {
                     background: j.risk === 'over_budget' ? '#fff5f5' : j.risk === 'at_risk' ? '#fffbeb' : '#fff',
                   }}>
                     {/* Property / Job */}
-                    <td style={{ padding: '12px 16px', verticalAlign: 'top' }}>
+                    <td style={{ padding: '8px 10px', verticalAlign: 'middle' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         {/* Property name → opens the Construction Job in our system */}
                         <a
@@ -866,47 +866,56 @@ export default function ConstructionPlan() {
                         </a>
                         {j.opp_number ? ` · #${j.opp_number}` : ''}
                       </div>
-                      {/* Per-job planning: lead + customer-confirmed schedule */}
+                    </td>
+
+                    {/* Lead */}
+                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
                       {(() => {
-                        const lead      = planningOverride[j.opportunity_id]?.lead_name ?? j.lead_name ?? '';
+                        const lead = planningOverride[j.opportunity_id]?.lead_name ?? j.lead_name ?? '';
+                        return (
+                          <select
+                            value={lead}
+                            onChange={e => updatePlanning(j.opportunity_id, { lead_name: e.target.value })}
+                            style={{
+                              fontSize: 11, padding: '3px 6px', borderRadius: 6, fontFamily: 'inherit', maxWidth: 140,
+                              border: '1px solid ' + (lead ? '#c7d2fe' : '#e5e7eb'),
+                              background: lead ? '#eef2ff' : '#fff',
+                              color: lead ? '#3730a3' : '#9ca3af',
+                            }}
+                          >
+                            <option value="">Assign…</option>
+                            {leads.map(l => {
+                              const nm = l.display_name || l.aspire_name;
+                              return <option key={l.id} value={nm}>{nm}</option>;
+                            })}
+                          </select>
+                        );
+                      })()}
+                    </td>
+
+                    {/* Confirmed (schedule confirmed with customer) */}
+                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
+                      {(() => {
                         const confirmed = planningOverride[j.opportunity_id]?.schedule_confirmed ?? j.schedule_confirmed ?? false;
                         return (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 7, flexWrap: 'wrap' }}>
-                            <select
-                              value={lead}
-                              onChange={e => updatePlanning(j.opportunity_id, { lead_name: e.target.value })}
-                              style={{
-                                fontSize: 11, padding: '3px 6px', borderRadius: 6, fontFamily: 'inherit',
-                                border: '1px solid ' + (lead ? '#c7d2fe' : '#e5e7eb'),
-                                background: lead ? '#eef2ff' : '#fff',
-                                color: lead ? '#3730a3' : '#9ca3af', maxWidth: 160,
-                              }}
-                            >
-                              <option value="">Assign lead…</option>
-                              {leads.map(l => {
-                                const nm = l.display_name || l.aspire_name;
-                                return <option key={l.id} value={nm}>{nm}</option>;
-                              })}
-                            </select>
-                            <button
-                              onClick={() => updatePlanning(j.opportunity_id, { schedule_confirmed: !confirmed })}
-                              title="Schedule confirmed with customer"
-                              style={{
-                                fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 20, cursor: 'pointer',
-                                border: '1px solid ' + (confirmed ? '#86efac' : '#e5e7eb'),
-                                background: confirmed ? '#dcfce7' : '#f8fafc',
-                                color: confirmed ? '#15803d' : '#6b7280',
-                              }}
-                            >
-                              {confirmed ? '✅ Customer confirmed' : '📅 Confirm schedule'}
-                            </button>
-                          </div>
+                          <button
+                            onClick={() => updatePlanning(j.opportunity_id, { schedule_confirmed: !confirmed })}
+                            title={confirmed ? 'Customer-confirmed schedule' : 'Mark schedule confirmed with customer'}
+                            style={{
+                              fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 20, cursor: 'pointer', whiteSpace: 'nowrap',
+                              border: '1px solid ' + (confirmed ? '#86efac' : '#e5e7eb'),
+                              background: confirmed ? '#dcfce7' : '#f8fafc',
+                              color: confirmed ? '#15803d' : '#6b7280',
+                            }}
+                          >
+                            {confirmed ? '✅ Confirmed' : '📅 Confirm'}
+                          </button>
                         );
                       })()}
                     </td>
 
                     {/* % complete this month */}
-                    <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
+                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
                       <div style={{ fontWeight: 700, fontSize: 15, color: j.pct_complete >= 100 ? '#15803d' : '#1f2937' }}>
                         {j.ticket_count > 0 ? fmtPct(j.pct_complete) : '—'}
                       </div>
@@ -926,7 +935,7 @@ export default function ConstructionPlan() {
                     </td>
 
                     {/* Hours — month-specific ticket hours, not lifetime job totals */}
-                    <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
+                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
                       {j.ticket_count > 0
                         ? <HrsBar act={j.hrs_act_month} est={j.hrs_est_month} />
                         : <span style={{ color: '#9ca3af', fontSize: 12 }}>—</span>
@@ -934,7 +943,7 @@ export default function ConstructionPlan() {
                     </td>
 
                     {/* Revenue — month-specific from WorkTicketRevenues */}
-                    <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
+                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
                       {j.ticket_count > 0 ? (
                         <>
                           <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>
@@ -951,7 +960,7 @@ export default function ConstructionPlan() {
                     </td>
 
                     {/* Stage */}
-                    <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
+                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
                       {(() => {
                         const stage = planningOverride[j.opportunity_id]?.stage ?? j.stage ?? 'New';
                         const c = STAGE_COLOR[stage] || STAGE_COLOR['New'];
@@ -973,7 +982,7 @@ export default function ConstructionPlan() {
                     </td>
 
                     {/* Prep checklist toggle */}
-                    <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
+                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
                       {(() => {
                         const p = prepProgress[j.opportunity_id]
                           ?? { done: j.prep_done ?? 0, total: j.prep_total ?? 6 };
@@ -998,7 +1007,7 @@ export default function ConstructionPlan() {
                     </td>
 
                     {/* Remove — available on all jobs */}
-                    <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
+                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
                       <button
                         onClick={() => handleRemove(j.opportunity_id)}
                         title={
