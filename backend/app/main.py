@@ -231,6 +231,7 @@ async def lifespan(app: FastAPI):
                 opportunity_id     INTEGER PRIMARY KEY,
                 lead_name          TEXT,
                 schedule_confirmed INTEGER NOT NULL DEFAULT 0,
+                stage              TEXT,
                 updated_by         TEXT,
                 updated_at         TEXT
             )
@@ -262,6 +263,8 @@ async def lifespan(app: FastAPI):
         # job_prep_checklist — N/A/Complete/Upload-Doc status + linked attachment
         ("job_prep_checklist", "status",        "ALTER TABLE job_prep_checklist ADD COLUMN status TEXT"),
         ("job_prep_checklist", "attachment_id", "ALTER TABLE job_prep_checklist ADD COLUMN attachment_id INTEGER"),
+        # job_planning.stage — workflow stage (New → Complete)
+        ("job_planning", "stage", "ALTER TABLE job_planning ADD COLUMN stage TEXT"),
     ]
     for tbl, col, sql in _COLUMN_MIGRATIONS:
         try:

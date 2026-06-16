@@ -360,6 +360,7 @@ export interface PlanJob {
   prep_total?: number;  // total preparedness checklist items
   lead_name?: string;          // assigned construction lead
   schedule_confirmed?: boolean; // customer-confirmed schedule
+  stage?: string;              // workflow stage
 }
 
 export type PrepStatus = '' | 'na' | 'complete' | 'uploaded';
@@ -401,7 +402,7 @@ export async function uploadJobAttachment(
 
 export async function setJobPlanning(
   oppId: number,
-  patch: { lead_name?: string; schedule_confirmed?: boolean; updated_by?: string },
+  patch: { lead_name?: string; schedule_confirmed?: boolean; stage?: string; updated_by?: string },
 ): Promise<{ ok: boolean }> {
   return request('PUT', `/construction/plan/jobs/${oppId}/planning`, patch);
 }

@@ -58,7 +58,12 @@ class PrepToggleIn(BaseModel):
 class PlanningIn(BaseModel):
     lead_name:          Optional[str]  = None   # assign a construction lead (None = leave unchanged)
     schedule_confirmed: Optional[bool] = None   # customer-confirmed schedule (None = leave unchanged)
+    stage:              Optional[str]  = None   # workflow stage (None = leave unchanged)
     updated_by:         Optional[str]  = None
+
+# Workflow stages for a construction job on the planning board (ordered).
+STAGES = ["New", "Planning", "Set for Production", "Lead Assigned", "In Production", "Complete"]
+DEFAULT_STAGE = "New"
 
 # Fixed preparedness checklist applied to every committed job (keyed by opportunity_id).
 PREP_ITEMS = [
@@ -488,7 +493,7 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         ph2 = ",".join("?" for _ in jobs)
         try:
             plan_rows = await db._q(
-                f"""SELECT opportunity_id, lead_name, schedule_confirmed
+                f"""SELECT opportunity_id, lead_name, schedule_confirmed, stage
                     FROM job_planning WHERE opportunity_id IN ({ph2})""",
                 list(jobs.keys()),
             )
@@ -503,6 +508,7 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         p = planning.get(oid) or {}
         j["lead_name"]          = p.get("lead_name") or ""
         j["schedule_confirmed"] = bool(p.get("schedule_confirmed"))
+        j["stage"]              = p.get("stage") or DEFAULT_STAGE
 
     job_list = list(jobs.values())
     risk_order = {"over_budget": 0, "at_risk": 1, "on_track": 2, "complete": 3}
@@ -674,19 +680,45 @@ async def toggle_checklist(opportunity_id: int, body: PrepToggleIn, db: Database
 
 @router.put("/jobs/{opportunity_id}/planning")
 async def set_planning(opportunity_id: int, body: PlanningIn, db: Database = Depends(get_db)):
-    """Assign the lead and/or set the customer-confirmed schedule flag for a job."""
+    """Assign the lead, set the customer-confirmed schedule flag, and/or set the stage."""
+    if body.stage is not None and body.stage not in STAGES:
+        raise HTTPException(status_code=400, detail=f"Invalid stage: {body.stage}")
     sc = None if body.schedule_confirmed is None else (1 if body.schedule_confirmed else 0)
+
+    # Read the prior stage so we can detect a stage change (hook point for Twilio).
+    prev_stage = None
+    try:
+        rows = await db._q("SELECT stage FROM job_planning WHERE opportunity_id = ?", [opportunity_id])
+        if rows:
+            prev_stage = rows[0].get("stage")
+    except Exception:
+        pass
+
     await db._x(
-        """INSERT INTO job_planning (opportunity_id, lead_name, schedule_confirmed, updated_by, updated_at)
-           VALUES (?, ?, ?, ?, datetime('now'))
+        """INSERT INTO job_planning (opportunity_id, lead_name, schedule_confirmed, stage, updated_by, updated_at)
+           VALUES (?, ?, ?, ?, ?, datetime('now'))
            ON CONFLICT(opportunity_id) DO UPDATE SET
              lead_name          = COALESCE(excluded.lead_name, job_planning.lead_name),
              schedule_confirmed = COALESCE(excluded.schedule_confirmed, job_planning.schedule_confirmed),
+             stage              = COALESCE(excluded.stage, job_planning.stage),
              updated_by         = excluded.updated_by,
              updated_at         = datetime('now')""",
-        [opportunity_id, body.lead_name, sc, body.updated_by],
+        [opportunity_id, body.lead_name, sc, body.stage, body.updated_by],
     )
-    return {"ok": True, "opportunity_id": opportunity_id}
+
+    # Stage transition → notify (Twilio). Wired once the production WhatsApp sender +
+    # templates are live and the per-transition recipient rules are defined.
+    if body.stage is not None and body.stage != (prev_stage or DEFAULT_STAGE):
+        await _on_stage_change(db, opportunity_id, prev_stage or DEFAULT_STAGE, body.stage, body.updated_by)
+
+    return {"ok": True, "opportunity_id": opportunity_id, "stage": body.stage}
+
+
+async def _on_stage_change(db: Database, opp_id: int, old_stage: str, new_stage: str, by: Optional[str]) -> None:
+    """Hook fired when a job's stage changes. For now just logs; will trigger Twilio
+    notifications per the agreed transition rules once the production sender is live."""
+    logger.info(f"Stage change: opp {opp_id} {old_stage!r} → {new_stage!r} (by {by or 'unknown'})")
+    # TODO(twilio): notify the relevant people based on new_stage (rules TBD).
 
 
 @router.get("/jobs/{opportunity_id}/diagnose")

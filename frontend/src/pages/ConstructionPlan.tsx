@@ -13,6 +13,17 @@ import {
 } from '../lib/api';
 import JobPrepChecklist from './JobPrepChecklist';
 
+// Workflow stages (must match the backend STAGES list)
+const STAGES = ['New', 'Planning', 'Set for Production', 'Lead Assigned', 'In Production', 'Complete'] as const;
+const STAGE_COLOR: Record<string, { bg: string; text: string }> = {
+  'New':                { bg: '#f1f5f9', text: '#475569' },
+  'Planning':           { bg: '#eff6ff', text: '#1d4ed8' },
+  'Set for Production':  { bg: '#fef3c7', text: '#92400e' },
+  'Lead Assigned':      { bg: '#f3e8ff', text: '#7e22ce' },
+  'In Production':      { bg: '#ffedd5', text: '#c2410c' },
+  'Complete':           { bg: '#dcfce7', text: '#15803d' },
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmt$(n: number | null | undefined): string {
@@ -579,8 +590,8 @@ export default function ConstructionPlan() {
   const [prepProgress,  setPrepProgress]  = useState<Record<number, { done: number; total: number }>>({});
   // Construction leads (for the per-job Lead dropdown)
   const [leads, setLeads] = useState<ConstructionLead[]>([]);
-  // Optimistic per-job planning state (lead / schedule confirmed)
-  const [planningOverride, setPlanningOverride] = useState<Record<number, { lead_name?: string; schedule_confirmed?: boolean }>>({});
+  // Optimistic per-job planning state (lead / schedule confirmed / stage)
+  const [planningOverride, setPlanningOverride] = useState<Record<number, { lead_name?: string; schedule_confirmed?: boolean; stage?: string }>>({});
   // Work queue — construction jobs not yet in this month's plan (pipeline)
   const [queue, setQueue]               = useState<PlanSuggestion[]>([]);
   const [queueLoading, setQueueLoading] = useState(false);
@@ -633,7 +644,7 @@ export default function ConstructionPlan() {
     try { return JSON.parse(localStorage.getItem('ap_user') || '{}').name || ''; } catch { return ''; }
   };
 
-  const updatePlanning = async (oppId: number, patch: { lead_name?: string; schedule_confirmed?: boolean }) => {
+  const updatePlanning = async (oppId: number, patch: { lead_name?: string; schedule_confirmed?: boolean; stage?: string }) => {
     setPlanningOverride(prev => ({ ...prev, [oppId]: { ...prev[oppId], ...patch } }));
     try { await setJobPlanning(oppId, { ...patch, updated_by: planUserName() || undefined }); }
     catch { alert('Could not save — please try again'); load(); }
@@ -797,7 +808,7 @@ export default function ConstructionPlan() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
-                  {['Property / Job', '% This Month', 'Hours', 'Revenue', 'Risk', 'Prep', ''].map((h, i) => (
+                  {['Property / Job', '% This Month', 'Hours', 'Revenue', 'Stage', 'Prep', ''].map((h, i) => (
                     <th key={i} style={{
                       padding: '10px 16px', textAlign: i === 0 ? 'left' : 'center',
                       fontSize: 11, fontWeight: 700, color: '#6b7280',
@@ -935,9 +946,26 @@ export default function ConstructionPlan() {
                       )}
                     </td>
 
-                    {/* Risk */}
+                    {/* Stage */}
                     <td style={{ padding: '12px 16px', textAlign: 'center', verticalAlign: 'top' }}>
-                      <RiskBadge risk={j.risk} />
+                      {(() => {
+                        const stage = planningOverride[j.opportunity_id]?.stage ?? j.stage ?? 'New';
+                        const c = STAGE_COLOR[stage] || STAGE_COLOR['New'];
+                        return (
+                          <select
+                            value={stage}
+                            onChange={e => updatePlanning(j.opportunity_id, { stage: e.target.value })}
+                            title="Job stage"
+                            style={{
+                              fontSize: 11, fontWeight: 700, padding: '4px 8px', borderRadius: 8,
+                              border: `1px solid ${c.text}33`, background: c.bg, color: c.text,
+                              cursor: 'pointer', fontFamily: 'inherit',
+                            }}
+                          >
+                            {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        );
+                      })()}
                     </td>
 
                     {/* Prep checklist toggle */}

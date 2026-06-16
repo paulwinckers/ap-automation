@@ -608,6 +608,7 @@ CREATE TABLE IF NOT EXISTS job_planning (
     opportunity_id     INTEGER PRIMARY KEY,
     lead_name          TEXT,
     schedule_confirmed INTEGER NOT NULL DEFAULT 0,
+    stage              TEXT,            -- New | Planning | Set for Production | Lead Assigned | In Production | Complete
     updated_by         TEXT,
     updated_at         TEXT
 );
