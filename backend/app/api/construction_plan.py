@@ -914,83 +914,110 @@ async def _fetch_scheduled_opp_ids_all_divisions(month: str) -> dict[int, int]:
 @router.get("/{month}/suggestions")
 async def get_suggestions(month: str, db: Database = Depends(get_db)):
     """
-    Return Construction opportunities not already in this month's plan.
-
-    Two tiers — returned in order:
-      1. SCHEDULED  — have work tickets in Aspire for this month (most relevant)
-      2. OTHER      — remaining active Construction opps with no scheduled tickets
-
-    Each suggestion includes `ticket_count` (0 for tier-2 entries) so the
-    frontend can visually distinguish them.
+    Work queue: WON Construction opportunities that still have work to do but aren't
+    in this month's plan yet. A job qualifies if it has either:
+      • an OPEN work ticket (status 'Open' — created, not yet scheduled), OR
+      • a work ticket SCHEDULED in a future month (after the selected month).
+    Jobs already committed/scheduled this month (in the plan) are excluded.
     """
     if len(month) != 7 or month[4] != "-":
         raise HTTPException(status_code=400, detail="month must be YYYY-MM")
 
     import asyncio as _aio
 
-    committed_rows_coro  = db._q(
+    y, m = int(month[:4]), int(month[5:7])
+    next_m = f"{y + 1}-01" if m == 12 else f"{y}-{str(m + 1).zfill(2)}"
+    future_start = f"{next_m}-01"   # first day after the selected month
+
+    async def _open_tickets() -> list[dict]:
+        """Work tickets in 'Open' status (created but not yet scheduled)."""
+        try:
+            res = await _aspire._get("WorkTickets", {
+                "$filter": "WorkTicketStatusName eq 'Open'",
+                "$select": "WorkTicketID,OpportunityID,WorkTicketStatusName",
+                "$top": "1000",
+            })
+            return _aspire._extract_list(res)
+        except Exception as e:
+            logger.warning(f"Open work-ticket fetch failed: {e}")
+            return []
+
+    async def _future_tickets() -> list[dict]:
+        """Work tickets scheduled in a month after the selected one."""
+        for fmt in (
+            f"ScheduledStartDate ge {future_start}",
+            f"ScheduledStartDate ge {future_start}T00:00:00Z",
+        ):
+            try:
+                res = await _aspire._get("WorkTickets", {
+                    "$filter": fmt,
+                    "$select": "WorkTicketID,OpportunityID,ScheduledStartDate",
+                    "$top": "1000",
+                })
+                t = _aspire._extract_list(res)
+                if t:
+                    return t
+            except Exception:
+                pass
+        return []
+
+    committed_coro = db._q(
         "SELECT opportunity_id FROM construction_job_targets WHERE month = ?", [month]
     )
-    # Fetch manually committed jobs, auto-scheduled plan jobs, and all-division
-    # scheduled ticket map in parallel
-    committed_rows, scheduled_plan_map, all_scheduled_map = await _aio.gather(
-        committed_rows_coro,
-        _fetch_scheduled_opp_ids(month),          # Construction division, used for plan
-        _fetch_scheduled_opp_ids_all_divisions(month),  # All divisions, for suggestions
+    committed_rows, scheduled_plan_map, open_tk, future_tk = await _aio.gather(
+        committed_coro,
+        _fetch_scheduled_opp_ids(month),   # construction opps already scheduled this month
+        _open_tickets(),
+        _future_tickets(),
     )
-
     already_in_plan = {r["opportunity_id"] for r in committed_rows} | set(scheduled_plan_map.keys())
 
-    # Tier 1: opps with scheduled tickets this month but not yet in plan
-    # Fetch actuals for those opps so we can show name/contract value
-    tier1_ids = [oid for oid in all_scheduled_map if oid not in already_in_plan]
-    tier1_actuals: dict[int, dict] = {}
-    if tier1_ids:
-        tier1_actuals = await _fetch_opp_actuals(tier1_ids)
+    # Candidate opps from open + future tickets, with why-it-qualifies flags
+    cand: dict[int, dict] = {}
+    for t in open_tk:
+        oid = t.get("OpportunityID")
+        if oid:
+            c = cand.setdefault(oid, {"open": False, "future": False, "n": 0})
+            c["open"] = True
+            c["n"] += 1
+    for t in future_tk:
+        oid = t.get("OpportunityID")
+        if oid:
+            c = cand.setdefault(oid, {"open": False, "future": False, "n": 0})
+            c["future"] = True
+            c["n"] += 1
 
-    tier1 = []
-    for oid in tier1_ids:
-        o = tier1_actuals.get(oid, {})
+    cand_ids = [oid for oid in cand if oid not in already_in_plan]
+    if not cand_ids:
+        return {"month": month, "suggestions": [], "scheduled_count": 0}
+
+    # Resolve opp details and keep only WON Construction jobs
+    actuals = await _fetch_opp_actuals(cand_ids)
+    branch = (settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction").lower()
+    suggestions = []
+    for oid in cand_ids:
+        o = actuals.get(oid, {})
+        status = o.get("OpportunityStatusName") or ""
         div = (o.get("DivisionName") or "").lower()
-        branch = (settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction").lower()
-        # Only include Construction division jobs in tier 1
-        if branch not in div:
+        if status.strip().lower() != "won" or branch not in div:
             continue
-        tier1.append({
+        c = cand[oid]
+        suggestions.append({
             "opportunity_id":   oid,
             "opportunity_name": o.get("OpportunityName") or f"Job #{oid}",
             "property_name":    o.get("PropertyName") or "",
-            "status":           o.get("OpportunityStatusName") or "",
+            "status":           status,
             "pct_complete":     float(o.get("PercentComplete") or 0),
             "hrs_est":          float(o.get("EstimatedLaborHours") or 0),
             "hrs_act":          float(o.get("ActualLaborHours") or 0),
             "won_dollars":      float(o.get("WonDollars") or 0),
-            "ticket_count":     all_scheduled_map[oid],
-            "has_scheduled":    True,
+            "ticket_count":     c["n"],
+            "has_scheduled":    c["future"],   # has tickets scheduled in a future month
         })
-    tier1.sort(key=lambda s: s["property_name"])
-
-    # Tier 2: all other active Construction opps (no scheduled tickets, not in plan)
-    exclude_tier2 = already_in_plan | {s["opportunity_id"] for s in tier1}
-    other_opps = await _fetch_construction_opps(exclude_ids=exclude_tier2)
-    tier2 = [
-        {
-            "opportunity_id":   o.get("OpportunityID"),
-            "opportunity_name": o.get("OpportunityName") or "",
-            "property_name":    o.get("PropertyName") or "",
-            "status":           o.get("OpportunityStatusName") or "",
-            "pct_complete":     float(o.get("PercentComplete") or 0),
-            "hrs_est":          float(o.get("EstimatedLaborHours") or 0),
-            "hrs_act":          float(o.get("ActualLaborHours") or 0),
-            "won_dollars":      float(o.get("WonDollars") or 0),
-            "ticket_count":     0,
-            "has_scheduled":    False,
-        }
-        for o in other_opps
-    ]
+    suggestions.sort(key=lambda s: s["property_name"])
 
     return {
         "month": month,
-        "suggestions": tier1 + tier2,
-        "scheduled_count": len(tier1),
+        "suggestions": suggestions,
+        "scheduled_count": sum(1 for s in suggestions if s["has_scheduled"]),
     }
