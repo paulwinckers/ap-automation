@@ -62,7 +62,8 @@ class PlanningIn(BaseModel):
     updated_by:         Optional[str]  = None
 
 # Workflow stages for a construction job on the planning board (ordered).
-STAGES = ["New", "Planning", "Set for Production", "Lead Assigned", "In Production", "Complete"]
+STAGES = ["New", "Planning", "Set for Production", "Lead Assigned", "In Production",
+          "Complete", "Ready to Invoice", "Invoiced", "Paid"]
 DEFAULT_STAGE = "New"
 
 # Fixed preparedness checklist applied to every committed job (keyed by opportunity_id).

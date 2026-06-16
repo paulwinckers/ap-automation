@@ -14,7 +14,8 @@ import {
 import JobPrepChecklist from './JobPrepChecklist';
 
 // Workflow stages (must match the backend STAGES list)
-const STAGES = ['New', 'Planning', 'Set for Production', 'Lead Assigned', 'In Production', 'Complete'] as const;
+const STAGES = ['New', 'Planning', 'Set for Production', 'Lead Assigned', 'In Production',
+                'Complete', 'Ready to Invoice', 'Invoiced', 'Paid'] as const;
 const STAGE_COLOR: Record<string, { bg: string; text: string }> = {
   'New':                { bg: '#f1f5f9', text: '#475569' },
   'Planning':           { bg: '#eff6ff', text: '#1d4ed8' },
@@ -22,6 +23,9 @@ const STAGE_COLOR: Record<string, { bg: string; text: string }> = {
   'Lead Assigned':      { bg: '#f3e8ff', text: '#7e22ce' },
   'In Production':      { bg: '#ffedd5', text: '#c2410c' },
   'Complete':           { bg: '#dcfce7', text: '#15803d' },
+  'Ready to Invoice':    { bg: '#cffafe', text: '#0e7490' },
+  'Invoiced':           { bg: '#e0e7ff', text: '#4338ca' },
+  'Paid':               { bg: '#a7f3d0', text: '#065f46' },
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
