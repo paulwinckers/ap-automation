@@ -8,8 +8,9 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   getMonthlyPlan, setMonthlyGoal, addJobToMonth, removeJobFromMonth, getPlanSuggestions,
   listConstructionLeads, upsertConstructionLead, deleteConstructionLead,
-  sendCheckins, getCheckinStatus, setJobPlanning,
+  sendCheckins, getCheckinStatus, getJobMaterials, setJobPlanning,
   MonthlyPlan, PlanJob, PlanSuggestion, ConstructionLead, CheckinStatus,
+  JobMaterials, MaterialItem, PurchaseOrder,
 } from '../lib/api';
 import JobPrepChecklist from './JobPrepChecklist';
 
@@ -578,6 +579,144 @@ function CheckinStatusPanel({ month, onClose }: { month: string; onClose: () => 
   );
 }
 
+// ── Materials Panel ───────────────────────────────────────────────────────────
+
+function MaterialsPanel({ opportunityId }: { opportunityId: number }) {
+  const [data, setData]       = useState<JobMaterials | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState('');
+
+  useEffect(() => {
+    getJobMaterials(opportunityId)
+      .then(d => { setData(d); setLoading(false); })
+      .catch(e => { setError(e.message || 'Failed to load'); setLoading(false); });
+  }, [opportunityId]);
+
+  const typeBadge = (type: string) => {
+    const map: Record<string, { bg: string; color: string }> = {
+      Material: { bg: '#eff6ff', color: '#1d4ed8' },
+      Sub:      { bg: '#faf5ff', color: '#7c3aed' },
+      Other:    { bg: '#fef3c7', color: '#92400e' },
+    };
+    const s = map[type] || { bg: '#f1f5f9', color: '#475569' };
+    return (
+      <span style={{
+        background: s.bg, color: s.color, fontSize: 10, fontWeight: 700,
+        padding: '1px 6px', borderRadius: 6, whiteSpace: 'nowrap',
+      }}>{type}</span>
+    );
+  };
+
+  const poStatusBadge = (status: string) => {
+    const s = status.toLowerCase();
+    const style = s === 'posted'   ? { bg: '#f0fdf4', color: '#15803d' }
+                : s === 'received' ? { bg: '#eff6ff', color: '#1d4ed8' }
+                : s === 'new'      ? { bg: '#fef9c3', color: '#92400e' }
+                : s === 'void'     ? { bg: '#fee2e2', color: '#dc2626' }
+                :                    { bg: '#f1f5f9', color: '#475569' };
+    return (
+      <span style={{
+        background: style.bg, color: style.color, fontSize: 10, fontWeight: 700,
+        padding: '2px 7px', borderRadius: 6, whiteSpace: 'nowrap',
+      }}>{status}</span>
+    );
+  };
+
+  if (loading) return <div style={{ padding: '16px 20px', color: '#9ca3af', fontSize: 13 }}>Loading materials…</div>;
+  if (error)   return <div style={{ padding: '16px 20px', color: '#dc2626', fontSize: 13 }}>{error}</div>;
+  if (!data)   return null;
+
+  // Build a WorkTicketID → PO map for quick lookup
+  const poByTicket: Record<number, PurchaseOrder[]> = {};
+  for (const po of data.pos) {
+    if (po.work_ticket_id) {
+      (poByTicket[po.work_ticket_id] = poByTicket[po.work_ticket_id] || []).push(po);
+    }
+  }
+
+  const purchasable = data.items.filter(it => !it.do_not_purchase);
+  const noPurchase  = data.items.filter(it => it.do_not_purchase);
+
+  return (
+    <div style={{ padding: '0 20px 20px' }}>
+      {/* Summary row */}
+      <div style={{ display: 'flex', gap: 16, marginBottom: 14, flexWrap: 'wrap', fontSize: 12, color: '#6b7280' }}>
+        <span>📦 <strong style={{ color: '#111827' }}>{data.items.length}</strong> purchasable items</span>
+        {data.pos.length > 0 && <span>· 🧾 <strong style={{ color: '#111827' }}>{data.pos.length}</strong> PO{data.pos.length !== 1 ? 's' : ''}</span>}
+        <span>· <strong style={{ color: '#111827' }}>
+          ${purchasable.reduce((s, i) => s + i.total_cost_est, 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </strong> est. total</span>
+      </div>
+
+      {data.items.length === 0 ? (
+        <div style={{ color: '#9ca3af', fontSize: 13, padding: '8px 0' }}>No purchasable items on this job.</div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: '#f8fafc', color: '#6b7280' }}>
+                <th style={{ padding: '7px 12px', textAlign: 'left', fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Item</th>
+                <th style={{ padding: '7px 12px', textAlign: 'left',  fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Type</th>
+                <th style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Qty</th>
+                <th style={{ padding: '7px 12px', textAlign: 'left',  fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>UOM</th>
+                <th style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Unit Cost</th>
+                <th style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Est.</th>
+                <th style={{ padding: '7px 12px', textAlign: 'left',  fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>PO Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.items.map((it, i) => {
+                const pos = poByTicket[it.work_ticket_id] || [];
+                return (
+                  <tr key={it.work_ticket_item_id} style={{
+                    borderTop: '1px solid #f1f5f9',
+                    background: it.do_not_purchase ? '#fafafa' : '#fff',
+                    opacity: it.do_not_purchase ? 0.6 : 1,
+                  }}>
+                    <td style={{ padding: '8px 12px' }}>
+                      <div style={{ fontWeight: 500, color: '#111827' }}>{it.item_name}</div>
+                      {it.notes && <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>{it.notes}</div>}
+                      {it.do_not_purchase && <div style={{ fontSize: 10, color: '#9ca3af', fontStyle: 'italic' }}>Do not purchase</div>}
+                    </td>
+                    <td style={{ padding: '8px 12px' }}>{typeBadge(it.item_type)}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', color: '#374151' }}>
+                      {it.quantity % 1 === 0 ? it.quantity.toFixed(0) : it.quantity.toFixed(2)}
+                    </td>
+                    <td style={{ padding: '8px 12px', color: '#6b7280' }}>{it.uom}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', color: '#374151' }}>
+                      {it.unit_cost > 0 ? `$${it.unit_cost.toFixed(2)}` : '—'}
+                    </td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: '#111827' }}>
+                      {it.total_cost_est > 0 ? `$${it.total_cost_est.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                    </td>
+                    <td style={{ padding: '8px 12px' }}>
+                      {it.do_not_purchase ? (
+                        <span style={{ color: '#9ca3af', fontSize: 11 }}>—</span>
+                      ) : pos.length > 0 ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          {pos.map(po => (
+                            <div key={po.receipt_id} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                              {poStatusBadge(po.status)}
+                              {po.po_number && <span style={{ color: '#6b7280', fontSize: 10 }}>PO#{po.po_number}</span>}
+                              {po.vendor_name && <span style={{ color: '#9ca3af', fontSize: 10 }}>{po.vendor_name}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{ color: '#f59e0b', fontSize: 11, fontWeight: 600 }}>No PO</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ConstructionPlan() {
@@ -590,6 +729,7 @@ export default function ConstructionPlan() {
   const [showLeads,     setShowLeads]     = useState(false);
   const [showCheckin,   setShowCheckin]   = useState(false);
   const [prepFor,       setPrepFor]       = useState<number | null>(null);
+  const [materialsFor,  setMaterialsFor]  = useState<number | null>(null);
   // Live prep counts per opp (overrides server value as the user checks items)
   const [prepProgress,  setPrepProgress]  = useState<Record<number, { done: number; total: number }>>({});
   // Construction leads (for the per-job Lead dropdown)
@@ -812,7 +952,7 @@ export default function ConstructionPlan() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
-                  {['Property / Job', 'Lead', 'Confirmed', '% This Month', 'Hours', 'Revenue', 'Stage', 'Prep', ''].map((h, i) => (
+                  {['Property / Job', 'Lead', 'Confirmed', '% This Month', 'Hours', 'Revenue', 'Stage', 'Prep', 'Materials', ''].map((h, i) => (
                     <th key={i} style={{
                       padding: '8px 10px', textAlign: i === 0 ? 'left' : 'center',
                       fontSize: 11, fontWeight: 700, color: '#6b7280',
@@ -1006,6 +1146,22 @@ export default function ConstructionPlan() {
                       })()}
                     </td>
 
+                    {/* Materials toggle */}
+                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
+                      <button
+                        onClick={() => setMaterialsFor(materialsFor === j.opportunity_id ? null : j.opportunity_id)}
+                        style={{
+                          padding: '3px 10px', fontSize: 11, fontWeight: 600, borderRadius: 6,
+                          border: materialsFor === j.opportunity_id ? '1px solid #2563eb' : '1px solid #e5e7eb',
+                          background: materialsFor === j.opportunity_id ? '#eff6ff' : '#f8fafc',
+                          color: materialsFor === j.opportunity_id ? '#1d4ed8' : '#6b7280',
+                          cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        📦 {materialsFor === j.opportunity_id ? '▲' : '▼'}
+                      </button>
+                    </td>
+
                     {/* Remove — available on all jobs */}
                     <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
                       <button
@@ -1048,6 +1204,14 @@ export default function ConstructionPlan() {
                             Open Construction Project →
                           </a>
                         </div>
+                      </td>
+                    </tr>
+                  )}
+                  {/* Materials panel — lazy loaded, spans all columns */}
+                  {materialsFor === j.opportunity_id && (
+                    <tr>
+                      <td colSpan={11} style={{ padding: 0, background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
+                        <MaterialsPanel opportunityId={j.opportunity_id} />
                       </td>
                     </tr>
                   )}
