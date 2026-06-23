@@ -629,7 +629,8 @@ export default function FieldProject() {
 
   useEffect(() => { load(); loadJobAtts(); }, [oppId]);
 
-  // Pre-fill "hours remaining" with today's scheduled − approved (crew can override).
+  // Pre-fill "hours remaining" = estimate − approved − scheduled today (crew can override).
+  // Only seed tickets with hours scheduled today, so the field surfaces a concrete number.
   useEffect(() => {
     if (!data) return;
     setTicketHours(prev => {
@@ -637,7 +638,7 @@ export default function FieldProject() {
       for (const t of data.tickets) {
         const sched = t.ScheduledToday ?? 0;
         if (sched > 0 && next[t.WorkTicketID] === undefined) {
-          next[t.WorkTicketID] = Math.max(sched - (t.HoursAct ?? 0), 0).toFixed(1);
+          next[t.WorkTicketID] = Math.max((t.HoursEst ?? 0) - (t.HoursAct ?? 0) - sched, 0).toFixed(1);
         }
       }
       return next;
@@ -752,7 +753,9 @@ export default function FieldProject() {
 
   const totalEst        = data.tickets.reduce((s, t) => s + (t.HoursEst ?? 0), 0);
   const totalAct        = data.tickets.reduce((s, t) => s + (t.HoursAct ?? 0), 0);
-  const totalRemaining  = data.tickets.reduce((s, t) => s + Math.max(0, (t.HoursEst ?? 0) - (t.HoursAct ?? 0)), 0);
+  const totalSchedToday = data.tickets.reduce((s, t) => s + (t.ScheduledToday ?? 0), 0);
+  // Remaining = Estimate − Approved − Scheduled today
+  const totalRemaining  = data.tickets.reduce((s, t) => s + Math.max(0, (t.HoursEst ?? 0) - (t.HoursAct ?? 0) - (t.ScheduledToday ?? 0)), 0);
   const totalRevenue    = data.tickets.reduce((s, t) => s + (t.Revenue ?? 0), 0);
   const totalEarned     = data.tickets.reduce((s, t) => s + (t.EarnedRevenue ?? 0), 0);
   const overBudget      = totalAct > totalEst && totalEst > 0;
@@ -797,10 +800,11 @@ export default function FieldProject() {
         {/* Summary chips */}
         <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #f1f5f9' }}>
           {[
-            { label: 'Est Hrs',   value: fmtHrs(totalEst) },
-            { label: 'Act Hrs',   value: fmtHrs(totalAct), alert: overBudget },
-            { label: 'Remaining', value: fmtHrs(totalRemaining), alert: overBudget },
-            { label: 'Updates',   value: `${responded}` },
+            { label: 'Est Hrs',     value: fmtHrs(totalEst) },
+            { label: 'Act Hrs',     value: fmtHrs(totalAct), alert: overBudget },
+            { label: 'Sched Today', value: fmtHrs(totalSchedToday) },
+            { label: 'Remaining',   value: fmtHrs(totalRemaining), alert: overBudget },
+            { label: 'Updates',     value: `${responded}` },
           ].map(({ label, value, alert }) => (
             <div key={label} style={{ flex: 1, padding: '12px 4px', textAlign: 'center', borderRight: '1px solid #f1f5f9' }}>
               <div style={{ fontSize: 16, fontWeight: 800, color: alert ? '#ef4444' : '#0f172a' }}>{value}</div>
@@ -1344,8 +1348,8 @@ export default function FieldProject() {
                         const est   = t.HoursEst ?? 0;
                         const act   = t.HoursAct ?? 0;
                         const sched = t.ScheduledToday ?? 0;
-                        // Pre-fill from today's schedule when available, else fall back to est − act.
-                        const rem   = sched > 0 ? Math.max(sched - act, 0) : Math.max(est - act, 0);
+                        // Remaining = estimate − approved − scheduled today
+                        const rem   = Math.max(est - act - sched, 0);
                         return (
                           <div key={t.WorkTicketID} style={{
                             display: 'flex', alignItems: 'center', gap: 10,
@@ -1359,8 +1363,8 @@ export default function FieldProject() {
                               </div>
                               <div style={{ fontSize: 10, color: '#9ca3af' }}>
                                 {sched > 0
-                                  ? <>{sched.toFixed(1)}h scheduled today · {act.toFixed(1)}h approved · ~{rem.toFixed(1)}h rem</>
-                                  : <>{act.toFixed(1)}h used of {est.toFixed(1)}h est · ~{rem.toFixed(1)}h rem</>}
+                                  ? <>{sched.toFixed(1)}h scheduled today · {act.toFixed(1)}h approved of {est.toFixed(1)}h est · ~{rem.toFixed(1)}h rem</>
+                                  : <>{act.toFixed(1)}h approved of {est.toFixed(1)}h est · ~{rem.toFixed(1)}h rem</>}
                               </div>
                             </div>
                             <input
