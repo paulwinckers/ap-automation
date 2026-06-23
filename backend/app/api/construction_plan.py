@@ -96,7 +96,8 @@ async def _fetch_opp_actuals(opp_ids: list[int]) -> dict[int, dict]:
             "$filter": f"({or_filter})",
             "$select": (
                 "OpportunityID,OpportunityName,PropertyName,OpportunityNumber,"
-                "DivisionName,WonDollars,ActualEarnedRevenue,EstimatedDollars,"
+                "DivisionName,OpportunityType,SalesTypeName,"
+                "WonDollars,ActualEarnedRevenue,EstimatedDollars,"
                 "EstimatedLaborHours,ActualLaborHours,PercentComplete,"
                 "OpportunityStatusName,StartDate,EndDate"
             ),

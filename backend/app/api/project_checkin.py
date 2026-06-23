@@ -1032,15 +1032,25 @@ async def my_project_lookup(db: Database = Depends(get_db)):
         primary_ids = [e["primary_oid"] for e in opp_map.values()]
         actuals     = await _fetch_opp_actuals(primary_ids)
 
-        # ── Build project list — construction + Won only ──────────────────────────
+        # ── Build project list — Won construction jobs + Won maintenance Enhancement
+        # Project work orders (Residential/Commercial Maintenance, OpportunityType
+        # "Work Order", SalesType "Enhancement Project") ───────────────────────────
         projects = []
         for e in opp_map.values():
             oid        = e["primary_oid"]
             opp        = actuals.get(oid, {})
             division   = (opp.get("DivisionName") or "").lower()
             opp_status = (opp.get("OpportunityStatusName") or "").lower()
+            opp_type   = (opp.get("OpportunityType") or "").lower()
+            sales_type = (opp.get("SalesTypeName") or "").lower()
 
-            if "construction" not in division:
+            is_construction = "construction" in division
+            is_enhancement  = (
+                "maintenance" in division
+                and opp_type == "work order"
+                and sales_type == "enhancement project"
+            )
+            if not (is_construction or is_enhancement):
                 continue
             if opp_status != "won":
                 continue
@@ -1057,9 +1067,11 @@ async def my_project_lookup(db: Database = Depends(get_db)):
                 "hrs_act":      round(e["hrs_act"], 1),
                 "ticket_count": e["ticket_count"],
                 "latest_date":  e["latest_date"],
+                "kind":         "enhancement" if is_enhancement else "construction",
             })
 
-        logger.info(f"my-project: returning {len(projects)} construction projects")
+        logger.info(f"my-project: returning {len(projects)} projects "
+                    f"({sum(1 for p in projects if p['kind']=='enhancement')} enhancement)")
         projects.sort(key=lambda x: x["latest_date"], reverse=True)
         projects.sort(key=lambda x: x["all_done"])   # active first, completed last
 

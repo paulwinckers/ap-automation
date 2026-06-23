@@ -20,17 +20,19 @@ interface Project {
   hrs_act:      number;
   ticket_count: number;
   latest_date:  string;
+  kind?:        'construction' | 'enhancement';
 }
 
 interface PropertyGroup {
-  key:          string;
-  projects:     Project[];
-  hrs_est:      number;
-  hrs_act:      number;
-  ticket_count: number;
-  latest_date:  string;
-  all_done:     boolean;
-  status:       string;
+  key:           string;
+  projects:      Project[];
+  hrs_est:       number;
+  hrs_act:       number;
+  ticket_count:  number;
+  latest_date:   string;
+  all_done:      boolean;
+  status:        string;
+  is_enhancement: boolean;
 }
 
 const STATUS_COLOR: Record<string, { bg: string; text: string; dot: string }> = {
@@ -80,6 +82,7 @@ function groupByProperty(projects: Project[]): PropertyGroup[] {
       latest_date:  list.map(p => p.latest_date).filter(Boolean).sort().reverse()[0] || '',
       all_done:     list.every(p => p.all_done),
       status:       bestStatus(list),
+      is_enhancement: list.some(p => p.kind === 'enhancement'),
     });
   }
   return groups;
@@ -117,7 +120,14 @@ function PropertyCard({ group, onSelect }: { group: PropertyGroup; onSelect: (op
       {/* Header row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={S.projName}>{group.key}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <div style={S.projName}>{group.key}</div>
+            {group.is_enhancement && (
+              <span style={{ background: '#f3e8ff', color: '#7e22ce', fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20 }}>
+                ✨ Enhancement
+              </span>
+            )}
+          </div>
           {!multi && group.projects[0].opp_name !== group.key && (
             <div style={S.projSub}>{group.projects[0].opp_name}</div>
           )}
