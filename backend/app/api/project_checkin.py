@@ -1566,8 +1566,16 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
         strat_rows = []  # table may not exist yet on older deployments
     strat = strat_rows[0] if strat_rows else {}
 
+    # Classify the project so the UI can label it correctly.
+    _div   = (opp.get("DivisionName") or "").lower()
+    _otype = (opp.get("OpportunityType") or "").lower()
+    _stype = (opp.get("SalesTypeName") or "").lower()
+    _kind  = ("enhancement" if ("maintenance" in _div and _otype == "work order"
+                                and _stype == "enhancement project") else "construction")
+
     return {
         "opportunity_id":   opp_id,
+        "kind":             _kind,
         "opportunity_name": opp.get("OpportunityName") or f"Job #{opp_id}",
         "property_name":    opp.get("PropertyName") or "",
         "opp_number":       opp.get("OpportunityNumber"),

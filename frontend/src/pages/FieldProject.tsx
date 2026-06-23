@@ -168,6 +168,7 @@ interface MaterialsData {
 
 interface ProjectData {
   opportunity_id:   number;
+  kind?:            'construction' | 'enhancement';
   opportunity_name: string;
   property_name:    string;
   opp_number:       string | number | null;
@@ -758,7 +759,7 @@ export default function FieldProject() {
               ＋ Change Order
             </button>
           </div>
-          <div style={HDR_LABEL}>Construction Project</div>
+          <div style={HDR_LABEL}>{data.kind === 'enhancement' ? 'Enhancement Project' : 'Construction Project'}</div>
           <div style={HDR_TITLE}>{data.property_name || data.opportunity_name}</div>
           {data.property_name && (
             <div style={HDR_SUB}>{data.opportunity_name}</div>
