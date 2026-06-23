@@ -17,7 +17,7 @@ const NAV = [
     items: [
       { label: 'Submit Receipt',        path: '/field',                icon: '🧾' },
       { label: 'Schedule',              path: '/field/work-ticket',    icon: '✅' },
-      { label: 'Construction Projects', path: '/field/project',        icon: '🏗️' },
+      { label: 'Projects', path: '/field/project',        icon: '🏗️' },
       { label: 'Maintenance',           path: '/field/maintenance',    icon: '🌿' },
       { label: 'Purchase Order',        path: '/field/purchase-order', icon: '🛒', color: '#f59e0b' },
       { label: 'New Opportunity',       path: '/field/opportunity',    icon: '+',  color: '#22c55e' },
