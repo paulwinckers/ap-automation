@@ -23,6 +23,7 @@ interface Ticket {
   HoursAct:             number | null;
   HoursScheduled:       number | null;
   HoursUnscheduled:     number | null;
+  ScheduledToday:       number | null;
   CrewLeaderName:       string | null;
   Revenue:              number | null;
   EarnedRevenue:        number | null;
@@ -627,6 +628,21 @@ export default function FieldProject() {
   };
 
   useEffect(() => { load(); loadJobAtts(); }, [oppId]);
+
+  // Pre-fill "hours remaining" with today's scheduled − approved (crew can override).
+  useEffect(() => {
+    if (!data) return;
+    setTicketHours(prev => {
+      const next = { ...prev };
+      for (const t of data.tickets) {
+        const sched = t.ScheduledToday ?? 0;
+        if (sched > 0 && next[t.WorkTicketID] === undefined) {
+          next[t.WorkTicketID] = Math.max(sched - (t.HoursAct ?? 0), 0).toFixed(1);
+        }
+      }
+      return next;
+    });
+  }, [data]);
 
   // Project strategy (CM's living plan — app-side, seeded from Aspire scope on first edit)
   const [stratEditing, setStratEditing] = useState(false);
@@ -1327,7 +1343,9 @@ export default function FieldProject() {
                         const label = t.ServiceName || `#${t.WorkTicketNumber}`;
                         const est   = t.HoursEst ?? 0;
                         const act   = t.HoursAct ?? 0;
-                        const rem   = Math.max(est - act, 0);
+                        const sched = t.ScheduledToday ?? 0;
+                        // Pre-fill from today's schedule when available, else fall back to est − act.
+                        const rem   = sched > 0 ? Math.max(sched - act, 0) : Math.max(est - act, 0);
                         return (
                           <div key={t.WorkTicketID} style={{
                             display: 'flex', alignItems: 'center', gap: 10,
@@ -1340,7 +1358,9 @@ export default function FieldProject() {
                                 {label}
                               </div>
                               <div style={{ fontSize: 10, color: '#9ca3af' }}>
-                                {act.toFixed(1)}h used of {est.toFixed(1)}h est · ~{rem.toFixed(1)}h rem
+                                {sched > 0
+                                  ? <>{sched.toFixed(1)}h scheduled today · {act.toFixed(1)}h approved · ~{rem.toFixed(1)}h rem</>
+                                  : <>{act.toFixed(1)}h used of {est.toFixed(1)}h est · ~{rem.toFixed(1)}h rem</>}
                               </div>
                             </div>
                             <input

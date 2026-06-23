@@ -1343,6 +1343,29 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
     opp     = actuals.get(opp_id, {})
     tickets = await _fetch_all_opp_tickets(opp_id)
 
+    # Hours scheduled for TODAY per ticket (from WorkTicketVisits) — lets the project
+    # page show today's scheduled hours and pre-fill "hours remaining" (scheduled − approved).
+    sched_today: dict[int, float] = {}
+    try:
+        now_local = datetime.now(tz)
+        today     = now_local.strftime("%Y-%m-%d")
+        tomorrow  = (now_local + timedelta(days=1)).strftime("%Y-%m-%d")
+        tids = [t.get("WorkTicketID") for t in tickets if t.get("WorkTicketID")]
+        for i in range(0, len(tids), 15):
+            chunk = tids[i:i + 15]
+            or_f  = " or ".join(f"WorkTicketID eq {x}" for x in chunk)
+            vres = await _aspire._get("WorkTicketVisits", {
+                "$filter": f"({or_f}) and ScheduledDate ge {today}T00:00:00Z and ScheduledDate lt {tomorrow}T00:00:00Z",
+                "$select": "WorkTicketID,Hours,ScheduledDate",
+                "$top": "200",
+            })
+            for v in _aspire._extract_list(vres):
+                wt = v.get("WorkTicketID")
+                if wt:
+                    sched_today[wt] = sched_today.get(wt, 0.0) + float(v.get("Hours") or 0)
+    except Exception as e:
+        logger.warning(f"WorkTicketVisits (today) fetch failed for opp {opp_id}: {e}")
+
     # Most recent AI tip from D1 (avoid regenerating every page load)
     tip_rows = await db._q(
         "SELECT ai_tip, sent_at FROM project_checkins WHERE opportunity_id = ? ORDER BY sent_at DESC LIMIT 1",
@@ -1596,6 +1619,7 @@ async def get_project_page(opp_id: int, db: Database = Depends(get_db)):
             "HoursAct":             t.get("HoursAct"),
             "HoursScheduled":       t.get("HoursScheduled"),
             "HoursUnscheduled":     t.get("HoursUnscheduled"),
+            "ScheduledToday":       round(sched_today.get(t.get("WorkTicketID"), 0.0), 1),
             "CrewLeaderName":       t.get("CrewLeaderName"),
             "Revenue":              t.get("Revenue"),
             "EarnedRevenue":        t.get("EarnedRevenue"),
