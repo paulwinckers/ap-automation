@@ -760,6 +760,23 @@ async def diagnose_job(opportunity_id: int):
         except Exception as e:
             results["WorkTicketItems"] = {"error": str(e)}
 
+        # 2b. WorkTicketVisits — scheduled hours per visit (probe)
+        try:
+            res = await _aspire._get("WorkTicketVisits", {"$filter": f"({or_f})", "$top": "50"})
+            visits = _aspire._extract_list(res)
+            results["WorkTicketVisits"] = {
+                "count": len(visits),
+                "total_scheduled_hours": round(sum(float(v.get("Hours") or 0) for v in visits), 2),
+                "sample": visits[0] if visits else None,
+                "by_date": [
+                    {"date": (v.get("ScheduledDate") or "")[:10], "hours": v.get("Hours"),
+                     "route": v.get("RouteName"), "wt": v.get("WorkTicketID")}
+                    for v in visits[:12]
+                ],
+            }
+        except Exception as e:
+            results["WorkTicketVisits"] = {"error": str(e)}
+
         # 3. Receipts by WorkTicketID
         try:
             res = await _aspire._get("Receipts", {"$filter": f"({or_f})", "$top": "5"})
