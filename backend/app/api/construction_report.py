@@ -537,6 +537,10 @@ async def _scheduler_loop():
         if not in_window or _last_run_date == today_str:
             continue
         _last_run_date = today_str
+        # No nightly send on Friday (4) or Saturday (5) evenings.
+        if now.weekday() in (4, 5):
+            logger.info(f"Construction nightly report: skipping {now.strftime('%A')} evening")
+            continue
         logger.info(
             f"Construction nightly report: firing for {today_str} at {now.strftime('%H:%M %Z')}"
         )

@@ -1895,6 +1895,10 @@ async def _digest_scheduler_loop():
 
         # Mark fired before awaiting so a crash mid-send doesn't re-trigger
         _last_run_date = today_str
+        # No nightly send on Friday (4) or Saturday (5) evenings.
+        if now.weekday() in (4, 5):
+            logger.info(f"Issues digest scheduler: skipping {now.strftime('%A')} evening")
+            continue
         logger.info(f"Issues digest scheduler: firing for {today_str} at {now.strftime('%H:%M %Z')}")
         try:
             import re as _re
