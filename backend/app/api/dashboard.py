@@ -1461,6 +1461,11 @@ async def _issues_digest_body(cfg, asyncio, _re, timedelta, datetime, timezone, 
         meta     = _meta.get(inum) or {}
         prop_name = _resolve_prop(a, meta)
         category  = a.get("ActivityCategoryName") or meta.get("ActivityCategoryName") or ""
+        # Exclude "Possible Opportunity" issues — these are sales leads, not
+        # operational issues, so they don't belong in the issues digest.
+        _subj_lc = ((a.get("Subject") or "") + " " + (meta.get("Subject") or "")).lower()
+        if category.strip().lower() == "possible opportunity" or "possible opportunity" in _subj_lc:
+            continue
         assigned  = parsed.get("assigned_to") or _best_asgn.get(inum, [])
         priority  = parsed.get("priority") or a.get("Priority") or "Normal"
         status    = parsed.get("status") or a.get("Status") or "Open"
