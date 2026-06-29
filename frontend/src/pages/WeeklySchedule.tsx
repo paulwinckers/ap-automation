@@ -55,11 +55,18 @@ const TYPE_DOT: Record<string, string> = {
 };
 
 function SiteRow({ s }: { s: ScheduleSite }) {
-  const title = `${s.property} — ${s.type === 'maintenance' ? 'Maintenance' : s.type === 'project' ? 'Project' : 'Other'}`;
+  const typeLabel = s.type === 'maintenance' ? 'Maintenance' : s.type === 'project' ? 'Project' : 'Other';
+  const readyLabel = s.type === 'project' ? `  ·  ${s.ready ? 'Ready' : 'Not ready'}${s.stage ? ` (${s.stage})` : ''}` : '';
+  const title = `${s.property} — ${typeLabel}${readyLabel}`;
   const inner = (
     <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
       <span style={{ width: 7, height: 7, borderRadius: '50%', background: TYPE_DOT[s.type], flexShrink: 0 }} />
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.property}</span>
+      {s.type === 'project' && (
+        <span style={{ flexShrink: 0, fontWeight: 700, color: s.ready ? '#15803d' : '#b45309' }}>
+          {s.ready ? '✓' : '⏳'}
+        </span>
+      )}
     </span>
   );
   return (
@@ -208,6 +215,7 @@ export default function WeeklySchedule() {
             <Chip label="Sites"       value={data.summary.total_sites} />
             <Chip label="Maintenance" value={data.summary.maintenance} color="#15803d" />
             <Chip label="Projects"    value={data.summary.project}      color="#6d28d9" />
+            <Chip label="Proj. ready" value={data.summary.project_ready ?? 0} color="#15803d" />
             <Chip label="Crews"       value={data.divisions.reduce((s, d) => s + d.lead_count, 0)} />
           </div>
         )}
@@ -292,6 +300,9 @@ export default function WeeklySchedule() {
             <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: TYPE_DOT.project }} /> Project
             </span>
+            <span style={{ color: '#15803d', fontWeight: 700 }}>✓ Ready</span>
+            <span style={{ color: '#b45309', fontWeight: 700 }}>⏳ Not ready</span>
+            <span style={{ color: '#9ca3af' }}>(projects — Set for Production or beyond)</span>
           </div>
         )}
       </div>

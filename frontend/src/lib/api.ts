@@ -516,6 +516,8 @@ export interface ScheduleSite {
   type: 'maintenance' | 'project' | 'other';
   opp_id: number | null;
   work_ticket_number: number | null;
+  ready?: boolean;   // projects only: stage is Set for Production or beyond
+  stage?: string;    // projects only: construction-plan stage
 }
 export interface ScheduleLead {
   lead: string;
@@ -531,7 +533,7 @@ export interface ScheduleDivision {
 export interface DaySchedule {
   date: string;
   divisions: ScheduleDivision[];
-  summary: { total_sites: number; maintenance: number; project: number; other: number; visits: number };
+  summary: { total_sites: number; maintenance: number; project: number; project_ready: number; other: number; visits: number };
 }
 
 export async function getDaySchedule(date?: string): Promise<DaySchedule> {
@@ -553,7 +555,7 @@ export interface WeekSchedule {
   week_start: string;
   days: string[];           // 5 YYYY-MM-DD (Mon–Fri)
   divisions: WeekScheduleDivision[];
-  summary: { total_sites: number; maintenance: number; project: number; other: number; visits: number };
+  summary: { total_sites: number; maintenance: number; project: number; project_ready: number; other: number; visits: number };
 }
 
 export async function getWeekSchedule(start?: string): Promise<WeekSchedule> {

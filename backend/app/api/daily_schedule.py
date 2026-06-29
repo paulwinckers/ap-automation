@@ -18,11 +18,24 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from app.core.config import settings
-from app.api.construction_plan import _aspire, _fetch_opp_actuals
+from app.core.database import Database
+from app.api.construction_plan import (
+    _aspire, _fetch_opp_actuals, get_db, STAGES, DEFAULT_STAGE,
+)
+
+# A project (Work Order) counts as "ready" once it reaches Set for Production or beyond.
+_READY_FROM_INDEX = STAGES.index("Set for Production")
+
+
+def _stage_is_ready(stage: str | None) -> bool:
+    try:
+        return STAGES.index(stage or DEFAULT_STAGE) >= _READY_FROM_INDEX
+    except ValueError:
+        return False
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +178,39 @@ def _site_key(r: dict) -> str:
     return f"opp{r['opp_id']}" if r.get("opp_id") else f"wt{r['work_ticket_number']}"
 
 
+async def _project_stage_map(db: Database, records: list[dict]) -> dict[int, str]:
+    """{opportunity_id: stage} from the construction plan, for project (work order) opps."""
+    proj_oids = sorted({r["opp_id"] for r in records if r["type"] == "project" and r.get("opp_id")})
+    if not proj_oids:
+        return {}
+    ph = ",".join("?" for _ in proj_oids)
+    try:
+        rows = await db._q(
+            f"SELECT opportunity_id, stage FROM job_planning WHERE opportunity_id IN ({ph})",
+            proj_oids,
+        )
+        return {r["opportunity_id"]: r["stage"] for r in rows if r.get("stage")}
+    except Exception as e:
+        logger.warning(f"job_planning stage lookup failed: {e}")
+        return {}
+
+
+def _make_site(r: dict, stage_map: dict[int, str]) -> dict:
+    """Site dict for the response. Projects carry their plan stage + ready flag."""
+    site = {
+        "property":           r["property"],
+        "type":               r["type"],
+        "opp_id":             r["opp_id"],
+        "work_ticket_number": r["work_ticket_number"],
+    }
+    if r["type"] == "project":
+        stage = stage_map.get(r["opp_id"]) if r.get("opp_id") else None
+        stage = stage or DEFAULT_STAGE
+        site["stage"] = stage
+        site["ready"] = _stage_is_ready(stage)
+    return site
+
+
 def _div_sort_key(div: str):
     try:
         return (0, _DIV_ORDER.index(div))
@@ -173,7 +219,7 @@ def _div_sort_key(div: str):
 
 
 @router.get("/day")
-async def get_day_schedule(date: str | None = None):
+async def get_day_schedule(date: str | None = None, db: Database = Depends(get_db)):
     """
     High-level list of sites being visited on a day, grouped Division → Lead → Property.
 
@@ -197,28 +243,28 @@ async def get_day_schedule(date: str | None = None):
         payload = {
             "date": date,
             "divisions": [],
-            "summary": {"total_sites": 0, "maintenance": 0, "project": 0, "other": 0, "visits": 0},
+            "summary": {"total_sites": 0, "maintenance": 0, "project": 0, "project_ready": 0, "other": 0, "visits": 0},
         }
         _cache[date] = (payload, _time.time())
         return payload
 
-    records = await _enrich_visits(visits)
+    records   = await _enrich_visits(visits)
+    stage_map = await _project_stage_map(db, records)
 
-    # division -> lead -> { dedup_key : site }  (dedup by opportunity + type)
+    # division -> lead -> { dedup_key : site }  (one entry per opportunity)
     tree: dict[str, dict[str, dict[str, dict]]] = defaultdict(lambda: defaultdict(dict))
     totals = {"maintenance": 0, "project": 0, "other": 0}
+    project_ready = 0
 
     for r in records:
         dedup_key = _site_key(r)
         bucket = tree[r["division"]][r["lead"]]
         if dedup_key not in bucket:
-            bucket[dedup_key] = {
-                "property":            r["property"],
-                "type":                r["type"],
-                "opp_id":              r["opp_id"],
-                "work_ticket_number":  r["work_ticket_number"],
-            }
+            site = _make_site(r, stage_map)
+            bucket[dedup_key] = site
             totals[r["type"]] += 1
+            if site.get("ready"):
+                project_ready += 1
 
     # Build sorted response
     divisions = []
@@ -241,11 +287,12 @@ async def get_day_schedule(date: str | None = None):
         "date": date,
         "divisions": divisions,
         "summary": {
-            "total_sites":  total_sites,
-            "maintenance":  totals["maintenance"],
-            "project":      totals["project"],
-            "other":        totals["other"],
-            "visits":       len(visits),
+            "total_sites":    total_sites,
+            "maintenance":    totals["maintenance"],
+            "project":        totals["project"],
+            "project_ready":  project_ready,
+            "other":          totals["other"],
+            "visits":         len(visits),
         },
     }
     _cache[date] = (payload, _time.time())
@@ -253,7 +300,7 @@ async def get_day_schedule(date: str | None = None):
 
 
 @router.get("/week")
-async def get_week_schedule(start: str | None = None):
+async def get_week_schedule(start: str | None = None, db: Database = Depends(get_db)):
     """
     Weekly grid of the 5 workdays (Mon–Fri) for the week containing `start`.
 
@@ -285,18 +332,20 @@ async def get_week_schedule(start: str | None = None):
     if not visits:
         payload = {
             "week_start": week_start, "days": days, "divisions": [],
-            "summary": {"total_sites": 0, "maintenance": 0, "project": 0, "other": 0, "visits": 0},
+            "summary": {"total_sites": 0, "maintenance": 0, "project": 0, "project_ready": 0, "other": 0, "visits": 0},
         }
         _cache[cache_key] = (payload, _time.time())
         return payload
 
-    records = await _enrich_visits(visits)
+    records   = await _enrich_visits(visits)
+    stage_map = await _project_stage_map(db, records)
 
     # division -> lead -> [ {dedup_key: site} per workday ]
     def _empty_week():
         return [dict() for _ in range(5)]
     tree: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(_empty_week))
     totals = {"maintenance": 0, "project": 0, "other": 0}
+    project_ready = 0
 
     for r in records:
         di = day_index.get(r["date"])
@@ -305,13 +354,11 @@ async def get_week_schedule(start: str | None = None):
         bucket = tree[r["division"]][r["lead"]][di]
         dedup_key = _site_key(r)
         if dedup_key not in bucket:
-            bucket[dedup_key] = {
-                "property":            r["property"],
-                "type":                r["type"],
-                "opp_id":              r["opp_id"],
-                "work_ticket_number":  r["work_ticket_number"],
-            }
+            site = _make_site(r, stage_map)
+            bucket[dedup_key] = site
             totals[r["type"]] += 1
+            if site.get("ready"):
+                project_ready += 1
 
     divisions = []
     for div in sorted(tree.keys(), key=_div_sort_key):
@@ -338,11 +385,12 @@ async def get_week_schedule(start: str | None = None):
         "days": days,
         "divisions": divisions,
         "summary": {
-            "total_sites":  total_sites,
-            "maintenance":  totals["maintenance"],
-            "project":      totals["project"],
-            "other":        totals["other"],
-            "visits":       len(visits),
+            "total_sites":    total_sites,
+            "maintenance":    totals["maintenance"],
+            "project":        totals["project"],
+            "project_ready":  project_ready,
+            "other":          totals["other"],
+            "visits":         len(visits),
         },
     }
     _cache[cache_key] = (payload, _time.time())
@@ -379,9 +427,17 @@ def _render_week_email_html(payload: dict) -> str:
         out = []
         for st in sites:
             dot = _TYPE_DOT.get(st.get("type"), _TYPE_DOT["other"])
+            ready_tag = ""
+            if st.get("type") == "project":
+                if st.get("ready"):
+                    ready_tag = ('<span style="color:#15803d;font-weight:700;font-size:11px">'
+                                 '&nbsp;✓ Ready</span>')
+                else:
+                    ready_tag = ('<span style="color:#b45309;font-weight:700;font-size:11px">'
+                                 '&nbsp;⏳ Not ready</span>')
             out.append(
                 f'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;'
-                f'background:{dot};margin-right:6px"></span>{st.get("property","")}'
+                f'background:{dot};margin-right:6px"></span>{st.get("property","")}{ready_tag}'
             )
         return '<br>'.join(out)
 
@@ -430,6 +486,7 @@ def _render_week_email_html(payload: dict) -> str:
         <strong>{s.get("total_sites",0)}</strong> sites &nbsp;·&nbsp;
         <strong style="color:#15803d">{s.get("maintenance",0)}</strong> maintenance &nbsp;·&nbsp;
         <strong style="color:#6d28d9">{s.get("project",0)}</strong> projects
+        <span style="color:#94a3b8">({s.get("project_ready",0)} ready)</span>
       </div>
       {''.join(div_blocks) if div_blocks else '<p style="color:#6b7280">No sites scheduled this week.</p>'}
       {legend if div_blocks else ''}
@@ -448,11 +505,12 @@ class WeekEmailBody(BaseModel):
 
 
 @router.post("/week/email")
-async def email_week_schedule(start: str | None = None, body: WeekEmailBody | None = None):
+async def email_week_schedule(start: str | None = None, body: WeekEmailBody | None = None,
+                              db: Database = Depends(get_db)):
     """Email the weekly schedule (manual send). Defaults to the configured recipient."""
     from app.services.email_intake import GraphClient
 
-    payload    = await get_week_schedule(start)
+    payload    = await get_week_schedule(start, db)
     recipients = (body.to if body and body.to else None) or _week_recipients()
 
     days = payload.get("days", [])

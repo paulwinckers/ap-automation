@@ -61,6 +61,19 @@ function TypeBadge({ type }: { type: string }) {
   );
 }
 
+function ReadyBadge({ ready, stage }: { ready?: boolean; stage?: string }) {
+  return (
+    <span
+      title={stage ? `Stage: ${stage}` : undefined}
+      style={{
+        background: ready ? '#dcfce7' : '#fef3c7', color: ready ? '#15803d' : '#b45309',
+        fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
+        whiteSpace: 'nowrap', flexShrink: 0,
+      }}
+    >{ready ? '✓ Ready' : '⏳ Not ready'}</span>
+  );
+}
+
 export default function DailySchedule() {
   const [date, setDate]       = useState<string>(ymd(new Date()));
   const [data, setData]       = useState<DaySchedule | null>(null);
@@ -127,6 +140,7 @@ export default function DailySchedule() {
             <Chip label="Sites"        value={data.summary.total_sites} />
             <Chip label="Maintenance"  value={data.summary.maintenance} color="#15803d" />
             <Chip label="Projects"     value={data.summary.project}      color="#6d28d9" />
+            <Chip label="Proj. ready"  value={data.summary.project_ready ?? 0} color="#15803d" />
             <Chip label="Crews"        value={data.divisions.reduce((s, d) => s + d.lead_count, 0)} />
           </div>
         )}
@@ -181,6 +195,7 @@ export default function DailySchedule() {
                               </a>
                             : s.property}
                         </span>
+                        {s.type === 'project' && <ReadyBadge ready={s.ready} stage={s.stage} />}
                         <TypeBadge type={s.type} />
                       </div>
                     ))}
