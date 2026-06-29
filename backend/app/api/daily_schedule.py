@@ -426,19 +426,24 @@ def _render_week_email_html(payload: dict) -> str:
             return '<span style="color:#d1d5db">·</span>'
         out = []
         for st in sites:
-            dot = _TYPE_DOT.get(st.get("type"), _TYPE_DOT["other"])
-            ready_tag = ""
+            prop = st.get("property", "")
             if st.get("type") == "project":
-                if st.get("ready"):
-                    ready_tag = ('<span style="color:#15803d;font-weight:700;font-size:11px">'
-                                 '&nbsp;✓ Ready</span>')
-                else:
-                    ready_tag = ('<span style="color:#b45309;font-weight:700;font-size:11px">'
-                                 '&nbsp;⏳ Not ready</span>')
-            out.append(
-                f'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;'
-                f'background:{dot};margin-right:6px"></span>{st.get("property","")}{ready_tag}'
-            )
+                # Filled green/red block with black text — matches the web view.
+                ready = bool(st.get("ready"))
+                bg    = "#86efac" if ready else "#fca5a5"
+                label = "READY" if ready else "NOT READY"
+                out.append(
+                    f'<span style="display:inline-block;background:{bg};color:#000;'
+                    f'border-radius:5px;padding:2px 7px;margin:2px 0;font-weight:600">'
+                    f'{prop} <span style="font-weight:800;font-size:10px;letter-spacing:0.04em">'
+                    f'&nbsp;{label}</span></span>'
+                )
+            else:
+                dot = _TYPE_DOT.get(st.get("type"), _TYPE_DOT["other"])
+                out.append(
+                    f'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;'
+                    f'background:{dot};margin-right:6px"></span>{prop}'
+                )
         return '<br>'.join(out)
 
     div_blocks = []
@@ -475,7 +480,10 @@ def _render_week_email_html(payload: dict) -> str:
         '<div style="margin-top:14px;font-size:12px;color:#6b7280">'
         f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{_TYPE_DOT["maintenance"]};margin-right:5px"></span>Maintenance'
         '&nbsp;&nbsp;&nbsp;'
-        f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{_TYPE_DOT["project"]};margin-right:5px"></span>Project'
+        '<span style="display:inline-block;width:16px;height:11px;border-radius:3px;background:#86efac;margin-right:5px"></span>Project ready'
+        '&nbsp;&nbsp;&nbsp;'
+        '<span style="display:inline-block;width:16px;height:11px;border-radius:3px;background:#fca5a5;margin-right:5px"></span>Project not ready'
+        '&nbsp;&nbsp;<span style="color:#9ca3af">(ready = Set for Production or beyond)</span>'
         '</div>'
     )
 
