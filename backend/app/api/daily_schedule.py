@@ -90,7 +90,7 @@ async def _fetch_visits_range(start: str, end_exclusive: str) -> list[dict]:
         try:
             batch = _aspire._extract_list(await _aspire._get("WorkTicketVisits", {
                 "$filter": flt,
-                "$select": "WorkTicketVisitID,RouteID,WorkTicketID,WorkTicketNumber,ScheduledDate",
+                "$select": "WorkTicketVisitID,RouteID,WorkTicketID,WorkTicketNumber,ScheduledDate,SequenceNum",
                 "$top": "500",
                 "$skip": str(skip),
             }))
@@ -149,8 +149,19 @@ async def _enrich_visits(visits: list[dict]) -> list[dict]:
             "type":               _type_tag(opp.get("OpportunityType")),
             "opp_id":             oid,
             "work_ticket_number": v.get("WorkTicketNumber"),
+            "sequence":           v.get("SequenceNum") if v.get("SequenceNum") is not None else 9999,
+            "visit_id":           v.get("WorkTicketVisitID") or 0,
         })
+    # Stable order so "first work ticket" for a property is deterministic (route order).
+    records.sort(key=lambda r: (r["date"], r["sequence"], r["visit_id"]))
     return records
+
+
+def _site_key(r: dict) -> str:
+    """Dedup key: one entry per opportunity (so a project with multiple work
+    tickets is listed once — its first by route order). Falls back to the work
+    ticket when there's no opportunity."""
+    return f"opp{r['opp_id']}" if r.get("opp_id") else f"wt{r['work_ticket_number']}"
 
 
 def _div_sort_key(div: str):
@@ -197,7 +208,7 @@ async def get_day_schedule(date: str | None = None):
     totals = {"maintenance": 0, "project": 0, "other": 0}
 
     for r in records:
-        dedup_key = f"{r['opp_id'] or r['work_ticket_number']}|{r['type']}"
+        dedup_key = _site_key(r)
         bucket = tree[r["division"]][r["lead"]]
         if dedup_key not in bucket:
             bucket[dedup_key] = {
@@ -291,7 +302,7 @@ async def get_week_schedule(start: str | None = None):
         if di is None:
             continue  # weekend / out of range
         bucket = tree[r["division"]][r["lead"]][di]
-        dedup_key = f"{r['opp_id'] or r['work_ticket_number']}|{r['type']}"
+        dedup_key = _site_key(r)
         if dedup_key not in bucket:
             bucket[dedup_key] = {
                 "property":            r["property"],

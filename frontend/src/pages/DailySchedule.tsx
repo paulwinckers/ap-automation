@@ -6,7 +6,20 @@
  */
 
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { getDaySchedule, DaySchedule } from '../lib/api';
+
+function ViewToggle({ active }: { active: 'day' | 'week' }) {
+  const base: React.CSSProperties = { padding: '6px 16px', fontSize: 13, fontWeight: 700, textDecoration: 'none' };
+  const on  = { ...base, background: '#2563eb', color: '#fff' };
+  const off = { ...base, background: '#fff', color: '#374151', fontWeight: 600 as const };
+  return (
+    <div style={{ display: 'inline-flex', border: '1px solid #d1d5db', borderRadius: 8, overflow: 'hidden' }}>
+      <Link to="/dashboards/schedule"      style={active === 'day'  ? on : off}>Day</Link>
+      <Link to="/dashboards/schedule/week" style={active === 'week' ? on : off}>Week</Link>
+    </div>
+  );
+}
 
 // Local YYYY-MM-DD (avoids UTC shift from toISOString)
 function ymd(d: Date): string {
@@ -85,9 +98,7 @@ export default function DailySchedule() {
               Sites we're visiting, by division &amp; lead — live from Aspire
             </p>
           </div>
-          <a href="/dashboards/schedule/week" style={{ fontSize: 13, fontWeight: 600, color: '#2563eb', textDecoration: 'none' }}>
-            Week view →
-          </a>
+          <ViewToggle active="day" />
         </div>
 
         {/* Date nav */}
