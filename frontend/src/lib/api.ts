@@ -538,6 +538,28 @@ export async function getDaySchedule(date?: string): Promise<DaySchedule> {
   return request('GET', `/schedule/day${date ? `?date=${date}` : ''}`);
 }
 
+export interface WeekScheduleLead {
+  lead: string;
+  site_count: number;
+  days: ScheduleSite[][];   // length 5, aligned to WeekSchedule.days (Mon–Fri)
+}
+export interface WeekScheduleDivision {
+  division: string;
+  site_count: number;
+  lead_count: number;
+  leads: WeekScheduleLead[];
+}
+export interface WeekSchedule {
+  week_start: string;
+  days: string[];           // 5 YYYY-MM-DD (Mon–Fri)
+  divisions: WeekScheduleDivision[];
+  summary: { total_sites: number; maintenance: number; project: number; other: number; visits: number };
+}
+
+export async function getWeekSchedule(start?: string): Promise<WeekSchedule> {
+  return request('GET', `/schedule/week${start ? `?start=${start}` : ''}`);
+}
+
 // ── Aspire Field Operations ───────────────────────────────────────────────────
 
 export interface FieldOpportunity {

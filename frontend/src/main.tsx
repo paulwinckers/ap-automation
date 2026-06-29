@@ -16,6 +16,7 @@ import OpsDashboard           from './pages/OpsDashboard';
 import ConstructionDashboard  from './pages/ConstructionDashboard';
 import ConstructionPlan       from './pages/ConstructionPlan';
 import DailySchedule          from './pages/DailySchedule';
+import WeeklySchedule         from './pages/WeeklySchedule';
 import EstimatingDashboard    from './pages/EstimatingDashboard';
 import ActivitiesDashboard    from './pages/ActivitiesDashboard';
 import DashboardsIndex        from './pages/DashboardsIndex';
@@ -103,7 +104,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/dashboards"              element={<RequireAuth><Office><DashboardsIndex /></Office></RequireAuth>} />
         <Route path="/dashboards/sales"        element={<RequireAuth><Office><SalesDashboard /></Office></RequireAuth>} />
         <Route path="/dashboards/ops"          element={<RequireAuth><Office><OpsDashboard /></Office></RequireAuth>} />
-        <Route path="/dashboards/schedule"     element={<RequireAuth><Office><DailySchedule /></Office></RequireAuth>} />
+        <Route path="/dashboards/schedule"      element={<RequireAuth><Office><DailySchedule /></Office></RequireAuth>} />
+        <Route path="/dashboards/schedule/week" element={<RequireAuth><Office><WeeklySchedule /></Office></RequireAuth>} />
         <Route path="/dashboards/construction" element={<RequireAuth><Office><ConstructionDashboard /></Office></RequireAuth>} />
         <Route path="/dashboards/construction/plan" element={<RequireAuth><Office><ConstructionPlan /></Office></RequireAuth>} />
         <Route path="/dashboards/estimating"   element={<RequireAuth><Office><EstimatingDashboard /></Office></RequireAuth>} />

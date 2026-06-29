@@ -31,6 +31,7 @@ const NAV = [
     section: 'Field Ops',
     items: [
       { label: 'Daily Schedule', path: '/dashboards/schedule', icon: '🗺️' },
+      { label: 'Weekly Schedule', path: '/dashboards/schedule/week', icon: '📆' },
       { label: 'Field Chat',    path: '/ops/issues',        icon: '💬' },
       { label: 'Crew Schedule', path: '/ops/crew-schedule', icon: '👥' },
       { label: 'Contacts',      path: '/ops/contacts',      icon: '📞' },

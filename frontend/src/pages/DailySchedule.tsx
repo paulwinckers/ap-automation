@@ -76,12 +76,19 @@ export default function DailySchedule() {
       <div style={{ maxWidth: 1000, margin: '0 auto' }}>
 
         {/* Header */}
-        <h1 style={{ margin: '0 0 4px', fontSize: 24, fontWeight: 800, color: '#111827' }}>
-          Daily Schedule
-        </h1>
-        <p style={{ margin: '0 0 20px', fontSize: 13, color: '#6b7280' }}>
-          Sites we're visiting, by division &amp; lead — live from Aspire
-        </p>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+          <div>
+            <h1 style={{ margin: '0 0 4px', fontSize: 24, fontWeight: 800, color: '#111827' }}>
+              Daily Schedule
+            </h1>
+            <p style={{ margin: '0 0 20px', fontSize: 13, color: '#6b7280' }}>
+              Sites we're visiting, by division &amp; lead — live from Aspire
+            </p>
+          </div>
+          <a href="/dashboards/schedule/week" style={{ fontSize: 13, fontWeight: 600, color: '#2563eb', textDecoration: 'none' }}>
+            Week view →
+          </a>
+        </div>
 
         {/* Date nav */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>

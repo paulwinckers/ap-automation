@@ -81,12 +81,12 @@ async def _get_route_map() -> dict[int, dict]:
     return rmap
 
 
-async def _fetch_visits(day: str) -> list[dict]:
-    """All WorkTicketVisits scheduled on `day` (YYYY-MM-DD)."""
+async def _fetch_visits_range(start: str, end_exclusive: str) -> list[dict]:
+    """All WorkTicketVisits with ScheduledDate in [start, end_exclusive) (YYYY-MM-DD)."""
     visits: list[dict] = []
-    flt = (f"ScheduledDate ge {day}T00:00:00Z and "
-           f"ScheduledDate lt {day}T23:59:59Z")
-    for skip in range(0, 2000, 500):
+    flt = (f"ScheduledDate ge {start}T00:00:00Z and "
+           f"ScheduledDate lt {end_exclusive}T00:00:00Z")
+    for skip in range(0, 5000, 500):
         try:
             batch = _aspire._extract_list(await _aspire._get("WorkTicketVisits", {
                 "$filter": flt,
@@ -128,6 +128,31 @@ async def _fetch_wt_opp_map(wt_ids: list[int]) -> dict[int, int]:
     return out
 
 
+async def _enrich_visits(visits: list[dict]) -> list[dict]:
+    """Attach division / lead / property / type / date to each visit."""
+    route_map = await _get_route_map()
+    wt_ids  = sorted({v["WorkTicketID"] for v in visits if v.get("WorkTicketID")})
+    wt2opp  = await _fetch_wt_opp_map(wt_ids)
+    opp_ids = sorted({o for o in wt2opp.values() if o})
+    opps    = await _fetch_opp_actuals(opp_ids)
+
+    records: list[dict] = []
+    for v in visits:
+        route = route_map.get(v.get("RouteID")) or {}
+        oid   = wt2opp.get(v.get("WorkTicketID"))
+        opp   = opps.get(oid) or {}
+        records.append({
+            "date":               (v.get("ScheduledDate") or "")[:10],
+            "division":           route.get("division") or opp.get("DivisionName") or "Unassigned",
+            "lead":               route.get("lead") or route.get("route_name") or "Unassigned",
+            "property":           opp.get("PropertyName") or f"WT #{v.get('WorkTicketNumber') or v.get('WorkTicketID')}",
+            "type":               _type_tag(opp.get("OpportunityType")),
+            "opp_id":             oid,
+            "work_ticket_number": v.get("WorkTicketNumber"),
+        })
+    return records
+
+
 def _div_sort_key(div: str):
     try:
         return (0, _DIV_ORDER.index(div))
@@ -153,7 +178,8 @@ async def get_day_schedule(date: str | None = None):
     if cached and (_time.time() - cached[1]) < _CACHE_TTL:
         return cached[0]
 
-    visits = await _fetch_visits(date)
+    next_day = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    visits = await _fetch_visits_range(date, next_day)
 
     if not visits:
         payload = {
@@ -164,37 +190,23 @@ async def get_day_schedule(date: str | None = None):
         _cache[date] = (payload, _time.time())
         return payload
 
-    route_map = await _get_route_map()
+    records = await _enrich_visits(visits)
 
-    wt_ids  = sorted({v["WorkTicketID"] for v in visits if v.get("WorkTicketID")})
-    wt2opp  = await _fetch_wt_opp_map(wt_ids)
-    opp_ids = sorted({o for o in wt2opp.values() if o})
-    opps    = await _fetch_opp_actuals(opp_ids)   # {opp_id: {PropertyName, OpportunityType, ...}}
-
-    # division -> lead -> { (key) : site }  (dedup by opportunity + type)
+    # division -> lead -> { dedup_key : site }  (dedup by opportunity + type)
     tree: dict[str, dict[str, dict[str, dict]]] = defaultdict(lambda: defaultdict(dict))
     totals = {"maintenance": 0, "project": 0, "other": 0}
 
-    for v in visits:
-        route = route_map.get(v.get("RouteID")) or {}
-        oid   = wt2opp.get(v.get("WorkTicketID"))
-        opp   = opps.get(oid) or {}
-
-        division = route.get("division") or opp.get("DivisionName") or "Unassigned"
-        lead     = route.get("lead") or route.get("route_name") or "Unassigned"
-        prop     = opp.get("PropertyName") or f"WT #{v.get('WorkTicketNumber') or v.get('WorkTicketID')}"
-        tag      = _type_tag(opp.get("OpportunityType"))
-
-        dedup_key = f"{oid or v.get('WorkTicketID')}|{tag}"
-        bucket = tree[division][lead]
+    for r in records:
+        dedup_key = f"{r['opp_id'] or r['work_ticket_number']}|{r['type']}"
+        bucket = tree[r["division"]][r["lead"]]
         if dedup_key not in bucket:
             bucket[dedup_key] = {
-                "property":            prop,
-                "type":                tag,
-                "opp_id":              oid,
-                "work_ticket_number":  v.get("WorkTicketNumber"),
+                "property":            r["property"],
+                "type":                r["type"],
+                "opp_id":              r["opp_id"],
+                "work_ticket_number":  r["work_ticket_number"],
             }
-            totals[tag] += 1
+            totals[r["type"]] += 1
 
     # Build sorted response
     divisions = []
@@ -225,4 +237,101 @@ async def get_day_schedule(date: str | None = None):
         },
     }
     _cache[date] = (payload, _time.time())
+    return payload
+
+
+@router.get("/week")
+async def get_week_schedule(start: str | None = None):
+    """
+    Weekly grid of the 5 workdays (Mon–Fri) for the week containing `start`.
+
+    Same content as /day but spread across the work week: Division → Lead, with
+    each lead's sites laid out per workday. `start` is any YYYY-MM-DD in the
+    target week (normalized to that week's Monday); defaults to the current week.
+    """
+    tz = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    if not start:
+        start = datetime.now(tz).strftime("%Y-%m-%d")
+    if len(start) != 10 or start[4] != "-" or start[7] != "-":
+        raise HTTPException(status_code=400, detail="start must be YYYY-MM-DD")
+
+    # Normalize to Monday of that week; 5 workdays Mon–Fri.
+    anchor  = datetime.strptime(start, "%Y-%m-%d")
+    monday  = anchor - timedelta(days=anchor.weekday())
+    days    = [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)]
+    week_start = days[0]
+    end_excl   = (monday + timedelta(days=5)).strftime("%Y-%m-%d")  # Saturday (exclusive)
+
+    cache_key = f"week:{week_start}"
+    cached = _cache.get(cache_key)
+    if cached and (_time.time() - cached[1]) < _CACHE_TTL:
+        return cached[0]
+
+    visits = await _fetch_visits_range(week_start, end_excl)
+    day_index = {d: i for i, d in enumerate(days)}
+
+    if not visits:
+        payload = {
+            "week_start": week_start, "days": days, "divisions": [],
+            "summary": {"total_sites": 0, "maintenance": 0, "project": 0, "other": 0, "visits": 0},
+        }
+        _cache[cache_key] = (payload, _time.time())
+        return payload
+
+    records = await _enrich_visits(visits)
+
+    # division -> lead -> [ {dedup_key: site} per workday ]
+    def _empty_week():
+        return [dict() for _ in range(5)]
+    tree: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(_empty_week))
+    totals = {"maintenance": 0, "project": 0, "other": 0}
+
+    for r in records:
+        di = day_index.get(r["date"])
+        if di is None:
+            continue  # weekend / out of range
+        bucket = tree[r["division"]][r["lead"]][di]
+        dedup_key = f"{r['opp_id'] or r['work_ticket_number']}|{r['type']}"
+        if dedup_key not in bucket:
+            bucket[dedup_key] = {
+                "property":            r["property"],
+                "type":                r["type"],
+                "opp_id":              r["opp_id"],
+                "work_ticket_number":  r["work_ticket_number"],
+            }
+            totals[r["type"]] += 1
+
+    divisions = []
+    for div in sorted(tree.keys(), key=_div_sort_key):
+        leads = []
+        div_site_count = 0
+        for lead in sorted(tree[div].keys(), key=str.lower):
+            week_days = [
+                sorted(day_bucket.values(), key=lambda s: s["property"].lower())
+                for day_bucket in tree[div][lead]
+            ]
+            lead_count = sum(len(d) for d in week_days)
+            div_site_count += lead_count
+            leads.append({"lead": lead, "site_count": lead_count, "days": week_days})
+        divisions.append({
+            "division":   div,
+            "site_count": div_site_count,
+            "lead_count": len(leads),
+            "leads":      leads,
+        })
+
+    total_sites = totals["maintenance"] + totals["project"] + totals["other"]
+    payload = {
+        "week_start": week_start,
+        "days": days,
+        "divisions": divisions,
+        "summary": {
+            "total_sites":  total_sites,
+            "maintenance":  totals["maintenance"],
+            "project":      totals["project"],
+            "other":        totals["other"],
+            "visits":       len(visits),
+        },
+    }
+    _cache[cache_key] = (payload, _time.time())
     return payload
