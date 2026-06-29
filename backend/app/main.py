@@ -282,8 +282,9 @@ async def lifespan(app: FastAPI):
     await _db.close()
     # Start email polling on startup
     await email_intake.start()
-    # Start construction nightly report scheduler (fires 7 PM Pacific)
-    start_construction_scheduler()
+    # Construction nightly Work Ticket Report is paused (a weekly report may
+    # replace it later). The router/manual-send endpoint stays available.
+    # start_construction_scheduler()
     # Start issues digest nightly scheduler (fires 7 PM Pacific)
     start_digest_scheduler()
     yield
