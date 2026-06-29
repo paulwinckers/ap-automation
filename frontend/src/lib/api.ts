@@ -361,6 +361,18 @@ export interface PlanJob {
   lead_name?: string;          // assigned construction lead
   schedule_confirmed?: boolean; // customer-confirmed schedule
   stage?: string;              // workflow stage
+  attachments?: PlanAttachment[];  // Aspire opportunity files
+  attachment_count?: number;
+}
+
+export interface PlanAttachment {
+  attachment_id: number | null;
+  file_name: string;
+  file_extension: string;
+  attachment_type: string;
+  created_date: string;
+  file_url: string;           // external link if available, else Aspire opportunity deep-link
+  expose_to_crew: boolean;
 }
 
 export type PrepStatus = '' | 'na' | 'complete' | 'uploaded';
@@ -507,6 +519,35 @@ export async function removeJobFromMonth(month: string, opportunityId: number): 
 
 export async function getPlanSuggestions(month: string): Promise<{ month: string; suggestions: PlanSuggestion[]; scheduled_count: number }> {
   return request('GET', `/construction/plan/${month}/suggestions`);
+}
+
+// ── Daily Schedule (sites visited per day, by division → lead → property) ──────
+
+export interface ScheduleSite {
+  property: string;
+  type: 'maintenance' | 'project' | 'other';
+  opp_id: number | null;
+  work_ticket_number: number | null;
+}
+export interface ScheduleLead {
+  lead: string;
+  site_count: number;
+  sites: ScheduleSite[];
+}
+export interface ScheduleDivision {
+  division: string;
+  site_count: number;
+  lead_count: number;
+  leads: ScheduleLead[];
+}
+export interface DaySchedule {
+  date: string;
+  divisions: ScheduleDivision[];
+  summary: { total_sites: number; maintenance: number; project: number; other: number; visits: number };
+}
+
+export async function getDaySchedule(date?: string): Promise<DaySchedule> {
+  return request('GET', `/schedule/day${date ? `?date=${date}` : ''}`);
 }
 
 // ── Aspire Field Operations ───────────────────────────────────────────────────

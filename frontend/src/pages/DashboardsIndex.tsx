@@ -19,6 +19,12 @@ const DASHBOARDS = [
     sub:   'Daily hours log vs budget, MTD/YTD',
   },
   {
+    to:    '/dashboards/schedule',
+    icon:  '🗺️',
+    label: 'Daily Schedule',
+    sub:   'Sites visited today by division & lead',
+  },
+  {
     to:    '/dashboards/construction',
     icon:  '🏗️',
     label: 'Construction Dashboard',
