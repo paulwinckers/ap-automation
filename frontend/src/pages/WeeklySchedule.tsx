@@ -54,19 +54,47 @@ const TYPE_DOT: Record<string, string> = {
   other:       '#94a3b8',
 };
 
+// Project (work order) fill colours — green = ready, red = not ready, black text.
+const READY_BG     = '#86efac';
+const NOT_READY_BG = '#fca5a5';
+
 function SiteRow({ s }: { s: ScheduleSite }) {
-  const typeLabel = s.type === 'maintenance' ? 'Maintenance' : s.type === 'project' ? 'Project' : 'Other';
-  const readyLabel = s.type === 'project' ? `  ·  ${s.ready ? 'Ready' : 'Not ready'}${s.stage ? ` (${s.stage})` : ''}` : '';
-  const title = `${s.property} — ${typeLabel}${readyLabel}`;
+  // Projects (work orders): filled green/red block with black text so the
+  // ready/not-ready status is unmistakable.
+  if (s.type === 'project') {
+    const ready = !!s.ready;
+    const title = `${s.property} — Project · ${ready ? 'Ready' : 'Not ready'}${s.stage ? ` (${s.stage})` : ''}`;
+    const inner = (
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.property}</span>
+        <span style={{ flexShrink: 0, fontWeight: 800, fontSize: 9, letterSpacing: '0.04em' }}>
+          {ready ? 'READY' : 'NOT READY'}
+        </span>
+      </span>
+    );
+    return (
+      <div title={title} style={{
+        background: ready ? READY_BG : NOT_READY_BG, color: '#000',
+        borderRadius: 6, padding: '3px 8px', margin: '3px 0', fontSize: 12, fontWeight: 600,
+      }}>
+        {s.opp_id
+          ? <Link to={`/field/project/${s.opp_id}`} style={{ color: '#000', textDecoration: 'none', display: 'block' }}
+                  onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+                  onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}>
+              {inner}
+            </Link>
+          : inner}
+      </div>
+    );
+  }
+
+  // Maintenance / other — plain dot + property.
+  const typeLabel = s.type === 'maintenance' ? 'Maintenance' : 'Other';
+  const title = `${s.property} — ${typeLabel}`;
   const inner = (
     <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
       <span style={{ width: 7, height: 7, borderRadius: '50%', background: TYPE_DOT[s.type], flexShrink: 0 }} />
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.property}</span>
-      {s.type === 'project' && (
-        <span style={{ flexShrink: 0, fontWeight: 700, color: s.ready ? '#15803d' : '#b45309' }}>
-          {s.ready ? '✓' : '⏳'}
-        </span>
-      )}
     </span>
   );
   return (
@@ -298,11 +326,12 @@ export default function WeeklySchedule() {
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: TYPE_DOT.maintenance }} /> Maintenance
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: TYPE_DOT.project }} /> Project
+              <span style={{ width: 16, height: 12, borderRadius: 3, background: READY_BG, display: 'inline-block' }} /> Project ready
             </span>
-            <span style={{ color: '#15803d', fontWeight: 700 }}>✓ Ready</span>
-            <span style={{ color: '#b45309', fontWeight: 700 }}>⏳ Not ready</span>
-            <span style={{ color: '#9ca3af' }}>(projects — Set for Production or beyond)</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 16, height: 12, borderRadius: 3, background: NOT_READY_BG, display: 'inline-block' }} /> Project not ready
+            </span>
+            <span style={{ color: '#9ca3af' }}>(ready = Set for Production or beyond)</span>
           </div>
         )}
       </div>
