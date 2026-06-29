@@ -2803,6 +2803,10 @@ async def _scheduler_loop():
         if not in_window or _last_run_date == today_str:
             continue
         _last_run_date = today_str
+        # No check-ins on Saturday (5) or Sunday (6).
+        if now.weekday() in (5, 6):
+            logger.info(f"Check-in scheduler: skipping {now.strftime('%A')}")
+            continue
         logger.info(f"Check-in scheduler: firing for {today_str} at {now.strftime('%H:%M %Z')}")
         month = now.strftime("%Y-%m")
         try:
