@@ -590,7 +590,6 @@ export default function ConstructionPlan() {
   const [showLeads,     setShowLeads]     = useState(false);
   const [showCheckin,   setShowCheckin]   = useState(false);
   const [prepFor,       setPrepFor]       = useState<number | null>(null);
-  const [filesFor,      setFilesFor]      = useState<number | null>(null);
   // Live prep counts per opp (overrides server value as the user checks items)
   const [prepProgress,  setPrepProgress]  = useState<Record<number, { done: number; total: number }>>({});
   // Construction leads (for the per-job Lead dropdown)
@@ -813,7 +812,7 @@ export default function ConstructionPlan() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
-                  {['Property / Job', 'Lead', 'Confirmed', '% This Month', 'Hours', 'Revenue', 'Stage', 'Files', 'Prep', ''].map((h, i) => (
+                  {['Property / Job', 'Lead', 'Confirmed', '% This Month', 'Hours', 'Revenue', 'Stage', 'Prep', ''].map((h, i) => (
                     <th key={i} style={{
                       padding: '8px 10px', textAlign: i === 0 ? 'left' : 'center',
                       fontSize: 11, fontWeight: 700, color: '#6b7280',
@@ -982,32 +981,6 @@ export default function ConstructionPlan() {
                       })()}
                     </td>
 
-                    {/* Files — Aspire opportunity attachments */}
-                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
-                      {(() => {
-                        const n    = j.attachment_count ?? (j.attachments?.length ?? 0);
-                        const open = filesFor === j.opportunity_id;
-                        if (n === 0) {
-                          return <span style={{ color: '#d1d5db', fontSize: 12 }}>—</span>;
-                        }
-                        return (
-                          <button
-                            onClick={() => setFilesFor(open ? null : j.opportunity_id)}
-                            title="Opportunity files in Aspire"
-                            style={{
-                              padding: '3px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6,
-                              border: '1px solid ' + (open ? '#2563eb' : '#e5e7eb'),
-                              background: open ? '#eff6ff' : '#f8fafc',
-                              color: open ? '#1d4ed8' : '#374151',
-                              cursor: 'pointer', whiteSpace: 'nowrap',
-                            }}
-                          >
-                            📎 {n} {open ? '▲' : '▼'}
-                          </button>
-                        );
-                      })()}
-                    </td>
-
                     {/* Prep checklist toggle */}
                     <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
                       {(() => {
@@ -1053,61 +1026,10 @@ export default function ConstructionPlan() {
                       >✕</button>
                     </td>
                   </tr>
-                  {/* Aspire opportunity files panel */}
-                  {filesFor === j.opportunity_id && (j.attachments?.length ?? 0) > 0 && (
-                    <tr>
-                      <td colSpan={11} style={{ padding: '14px 16px', background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
-                          Aspire opportunity files
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: 560 }}>
-                          {j.attachments!.map((a, ai) => (
-                            <a
-                              key={a.attachment_id ?? ai}
-                              href={a.file_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title="Open in Aspire"
-                              style={{
-                                display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
-                                background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8,
-                                textDecoration: 'none', color: '#111827',
-                              }}
-                              onMouseEnter={e => (e.currentTarget.style.borderColor = '#93c5fd')}
-                              onMouseLeave={e => (e.currentTarget.style.borderColor = '#e5e7eb')}
-                            >
-                              <span style={{ fontSize: 16, flexShrink: 0 }}>
-                                {a.file_extension === 'pdf' ? '📕'
-                                  : ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic'].includes(a.file_extension) ? '🖼️'
-                                  : ['dwg', 'dxf'].includes(a.file_extension) ? '📐'
-                                  : ['doc', 'docx'].includes(a.file_extension) ? '📄'
-                                  : ['xls', 'xlsx'].includes(a.file_extension) ? '📊'
-                                  : '📎'}
-                              </span>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {a.file_name}
-                                </div>
-                                <div style={{ fontSize: 11, color: '#9ca3af' }}>
-                                  {a.attachment_type || a.file_extension.toUpperCase()}
-                                  {a.created_date ? ` · ${a.created_date}` : ''}
-                                  {a.expose_to_crew ? ' · 👷 crew' : ''}
-                                </div>
-                              </div>
-                              <span style={{ color: '#2563eb', fontSize: 13, flexShrink: 0 }}>↗</span>
-                            </a>
-                          ))}
-                        </div>
-                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 8 }}>
-                          Files open in Aspire (binaries aren't downloadable via the API); external links open directly.
-                        </div>
-                      </td>
-                    </tr>
-                  )}
                   {/* Preparedness checklist panel + link to the Construction Project page */}
                   {prepFor === j.opportunity_id && (
                     <tr>
-                      <td colSpan={11} style={{ padding: '14px 16px', background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
+                      <td colSpan={10} style={{ padding: '14px 16px', background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
                         <div style={{ maxWidth: 520 }}>
                           <JobPrepChecklist
                             oppId={j.opportunity_id}

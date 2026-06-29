@@ -361,18 +361,6 @@ export interface PlanJob {
   lead_name?: string;          // assigned construction lead
   schedule_confirmed?: boolean; // customer-confirmed schedule
   stage?: string;              // workflow stage
-  attachments?: PlanAttachment[];  // Aspire opportunity files
-  attachment_count?: number;
-}
-
-export interface PlanAttachment {
-  attachment_id: number | null;
-  file_name: string;
-  file_extension: string;
-  attachment_type: string;
-  created_date: string;
-  file_url: string;           // external link if available, else Aspire opportunity deep-link
-  expose_to_crew: boolean;
 }
 
 export type PrepStatus = '' | 'na' | 'complete' | 'uploaded';

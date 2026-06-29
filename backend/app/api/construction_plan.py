@@ -126,59 +126,6 @@ async def _fetch_opp_actuals(opp_ids: list[int]) -> dict[int, dict]:
     return out
 
 
-async def _fetch_opp_attachments_map(opp_ids: list[int]) -> dict[int, list[dict]]:
-    """Fetch Aspire opportunity attachments (metadata) for many opps at once.
-
-    Aspire stores files internally and does not serve the binaries over OData, so
-    each attachment links out to Aspire's opportunity page — unless the file is an
-    external link (SharePoint/OneDrive), which opens directly.
-
-    Returns {opportunity_id: [{attachment_id, file_name, file_extension,
-    attachment_type, created_date, file_url, expose_to_crew}, ...]} newest first.
-    """
-    import asyncio as _asyncio
-    if not opp_ids:
-        return {}
-
-    chunks = [opp_ids[i:i + 15] for i in range(0, len(opp_ids), 15)]
-
-    async def _fetch_chunk(chunk: list[int]) -> list[dict]:
-        or_filter = " or ".join(f"OpportunityID eq {oid}" for oid in chunk)
-        try:
-            res = await _aspire._get("Attachments", {
-                "$filter": f"({or_filter})",
-                "$select": ("AttachmentID,OpportunityID,AttachmentName,OriginalFileName,"
-                            "FileExtension,AttachmentTypeName,DateUploaded,ExternalContentID,ExposeToCrew"),
-                "$orderby": "DateUploaded desc",
-                "$top": "500",
-            })
-            return _aspire._extract_list(res)
-        except Exception as e:
-            logger.warning(f"Attachments chunk fetch failed: {e}")
-            return []
-
-    results = await _asyncio.gather(*[_fetch_chunk(c) for c in chunks])
-    out: dict[int, list[dict]] = {}
-    for rows in results:
-        for r in rows:
-            oid = r.get("OpportunityID")
-            if not oid:
-                continue
-            ext     = (r.get("FileExtension") or "").lstrip(".").lower()
-            ext_url = r.get("ExternalContentID") or ""
-            out.setdefault(oid, []).append({
-                "attachment_id":   r.get("AttachmentID"),
-                "file_name":       r.get("AttachmentName") or r.get("OriginalFileName") or "File",
-                "file_extension":  ext,
-                "attachment_type": r.get("AttachmentTypeName") or "",
-                "created_date":    (r.get("DateUploaded") or "")[:10],
-                # Direct external URL when present, else deep-link to the opportunity in Aspire
-                "file_url":        ext_url if ext_url.startswith("http") else f"{_ASPIRE_WEB_BASE}/opportunities/details/{oid}",
-                "expose_to_crew":  bool(r.get("ExposeToCrew")),
-            })
-    return out
-
-
 async def _fetch_scheduled_opp_ids(month: str) -> dict[int, list[dict]]:
     """
     Return {opportunity_id: [ticket, ...]} for all Construction work tickets
@@ -401,10 +348,9 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
 
     # Fetch opportunity actuals and ticket revenues in parallel
     all_opp_ids = list(scheduled_ids | manual_ids)
-    actuals, ticket_revenues, attach_map = await _aio.gather(
+    actuals, ticket_revenues = await _aio.gather(
         _fetch_opp_actuals(all_opp_ids),
         _fetch_ticket_revenues(month, all_ticket_ids),
-        _fetch_opp_attachments_map(all_opp_ids),
     )
 
     def _make_job(oid: int, source: str, notes: str = "", committed_by: str = "", committed_at: str = "") -> dict:
@@ -492,8 +438,6 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             "committed_by":      committed_by,
             "committed_at":      committed_at,
             "risk":              _risk_flag(opp, pct_month if n_total else None),
-            "attachments":       attach_map.get(oid, []),
-            "attachment_count":  len(attach_map.get(oid, [])),
         }
 
     jobs: dict[int, dict] = {}
