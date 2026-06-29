@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getWeekSchedule, WeekSchedule, ScheduleSite } from '../lib/api';
+import { getWeekSchedule, emailWeekSchedule, WeekSchedule, ScheduleSite } from '../lib/api';
 
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -107,6 +107,26 @@ export default function WeeklySchedule() {
   const [data, setData]           = useState<WeekSchedule | null>(null);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState('');
+  const [emailState, setEmailState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [emailMsg, setEmailMsg]     = useState('');
+
+  // reset the email button when the viewed week changes
+  useEffect(() => { setEmailState('idle'); setEmailMsg(''); }, [weekStart]);
+
+  async function handleEmail() {
+    if (emailState === 'sending') return;
+    if (!window.confirm('Email this week’s schedule now?')) return;
+    setEmailState('sending');
+    setEmailMsg('');
+    try {
+      const r = await emailWeekSchedule(weekStart);
+      setEmailState('sent');
+      setEmailMsg(`Sent to ${r.recipients.join(', ')}`);
+    } catch (e: any) {
+      setEmailState('error');
+      setEmailMsg(e?.message || 'Send failed');
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -144,7 +164,28 @@ export default function WeeklySchedule() {
               Mon–Fri sites by division &amp; lead — live from Aspire
             </p>
           </div>
-          <ViewToggle active="week" />
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+            <ViewToggle active="week" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {emailMsg && (
+                <span style={{ fontSize: 12, color: emailState === 'error' ? '#b91c1c' : '#15803d' }}>
+                  {emailState === 'sent' ? '✓ ' : ''}{emailMsg}
+                </span>
+              )}
+              <button
+                onClick={handleEmail}
+                disabled={emailState === 'sending' || loading || !data || data.divisions.length === 0}
+                style={{
+                  padding: '7px 14px', borderRadius: 8, border: '1px solid #2563eb',
+                  background: emailState === 'sending' ? '#93c5fd' : '#2563eb', color: '#fff',
+                  fontSize: 13, fontWeight: 700, cursor: emailState === 'sending' ? 'default' : 'pointer',
+                  fontFamily: 'inherit', opacity: (!data || data.divisions.length === 0) ? 0.5 : 1,
+                }}
+              >
+                {emailState === 'sending' ? 'Sending…' : '✉ Email this week'}
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Week nav */}

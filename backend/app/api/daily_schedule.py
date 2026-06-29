@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.api.construction_plan import _aspire, _fetch_opp_actuals
@@ -346,3 +347,134 @@ async def get_week_schedule(start: str | None = None):
     }
     _cache[cache_key] = (payload, _time.time())
     return payload
+
+
+# ── Weekly schedule email ─────────────────────────────────────────────────────
+
+_TYPE_DOT = {"maintenance": "#16a34a", "project": "#7c3aed", "other": "#94a3b8"}
+_DIV_EMOJI = {
+    "Construction": "🏗️", "Residential Maintenance": "🏡",
+    "Commercial Maintenance": "🏢", "Irrigation/Lighting": "💧", "Snow": "❄️",
+}
+
+
+def _render_week_email_html(payload: dict) -> str:
+    """Render the weekly schedule as a table-based HTML email (Outlook-safe)."""
+    days = payload.get("days", [])
+    s    = payload.get("summary", {})
+    # Day column headers (short)
+    def hdr(d):
+        dt = datetime.strptime(d, "%Y-%m-%d")
+        return f'{dt.strftime("%a")} <span style="color:#94a3b8;font-weight:600">{dt.strftime("%-d")}</span>'
+
+    range_lbl = ""
+    if days:
+        a = datetime.strptime(days[0], "%Y-%m-%d").strftime("%b %-d")
+        b = datetime.strptime(days[-1], "%Y-%m-%d").strftime("%b %-d, %Y")
+        range_lbl = f"{a} – {b}"
+
+    def cell(sites: list[dict]) -> str:
+        if not sites:
+            return '<span style="color:#d1d5db">·</span>'
+        out = []
+        for st in sites:
+            dot = _TYPE_DOT.get(st.get("type"), _TYPE_DOT["other"])
+            out.append(
+                f'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;'
+                f'background:{dot};margin-right:6px"></span>{st.get("property","")}'
+            )
+        return '<br>'.join(out)
+
+    div_blocks = []
+    for div in payload.get("divisions", []):
+        rows = []
+        for ld in div.get("leads", []):
+            tds = "".join(
+                f'<td style="padding:6px 10px;border-top:1px solid #f1f5f9;font-size:12px;'
+                f'color:#1f2937;vertical-align:top">{cell(day)}</td>'
+                for day in ld.get("days", [])
+            )
+            rows.append(
+                f'<tr><td style="padding:6px 10px;border-top:1px solid #f1f5f9;font-size:12px;'
+                f'font-weight:700;color:#1f2937;vertical-align:top;white-space:nowrap">{ld.get("lead","")}'
+                f'<div style="font-size:10px;color:#9ca3af;font-weight:600">{ld.get("site_count",0)}</div></td>{tds}</tr>'
+            )
+        day_headers = "".join(
+            f'<th style="padding:7px 10px;text-align:left;font-size:11px;color:#374151;'
+            f'background:#f8fafc;border-bottom:2px solid #e5e7eb">{hdr(d)}</th>'
+            for d in days
+        )
+        emoji = _DIV_EMOJI.get(div["division"], "📍")
+        div_blocks.append(
+            f'<h3 style="margin:22px 0 8px;font-size:15px;color:#111827">{emoji} {div["division"]} '
+            f'<span style="font-size:12px;color:#9ca3af;font-weight:600">'
+            f'{div.get("site_count",0)} visits · {div.get("lead_count",0)} crews</span></h3>'
+            f'<table style="border-collapse:collapse;width:100%;border:1px solid #e5e7eb;border-radius:8px">'
+            f'<thead><tr><th style="padding:7px 10px;text-align:left;font-size:11px;color:#6b7280;'
+            f'background:#f8fafc;border-bottom:2px solid #e5e7eb">Lead</th>{day_headers}</tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table>'
+        )
+
+    legend = (
+        '<div style="margin-top:14px;font-size:12px;color:#6b7280">'
+        f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{_TYPE_DOT["maintenance"]};margin-right:5px"></span>Maintenance'
+        '&nbsp;&nbsp;&nbsp;'
+        f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{_TYPE_DOT["project"]};margin-right:5px"></span>Project'
+        '</div>'
+    )
+
+    return f"""<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:900px;margin:0 auto;color:#111827">
+      <h2 style="margin:0 0 2px;font-size:20px">🗓️ Weekly Schedule</h2>
+      <div style="font-size:14px;color:#6b7280;margin-bottom:4px">{range_lbl}</div>
+      <div style="font-size:13px;color:#374151;margin-bottom:6px">
+        <strong>{s.get("total_sites",0)}</strong> sites &nbsp;·&nbsp;
+        <strong style="color:#15803d">{s.get("maintenance",0)}</strong> maintenance &nbsp;·&nbsp;
+        <strong style="color:#6d28d9">{s.get("project",0)}</strong> projects
+      </div>
+      {''.join(div_blocks) if div_blocks else '<p style="color:#6b7280">No sites scheduled this week.</p>'}
+      {legend if div_blocks else ''}
+    </div>"""
+
+
+def _week_recipients() -> list[str]:
+    raw = (getattr(settings, "SCHEDULE_WEEK_RECIPIENTS", "") or "").strip()
+    if raw:
+        return [r.strip() for r in raw.split(",") if r.strip()]
+    return ["pwinckers1@gmail.com"]
+
+
+class WeekEmailBody(BaseModel):
+    to: list[str] | None = None
+
+
+@router.post("/week/email")
+async def email_week_schedule(start: str | None = None, body: WeekEmailBody | None = None):
+    """Email the weekly schedule (manual send). Defaults to the configured recipient."""
+    from app.services.email_intake import GraphClient
+
+    payload    = await get_week_schedule(start)
+    recipients = (body.to if body and body.to else None) or _week_recipients()
+
+    days = payload.get("days", [])
+    if days:
+        a = datetime.strptime(days[0], "%Y-%m-%d").strftime("%b %-d")
+        b = datetime.strptime(days[-1], "%Y-%m-%d").strftime("%b %-d")
+        subject = f"🗓️ Weekly Schedule — {a}–{b}"
+    else:
+        subject = "🗓️ Weekly Schedule"
+
+    html  = _render_week_email_html(payload)
+    graph = GraphClient()
+    await graph.send_email(
+        mailbox=settings.MS_AP_INBOX,
+        to_addresses=recipients,
+        subject=subject,
+        body_html=html,
+    )
+    logger.info(f"Weekly schedule emailed to {recipients} ({payload['summary']['total_sites']} sites)")
+    return {
+        "ok": True,
+        "recipients": recipients,
+        "week_start": payload.get("week_start"),
+        "sites": payload.get("summary", {}).get("total_sites", 0),
+    }

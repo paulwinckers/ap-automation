@@ -560,6 +560,10 @@ export async function getWeekSchedule(start?: string): Promise<WeekSchedule> {
   return request('GET', `/schedule/week${start ? `?start=${start}` : ''}`);
 }
 
+export async function emailWeekSchedule(start?: string): Promise<{ ok: boolean; recipients: string[]; week_start: string; sites: number }> {
+  return request('POST', `/schedule/week/email${start ? `?start=${start}` : ''}`, {});
+}
+
 // ── Aspire Field Operations ───────────────────────────────────────────────────
 
 export interface FieldOpportunity {
