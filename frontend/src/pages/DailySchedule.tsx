@@ -61,18 +61,6 @@ function TypeBadge({ type }: { type: string }) {
   );
 }
 
-function ReadyBadge({ ready, stage }: { ready?: boolean; stage?: string }) {
-  return (
-    <span
-      title={stage ? `Stage: ${stage}` : undefined}
-      style={{
-        background: ready ? '#dcfce7' : '#fef3c7', color: ready ? '#15803d' : '#b45309',
-        fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
-        whiteSpace: 'nowrap', flexShrink: 0,
-      }}
-    >{ready ? '✓ Ready' : '⏳ Not ready'}</span>
-  );
-}
 
 export default function DailySchedule() {
   const [date, setDate]       = useState<string>(ymd(new Date()));
@@ -180,25 +168,56 @@ export default function DailySchedule() {
                     <span style={{ fontSize: 11, color: '#9ca3af', fontWeight: 600 }}>{ld.site_count}</span>
                   </div>
                   <div>
-                    {ld.sites.map((s, i) => (
-                      <div key={i} style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '8px 14px',
-                        borderTop: i > 0 ? '1px solid #f6f7f9' : undefined,
-                      }}>
-                        <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {s.opp_id
-                            ? <a href={`/field/project/${s.opp_id}`} style={{ color: '#111827', textDecoration: 'none' }}
-                                 onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
-                                 onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}>
-                                {s.property}
-                              </a>
-                            : s.property}
-                        </span>
-                        {s.type === 'project' && <ReadyBadge ready={s.ready} stage={s.stage} />}
-                        <TypeBadge type={s.type} />
-                      </div>
-                    ))}
+                    {ld.sites.map((s, i) => {
+                      // Projects (work orders): filled green/red row, black text.
+                      if (s.type === 'project') {
+                        const ready = !!s.ready;
+                        return (
+                          <div key={i} style={{ padding: '5px 14px', borderTop: i > 0 ? '1px solid #f6f7f9' : undefined }}>
+                            <div
+                              title={s.stage ? `Stage: ${s.stage}` : undefined}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                background: ready ? '#86efac' : '#fca5a5', color: '#000',
+                                borderRadius: 8, padding: '6px 10px',
+                              }}
+                            >
+                              <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {s.opp_id
+                                  ? <a href={`/field/project/${s.opp_id}`} style={{ color: '#000', textDecoration: 'none' }}
+                                       onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+                                       onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}>
+                                      {s.property}
+                                    </a>
+                                  : s.property}
+                              </span>
+                              <span style={{ flexShrink: 0, fontWeight: 800, fontSize: 10, letterSpacing: '0.04em' }}>
+                                {ready ? 'READY' : 'NOT READY'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      // Maintenance / other — plain row.
+                      return (
+                        <div key={i} style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '8px 14px',
+                          borderTop: i > 0 ? '1px solid #f6f7f9' : undefined,
+                        }}>
+                          <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {s.opp_id
+                              ? <a href={`/field/project/${s.opp_id}`} style={{ color: '#111827', textDecoration: 'none' }}
+                                   onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+                                   onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}>
+                                  {s.property}
+                                </a>
+                              : s.property}
+                          </span>
+                          <TypeBadge type={s.type} />
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
