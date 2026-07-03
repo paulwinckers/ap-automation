@@ -371,12 +371,24 @@ class EmailIntakeService:
 
         # Skip payment remittance advice — these are customers paying US, not vendor bills
         # e.g. "Payment Remittance Advice" from NVA, strata corps, property managers, etc.
+        # "remittance slip" is how QuickBooks titles the payment confirmation WE send a
+        # vendor when we pay them (e.g. "Remittance Slip from Dario's Landscape Services") —
+        # it is outbound, never a payable.
         remittance_keywords = [
             "remittance advice", "payment remittance", "remittance notice",
             "eft remittance", "ach remittance", "wire remittance",
-            "remittance confirmation", "payment advice",
+            "remittance confirmation", "payment advice", "remittance slip",
         ]
         if any(k in subject_lower for k in remittance_keywords):
+            return "skip"
+        # QuickBooks emails our own outbound remittance slips / payment confirmations
+        # from this address with OUR company as the display name. Skip those — but a
+        # vendor who invoices us via QBO also uses this address (with THEIR name), so
+        # only skip when the sender display name is us.
+        from_name = email.get("from", {}).get("emailAddress", {}).get("name", "").lower()
+        if sender == "quickbooks@notification.intuit.com" and any(
+            p in from_name for p in ("darios landscape", "dario's landscape")
+        ):
             return "skip"
         # Also catch body-level remittance markers (subject may just say "Payment")
         body_lower = body_content.lower() if body_content else ""
