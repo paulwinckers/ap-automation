@@ -738,9 +738,10 @@ class Database:
         )
 
     async def mark_forwarded(self, invoice_id: int, forwarded_to: str) -> None:
-        """Record that a job-cost invoice was emailed to a recipient for manual processing."""
+        """Record that a job-cost invoice was emailed to a recipient for manual processing.
+        Clears any pending-forward queue message so the row shows only the 'Sent to' badge."""
         await self._x(
-            "UPDATE invoices SET forwarded_to = ? WHERE id = ?",
+            "UPDATE invoices SET forwarded_to = ?, error_message = NULL WHERE id = ?",
             [forwarded_to, invoice_id],
         )
 

@@ -185,16 +185,26 @@ async def route_invoice(
         return await _route_to_qbo(invoice, gl_account, db, qbo, employee_name, gl_name=gl_name, notify_ap=notify_ap)
 
     else:  # QUEUE
-        # Use a meaningful reason depending on why we're queuing
-        if vendor_rule.type == VendorType.JOB_COST or (
-            vendor_rule.type == VendorType.MIXED and effective_po
-        ):
-            reason = "aspire_not_configured"
+        # These are job-cost / mixed-with-PO vendors that don't auto-post to Aspire.
+        # The intended handling is to email the invoice to the vendor's forward_to
+        # address (set per-vendor in the vendor profile) for manual Aspire entry.
+        forward_target = (vendor_rule.forward_to if vendor_rule else None) or getattr(settings, "AP_FORWARD_EMAIL", None)
+
+        if forward_target:
+            queue_msg = f"Pending forward to {forward_target}"
         else:
-            reason = "mixed_vendor_no_po"
-        await _queue(invoice, db, reason=reason)
-        # Notify the assigned contact (e.g. Keeland) so they can enter it in Aspire
-        await _notify_queued(invoice, vendor_rule, reason, db)
+            queue_msg = "No forwarding email set for this vendor"
+        await _queue(invoice, db, reason=queue_msg)
+
+        # Attempt the forward and reflect the real outcome on the invoice.
+        result = await _notify_queued(invoice, vendor_rule, db)
+        if result["sent"]:
+            pass  # mark_forwarded set forwarded_to + cleared the message → shows "Sent to X"
+        elif result["error"]:
+            # Surface the failure instead of leaving a stale "pending" message.
+            err = result["error"][:140]
+            await db.mark_queued(invoice.id, f"⚠ Forward to {result['target'] or 'AP'} failed — {err}")
+        # else: no forward email configured — the honest "No forwarding email…" message stays.
         return RoutingOutcome.QUEUED
 
 
@@ -676,21 +686,23 @@ async def _route_to_qbo_purchase(
         return RoutingOutcome.ERROR
 
 
-async def _notify_queued(invoice: Invoice, vendor_rule, reason: str, db: Optional[Database] = None) -> None:
+async def _notify_queued(invoice: Invoice, vendor_rule, db: Optional[Database] = None) -> dict:
     """
-    Email the vendor's assigned contact when a job-cost invoice queues for Aspire.
+    Email the vendor's forward_to contact when a job-cost invoice queues for review.
     Falls back to settings.AP_FORWARD_EMAIL if the vendor rule has no forward_to.
-    Also marks forwarded_to on the invoice so the dashboard badge updates.
-    Silently swallows failures so a missed email never blocks the queue write.
+    On success, marks forwarded_to on the invoice so the dashboard shows "Sent to X".
+
+    Returns {attempted, sent, target, error} so the caller can surface a failed
+    forward instead of it being silently swallowed.
     """
     forward_to = (vendor_rule.forward_to if vendor_rule else None) or getattr(settings, "AP_FORWARD_EMAIL", None)
     if not forward_to:
-        return
+        return {"attempted": False, "sent": False, "target": None, "error": None}
+    if not settings.MS_AP_INBOX:
+        logger.warning("MS_AP_INBOX not set — cannot send queue notification email")
+        return {"attempted": False, "sent": False, "target": forward_to, "error": "MS_AP_INBOX not configured"}
     try:
         from app.services.email_intake import GraphClient
-        if not settings.MS_AP_INBOX:
-            logger.warning("MS_AP_INBOX not set — skipping queue notification email")
-            return
 
         po_info = invoice.po_number_override or invoice.po_number or "none on file"
         amount  = f"${invoice.total_amount:,.2f}" if invoice.total_amount else "unknown"
@@ -700,12 +712,8 @@ async def _notify_queued(invoice: Invoice, vendor_rule, reason: str, db: Optiona
             "expense":     "Personal expense",
             "credit_memo": "Credit memo / return",
         }.get(invoice.doc_type or "", "On account (vendor invoice)")
-        reason_label = {
-            "aspire_not_configured":  "Aspire not yet connected — manual entry required",
-            "mixed_vendor_no_po":     "No PO number found on invoice",
-            "job_cost_no_po":         "No PO number — cannot post to Aspire",
-            "job_cost_card_receipt":  "Job cost — enter in Aspire manually (not posted to QBO)",
-        }.get(reason, reason.replace("_", " ").title())
+        reason_label = "Enter in Aspire manually" if invoice.doc_type in ("mastercard", "debit_card") \
+            else "Job cost invoice — enter in Aspire against the PO"
 
         # Build a subject that makes the payment method obvious for card receipts
         if invoice.doc_type == "mastercard":
@@ -773,8 +781,10 @@ async def _notify_queued(invoice: Invoice, vendor_rule, reason: str, db: Optiona
                 await db.mark_forwarded(invoice.id, forward_to)
         finally:
             await graph.close()
+        return {"attempted": True, "sent": True, "target": forward_to, "error": None}
     except Exception as e:
-        logger.warning(f"Queue notification failed (non-fatal): {e}")
+        logger.warning(f"Queue notification failed for invoice {invoice.id} → {forward_to}: {e}")
+        return {"attempted": True, "sent": False, "target": forward_to, "error": str(e)}
 
 
 async def _route_to_qbo_vendor_credit(
