@@ -1005,6 +1005,29 @@ async def mark_as_card_purchase(
     raise HTTPException(status_code=500, detail=f"QBO posting failed: {fresh.get('error_message') or 'unknown error'}")
 
 
+@router.get("/debug-qbo-accounts")
+async def debug_qbo_accounts():
+    """List QBO Credit Card / liability / bank accounts (Name, AcctNum, Active) to
+    diagnose payment-account lookups (e.g. the MasterCard 2240 not-found error)."""
+    queries = {
+        "credit_card": "SELECT Id, Name, AcctNum, AccountType, Active FROM Account WHERE AccountType = 'Credit Card' MAXRESULTS 100",
+        "liability":   "SELECT Id, Name, AcctNum, AccountType, Active FROM Account WHERE AccountType IN ('Other Current Liability','Long Term Liability') MAXRESULTS 200",
+        "bank":        "SELECT Id, Name, AcctNum, AccountType, Active FROM Account WHERE AccountType = 'Bank' MAXRESULTS 100",
+    }
+    out: dict = {}
+    for label, q in queries.items():
+        try:
+            res = await _qbo._get("query", {"query": q})
+            accts = res.get("QueryResponse", {}).get("Account", [])
+            out[label] = [
+                {"Id": a.get("Id"), "Name": a.get("Name"), "AcctNum": a.get("AcctNum"), "Active": a.get("Active")}
+                for a in accts
+            ]
+        except Exception as e:
+            out[label] = {"error": str(e)}
+    return out
+
+
 @router.post("/archive-unknown")
 async def archive_unknown_invoices(db: Database = Depends(get_db)):
     """Bulk archive all invoices with no vendor name (junk records)."""
