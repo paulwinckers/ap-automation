@@ -27,7 +27,7 @@ from app.services.aspire import AspireClient
 from app.services.extractor import InvoiceExtractor
 from app.services.qbo import QBOClient
 from app.services.r2 import upload_invoice_pdf, get_file_bytes
-from app.services.routing import RoutingOutcome, route_invoice
+from app.services.routing import RoutingOutcome, route_invoice, _route_to_qbo_purchase
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -57,6 +57,12 @@ class POOverrideRequest(BaseModel):
 
 class OverheadRequest(BaseModel):
     gl_account:  Optional[str] = None
+    reviewed_by: str = "ap_user"
+
+
+class CardPurchaseRequest(BaseModel):
+    method:      str                    # "mastercard" or "debit_card"
+    gl_account:  Optional[str] = None   # expense (category) GL; falls back to vendor default
     reviewed_by: str = "ap_user"
 
 
@@ -905,6 +911,98 @@ async def mark_as_overhead(
     except Exception as e:
         await db.mark_error(invoice_id, str(e))
         raise HTTPException(status_code=500, detail=f"QBO posting failed: {e}")
+
+
+@router.post("/{invoice_id}/card-purchase")
+async def mark_as_card_purchase(
+    invoice_id: int,
+    body:       CardPurchaseRequest,
+    db:         Database = Depends(get_db),
+):
+    """Reclassify a queued/errored invoice as a card-paid receipt and post it to QBO
+    as a Purchase (expense paid from the card account) instead of a Bill/AP.
+
+    Payment (credit) side: MasterCard 2240 or Debit 1000.
+    Expense (debit) side: provided gl_account, else the vendor rule's default GL.
+    """
+    method = (body.method or "").strip().lower()
+    if method not in ("mastercard", "debit_card"):
+        raise HTTPException(status_code=400, detail="method must be 'mastercard' or 'debit_card'")
+    payment_account = settings.MASTERCARD_GL if method == "mastercard" else settings.DEBIT_CARD_GL
+
+    row = await db.get_invoice(invoice_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if row["status"] not in ("queued", "error"):
+        raise HTTPException(status_code=400, detail="Only queued or error invoices can be reclassified")
+
+    # Expense GL: provided, else vendor default. If neither → ask the caller for one.
+    gl_account = body.gl_account
+    gl_name    = None
+    if not gl_account:
+        vendor_rule = await db.get_vendor_rule_by_name(row["vendor_name"])
+        if vendor_rule:
+            gl_account = vendor_rule.default_gl_account
+            gl_name    = vendor_rule.default_gl_name
+    if not gl_account:
+        raise HTTPException(status_code=422, detail="No expense GL — provide one or add a default GL to the vendor rule")
+
+    # Year guard — same as route_invoice / overhead.
+    _inv_date_str = row.get("invoice_date") or ""
+    _current_year = _date.today().year
+    try:
+        _inv_year = int(_inv_date_str[:4]) if len(_inv_date_str) >= 4 else _current_year
+    except (ValueError, TypeError):
+        _inv_year = _current_year
+    if _inv_year != _current_year:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invoice date '{_inv_date_str}' is not in the current year ({_current_year}). "
+                   f"Correct the date before posting.",
+        )
+
+    raw = json.loads(row.get("intake_raw") or "{}")
+    r2_key = row.get("pdf_r2_key")
+    file_bytes = await get_file_bytes(r2_key) if r2_key else None
+
+    # Persist doc_type so a later Retry keeps the card routing.
+    await db._x("UPDATE invoices SET doc_type = ? WHERE id = ?", [method, invoice_id])
+
+    invoice = Invoice(
+        id             = invoice_id,
+        status         = InvoiceStatus.QUEUED,
+        vendor_name    = row["vendor_name"],
+        invoice_number = row["invoice_number"],
+        invoice_date   = row["invoice_date"],
+        due_date       = row["due_date"],
+        subtotal       = row["subtotal"],
+        tax_amount     = row["tax_amount"],
+        total_amount   = row["total_amount"],
+        currency       = row.get("currency") or "CAD",
+        pdf_filename   = row["pdf_filename"],
+        doc_type       = method,
+        gl_account     = gl_account,
+        file_bytes     = file_bytes,
+        line_items     = [LineItem(**li) for li in raw.get("line_items", [])],
+        tax_lines      = [TaxLine(**tl) for tl in raw.get("tax_lines", [])],
+    )
+
+    await db.audit(invoice_id, "reclassify_card", body.reviewed_by, {
+        "method": method, "gl_account": gl_account, "payment_account": payment_account,
+    })
+
+    outcome = await _route_to_qbo_purchase(
+        invoice, gl_account, db, _qbo, gl_name=gl_name, payment_account=payment_account,
+    )
+    if outcome == RoutingOutcome.POSTED_QBO:
+        return {
+            "invoice_id": invoice_id, "outcome": "posted_qbo", "method": method,
+            "payment_account": payment_account, "gl_account": gl_account,
+            "message": f"Posted to QBO as a {'MasterCard' if method == 'mastercard' else 'Debit card'} "
+                       f"purchase (paid from {payment_account})",
+        }
+    fresh = await db.get_invoice(invoice_id)
+    raise HTTPException(status_code=500, detail=f"QBO posting failed: {fresh.get('error_message') or 'unknown error'}")
 
 
 @router.post("/archive-unknown")

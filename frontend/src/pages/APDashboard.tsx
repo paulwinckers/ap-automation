@@ -134,6 +134,7 @@ export default function APDashboard() {
   const [pulse, setPulse]             = useState(false);
   const [retrying, setRetrying]       = useState<number | null>(null);
   const [archiving, setArchiving]     = useState<number | null>(null);
+  const [cardSaving, setCardSaving]   = useState<number | null>(null);
   const [syncingQbo, setSyncingQbo]   = useState<number | null>(null);
   const [poInputs, setPoInputs]       = useState<Record<number, string>>({});
   const [poSaving, setPoSaving]       = useState<number | null>(null);
@@ -229,6 +230,35 @@ export default function APDashboard() {
       alert('Retry failed — check Railway logs');
     } finally {
       setRetrying(null);
+    }
+  }
+
+  async function markCard(id: number, method: 'mastercard' | 'debit_card') {
+    const label = method === 'mastercard' ? 'MasterCard (2240)' : 'Debit card (1000)';
+    setCardSaving(id);
+    try {
+      const post = (gl?: string) => fetch(`${API}/invoices/${id}/card-purchase`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(gl ? { method, gl_account: gl } : { method }),
+      });
+      let res = await post();
+      if (res.status === 422) {
+        // Vendor has no default expense GL — ask for one and retry.
+        const gl = window.prompt(`Expense (category) GL for this ${label} purchase — e.g. 6820:`);
+        if (!gl || !gl.trim()) { setCardSaving(null); return; }
+        res = await post(gl.trim());
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        alert(`Post failed: ${err.detail || res.statusText}`);
+      } else {
+        await refresh();
+      }
+    } catch {
+      alert('Card post failed — check Railway logs');
+    } finally {
+      setCardSaving(null);
     }
   }
 
@@ -1080,6 +1110,34 @@ export default function APDashboard() {
                           ✎ Fix date
                         </button>
                       )
+                    )}
+
+                    {/* Paid by card — reclassify a bill as a card-paid receipt (posts a QBO purchase) */}
+                    {(e.status === 'queued' || e.status === 'error') && view === 'active' && (
+                      <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                        <button onClick={() => markCard(e.id, 'mastercard')}
+                          disabled={cardSaving === e.id}
+                          title="Paid by MasterCard — post to QBO as an expense paid from 2240"
+                          style={{
+                            fontSize: 10, padding: '2px 7px', borderRadius: 5,
+                            background: '#ecfeff', border: '1px solid #22d3ee',
+                            color: '#0e7490', fontWeight: 600,
+                            cursor: cardSaving === e.id ? 'wait' : 'pointer',
+                          }}>
+                          {cardSaving === e.id ? '…' : '💳 Paid by MC'}
+                        </button>
+                        <button onClick={() => markCard(e.id, 'debit_card')}
+                          disabled={cardSaving === e.id}
+                          title="Paid by Debit — post to QBO as an expense paid from 1000"
+                          style={{
+                            fontSize: 10, padding: '2px 7px', borderRadius: 5,
+                            background: '#eff6ff', border: '1px solid #60a5fa',
+                            color: '#1d4ed8', fontWeight: 600,
+                            cursor: cardSaving === e.id ? 'wait' : 'pointer',
+                          }}>
+                          {cardSaving === e.id ? '…' : '💳 Paid by Debit'}
+                        </button>
+                      </div>
                     )}
                   </td>
                   <td style={{ ...styles.td, fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>
