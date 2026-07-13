@@ -27,43 +27,6 @@ router = APIRouter(prefix="/aspire/field", tags=["aspire-field"])
 
 _aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)
 
-@router.get("/debug-access")
-async def debug_aspire_access():
-    """Diagnose why some entities return empty in production: shows the (masked)
-    Aspire credentials this instance uses and whether each entity errors vs returns
-    an empty list. Temporary — remove after diagnosis."""
-    def _mask(s: str) -> str:
-        s = s or ""
-        return f"len={len(s)} {s[:4]}…{s[-4:]}" if len(s) >= 8 else f"len={len(s)}"
-
-    out: dict = {
-        "config": {
-            "base_url":          settings.ASPIRE_BASE_URL,
-            "token_url":         settings.ASPIRE_TOKEN_URL,
-            "sandbox":           settings.ASPIRE_SANDBOX,
-            "dashboard_sandbox": settings.ASPIRE_DASHBOARD_SANDBOX,
-            "client_id":         _mask(settings.ASPIRE_CLIENT_ID or ""),
-            "client_secret":     _mask(settings.ASPIRE_CLIENT_SECRET or ""),
-            "field_client_base": _aspire.base_url,
-        },
-        "entities": {},
-    }
-    probes = [
-        ("Contacts_Employee", "Contacts", {"$filter": "Active eq true and ContactTypeName eq 'Employee'", "$top": "3"}),
-        ("Properties",        "Properties", {"$top": "3"}),
-        ("CatalogItems",      "CatalogItems", {"$top": "3"}),
-        ("Opportunities",     "Opportunities", {"$top": "3"}),
-        ("Routes",            "Routes", {"$top": "3"}),
-    ]
-    for label, entity, params in probes:
-        try:
-            res = await _aspire._get(entity, params)
-            out["entities"][label] = {"count": len(_aspire._extract_list(res)), "error": None}
-        except Exception as e:
-            out["entities"][label] = {"count": None, "error": str(e)[:400]}
-    return out
-
-
 MAX_FILES     = 10
 MAX_PHOTO_SIZE = 15  * 1024 * 1024   # 15 MB per photo/image
 MAX_VIDEO_SIZE = 200 * 1024 * 1024   # 200 MB per video clip

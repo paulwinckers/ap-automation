@@ -93,18 +93,31 @@ class AspireClient:
 
         raise last_exc  # type: ignore[misc]
 
+    def _invalidate_token(self) -> None:
+        """Drop the cached token so the next call mints a fresh one."""
+        self._token = None
+        self._token_expires_at = 0.0
+
     async def _get(self, path: str, params: dict = None) -> dict:
-        token = await self._get_token()
-        resp = await self._http.get(
-            f"{self.base_url}/{path.lstrip('/')}",
-            params=params,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json;odata.metadata=minimal",
-            },
-        )
-        resp.raise_for_status()
-        return resp.json()
+        # Retry once on 401/403: a stale/invalid cached token would otherwise
+        # silently poison this client instance for its whole 23h cache life
+        # (callers swallow the error into an empty list). Refreshing self-heals it.
+        for attempt in range(2):
+            token = await self._get_token()
+            resp = await self._http.get(
+                f"{self.base_url}/{path.lstrip('/')}",
+                params=params,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json;odata.metadata=minimal",
+                },
+            )
+            if resp.status_code in (401, 403) and attempt == 0:
+                logger.warning(f"Aspire GET {path} → {resp.status_code}; refreshing token and retrying")
+                self._invalidate_token()
+                continue
+            resp.raise_for_status()
+            return resp.json()
 
     @staticmethod
     def _extract_list(result) -> list:
@@ -197,16 +210,23 @@ class AspireClient:
         return resp.json() if resp.content else {}
 
     async def _post(self, path: str, body: dict):
-        token = await self._get_token()
-        resp = await self._http.post(
-            f"{self.base_url}/{path.lstrip('/')}",
-            json=body,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-        )
+        resp = None
+        for attempt in range(2):
+            token = await self._get_token()
+            resp = await self._http.post(
+                f"{self.base_url}/{path.lstrip('/')}",
+                json=body,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+            )
+            if resp.status_code in (401, 403) and attempt == 0:
+                logger.warning(f"Aspire POST {path} → {resp.status_code}; refreshing token and retrying")
+                self._invalidate_token()
+                continue
+            break
         if not resp.is_success:
             logger.error(
                 f"Aspire POST {path} failed {resp.status_code}: {resp.text[:500]}"
