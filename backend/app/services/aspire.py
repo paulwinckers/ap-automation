@@ -627,8 +627,13 @@ class AspireClient:
                         "FullName":  name,
                         "Email":     email,
                     })
-            logger.info(f"Employee list from Contacts: {len(out)}")
-            return out
+            if out:
+                logger.info(f"Employee list from Contacts: {len(out)}")
+                return out
+            # Contacts returned an empty list (e.g. the API app lacks Contacts read
+            # permission) — fall through to the Opportunities-derived fallback so the
+            # dropdown isn't blank.
+            logger.info("Contacts returned no employees — falling back to Opportunities")
         except Exception as e:
             logger.info(f"Contacts endpoint unavailable ({e}), falling back to Opportunities")
 

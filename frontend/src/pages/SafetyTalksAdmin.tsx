@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { listSafetyTalks, getSafetyTalk, type SafetyTalkSummary, type SafetyTalkDetail } from '../lib/api';
+import { listSafetyTalks, getSafetyTalk, deleteSafetyTalk, type SafetyTalkSummary, type SafetyTalkDetail } from '../lib/api';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -55,9 +55,10 @@ function Td({ children, align = 'left', style }: {
 
 // ── Expanded detail row ───────────────────────────────────────────────────────
 
-function DetailRow({ talkId, colSpan }: { talkId: number; colSpan: number }) {
+function DetailRow({ talkId, colSpan, onDeleted }: { talkId: number; colSpan: number; onDeleted: () => void }) {
   const [detail, setDetail] = useState<SafetyTalkDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     getSafetyTalk(talkId)
@@ -65,6 +66,18 @@ function DetailRow({ talkId, colSpan }: { talkId: number; colSpan: number }) {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [talkId]);
+
+  async function handleDelete() {
+    if (!window.confirm('Delete this safety talk permanently? This cannot be undone.')) return;
+    setDeleting(true);
+    try {
+      await deleteSafetyTalk(talkId);
+      onDeleted();
+    } catch (e: any) {
+      alert(`Delete failed: ${e?.message || 'unknown error'}`);
+      setDeleting(false);
+    }
+  }
 
   return (
     <tr style={{ background: '#eff6ff' }}>
@@ -114,6 +127,21 @@ function DetailRow({ talkId, colSpan }: { talkId: number; colSpan: number }) {
                 </a>
               </div>
             )}
+          </div>
+        )}
+        {detail && (
+          <div style={{ marginTop: 12, textAlign: 'right' }}>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              style={{
+                fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 6,
+                border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c',
+                cursor: deleting ? 'wait' : 'pointer',
+              }}
+            >
+              {deleting ? 'Deleting…' : '🗑 Delete talk'}
+            </button>
           </div>
         )}
       </td>
@@ -354,7 +382,7 @@ export default function SafetyTalksAdmin() {
                       </tr>
 
                       {expanded === talk.id && (
-                        <DetailRow talkId={talk.id} colSpan={COL_COUNT} />
+                        <DetailRow talkId={talk.id} colSpan={COL_COUNT} onDeleted={() => { setExpanded(null); load(); }} />
                       )}
                     </React.Fragment>
                   ))}

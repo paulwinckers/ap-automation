@@ -1476,6 +1476,10 @@ export async function createSafetyTalk(p: SafetyTalkPayload): Promise<SafetyTalk
   return request<SafetyTalkDetail>('POST', '/safety/talks', form, true);
 }
 
+export async function deleteSafetyTalk(id: number): Promise<{ ok: boolean; deleted_id: number }> {
+  return request('DELETE', `/safety/talks/${id}`);
+}
+
 export async function listSafetyTalks(start?: string, end?: string): Promise<SafetyTalkSummary[]> {
   const params = new URLSearchParams();
   if (start) params.set('start_date', start);

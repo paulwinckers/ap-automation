@@ -238,6 +238,18 @@ async def get_safety_talk(talk_id: int, db: Database = Depends(get_db)):
     )
 
 
+@router.delete("/talks/{talk_id}")
+async def delete_safety_talk(talk_id: int, db: Database = Depends(get_db)):
+    """Delete a safety talk and its attendee rows."""
+    rows = await db._q("SELECT id FROM safety_talks WHERE id = ?", [talk_id])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Safety talk not found")
+    await db._x("DELETE FROM safety_talk_attendees WHERE talk_id = ?", [talk_id])
+    await db._x("DELETE FROM safety_talks WHERE id = ?", [talk_id])
+    logger.info(f"Safety talk deleted: id={talk_id}")
+    return {"ok": True, "deleted_id": talk_id}
+
+
 # ── AI: topic talking points ──────────────────────────────────────────────────
 
 TIPS_PROMPT = """\
