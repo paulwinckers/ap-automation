@@ -86,13 +86,27 @@ function isCurrentMonth(year: number, month: number): boolean {
   return year === now.getFullYear() && month === now.getMonth();
 }
 
+// Deep link to the posted QBO transaction, using the right editor per doc type.
+function qboTxnUrl(entry: FeedEntry): string | null {
+  if (!entry.qbo_bill_id || entry.destination !== 'qbo') return null;
+  const id = entry.qbo_bill_id;
+  if (entry.doc_type === 'credit_memo') return `https://app.qbo.intuit.com/app/vendorcredit?txnId=${id}`;
+  if (entry.doc_type === 'mastercard' || entry.doc_type === 'debit_card' || entry.doc_type === 'expense')
+    return `https://app.qbo.intuit.com/app/expense?txnId=${id}`;
+  return `https://app.qbo.intuit.com/app/bill?txnId=${id}`;
+}
+
 function statusBadge(entry: FeedEntry) {
   if (entry.status === 'posted') {
     const dest = entry.destination === 'aspire' ? 'Aspire' : 'QBO';
-    return (
-      <span style={{ background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: 12, fontSize: 12, fontWeight: 600 }}>
-        ✓ {dest}
-      </span>
+    const url  = qboTxnUrl(entry);
+    const style = { background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: 12, fontSize: 12, fontWeight: 600, textDecoration: 'none', display: 'inline-block', whiteSpace: 'nowrap' as const };
+    return url ? (
+      <a href={url} target="_blank" rel="noreferrer" title="Open & edit in QuickBooks" style={style}>
+        ✓ {dest} ↗
+      </a>
+    ) : (
+      <span style={style}>✓ {dest}</span>
     );
   }
   if (entry.forwarded_to) {
@@ -1143,7 +1157,7 @@ export default function APDashboard() {
                   <td style={{ ...styles.td, fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>
                     {e.qbo_bill_id ? (
                       <a
-                        href={`https://app.qbo.intuit.com/app/bill?txnId=${e.qbo_bill_id}`}
+                        href={qboTxnUrl(e) ?? `https://app.qbo.intuit.com/app/bill?txnId=${e.qbo_bill_id}`}
                         target="_blank"
                         rel="noreferrer"
                         style={{ color: '#2563eb', textDecoration: 'none' }}
