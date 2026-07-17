@@ -25,6 +25,12 @@ const DASHBOARDS = [
     sub:   'Sites visited today by division & lead',
   },
   {
+    to:    '/dashboards/customer',
+    icon:  '🏢',
+    label: 'Customer Dashboard',
+    sub:   'Weekly service report for a commercial customer',
+  },
+  {
     to:    '/dashboards/schedule/week',
     icon:  '📆',
     label: 'Weekly Schedule',
