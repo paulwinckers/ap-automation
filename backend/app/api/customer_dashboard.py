@@ -53,7 +53,7 @@ def _tz() -> ZoneInfo:
 
 
 def _week_bounds(week_start: str | None):
-    """Return (this_mon, next_mon, next_end) as date objects; Mon–Sun weeks."""
+    """Return (this_start, next_start, next_end) as dates; Saturday–Friday weeks."""
     tz = _tz()
     if week_start:
         try:
@@ -63,8 +63,9 @@ def _week_bounds(week_start: str | None):
     else:
         anchor = datetime.now(tz)
     d = anchor.date() if hasattr(anchor, "date") else anchor
-    this_mon = d - timedelta(days=d.weekday())
-    return this_mon, this_mon + timedelta(days=7), this_mon + timedelta(days=14)
+    # Saturday on/before the anchor. weekday(): Mon=0..Sat=5..Sun=6
+    this_sat = d - timedelta(days=(d.weekday() - 5) % 7)
+    return this_sat, this_sat + timedelta(days=7), this_sat + timedelta(days=14)
 
 
 # ── Aspire fetch helpers ──────────────────────────────────────────────────────
@@ -151,17 +152,20 @@ async def _fetch_ticket_photos(db: Database, ticket_ids: list[int]) -> dict[int,
             f"""SELECT work_ticket_id, r2_key, file_name, file_extension
                 FROM job_attachments
                 WHERE work_ticket_id IN ({ph}) AND is_active = 1
-                ORDER BY uploaded_at DESC""",
+                ORDER BY uploaded_at ASC""",
             ticket_ids,
         )
     except Exception as e:
         logger.warning(f"job_attachments lookup failed (photos omitted): {e}")
         return {}
 
+    MAX_PER_VISIT = 4
     for r in rows:
         ext = (r.get("file_extension") or "").lstrip(".").lower()
         if ext and ext not in ("jpg", "jpeg", "png", "heic", "webp", "gif"):
             continue  # only image attachments become thumbnails
+        if len(out[r["work_ticket_id"]]) >= MAX_PER_VISIT:
+            continue  # cap at the first 4 photos per visit
         try:
             url = await r2.get_presigned_url(r["r2_key"], expires_in=6 * 3600)
         except Exception as e:

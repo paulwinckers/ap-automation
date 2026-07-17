@@ -17,10 +17,11 @@ import {
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
-function mondayOf(date: string): string {
+// Saturday on/before the given date (weeks run Saturday–Friday).
+function weekStartOf(date: string): string {
   const [y, m, d] = date.split('-').map(Number);
   const dt = new Date(y, m - 1, d);
-  dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
+  dt.setDate(dt.getDate() - ((dt.getDay() + 1) % 7));
   return ymd(dt);
 }
 function addDays(date: string, n: number): string {
@@ -44,7 +45,7 @@ function Thumbs({ t }: { t: CustomerTicket }) {
   if (!t.photos?.length) return null;
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 5 }}>
-      {t.photos.map((p, i) => (
+      {t.photos.slice(0, 4).map((p, i) => (
         <a key={i} href={p.url} target="_blank" rel="noreferrer" title={p.file_name || 'Photo'}>
           <img src={p.url} alt="" style={{ width: 60, height: 60, objectFit: 'cover', borderRadius: 6, border: '1px solid #e5e7eb' }} />
         </a>
@@ -98,7 +99,7 @@ export default function CustomerDashboard() {
   const [query, setQuery]       = useState('');
   const [results, setResults]   = useState<CustomerSearchResult[]>([]);
   const [picked, setPicked]     = useState<CustomerSearchResult | null>(null);
-  const [weekStart, setWeekStart] = useState<string>(mondayOf(ymd(new Date())));
+  const [weekStart, setWeekStart] = useState<string>(weekStartOf(ymd(new Date())));
   const [report, setReport]     = useState<CustomerReport | null>(null);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState('');
@@ -147,7 +148,7 @@ export default function CustomerDashboard() {
     }
   }
 
-  const isThisWeek = weekStart === mondayOf(ymd(new Date()));
+  const isThisWeek = weekStart === weekStartOf(ymd(new Date()));
 
   return (
     <div style={{ background: '#f8fafc', minHeight: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: '28px 28px 60px' }}>
@@ -211,7 +212,7 @@ export default function CustomerDashboard() {
                 <div className="no-print" style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button onClick={() => setWeekStart(addDays(weekStart, -7))} style={btn}>← Prev</button>
                   <button onClick={() => setWeekStart(addDays(weekStart, 7))} style={btn}>Next →</button>
-                  {!isThisWeek && <button onClick={() => setWeekStart(mondayOf(ymd(new Date())))} style={btn}>This week</button>}
+                  {!isThisWeek && <button onClick={() => setWeekStart(weekStartOf(ymd(new Date())))} style={btn}>This week</button>}
                   <button onClick={() => window.print()} style={{ ...btn, background: '#f0fdf4', borderColor: '#86efac', color: '#166534' }}>🖨 Print / PDF</button>
                   <button onClick={() => setEmailOpen(o => !o)} style={{ ...btn, background: '#2563eb', borderColor: '#2563eb', color: '#fff' }}>✉ Email report</button>
                 </div>
