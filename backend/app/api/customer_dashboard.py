@@ -19,7 +19,9 @@ Photos: crew site photos are pulled from the D1 `job_attachments` table
 This module is self-contained and does NOT touch the invoice-routing core.
 """
 
+import html as _html
 import logging
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -178,6 +180,20 @@ async def _fetch_ticket_photos(db: Database, ticket_ids: list[int]) -> dict[int,
 
 # ── Report assembly ───────────────────────────────────────────────────────────
 
+def _clean_notes(s: str | None) -> str:
+    """Aspire stores work-ticket Notes as rich-text HTML. Reduce to readable
+    plain text: <br>/<p> → newlines, strip tags, decode entities (&amp; → &)."""
+    if not s:
+        return ""
+    s = re.sub(r"<\s*br\s*/?>", "\n", s, flags=re.I)
+    s = re.sub(r"</\s*p\s*>", "\n", s, flags=re.I)
+    s = re.sub(r"<[^>]+>", "", s)          # strip remaining tags
+    s = _html.unescape(s)                   # &amp; → &, &lt; → <, etc.
+    s = re.sub(r"[ \t]+\n", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
 def _is_construction(div: str) -> bool:
     return (div or "").strip().lower() == "construction"
 
@@ -226,7 +242,7 @@ async def get_customer_report(company_id: int, week_start: str | None, db: Datab
             "scheduled_date":     (t.get("ScheduledStartDate") or "")[:10],
             "complete_date":      (t.get("CompleteDate") or "")[:10],
             "crew":               t.get("CrewLeaderName") or "",
-            "notes":              (t.get("Notes") or "").strip(),
+            "notes":              _clean_notes(t.get("Notes")),
             "photos":             photo_map.get(wt, []),
         }
 
