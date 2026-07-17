@@ -562,6 +562,60 @@ export async function getWeekSchedule(start?: string): Promise<WeekSchedule> {
   return request('GET', `/schedule/week${start ? `?start=${start}` : ''}`);
 }
 
+// ── Customer Dashboard (commercial customer service report) ────────────────────
+
+export interface CustomerSearchResult { company_id: number; company_name: string; }
+export interface CustomerPhoto { url: string; file_name: string | null; }
+export interface CustomerTicket {
+  work_ticket_id: number;
+  work_ticket_number: number | string | null;
+  opp_id: number | null;
+  property: string;
+  division: string;
+  service: string;
+  status: string;
+  scheduled_date: string;
+  complete_date: string;
+  crew: string;
+  notes: string;
+  photos: CustomerPhoto[];
+}
+export interface CustomerDivisionGroup { division: string; count: number; tickets: CustomerTicket[]; }
+export interface CustomerConstructionProject {
+  opp_id: number | null;
+  name: string;
+  property: string;
+  status: string;
+  start_date: string;
+  end_date: string;
+  percent_complete: number | null;
+}
+export interface CustomerReport {
+  company_id: number;
+  company_name: string;
+  week_start: string; week_end: string;
+  next_week_start: string; next_week_end: string;
+  property_count: number;
+  this_week: CustomerDivisionGroup[];
+  next_week: CustomerDivisionGroup[];
+  construction: { projects: CustomerConstructionProject[]; completed: CustomerTicket[]; scheduled: CustomerTicket[] };
+  summary: { this_week_visits: number; next_week_visits: number; construction_projects: number; photos: number };
+}
+
+export async function searchCustomers(q: string): Promise<CustomerSearchResult[]> {
+  const r = await request<{ customers: CustomerSearchResult[] }>('GET', `/customer/search?q=${encodeURIComponent(q)}`);
+  return r.customers;
+}
+export async function getCustomerReport(companyId: number, weekStart?: string): Promise<CustomerReport> {
+  return request('GET', `/customer/${companyId}/report${weekStart ? `?week_start=${weekStart}` : ''}`);
+}
+export function customerEmailPreviewUrl(companyId: number, weekStart?: string): string {
+  return `${BASE}/customer/${companyId}/email-preview${weekStart ? `?week_start=${weekStart}` : ''}`;
+}
+export async function emailCustomerReport(companyId: number, to: string[], weekStart?: string, subject?: string): Promise<{ ok: boolean; recipients: string[]; subject: string }> {
+  return request('POST', `/customer/${companyId}/email${weekStart ? `?week_start=${weekStart}` : ''}`, { to, subject });
+}
+
 export async function emailWeekSchedule(start?: string): Promise<{ ok: boolean; recipients: string[]; week_start: string; sites: number }> {
   return request('POST', `/schedule/week/email${start ? `?start=${start}` : ''}`, {});
 }
