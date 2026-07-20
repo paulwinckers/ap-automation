@@ -183,10 +183,12 @@ class GraphClient:
         txn_date: Optional[str],
         attachment_bytes: Optional[bytes] = None,
         attachment_filename: Optional[str] = None,
+        payment_method: Optional[str] = None,
     ) -> None:
         """
         Send a QBO post confirmation email to the employee who submitted the receipt.
         Optionally attaches the original receipt photo.
+        A copy is filed in the 'Employee Expenses' subfolder for AP records.
         """
         currency = "CAD"
         amount_fmt = f"${total_amount:,.2f} {currency}" if total_amount else "N/A"
@@ -202,6 +204,7 @@ class GraphClient:
   <table style="width:100%;border-collapse:collapse;font-size:14px">
     <tr><td style="padding:8px 0;color:#6b7280;width:140px">Vendor</td><td style="padding:8px 0;font-weight:600">{vendor_name}</td></tr>
     <tr style="border-top:1px solid #f0f0f0"><td style="padding:8px 0;color:#6b7280">Amount</td><td style="padding:8px 0;font-weight:600">{amount_fmt}</td></tr>
+    <tr style="border-top:1px solid #f0f0f0"><td style="padding:8px 0;color:#6b7280">Paid by</td><td style="padding:8px 0;font-weight:600">{payment_method or "—"}</td></tr>
     <tr style="border-top:1px solid #f0f0f0"><td style="padding:8px 0;color:#6b7280">GL Account</td><td style="padding:8px 0">{gl_name}</td></tr>
     <tr style="border-top:1px solid #f0f0f0"><td style="padding:8px 0;color:#6b7280">QBO Reference</td><td style="padding:8px 0;font-size:12px;color:#6b7280">{qbo_id}</td></tr>
     <tr style="border-top:1px solid #f0f0f0"><td style="padding:8px 0;color:#6b7280">Date</td><td style="padding:8px 0">{date_fmt}</td></tr>
@@ -235,6 +238,14 @@ class GraphClient:
             f"users/{mailbox}/sendMail",
             {"message": message, "saveToSentItems": True},
         )
+
+        # File a copy of the confirmation in the 'Employee Expenses' subfolder so AP
+        # has an organised record (non-fatal — a filing hiccup never blocks the send).
+        try:
+            folder_id = await self.get_or_create_folder(mailbox, "Employee Expenses")
+            await self._post(f"users/{mailbox}/mailFolders/{folder_id}/messages", message)
+        except Exception as e:
+            logger.warning(f"Filing confirmation copy to Employee Expenses failed (non-fatal): {e}")
 
     async def get_or_create_folder(self, mailbox: str, folder_name: str) -> str:
         if folder_name in self._folder_cache:
@@ -1427,6 +1438,16 @@ email_intake = EmailIntakeService()
 
 # ── Standalone helper — callable from routing.py ──────────────────────────────
 
+def payment_label(doc_type: Optional[str]) -> str:
+    """Human-readable payment method for confirmation emails, from an invoice doc_type."""
+    return {
+        "mastercard":  "MasterCard (company card)",
+        "debit_card":  "Company debit card",
+        "expense":     "Personal expense (reimbursement)",
+        "credit_memo": "Credit / return",
+    }.get((doc_type or "").strip().lower(), "On account (vendor invoice)")
+
+
 async def send_qbo_confirmation(
     to_address: str,
     vendor_name: str,
@@ -1436,6 +1457,7 @@ async def send_qbo_confirmation(
     txn_date: Optional[str],
     file_bytes: Optional[bytes] = None,
     filename: Optional[str] = None,
+    payment_method: Optional[str] = None,
 ) -> None:
     """
     Send a posted-to-QBO confirmation email to an employee.
@@ -1457,6 +1479,7 @@ async def send_qbo_confirmation(
             txn_date=txn_date,
             attachment_bytes=file_bytes,
             attachment_filename=filename,
+            payment_method=payment_method,
         )
         logger.info(f"Confirmation email sent to {to_address}")
     except Exception as e:

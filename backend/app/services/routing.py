@@ -547,7 +547,7 @@ async def _route_to_qbo(
             emp_rule = await db.get_vendor_rule_by_name(employee_name)
             # Confirmation email to the employee
             if emp_rule and emp_rule.forward_to:
-                from app.services.email_intake import send_qbo_confirmation
+                from app.services.email_intake import send_qbo_confirmation, payment_label
                 await send_qbo_confirmation(
                     to_address=emp_rule.forward_to,
                     vendor_name=invoice.vendor_name or "Unknown vendor",
@@ -557,6 +557,7 @@ async def _route_to_qbo(
                     txn_date=invoice.invoice_date,
                     file_bytes=invoice.file_bytes,
                     filename=invoice.pdf_filename,
+                    payment_method=payment_label(invoice.doc_type),
                 )
             # AP notification when tagged as job cost
             if notify_ap:
@@ -666,7 +667,7 @@ async def _route_to_qbo_purchase(
         if employee_name:
             emp_rule = await db.get_vendor_rule_by_name(employee_name)
             if emp_rule and emp_rule.forward_to:
-                from app.services.email_intake import send_qbo_confirmation
+                from app.services.email_intake import send_qbo_confirmation, payment_label
                 await send_qbo_confirmation(
                     to_address=emp_rule.forward_to,
                     vendor_name=invoice.vendor_name or "Unknown vendor",
@@ -676,6 +677,7 @@ async def _route_to_qbo_purchase(
                     txn_date=invoice.invoice_date,
                     file_bytes=invoice.file_bytes,
                     filename=invoice.pdf_filename,
+                    payment_method=payment_label(invoice.doc_type),
                 )
 
         return RoutingOutcome.POSTED_QBO
