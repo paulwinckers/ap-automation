@@ -32,7 +32,7 @@ async def list_documents():
     await db.connect()
     try:
         rows = await db._q(
-            "SELECT id, title, description, filename, file_size, uploaded_by, created_at "
+            "SELECT id, title, description, folder, filename, file_size, uploaded_by, created_at "
             "FROM company_documents WHERE is_active = 1 ORDER BY created_at DESC",
             [],
         )
@@ -47,6 +47,7 @@ async def list_documents():
 async def upload_document(
     title:       str            = Form(...),
     description: Optional[str] = Form(default=None),
+    folder:      Optional[str] = Form(default=None),
     uploaded_by: Optional[str] = Form(default="Admin"),
     file:        UploadFile     = File(...),
 ):
@@ -86,11 +87,12 @@ async def upload_document(
     await db.connect()
     try:
         rows = await db._q(
-            "INSERT INTO company_documents (title, description, r2_key, filename, file_size, uploaded_by) "
-            "VALUES (?, ?, ?, ?, ?, ?) RETURNING id, created_at",
+            "INSERT INTO company_documents (title, description, folder, r2_key, filename, file_size, uploaded_by) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id, created_at",
             [
                 title.strip(),
                 (description or "").strip() or None,
+                (folder or "").strip() or None,
                 r2_key,
                 filename,
                 len(file_bytes),
@@ -106,6 +108,7 @@ async def upload_document(
     return {
         "id":          doc_id,
         "title":       title,
+        "folder":      (folder or "").strip() or None,
         "filename":    filename,
         "file_size":   len(file_bytes),
         "uploaded_by": uploaded_by,

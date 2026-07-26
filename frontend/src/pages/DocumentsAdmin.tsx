@@ -38,8 +38,24 @@ export default function DocumentsAdmin() {
   // Upload form
   const [title, setTitle]       = useState('');
   const [description, setDesc]  = useState('');
+  const [folder, setFolder]     = useState('');
   const [file, setFile]         = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const existingFolders = Array.from(new Set(docs.map(d => d.folder).filter(Boolean))) as string[];
+
+  // Group documents by folder — named folders (A→Z) first, then ungrouped.
+  const groups: { folder: string; docs: CompanyDocument[] }[] = (() => {
+    const map = new Map<string, CompanyDocument[]>();
+    for (const d of docs) {
+      const key = d.folder || '';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(d);
+    }
+    const named = Array.from(map.keys()).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    const order = [...named, ...(map.has('') ? [''] : [])];
+    return order.map(f => ({ folder: f, docs: map.get(f)! }));
+  })();
 
   const load = () => {
     setLoading(true);
@@ -57,11 +73,11 @@ export default function DocumentsAdmin() {
     setError(null);
     setSuccess(null);
     try {
-      await uploadDocument({ title: title.trim(), description: description.trim() || undefined, file });
+      await uploadDocument({ title: title.trim(), description: description.trim() || undefined, folder: folder.trim() || undefined, file });
       setSuccess(`"${title}" uploaded successfully.`);
       setLastUploaded(title.trim());
       setNotifyResult(null);
-      setTitle(''); setDesc(''); setFile(null);
+      setTitle(''); setDesc(''); /* keep folder selected for batch uploads */ setFile(null);
       if (fileRef.current) fileRef.current.value = '';
       load();
     } catch (e: unknown) {
@@ -134,6 +150,17 @@ export default function DocumentsAdmin() {
             value={description} onChange={e => setDesc(e.target.value)} />
         </div>
 
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ color: '#94a3b8', fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>
+            FOLDER (optional — type a new one or pick an existing)
+          </label>
+          <input style={inp} list="doc-folders" placeholder="e.g. Safety Committee Documents"
+            value={folder} onChange={e => setFolder(e.target.value)} />
+          <datalist id="doc-folders">
+            {existingFolders.map(f => <option key={f} value={f} />)}
+          </datalist>
+        </div>
+
         <div style={{ marginBottom: 16 }}>
           <label style={{ color: '#94a3b8', fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>
             FILE * (PDF, Word, Excel — max 50 MB)
@@ -198,7 +225,12 @@ export default function DocumentsAdmin() {
         <div style={{ color: '#94a3b8', textAlign: 'center', padding: 40 }}>No documents yet.</div>
       )}
 
-      {docs.map(doc => (
+      {groups.map(g => (
+        <div key={g.folder || '__ungrouped__'} style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', margin: '4px 0 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
+            📁 {g.folder || 'Ungrouped'} <span style={{ color: '#94a3b8', fontWeight: 600 }}>· {g.docs.length}</span>
+          </div>
+          {g.docs.map(doc => (
         <div key={doc.id} style={{
           background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10,
           padding: '14px 16px', marginBottom: 10,
@@ -227,6 +259,8 @@ export default function DocumentsAdmin() {
           >
             Delete
           </button>
+        </div>
+          ))}
         </div>
       ))}
     </div>

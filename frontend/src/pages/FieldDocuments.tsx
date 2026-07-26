@@ -126,6 +126,19 @@ export default function FieldDocuments() {
     padding: '0 0 40px',
   };
 
+  // Group documents by folder — named folders (A→Z) first, then ungrouped.
+  const groups: { folder: string; docs: CompanyDocument[] }[] = (() => {
+    const map = new Map<string, CompanyDocument[]>();
+    for (const d of docs) {
+      const key = d.folder || '';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(d);
+    }
+    const named = Array.from(map.keys()).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    const order = [...named, ...(map.has('') ? [''] : [])];
+    return order.map(f => ({ folder: f, docs: map.get(f)! }));
+  })();
+
   const notifButton = () => {
     if (notifState === 'unsupported' || notifState === 'denied') return null;
     if (notifState === 'subscribed') {
@@ -182,7 +195,15 @@ export default function FieldDocuments() {
           </div>
         )}
 
-        {docs.map(doc => (
+        {groups.map(g => (
+          <div key={g.folder || '__ungrouped__'} style={{ marginBottom: 22 }}>
+            {(groups.length > 1 || g.folder) && (
+              <div style={{ color: '#94a3b8', fontSize: 12, fontWeight: 800, letterSpacing: '0.04em',
+                textTransform: 'uppercase', margin: '4px 2px 10px' }}>
+                📁 {g.folder || 'General'}
+              </div>
+            )}
+            {g.docs.map(doc => (
           <a
             key={doc.id}
             href={getDocumentFileUrl(doc.id)}
@@ -211,6 +232,8 @@ export default function FieldDocuments() {
               <div style={{ color: '#3b82f6', fontSize: 20, flexShrink: 0 }}>→</div>
             </div>
           </a>
+            ))}
+          </div>
         ))}
       </div>
     </div>

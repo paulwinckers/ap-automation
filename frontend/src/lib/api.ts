@@ -1226,6 +1226,7 @@ export interface CompanyDocument {
   id:          number;
   title:       string;
   description: string | null;
+  folder:      string | null;
   filename:    string;
   file_size:   number | null;
   uploaded_by: string;
@@ -1244,11 +1245,13 @@ export function getDocumentFileUrl(id: number): string {
 export async function uploadDocument(p: {
   title:       string;
   description?: string;
+  folder?:     string;
   file:        File;
 }): Promise<CompanyDocument> {
   const form = new FormData();
   form.append('title', p.title);
   if (p.description) form.append('description', p.description);
+  if (p.folder)      form.append('folder', p.folder);
   form.append('file', p.file);
   const token = localStorage.getItem('ap_token');
   const res = await fetch(`${BASE}/documents`, {

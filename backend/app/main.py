@@ -267,6 +267,8 @@ async def lifespan(app: FastAPI):
         ("job_prep_checklist", "attachment_id", "ALTER TABLE job_prep_checklist ADD COLUMN attachment_id INTEGER"),
         # job_planning.stage — workflow stage (New → Complete)
         ("job_planning", "stage", "ALTER TABLE job_planning ADD COLUMN stage TEXT"),
+        # company_documents.folder — optional folder/category for grouping
+        ("company_documents", "folder", "ALTER TABLE company_documents ADD COLUMN folder TEXT"),
     ]
     for tbl, col, sql in _COLUMN_MIGRATIONS:
         try:
