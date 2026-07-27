@@ -109,6 +109,15 @@ async def lifespan(app: FastAPI):
     # We run the CREATE TABLE directly here (no inline comments, clean SQL) as a
     # belt-and-suspenders in case D1 rejected the comment-bearing version from schema.sql.
     _ENSURE_TABLES = {
+        "document_folders": """
+            CREATE TABLE IF NOT EXISTS document_folders (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT    NOT NULL,
+                parent_id   INTEGER,
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                created_by  TEXT
+            )
+        """,
         "job_attachments": """
             CREATE TABLE IF NOT EXISTS job_attachments (
                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -267,8 +276,10 @@ async def lifespan(app: FastAPI):
         ("job_prep_checklist", "attachment_id", "ALTER TABLE job_prep_checklist ADD COLUMN attachment_id INTEGER"),
         # job_planning.stage — workflow stage (New → Complete)
         ("job_planning", "stage", "ALTER TABLE job_planning ADD COLUMN stage TEXT"),
-        # company_documents.folder — optional folder/category for grouping
+        # company_documents.folder — optional folder/category for grouping (legacy text)
         ("company_documents", "folder", "ALTER TABLE company_documents ADD COLUMN folder TEXT"),
+        # company_documents.folder_id — FK into document_folders (nested folder tree)
+        ("company_documents", "folder_id", "ALTER TABLE company_documents ADD COLUMN folder_id INTEGER"),
     ]
     for tbl, col, sql in _COLUMN_MIGRATIONS:
         try:
@@ -280,6 +291,35 @@ async def lifespan(app: FastAPI):
                 logger.info(f"DB migration: added {tbl}.{col}")
             except Exception as me:
                 logger.warning(f"DB migration: could not add {tbl}.{col}: {me}")
+
+    # Backfill: turn any legacy document.folder text into real root folders + folder_id.
+    try:
+        legacy = await _db._q(
+            "SELECT DISTINCT folder FROM company_documents "
+            "WHERE folder IS NOT NULL AND folder != '' AND folder_id IS NULL"
+        )
+        for row in legacy:
+            fname = (row.get("folder") or "").strip()
+            if not fname:
+                continue
+            existing = await _db._q(
+                "SELECT id FROM document_folders WHERE name = ? AND parent_id IS NULL", [fname]
+            )
+            if existing:
+                fid = existing[0]["id"]
+            else:
+                ins = await _db._q(
+                    "INSERT INTO document_folders (name, parent_id, created_by) "
+                    "VALUES (?, NULL, 'migration') RETURNING id", [fname]
+                )
+                fid = ins[0]["id"]
+            await _db._x(
+                "UPDATE company_documents SET folder_id = ? WHERE folder = ? AND folder_id IS NULL",
+                [fid, fname],
+            )
+            logger.info(f"Document folder backfill: '{fname}' → folder_id {fid}")
+    except Exception as e:
+        logger.warning(f"Document folder backfill skipped: {e}")
 
     await seed_vendors_if_empty(_db)
     await _db.close()
