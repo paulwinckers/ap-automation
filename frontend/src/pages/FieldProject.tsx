@@ -378,6 +378,7 @@ export default function FieldProject() {
   const [submitMsg,      setSubmitMsg]      = useState('');
   const [photos,         setPhotos]         = useState<File[]>([]);
   const [previews,       setPreviews]       = useState<string[]>([]);
+  const [mediaWarning,   setMediaWarning]   = useState('');
 
   // Build object-URL previews whenever photos list changes
   useEffect(() => {
@@ -386,10 +387,22 @@ export default function FieldProject() {
     return () => urls.forEach(u => URL.revokeObjectURL(u));
   }, [photos]);
 
-  /** Add files to the photos list, compressing images (videos pass through unchanged). */
+  /** Add files, compressing images (videos pass through). Rejects files over the
+   *  150 MB per-file limit up front with a clear message. */
+  const MAX_MEDIA_BYTES = 150 * 1024 * 1024;
   const handlePhotos = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const processed = await Promise.all(Array.from(files).map(f => compressImage(f)));
+    const arr = Array.from(files);
+    const tooBig = arr.filter(f => f.size > MAX_MEDIA_BYTES);
+    const okFiles = arr.filter(f => f.size <= MAX_MEDIA_BYTES);
+    if (tooBig.length) {
+      const names = tooBig.map(f => `${f.name} (${(f.size / 1024 / 1024).toFixed(0)} MB)`).join(', ');
+      setMediaWarning(`Too large to upload (max 150 MB): ${names}. Trim the clip or record at a lower resolution.`);
+    } else {
+      setMediaWarning('');
+    }
+    if (!okFiles.length) return;
+    const processed = await Promise.all(okFiles.map(f => compressImage(f)));
     setPhotos(prev => [...prev, ...processed]);
   };
   // Smart prompt selections: promptId → selected option string
@@ -717,11 +730,13 @@ export default function FieldProject() {
       }
       const j = await r.json().catch(() => ({}));
       const photosSaved = (j as any).photos_saved ?? 0;
-      const photoMsg = photos.length > 0
-        ? (photosSaved > 0 ? ` · ${photosSaved} photo${photosSaved > 1 ? 's' : ''} saved` : ' · ⚠️ photos failed to upload')
+      const skipped: { name: string; reason: string }[] = (j as any).skipped ?? [];
+      const photoMsg = photosSaved > 0 ? ` · ${photosSaved} file${photosSaved > 1 ? 's' : ''} uploaded` : '';
+      const skipMsg  = skipped.length
+        ? ` · ⚠️ ${skipped.length} not uploaded: ${skipped.map(s => `${s.name} (${s.reason})`).join('; ')}`
         : '';
-      setSubmitMsg(`✅ Update sent to the team.${photoMsg}`);
-      setApproachNotes(''); setPlanTomorrow(''); setToolsMaterials(''); setRemainingHours(''); setBlockers(''); setPhotos([]);
+      setSubmitMsg(`✅ Update sent to the team.${photoMsg}${skipMsg}`);
+      setApproachNotes(''); setPlanTomorrow(''); setToolsMaterials(''); setRemainingHours(''); setBlockers(''); setPhotos([]); setMediaWarning('');
       setTab('history');
       load(true);   // refresh history quietly
     } catch (err: any) {
@@ -1233,13 +1248,11 @@ export default function FieldProject() {
                   {(h.photos || []).length > 0 && (
                     <div style={{ padding: '10px 14px', borderTop: '1px solid #f1f5f9', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                       {(h.photos || []).map(photo => {
-                        const isVideo = ['mp4','mov','avi','webm'].includes((photo.file_extension || '').toLowerCase());
+                        const isVideo = ['mp4','mov','m4v','avi','webm','mkv'].includes((photo.file_extension || '').toLowerCase());
                         const src = `${API}${photo.url}`;
                         return isVideo ? (
-                          <a key={photo.id} href={src} target="_blank" rel="noopener noreferrer"
-                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 72, height: 72, background: '#0f172a', borderRadius: 8, textDecoration: 'none', fontSize: 24 }}>
-                            🎥
-                          </a>
+                          <video key={photo.id} src={src} controls preload="metadata" playsInline
+                            style={{ width: 200, maxWidth: '100%', height: 140, objectFit: 'cover', borderRadius: 8, background: '#000', border: '1px solid #e2e8f0' }} />
                         ) : (
                           <a key={photo.id} href={src} target="_blank" rel="noopener noreferrer">
                             <img src={src} alt={photo.file_name}
@@ -1418,7 +1431,7 @@ export default function FieldProject() {
 
               {/* Photo / video upload */}
               <div style={{ marginBottom: 22 }}>
-                <label style={LABEL}>Photos / Videos (optional)</label>
+                <label style={LABEL}>Photos / Videos (optional · up to 150 MB each)</label>
 
                 {/* Thumbnails */}
                 {previews.length > 0 && (
@@ -1462,6 +1475,12 @@ export default function FieldProject() {
                   onChange={e => { handlePhotos(e.target.files); e.target.value = ''; }} style={{ display: 'none' }} />
                 <input ref={photoGalleryRef} type="file" accept="image/*,video/*" multiple
                   onChange={e => { handlePhotos(e.target.files); e.target.value = ''; }} style={{ display: 'none' }} />
+
+                {mediaWarning && (
+                  <div style={{ marginTop: 8, padding: '8px 10px', background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 8, color: '#92400e', fontSize: 12 }}>
+                    ⚠️ {mediaWarning}
+                  </div>
+                )}
               </div>
 
               {submitMsg && (

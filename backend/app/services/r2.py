@@ -132,6 +132,60 @@ async def get_file_bytes(key: str) -> Optional[bytes]:
         return None
 
 
+async def stream_to_r2(fileobj, key: str, content_type: str) -> bool:
+    """Stream an open file-like object to R2 via chunked multipart upload (low memory).
+    Used for large media so we never hold the whole file in a Python bytes object."""
+    if not _r2_available() or not key:
+        return False
+
+    def _up():
+        client = _make_client()
+        try:
+            fileobj.seek(0)
+        except Exception:
+            pass
+        client.upload_fileobj(fileobj, settings.R2_BUCKET_NAME, key, ExtraArgs={"ContentType": content_type})
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _up)
+    return True
+
+
+async def get_object_size(key: str) -> Optional[int]:
+    """Total byte size of an R2 object (for HTTP range responses)."""
+    if not _r2_available() or not key:
+        return None
+
+    def _head():
+        client = _make_client()
+        return client.head_object(Bucket=settings.R2_BUCKET_NAME, Key=key)["ContentLength"]
+
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(None, _head)
+    except Exception as e:
+        logger.warning(f"R2 head failed for {key}: {e}")
+        return None
+
+
+async def get_file_range(key: str, start: int, end: int) -> Optional[bytes]:
+    """Return bytes [start, end] inclusive from an R2 object (for range/seek playback)."""
+    if not _r2_available() or not key:
+        return None
+
+    def _get():
+        client = _make_client()
+        resp = client.get_object(Bucket=settings.R2_BUCKET_NAME, Key=key, Range=f"bytes={start}-{end}")
+        return resp["Body"].read()
+
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(None, _get)
+    except Exception as e:
+        logger.warning(f"R2 range read failed for {key}: {e}")
+        return None
+
+
 async def upload_field_photo(
     file_bytes: bytes,
     filename: str,

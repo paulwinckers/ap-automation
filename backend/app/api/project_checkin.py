@@ -30,8 +30,8 @@ import mimetypes
 import uuid
 
 import anthropic as _anthropic
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from app.core.config import settings
@@ -1170,45 +1170,8 @@ async def submit_checkin_response(
         "UPDATE project_checkins SET responded_at = datetime('now') WHERE id = ?", [c["id"]]
     )
 
-    # Upload photos/videos to R2 and record in checkin_photos
-    _PHOTO_MAX_BYTES = 30 * 1024 * 1024   # 30 MB per file
-    photo_ids: list[int] = []
-    if _r2._r2_available():
-        for upload in (photos or []):
-            if not upload:
-                continue
-            try:
-                file_bytes = await upload.read()
-                if not file_bytes or len(file_bytes) > _PHOTO_MAX_BYTES:
-                    logger.warning(f"Skipping photo: empty or too large ({len(file_bytes) if file_bytes else 0} bytes)")
-                    continue
-                # Derive filename — mobile browsers sometimes send an empty filename
-                ct_header = (upload.content_type or "").lower()
-                if upload.filename:
-                    filename = upload.filename
-                    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-                else:
-                    ext = ct_header.split("/")[-1].replace("jpeg", "jpg") if "/" in ct_header else "jpg"
-                    filename = f"photo_{uuid.uuid4().hex[:8]}.{ext}"
-                safe   = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
-                r2_key = f"checkin-photos/{c['id']}/{uuid.uuid4().hex[:8]}_{safe}"
-                ct     = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
-                def _up(key=r2_key, body=file_bytes, content_type=ct):
-                    _r2._make_client().put_object(
-                        Bucket=settings.R2_BUCKET_NAME,
-                        Key=key, Body=body, ContentType=content_type,
-                    )
-                await asyncio.get_event_loop().run_in_executor(None, _up)
-                photo_row_id = await db._x(
-                    """INSERT INTO checkin_photos
-                       (checkin_id, response_id, file_name, file_extension, r2_key, file_size)
-                       VALUES (?,?,?,?,?,?)""",
-                    [c["id"], response_id, filename, ext, r2_key, len(file_bytes)],
-                )
-                photo_ids.append(photo_row_id)
-                logger.info(f"Checkin photo #{photo_row_id} saved: {filename} ({len(file_bytes)} bytes)")
-            except Exception as photo_err:
-                logger.error(f"Failed to save photo: {photo_err}", exc_info=True)
+    # Stream photos/videos to R2 (large files stream, never fully buffered).
+    photo_ids, _ = await _save_checkin_media(db, c["id"], response_id, photos)
 
     # Notify the full construction team + the lead when a check-in is submitted
     today_str    = datetime.now().strftime("%B %d, %Y")
@@ -1242,8 +1205,9 @@ async def submit_checkin_response(
 
 
 @public_router.get("/photo/{photo_id}/file")
-async def serve_checkin_photo(photo_id: int, db: Database = Depends(get_db)):
-    """Stream a check-in photo from R2. Public endpoint — photo IDs are non-guessable UUIDs."""
+async def serve_checkin_photo(photo_id: int, request: Request, db: Database = Depends(get_db)):
+    """Stream a check-in photo/video from R2. Supports HTTP Range so videos play &
+    seek inline. Public endpoint — photo IDs are non-guessable UUIDs."""
     rows = await db._q(
         "SELECT r2_key, file_name, file_extension FROM checkin_photos WHERE id = ?",
         [photo_id],
@@ -1255,17 +1219,48 @@ async def serve_checkin_photo(photo_id: int, db: Database = Depends(get_db)):
     filename = rows[0]["file_name"]
     ext      = (rows[0]["file_extension"] or "").lower()
     ct       = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    disp     = f'inline; filename="{filename.replace(chr(34), "")}"'
 
+    range_header = request.headers.get("range") or request.headers.get("Range")
+    total = await _r2.get_object_size(r2_key)
+
+    # Range request → 206 Partial Content (enables seeking / progressive video playback).
+    if range_header and total:
+        try:
+            unit, rng = range_header.split("=", 1)
+            start_s, end_s = rng.split("-", 1)
+            start = int(start_s) if start_s else 0
+            end   = int(end_s) if end_s else total - 1
+        except Exception:
+            start, end = 0, total - 1
+        end = min(end, total - 1)
+        if start > end or start >= total:
+            return Response(status_code=416, headers={"Content-Range": f"bytes */{total}"})
+        chunk = await _r2.get_file_range(r2_key, start, end)
+        if chunk is None:
+            raise HTTPException(status_code=404, detail="File not found in storage")
+        return Response(
+            content=chunk, status_code=206, media_type=ct,
+            headers={
+                "Content-Range":       f"bytes {start}-{end}/{total}",
+                "Accept-Ranges":       "bytes",
+                "Content-Length":      str(len(chunk)),
+                "Content-Disposition": disp,
+                "Cache-Control":       "private, max-age=86400",
+            },
+        )
+
+    # Full file
     file_bytes = await _r2.get_file_bytes(r2_key)
     if file_bytes is None:
         raise HTTPException(status_code=404, detail="File not found in storage")
-
-    return StreamingResponse(
-        iter([file_bytes]),
-        media_type=ct,
+    return Response(
+        content=file_bytes, media_type=ct,
         headers={
-            "Content-Disposition": f'inline; filename="{filename.replace(chr(34), "")}"',
+            "Content-Disposition": disp,
             "Content-Length":      str(len(file_bytes)),
+            "Accept-Ranges":       "bytes",
+            "Cache-Control":       "private, max-age=86400",
         },
     )
 
@@ -2157,7 +2152,72 @@ _MIME_OVERRIDE = {
     "xls":  "application/vnd.ms-excel",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "dwg":  "application/acad",
+    "mp4":  "video/mp4",
+    "m4v":  "video/mp4",
+    "mov":  "video/quicktime",
+    "webm": "video/webm",
+    "avi":  "video/x-msvideo",
+    "mkv":  "video/x-matroska",
 }
+
+# Per-file cap for check-in media. Large files stream to R2 (never fully buffered
+# in a Python bytes object), so this can be generous.
+_MEDIA_MAX_BYTES = 150 * 1024 * 1024  # 150 MB
+
+
+async def _save_checkin_media(db: Database, checkin_id: int, response_id, photos: list) -> tuple[list, list]:
+    """Stream check-in photos/videos to R2 and record them. Returns (saved_ids, skipped).
+    skipped = [{"name", "reason"}] so the caller can tell the crew exactly what didn't upload."""
+    saved_ids: list = []
+    skipped: list = []
+    if not _r2._r2_available():
+        return saved_ids, skipped
+    for upload in (photos or []):
+        if not upload:
+            continue
+        filename = getattr(upload, "filename", None) or ""
+        try:
+            ct_header = (upload.content_type or "").lower()
+            if filename:
+                ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            else:
+                ext = ct_header.split("/")[-1].replace("jpeg", "jpg") if "/" in ct_header else "jpg"
+                filename = f"media_{uuid.uuid4().hex[:8]}.{ext}"
+
+            # Size without reading the whole file into memory.
+            size = getattr(upload, "size", None)
+            if size is None:
+                try:
+                    upload.file.seek(0, 2); size = upload.file.tell(); upload.file.seek(0)
+                except Exception:
+                    size = 0
+            if not size:
+                skipped.append({"name": filename, "reason": "empty file"}); continue
+            if size > _MEDIA_MAX_BYTES:
+                mb = size // (1024 * 1024)
+                skipped.append({"name": filename, "reason": f"too large ({mb} MB — max 150 MB)"})
+                logger.warning(f"Checkin media skipped (too large): {filename} {size} bytes")
+                continue
+
+            safe   = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
+            r2_key = f"checkin-photos/{checkin_id}/{uuid.uuid4().hex[:8]}_{safe}"
+            ct     = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+            ok = await _r2.stream_to_r2(upload.file, r2_key, ct)
+            if not ok:
+                skipped.append({"name": filename, "reason": "storage upload failed"}); continue
+
+            row_id = await db._x(
+                "INSERT INTO checkin_photos (checkin_id, response_id, file_name, file_extension, r2_key, file_size) "
+                "VALUES (?,?,?,?,?,?)",
+                [checkin_id, response_id, filename, ext, r2_key, size],
+            )
+            saved_ids.append(row_id)
+            logger.info(f"Checkin media #{row_id} saved: {filename} ({size} bytes, {ct})")
+        except Exception as e:
+            logger.error(f"Failed to save media '{filename}': {e}", exc_info=True)
+            skipped.append({"name": filename or "file", "reason": "server error"})
+    return saved_ids, skipped
 
 
 @public_router.get("/project/{opp_id}/job-attachments")
@@ -2376,47 +2436,10 @@ async def _do_submit_project_response(
         "UPDATE project_checkins SET responded_at = datetime('now') WHERE id = ?", [checkin_id]
     )
 
-    # Upload photos/videos to R2
-    _PHOTO_MAX_BYTES = 30 * 1024 * 1024
-    _saved_photo_ids: list[int] = []
-    if _r2._r2_available():
-        for upload in (photos or []):
-            if not upload:
-                continue
-            try:
-                file_bytes = await upload.read()
-                if not file_bytes or len(file_bytes) > _PHOTO_MAX_BYTES:
-                    logger.warning(f"Skipping photo: empty or too large ({len(file_bytes) if file_bytes else 0} bytes)")
-                    continue
-                # Derive filename — mobile browsers sometimes send an empty filename
-                ct_header = (upload.content_type or "").lower()
-                if upload.filename:
-                    filename = upload.filename
-                    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-                else:
-                    ext = ct_header.split("/")[-1].replace("jpeg", "jpg") if "/" in ct_header else "jpg"
-                    filename = f"photo_{uuid.uuid4().hex[:8]}.{ext}"
-                safe   = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in filename)
-                r2_key = f"checkin-photos/{checkin_id}/{uuid.uuid4().hex[:8]}_{safe}"
-                ct     = _MIME_OVERRIDE.get(ext) or mimetypes.guess_type(filename)[0] or "application/octet-stream"
-                def _up(key=r2_key, body=file_bytes, content_type=ct):
-                    _r2._make_client().put_object(
-                        Bucket=settings.R2_BUCKET_NAME,
-                        Key=key, Body=body, ContentType=content_type,
-                    )
-                await asyncio.get_event_loop().run_in_executor(None, _up)
-                photo_row_id = await db._x(
-                    """INSERT INTO checkin_photos
-                       (checkin_id, response_id, file_name, file_extension, r2_key, file_size)
-                       VALUES (?,?,?,?,?,?)""",
-                    [checkin_id, response_id, filename, ext, r2_key, len(file_bytes)],
-                )
-                _saved_photo_ids.append(photo_row_id)
-                logger.info(f"Checkin photo #{photo_row_id} saved: {filename} ({len(file_bytes)} bytes)")
-            except Exception as photo_err:
-                logger.error(f"Failed to save photo: {photo_err}", exc_info=True)
-    elif photos:
-        logger.warning("R2 not configured — skipping photo upload for project response")
+    # Stream photos/videos to R2 (large files stream, never fully buffered).
+    _saved_photo_ids, _skipped_media = await _save_checkin_media(db, checkin_id, response_id, photos)
+    if photos and not _r2._r2_available():
+        logger.warning("R2 not configured — skipping media upload for project response")
 
     # Notify the full construction team + the lead when a check-in is submitted
     today_str    = datetime.now().strftime("%B %d, %Y")
@@ -2447,6 +2470,7 @@ async def _do_submit_project_response(
         "ok": True,
         "message": "Thanks — your update has been sent to the team.",
         "photos_saved": len(_saved_photo_ids),
+        "skipped": _skipped_media,
     }
 
 
