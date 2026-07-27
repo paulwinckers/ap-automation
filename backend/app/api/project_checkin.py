@@ -686,8 +686,48 @@ def _render_mgmt_email(
     blockers: Optional[str],
     ai_tip: str,
     today_str: str,
+    media: Optional[list] = None,
+    opp_id: Optional[int] = None,
 ) -> str:
     rem_str = f"{remaining_hours:.1f}h" if remaining_hours is not None else "Not provided"
+
+    # Media: inline photo thumbnails (remote images — no attachment weight) + a
+    # video count, plus a button to the project page where everything plays inline.
+    media = media or []
+    photos_m = [m for m in media if not m.get("is_video")]
+    videos_m = [m for m in media if m.get("is_video")]
+    media_html = ""
+    if media:
+        api = _api_base()
+        thumbs = "".join(
+            f'<a href="{api}/checkin/photo/{m["id"]}/file" style="text-decoration:none;">'
+            f'<img src="{api}/checkin/photo/{m["id"]}/file" width="88" height="88" '
+            f'style="width:88px;height:88px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0;margin:0 6px 6px 0;" /></a>'
+            for m in photos_m
+        )
+        vid_line = ""
+        if videos_m:
+            vid_line = (
+                f'<div style="font-size:13px;color:#334155;margin-top:6px;">'
+                f'🎥 {len(videos_m)} video{"s" if len(videos_m) != 1 else ""} attached — '
+                f'view on the project page.</div>'
+            )
+        btn = ""
+        if opp_id is not None:
+            proj_url = f"{_portal_base()}/field/project/{opp_id}?tab=update"
+            btn = (
+                f'<div style="margin-top:12px;"><a href="{proj_url}" '
+                f'style="display:inline-block;background:#16a34a;color:#fff;text-decoration:none;'
+                f'font-weight:700;font-size:13px;padding:10px 18px;border-radius:8px;">View full update &amp; media →</a></div>'
+            )
+        media_html = (
+            '<div style="margin-top:18px;">'
+            '<div style="font-weight:700;font-size:11px;color:#64748b;margin-bottom:8px;'
+            'text-transform:uppercase;letter-spacing:.05em;">Photos'
+            f'{" &amp; Videos" if videos_m else ""}</div>'
+            f'{thumbs}{vid_line}{btn}'
+            '</div>'
+        )
     blockers_html = ""
     if blockers and blockers.strip():
         blockers_html = (
@@ -725,6 +765,8 @@ def _render_mgmt_email(
     </div>
 
     {blockers_html}
+
+    {media_html}
 
   </div>
 
@@ -1171,7 +1213,8 @@ async def submit_checkin_response(
     )
 
     # Stream photos/videos to R2 (large files stream, never fully buffered).
-    photo_ids, _ = await _save_checkin_media(db, c["id"], response_id, photos)
+    _saved_media, _ = await _save_checkin_media(db, c["id"], response_id, photos)
+    photo_ids = [m["id"] for m in _saved_media]
 
     # Notify the full construction team + the lead when a check-in is submitted
     today_str    = datetime.now().strftime("%B %d, %Y")
@@ -1189,6 +1232,8 @@ async def submit_checkin_response(
         blockers        = blockers,
         ai_tip          = c["ai_tip"] or "",
         today_str       = today_str,
+        media           = _saved_media,
+        opp_id          = c.get("opportunity_id"),
     )
     try:
         graph = GraphClient()
@@ -2163,12 +2208,18 @@ _MIME_OVERRIDE = {
 # Per-file cap for check-in media. Large files stream to R2 (never fully buffered
 # in a Python bytes object), so this can be generous.
 _MEDIA_MAX_BYTES = 150 * 1024 * 1024  # 150 MB
+_VID_EXTS = {"mp4", "m4v", "mov", "webm", "avi", "mkv"}
+
+
+def _api_base() -> str:
+    """Absolute base URL of THIS backend (for inline media links in emails)."""
+    return (settings.APP_BASE_URL or "https://ap-automation-production.up.railway.app").rstrip("/")
 
 
 async def _save_checkin_media(db: Database, checkin_id: int, response_id, photos: list) -> tuple[list, list]:
-    """Stream check-in photos/videos to R2 and record them. Returns (saved_ids, skipped).
-    skipped = [{"name", "reason"}] so the caller can tell the crew exactly what didn't upload."""
-    saved_ids: list = []
+    """Stream check-in photos/videos to R2 and record them. Returns (saved, skipped).
+    saved = [{"id","file_name","ext","is_video"}]; skipped = [{"name","reason"}]."""
+    saved: list = []
     skipped: list = []
     if not _r2._r2_available():
         return saved_ids, skipped
@@ -2212,12 +2263,12 @@ async def _save_checkin_media(db: Database, checkin_id: int, response_id, photos
                 "VALUES (?,?,?,?,?,?)",
                 [checkin_id, response_id, filename, ext, r2_key, size],
             )
-            saved_ids.append(row_id)
+            saved.append({"id": row_id, "file_name": filename, "ext": ext, "is_video": ext in _VID_EXTS})
             logger.info(f"Checkin media #{row_id} saved: {filename} ({size} bytes, {ct})")
         except Exception as e:
             logger.error(f"Failed to save media '{filename}': {e}", exc_info=True)
             skipped.append({"name": filename or "file", "reason": "server error"})
-    return saved_ids, skipped
+    return saved, skipped
 
 
 @public_router.get("/project/{opp_id}/job-attachments")
@@ -2437,7 +2488,7 @@ async def _do_submit_project_response(
     )
 
     # Stream photos/videos to R2 (large files stream, never fully buffered).
-    _saved_photo_ids, _skipped_media = await _save_checkin_media(db, checkin_id, response_id, photos)
+    _saved_media, _skipped_media = await _save_checkin_media(db, checkin_id, response_id, photos)
     if photos and not _r2._r2_available():
         logger.warning("R2 not configured — skipping media upload for project response")
 
@@ -2454,6 +2505,8 @@ async def _do_submit_project_response(
         blockers=blockers,
         ai_tip=ai_tip,
         today_str=today_str,
+        media=_saved_media,
+        opp_id=opp_id,
     )
     try:
         graph = GraphClient()
@@ -2469,7 +2522,7 @@ async def _do_submit_project_response(
     return {
         "ok": True,
         "message": "Thanks — your update has been sent to the team.",
-        "photos_saved": len(_saved_photo_ids),
+        "photos_saved": len(_saved_media),
         "skipped": _skipped_media,
     }
 
