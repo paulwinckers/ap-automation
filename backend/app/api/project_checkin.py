@@ -714,7 +714,7 @@ def _render_mgmt_email(
             )
         btn = ""
         if opp_id is not None:
-            proj_url = f"{_portal_base()}/field/project/{opp_id}?tab=update"
+            proj_url = f"{_portal_base()}/field/project/{opp_id}?tab=history"
             btn = (
                 f'<div style="margin-top:12px;"><a href="{proj_url}" '
                 f'style="display:inline-block;background:#16a34a;color:#fff;text-decoration:none;'
