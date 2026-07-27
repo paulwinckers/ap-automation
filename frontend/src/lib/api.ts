@@ -1227,10 +1227,39 @@ export interface CompanyDocument {
   title:       string;
   description: string | null;
   folder:      string | null;
+  folder_id:   number | null;
   filename:    string;
   file_size:   number | null;
   uploaded_by: string;
   created_at:  string;
+}
+
+export interface DocumentFolder {
+  id:         number;
+  name:       string;
+  parent_id:  number | null;
+  created_at: string;
+}
+
+export async function listFolders(): Promise<DocumentFolder[]> {
+  const r = await request<{ folders: DocumentFolder[] }>('GET', '/documents/folders');
+  return r.folders;
+}
+export async function createFolder(name: string, parentId?: number | null): Promise<DocumentFolder> {
+  return request('POST', '/documents/folders', { name, parent_id: parentId ?? null });
+}
+export async function renameFolder(id: number, name: string): Promise<{ ok: boolean }> {
+  return request('PATCH', `/documents/folders/${id}`, { name });
+}
+export async function moveFolder(id: number, parentId: number | null): Promise<{ ok: boolean }> {
+  // -1 sentinel = move to root
+  return request('PATCH', `/documents/folders/${id}`, { parent_id: parentId === null ? -1 : parentId });
+}
+export async function deleteFolder(id: number): Promise<{ ok: boolean }> {
+  return request('DELETE', `/documents/folders/${id}`);
+}
+export async function moveDocument(docId: number, folderId: number | null): Promise<{ ok: boolean }> {
+  return request('PATCH', `/documents/${docId}/move`, { folder_id: folderId });
 }
 
 export async function listDocuments(): Promise<CompanyDocument[]> {
@@ -1246,12 +1275,14 @@ export async function uploadDocument(p: {
   title:       string;
   description?: string;
   folder?:     string;
+  folderId?:   number | null;
   file:        File;
 }): Promise<CompanyDocument> {
   const form = new FormData();
   form.append('title', p.title);
   if (p.description) form.append('description', p.description);
   if (p.folder)      form.append('folder', p.folder);
+  if (p.folderId != null) form.append('folder_id', String(p.folderId));
   form.append('file', p.file);
   const token = localStorage.getItem('ap_token');
   const res = await fetch(`${BASE}/documents`, {

@@ -3,7 +3,7 @@
  * Public, no login required. /field/documents
  */
 import { useState, useEffect } from 'react';
-import { listDocuments, getDocumentFileUrl, getVapidPublicKey, savePushSubscription, type CompanyDocument } from '../lib/api';
+import { listDocuments, listFolders, getDocumentFileUrl, getVapidPublicKey, savePushSubscription, type CompanyDocument, type DocumentFolder } from '../lib/api';
 
 const BG   = '#0f172a';
 const CARD = '#1e293b';
@@ -109,13 +109,15 @@ function usePushSubscription() {
 
 export default function FieldDocuments() {
   const [docs, setDocs] = useState<CompanyDocument[]>([]);
+  const [folders, setFolders] = useState<DocumentFolder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const { state: notifState, subscribe } = usePushSubscription();
 
   useEffect(() => {
-    listDocuments()
-      .then(setDocs)
+    Promise.all([listDocuments(), listFolders()])
+      .then(([d, f]) => { setDocs(d); setFolders(f); })
       .catch(() => setError('Could not load documents. Please try again.'))
       .finally(() => setLoading(false));
   }, []);
@@ -126,18 +128,45 @@ export default function FieldDocuments() {
     padding: '0 0 40px',
   };
 
-  // Group documents by folder — named folders (A→Z) first, then ungrouped.
-  const groups: { folder: string; docs: CompanyDocument[] }[] = (() => {
-    const map = new Map<string, CompanyDocument[]>();
-    for (const d of docs) {
-      const key = d.folder || '';
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(d);
-    }
-    const named = Array.from(map.keys()).filter(Boolean).sort((a, b) => a.localeCompare(b));
-    const order = [...named, ...(map.has('') ? [''] : [])];
-    return order.map(f => ({ folder: f, docs: map.get(f)! }));
-  })();
+  // Folder tree helpers
+  const childrenOf = (pid: number | null) => folders.filter(f => f.parent_id === pid).sort((a, b) => a.name.localeCompare(b.name));
+  const docsIn = (fid: number | null) => docs.filter(d => (d.folder_id ?? null) === fid);
+  const toggle = (id: number) => setCollapsed(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const DocCard = ({ doc }: { doc: CompanyDocument }) => (
+    <a key={doc.id} href={getDocumentFileUrl(doc.id)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', display: 'block', marginBottom: 10 }}>
+      <div style={{ background: CARD, borderRadius: 12, padding: '13px 15px', display: 'flex', alignItems: 'center', gap: 13, border: '1px solid #334155' }}>
+        <div style={{ fontSize: 30, flexShrink: 0 }}>{fileIcon(doc.filename)}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ color: '#f1f5f9', fontSize: 15, fontWeight: 700, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.title}</div>
+          {doc.description && <div style={{ color: '#94a3b8', fontSize: 13, marginBottom: 3 }}>{doc.description}</div>}
+          <div style={{ color: '#475569', fontSize: 11 }}>{formatDate(doc.created_at)}{doc.file_size ? ` · ${formatSize(doc.file_size)}` : ''}</div>
+        </div>
+        <div style={{ color: '#3b82f6', fontSize: 20, flexShrink: 0 }}>→</div>
+      </div>
+    </a>
+  );
+
+  const renderFolder = (f: DocumentFolder, depth: number): React.ReactNode => {
+    const kids = childrenOf(f.id);
+    const inner = docsIn(f.id);
+    const isCollapsed = collapsed.has(f.id);
+    const count = inner.length + kids.reduce((s, k) => s + docsIn(k.id).length, 0);
+    return (
+      <div key={f.id} style={{ marginLeft: depth * 12, marginBottom: 6 }}>
+        <div onClick={() => toggle(f.id)} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: '#cbd5e1', fontWeight: 800, fontSize: 14, padding: '8px 2px' }}>
+          <span style={{ color: '#64748b', width: 12 }}>{isCollapsed ? '▸' : '▾'}</span>
+          📁 {f.name} <span style={{ color: '#64748b', fontWeight: 500, fontSize: 12 }}>· {count}</span>
+        </div>
+        {!isCollapsed && (
+          <div style={{ marginLeft: 8 }}>
+            {inner.map(doc => <DocCard key={doc.id} doc={doc} />)}
+            {kids.map(k => renderFolder(k, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const notifButton = () => {
     if (notifState === 'unsupported' || notifState === 'denied') return null;
@@ -195,46 +224,19 @@ export default function FieldDocuments() {
           </div>
         )}
 
-        {groups.map(g => (
-          <div key={g.folder || '__ungrouped__'} style={{ marginBottom: 22 }}>
-            {(groups.length > 1 || g.folder) && (
-              <div style={{ color: '#94a3b8', fontSize: 12, fontWeight: 800, letterSpacing: '0.04em',
-                textTransform: 'uppercase', margin: '4px 2px 10px' }}>
-                📁 {g.folder || 'General'}
+        {!loading && !error && (
+          <>
+            {childrenOf(null).map(f => renderFolder(f, 0))}
+            {docsIn(null).length > 0 && (
+              <div style={{ marginTop: folders.length ? 14 : 0 }}>
+                {folders.length > 0 && (
+                  <div style={{ color: '#64748b', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', margin: '4px 2px 10px' }}>General</div>
+                )}
+                {docsIn(null).map(doc => <DocCard key={doc.id} doc={doc} />)}
               </div>
             )}
-            {g.docs.map(doc => (
-          <a
-            key={doc.id}
-            href={getDocumentFileUrl(doc.id)}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ textDecoration: 'none', display: 'block', marginBottom: 12 }}
-          >
-            <div style={{
-              background: CARD, borderRadius: 12, padding: '14px 16px',
-              display: 'flex', alignItems: 'center', gap: 14,
-              border: '1px solid #334155',
-            }}>
-              <div style={{ fontSize: 32, flexShrink: 0 }}>{fileIcon(doc.filename)}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ color: '#f1f5f9', fontSize: 15, fontWeight: 700, marginBottom: 2,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {doc.title}
-                </div>
-                {doc.description && (
-                  <div style={{ color: '#94a3b8', fontSize: 13, marginBottom: 3 }}>{doc.description}</div>
-                )}
-                <div style={{ color: '#475569', fontSize: 11 }}>
-                  {formatDate(doc.created_at)}{doc.file_size ? ` · ${formatSize(doc.file_size)}` : ''}
-                </div>
-              </div>
-              <div style={{ color: '#3b82f6', fontSize: 20, flexShrink: 0 }}>→</div>
-            </div>
-          </a>
-            ))}
-          </div>
-        ))}
+          </>
+        )}
       </div>
     </div>
   );
