@@ -239,11 +239,12 @@ class GraphClient:
             {"message": message, "saveToSentItems": True},
         )
 
-        # File a copy of the confirmation in the 'Employee Expenses' subfolder so AP
-        # has an organised record (non-fatal — a filing hiccup never blocks the send).
+        # File a copy of the confirmation in the 'Employee Expenses' subfolder of the
+        # MONITORED inbox (where AP staff work), not the send mailbox. Non-fatal.
+        file_mbx = settings.MS_AP_INBOX or mailbox
         try:
-            folder_id = await self.get_or_create_folder(mailbox, "Employee Expenses")
-            await self._post(f"users/{mailbox}/mailFolders/{folder_id}/messages", message)
+            folder_id = await self.get_or_create_folder(file_mbx, "Employee Expenses")
+            await self._post(f"users/{file_mbx}/mailFolders/{folder_id}/messages", message)
         except Exception as e:
             logger.warning(f"Filing confirmation copy to Employee Expenses failed (non-fatal): {e}")
 
@@ -686,7 +687,7 @@ class EmailIntakeService:
                 # arrives reliably regardless of how the original was formatted.
                 try:
                     await self.graph.send_email(
-                        mailbox=settings.MS_AP_INBOX,
+                        mailbox=settings.ms_send_from,
                         to_addresses=[forward_to],
                         subject=f"Invoice: {extraction.vendor_name or 'Unknown vendor'} — ${extraction.total_amount or 0:,.2f} {extraction.currency}",
                         body_html=f"<pre style='font-family:monospace;font-size:13px'>{summary_text}</pre>",
@@ -827,7 +828,7 @@ class EmailIntakeService:
         amount_fmt = f"${abs(amount):,.2f} CAD"
         try:
             await self.graph.send_email(
-                mailbox=settings.MS_AP_INBOX,
+                mailbox=settings.ms_send_from,
                 to_addresses=[DEST_KEELAND],
                 subject=f"Credit memo posted to QBO — {extraction.vendor_name or 'Unknown vendor'} {amount_fmt}",
                 body_html=f"""
@@ -1019,7 +1020,7 @@ class EmailIntakeService:
 
             try:
                 await self.graph.send_email(
-                    mailbox=settings.MS_AP_INBOX,
+                    mailbox=settings.ms_send_from,
                     to_addresses=[DEST_PAUL],
                     subject=f"Vendor statement received — {vendor_name} {balance_fmt} ({label})",
                     body_html=f"""
@@ -1392,7 +1393,7 @@ Invoice ID in system: {invoice_id}"""
 </div>"""
 
         await self.graph.send_email(
-            mailbox=settings.MS_AP_INBOX,
+            mailbox=settings.ms_send_from,
             to_addresses=SUMMARY_TO,
             subject=f"AP Daily Summary — {today} ({n_posted} posted, {n_queued} needs review, {n_failed} failed)",
             body_html=html,
@@ -1470,7 +1471,7 @@ async def send_qbo_confirmation(
     graph = GraphClient()
     try:
         await graph.send_receipt_confirmation(
-            mailbox=settings.MS_AP_INBOX,
+            mailbox=settings.ms_send_from,
             to_address=to_address,
             vendor_name=vendor_name,
             total_amount=total_amount,

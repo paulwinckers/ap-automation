@@ -907,7 +907,7 @@ async def _send_project_checkins(month: str) -> dict:
 
         try:
             await graph.send_email(
-                mailbox=settings.MS_AP_INBOX,
+                mailbox=settings.ms_send_from,
                 to_addresses=[lead_email],
                 subject=subject,
                 body_html=html,
@@ -1238,7 +1238,7 @@ async def submit_checkin_response(
     try:
         graph = GraphClient()
         await graph.send_email(
-            mailbox=settings.MS_AP_INBOX,
+            mailbox=settings.ms_send_from,
             to_addresses=notify_emails,
             subject=f"✅ Project Update: {c['lead_name']} — {c['property_name'] or c['opportunity_name']}",
             body_html=html,
@@ -2511,7 +2511,7 @@ async def _do_submit_project_response(
     try:
         graph = GraphClient()
         await graph.send_email(
-            mailbox=settings.MS_AP_INBOX,
+            mailbox=settings.ms_send_from,
             to_addresses=notify_emails,
             subject=f"✅ Project Update: {lead_name} — {prop_name or opp_name}",
             body_html=html,

@@ -1111,7 +1111,7 @@ async def send_estimating_digest():
         raise HTTPException(status_code=503, detail="Microsoft Graph credentials not configured")
 
     graph   = GraphClient()
-    mailbox = cfg.MS_AP_INBOX
+    mailbox = cfg.ms_send_from
     sent: list[str] = []
     skipped: list[str] = []
 
@@ -1741,7 +1741,7 @@ Write the summary now (2-3 sentences maximum):"""
     </div>"""
 
     graph   = GraphClient()
-    mailbox = cfg.MS_AP_INBOX
+    mailbox = cfg.ms_send_from
     sent_to: list[str] = []
     skipped: list[str] = []
 
@@ -3841,7 +3841,7 @@ async def send_daily_report_email(
 
     graph = GraphClient()
     await graph.send_email(
-        mailbox=settings.MS_AP_INBOX,
+        mailbox=settings.ms_send_from,
         to_addresses=recipients,
         subject=f"📋 {division} Daily Report — {display_date}",
         body_html=html_body,

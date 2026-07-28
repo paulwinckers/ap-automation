@@ -358,7 +358,7 @@ async def _notify_aspire_unmatched(invoice, receipt_id, vendor_rule, db=None):
         graph = GraphClient()
         try:
             await graph.send_email(
-                mailbox=settings.MS_AP_INBOX,
+                mailbox=settings.ms_send_from,
                 to_addresses=[forward_to],
                 subject=f"New Aspire receipt — {invoice.vendor_name or 'Unknown vendor'} {amount} (assign work ticket)",
                 body_html=f"""
@@ -438,7 +438,7 @@ async def _notify_aspire_updated(invoice, receipt, vendor_rule, db=None):
         graph = GraphClient()
         try:
             await graph.send_email(
-                mailbox=settings.MS_AP_INBOX,
+                mailbox=settings.ms_send_from,
                 to_addresses=[forward_to],
                 subject=subject,
                 body_html=f"""
@@ -599,7 +599,7 @@ async def _notify_ap_employee_job_cost(
         graph = GraphClient()
         try:
             await graph.send_email(
-                mailbox=settings.MS_AP_INBOX,
+                mailbox=settings.ms_send_from,
                 to_addresses=[ap_email],
                 subject=f"Job cost expense from {employee_name} — {vendor} {amount}",
                 body_html=f"""
@@ -728,7 +728,7 @@ async def _notify_queued(invoice: Invoice, vendor_rule, db: Optional[Database] =
         graph = GraphClient()
         try:
             await graph.send_email(
-                mailbox=settings.MS_AP_INBOX,
+                mailbox=settings.ms_send_from,
                 to_addresses=[forward_to],
                 subject=subject,
                 body_html=f"""

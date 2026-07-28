@@ -1032,7 +1032,7 @@ async def create_opportunity(
             date_str = date.today().strftime("%B %d, %Y")
             note_html = notes.replace("\n", "<br>") if notes else "<em>None</em>"
             await graph.send_email(
-                mailbox=_s.MS_AP_INBOX,
+                mailbox=_s.ms_send_from,
                 to_addresses=[salesperson_email],
                 subject=f"New opportunity assigned to you{opp_num_str} — {opportunity_name}",
                 body_html=f"""

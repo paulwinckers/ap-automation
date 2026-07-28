@@ -532,7 +532,7 @@ async def email_week_schedule(start: str | None = None, body: WeekEmailBody | No
     html  = _render_week_email_html(payload)
     graph = GraphClient()
     await graph.send_email(
-        mailbox=settings.MS_AP_INBOX,
+        mailbox=settings.ms_send_from,
         to_addresses=recipients,
         subject=subject,
         body_html=html,

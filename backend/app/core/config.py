@@ -50,10 +50,16 @@ class Settings(BaseSettings):
     MS_CLIENT_ID:        str = ""
     MS_TENANT_ID:        str = ""
     MS_CLIENT_SECRET:    str = ""
-    MS_AP_INBOX:         str = ""   # e.g. ap@darios.ca
+    MS_AP_INBOX:         str = ""   # mailbox we READ/monitor + file into (e.g. accounting@darios.ca)
+    MS_SEND_FROM:        str = ""   # mailbox outbound email is sent FROM; blank → same as MS_AP_INBOX
 
     # Fallback forward-to email for job-cost invoices when vendor rule has none set
     AP_FORWARD_EMAIL:    str = ""   # e.g. keeland@darios.ca
+
+    @property
+    def ms_send_from(self) -> str:
+        """Mailbox outbound email is sent from — falls back to the monitored inbox."""
+        return self.MS_SEND_FROM or self.MS_AP_INBOX
 
     # Auth
     SECRET_KEY:          str = "change-me-in-production"  # set via Railway env var

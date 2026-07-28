@@ -357,7 +357,7 @@ async def email_report(company_id: int, body: EmailBody, week_start: str | None 
     from app.services.email_intake import GraphClient
     graph = GraphClient()
     try:
-        await graph.send_email(mailbox=settings.MS_AP_INBOX, to_addresses=recipients,
+        await graph.send_email(mailbox=settings.ms_send_from, to_addresses=recipients,
                                subject=subject, body_html=html)
     finally:
         await graph.close()
