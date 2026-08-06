@@ -69,6 +69,40 @@ async def reset_all_aspire_post(db: Database = Depends(get_db)):
     }
 
 
+class SwapForwardEmail(BaseModel):
+    old_email: str
+    new_email: str
+
+
+@router.post("/swap-forward-email")
+async def swap_forward_email(body: SwapForwardEmail, db: Database = Depends(get_db)):
+    """Bulk-swap a forwarding email across all vendor rules (case-insensitive).
+    Updates both forward_to and job_cost_forward_to. Handy when a person leaves."""
+    old = (body.old_email or "").strip()
+    new = (body.new_email or "").strip()
+    if not old or not new:
+        raise HTTPException(status_code=400, detail="old_email and new_email are required")
+
+    counts = await db._q(
+        "SELECT "
+        "SUM(CASE WHEN lower(forward_to) = lower(?) THEN 1 ELSE 0 END) AS ft, "
+        "SUM(CASE WHEN lower(job_cost_forward_to) = lower(?) THEN 1 ELSE 0 END) AS jc "
+        "FROM vendor_rules",
+        [old, old],
+    )
+    ft = (counts[0].get("ft") or 0) if counts else 0
+    jc = (counts[0].get("jc") or 0) if counts else 0
+
+    await db._x("UPDATE vendor_rules SET forward_to = ? WHERE lower(forward_to) = lower(?)", [new, old])
+    await db._x("UPDATE vendor_rules SET job_cost_forward_to = ? WHERE lower(job_cost_forward_to) = lower(?)", [new, old])
+
+    logger.info(f"Vendor forward-email swap: {old} → {new} ({ft} forward_to, {jc} job_cost_forward_to)")
+    return {
+        "old_email": old, "new_email": new,
+        "forward_to_updated": ft, "job_cost_forward_to_updated": jc,
+    }
+
+
 @router.get("/employees")
 async def list_employees(db: Database = Depends(get_db)):
     """Return names of vendors flagged as employees — used by the field crew expense form."""
