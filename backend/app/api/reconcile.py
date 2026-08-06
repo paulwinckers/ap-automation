@@ -227,10 +227,9 @@ async def upload_statement(
             logger.warning(f"R2 PDF upload failed (non-fatal): {e}")
             pdf_warning = f"PDF storage failed: {e}"
 
-        # Run live QBO diff
-        from_date, to_date = _period_date_range(period)
-        diff_result = await svc.reconcile(extraction, from_date, to_date)
-
+        # The live QBO diff is intentionally NOT computed here — it made every upload
+        # wait on QBO API round-trips. Diffs are computed lazily (and cached) when the
+        # period is viewed (/periods/{period}/diffs), so uploads return fast.
         return {
             "statement_id": statement_id,
             "vendor_name": vendor_name,
@@ -239,7 +238,7 @@ async def upload_statement(
             "currency": extraction.get("currency", "CAD"),
             "aging": extraction.get("aging"),
             "lines": extraction.get("lines", []),
-            "diff": diff_result,
+            "diff": None,   # computed on first view of the period (cached)
             "pdf_saved": pdf_saved,
             "pdf_warning": pdf_warning,
         }
