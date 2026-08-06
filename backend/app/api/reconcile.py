@@ -161,7 +161,11 @@ async def upload_statement(
 
         # Extract with Claude
         logger.info(f"Extracting vendor statement: {filename}")
-        extraction = await svc.extract_statement(file_bytes, filename)
+        try:
+            extraction = await svc.extract_statement(file_bytes, filename)
+        except ValueError as ve:
+            # Clear, user-facing extraction error (e.g. truncated long statement)
+            raise HTTPException(status_code=422, detail=str(ve))
 
         vendor_name = extraction.get("vendor_name")
         if not vendor_name:

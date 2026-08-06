@@ -268,7 +268,7 @@ class ReconciliationService:
 
         message = await self._claude.messages.create(
             model="claude-sonnet-4-5",
-            max_tokens=4096,
+            max_tokens=16384,   # long statements (many line items) overflowed 4096 → truncated JSON
             messages=[{
                 "role": "user",
                 "content": [
@@ -279,7 +279,7 @@ class ReconciliationService:
         )
 
         raw = message.content[0].text.strip()
-        logger.info(f"Statement extraction response: {raw[:300]}")
+        logger.info(f"Statement extraction: stop_reason={message.stop_reason}, {len(raw)} chars")
 
         if raw.startswith("```"):
             raw = raw.split("```")[1]
@@ -287,7 +287,20 @@ class ReconciliationService:
                 raw = raw[4:]
             raw = raw.strip()
 
-        data = json.loads(raw)
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            # Most common cause: the AI response was truncated on a very long statement.
+            if getattr(message, "stop_reason", None) == "max_tokens":
+                raise ValueError(
+                    "This statement is too long to read in one pass — the extraction was cut off. "
+                    "Try splitting the PDF into smaller parts and uploading each."
+                ) from e
+            logger.error(f"Statement JSON parse failed ({len(raw)} chars). Head: {raw[:400]}")
+            raise ValueError(
+                "Could not read this statement — the extraction didn't return valid data. "
+                "Please re-upload; if it keeps failing the statement layout may be unsupported."
+            ) from e
 
         # Normalize invoice numbers in lines
         for line in data.get("lines", []):
