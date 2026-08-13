@@ -369,7 +369,8 @@ async def _build_lookup_cache() -> None:
 
         SELECT = "OpportunityID,OpportunityName,PropertyName,DivisionName,OpportunityStatusName,OpportunityType,StartDate,EndDate,JobStatusName,EstimatedLaborHours,ActualLaborHours,PercentComplete,CompleteDate"
         DIV_FILTER = (
-            "(DivisionName eq 'Commercial Maintenance' or DivisionName eq 'Residential Maintenance')"
+            "(DivisionName eq 'Commercial Maintenance' or DivisionName eq 'Residential Maintenance'"
+            " or DivisionName eq 'Irrigation/Lighting')"
             " and OpportunityStatusName eq 'Won'"
             f" and ((StartDate ge {yr_start} and StartDate le {yr_end})"
             f" or (EndDate ge {yr_start} and EndDate le {yr_end}))"
