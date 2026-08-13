@@ -161,6 +161,29 @@ async def _fetch_tickets(opp_id: int) -> list[dict]:
     return rows
 
 
+def _clean_visit_note(text: str) -> str:
+    """Aspire embeds photo attachments inside visit notes as BBCode:
+    [Attachments][Attachment]28995[/Attachment]...[/Attachments]. Those files
+    aren't downloadable via the API, so replace the markup with a readable
+    '📷 Photo' indicator instead of showing raw tags."""
+    import re as _re
+    if not text:
+        return ""
+
+    def _repl(m):
+        n = len(_re.findall(r'\[Attachment\]', m.group(0)))
+        if not n:
+            return ""
+        return f"📷 {n} photo" + ("s" if n != 1 else "")
+
+    text = _re.sub(r'\[Attachments\].*?\[/Attachments\]', _repl, text,
+                   flags=_re.IGNORECASE | _re.DOTALL)
+    # also catch a stray/unclosed opening tag
+    text = _re.sub(r'\[/?Attachments?\]', '', text, flags=_re.IGNORECASE)
+    text = _re.sub(r'[ \t]{2,}', ' ', text).strip()
+    return text
+
+
 async def _fetch_visit_notes(ticket_id: int) -> list[dict]:
     """Fetch WorkTicketVisitNotes for a single work ticket."""
     try:
@@ -286,7 +309,7 @@ def _parse_comments_from_notes(notes_html: str) -> list[dict]:
         if len(cells) < 2:
             continue
         meta    = _re.sub(r'<[^>]+>', ' ', cells[0]).strip()
-        comment = _re.sub(r'<[^>]+>', '', cells[1]).strip()
+        comment = _clean_visit_note(_re.sub(r'<[^>]+>', '', cells[1]).strip())
         if not comment or comment == 'Comment' or meta in ('Created Date/By', ''):
             continue
         date_str = ""
@@ -590,7 +613,7 @@ async def get_ticket_notes(opp_id: int, ticket_id: int):
     return {
         "notes": [
             {
-                "note":           vn.get("Note") or "",
+                "note":           _clean_visit_note(vn.get("Note") or ""),
                 "created_at":     (vn.get("CreatedDateTime") or "")[:16],
                 "created_by":     vn.get("CreatedByUserName") or "",
                 "scheduled_date": (vn.get("ScheduledDate") or "")[:10],
@@ -788,7 +811,7 @@ async def get_maintenance_page(opp_id: int, db: Database = Depends(get_db)):
         if include_notes and tid and tid in visit_notes_map:
             out["visit_notes"] = [
                 {
-                    "note":           vn.get("Note") or "",
+                    "note":           _clean_visit_note(vn.get("Note") or ""),
                     "created_at":     (vn.get("CreatedDateTime") or "")[:16],
                     "created_by":     vn.get("CreatedByUserName") or "",
                     "scheduled_date": (vn.get("ScheduledDate") or "")[:10],
