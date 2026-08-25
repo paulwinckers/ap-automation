@@ -1950,17 +1950,35 @@ async def get_new_receipts():
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to fetch receipts: {e}")
 
+    # Receipts don't include VendorName — batch-resolve VendorID → name so the
+    # amend list shows the real current vendor (not "Unknown Vendor").
+    vendor_ids = list({r.get("VendorID") for r in records if r.get("VendorID")})
+    vendor_names: dict = {}
+    for i in range(0, len(vendor_ids), 15):
+        chunk = vendor_ids[i:i + 15]
+        or_f = " or ".join(f"VendorID eq {vid}" for vid in chunk)
+        try:
+            vres = await _aspire._get("Vendors", {
+                "$filter": f"({or_f})", "$select": "VendorID,VendorName", "$top": "50",
+            })
+            for v in _aspire._extract_list(vres):
+                if v.get("VendorID"):
+                    vendor_names[v["VendorID"]] = v.get("VendorName") or ""
+        except Exception as e:
+            logger.warning(f"Vendor name resolve failed for chunk {chunk}: {e}")
+
     receipts = []
     for r in records:
         rid = r.get("ReceiptID")
         note = (r.get("ReceiptNote") or "").strip()
         # Pull first non-empty line from the note for a short label
         note_snippet = next((ln.strip() for ln in note.splitlines() if ln.strip()), "")
+        vid = r.get("VendorID")
         receipts.append({
             "receipt_id":     rid,
             "display_number": (rid - 1) if rid else None,
-            "vendor_id":      r.get("VendorID"),
-            "vendor_name":    r.get("VendorName") or "Unknown Vendor",
+            "vendor_id":      vid,
+            "vendor_name":    r.get("VendorName") or vendor_names.get(vid) or "Unknown Vendor",
             "received_date":  (r.get("ReceivedDate") or "")[:10],
             "note_snippet":   note_snippet[:80],
             "total":          r.get("ReceiptTotalCost") or 0,
