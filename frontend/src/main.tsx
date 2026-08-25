@@ -69,7 +69,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         {/* Field crew — no shell, phone-optimised, no login required */}
         <Route path="/field"             element={<FieldSubmit />} />
         <Route path="/field/work-ticket" element={<FieldWorkTicket />} />
-        <Route path="/field/opportunity" element={<FieldOpportunity />} />
+        {/* New Opportunity — access removed for now (kept for easy re-enable)
+        <Route path="/field/opportunity" element={<FieldOpportunity />} /> */}
+        {/* Contacts — public (no login), moved up into Field Staff */}
+        <Route path="/field/contacts"    element={<PropertyLookup />} />
         <Route path="/field/issue"          element={<FieldIssue />} />
         <Route path="/field/purchase-order" element={<FieldPurchaseOrder />} />
         <Route path="/field/amend-po"       element={<FieldAmendPO />} />
