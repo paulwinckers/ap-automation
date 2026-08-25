@@ -468,24 +468,17 @@ export default function FieldPurchaseOrder() {
       <div style={wrap}>
         {header('Change PO Vendor')}
 
-        {amResult && (
-          <div style={{ ...card, border: '1px solid #16a34a' }}>
-            <div style={{ fontWeight: 700, color: '#4ade80' }}>✅ PO #{amResult.display_number} vendor changed</div>
-            <div style={{ color: '#94a3b8', fontSize: 13, marginTop: 4 }}>{amResult.old_vendor} → {amResult.vendor_name}</div>
-          </div>
-        )}
         {amError && <div style={{ ...card, border: '1px solid #ef4444', color: '#fca5a5' }}>{amError}</div>}
 
         {!amendSel ? (
           <div style={card}>
-            <div style={label}>Find the PO — only unposted (“New”) POs can be changed</div>
+            <div style={label}>Find the PO — only unposted (“New”) POs are listed</div>
             <input style={inp} placeholder="Search by PO #, vendor, or note…" value={amendSearch}
                    onChange={e => setAmendSearch(e.target.value)} autoFocus />
             {amendLoading && <div style={{ color: '#64748b', fontSize: 13, marginTop: 8 }}>Loading recent POs…</div>}
             <div style={{ marginTop: 10 }}>
               {filtered.map(r => (
-                <div key={r.receipt_id} style={row}
-                     onClick={() => { setAmendSel(r); setAmNewVendor(null); setAmVendorQuery(''); setAmVendors(preferredRef.current); }}>
+                <div key={r.receipt_id} style={row} onClick={() => setAmendSel(r)}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600, fontSize: 14 }}>PO #{r.display_number} · {r.vendor_name}</div>
                     <div style={{ color: '#64748b', fontSize: 12 }}>
@@ -503,32 +496,26 @@ export default function FieldPurchaseOrder() {
         ) : (
           <>
             <div style={card}>
-              <div style={label}>Changing vendor on</div>
+              <div style={label}>Change the vendor on</div>
               <div style={{ fontWeight: 700, fontSize: 16 }}>PO #{amendSel.display_number}</div>
               <div style={{ color: '#94a3b8', fontSize: 13, marginTop: 2 }}>
                 Current vendor: {amendSel.vendor_name}{amendSel.total ? ` · $${amendSel.total.toFixed(2)}` : ''}
               </div>
-              <button style={ghost} onClick={() => { setAmendSel(null); setAmNewVendor(null); }}>← Pick a different PO</button>
             </div>
-            <div style={card}>
-              <div style={label}>New vendor</div>
-              <input style={inp} placeholder="Search vendors…" value={amVendorQuery}
-                     onChange={e => { setAmVendorQuery(e.target.value); setAmNewVendor(null); }} autoFocus />
-              {amVendorLoading && <div style={{ color: '#64748b', fontSize: 13, marginTop: 8 }}>Searching…</div>}
-              <div style={{ marginTop: 10 }}>
-                {amVendors.map(v => (
-                  <div key={v.vendor_id}
-                       style={{ ...row, border: amNewVendor?.vendor_id === v.vendor_id ? '1px solid #22c55e' : row.border }}
-                       onClick={() => setAmNewVendor(v)}>
-                    <div style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{v.vendor_name}</div>
-                    {amNewVendor?.vendor_id === v.vendor_id && <span style={{ color: '#4ade80' }}>✓</span>}
-                  </div>
-                ))}
+            <div style={{ ...card, border: '1px solid #1d4ed8', background: '#172554' }}>
+              <div style={{ color: '#93c5fd', fontSize: 13, lineHeight: 1.5 }}>
+                The vendor is changed in Aspire. Tap below to open this PO, change the <b>Vendor</b> field, and save.
               </div>
             </div>
-            <button style={btn()} disabled={!amNewVendor || amending} onClick={submitAmend}>
-              {amending ? 'Changing…' : amNewVendor ? `Change vendor to ${amNewVendor.vendor_name}` : 'Select a new vendor'}
-            </button>
+            {amendSel.aspire_url ? (
+              <a href={amendSel.aspire_url} target="_blank" rel="noopener noreferrer"
+                 style={{ ...btn('#2563eb'), display: 'block', textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
+                Open PO #{amendSel.display_number} in Aspire →
+              </a>
+            ) : (
+              <div style={{ ...card, color: '#fca5a5', fontSize: 13 }}>No Aspire link available for this PO.</div>
+            )}
+            <button style={ghost} onClick={() => setAmendSel(null)}>← Pick a different PO</button>
           </>
         )}
 

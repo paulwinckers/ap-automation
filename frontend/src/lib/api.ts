@@ -1179,6 +1179,7 @@ export interface NewReceipt {
   received_date:  string;
   note_snippet:   string;
   total:          number;
+  aspire_url?:    string;
 }
 
 export async function getNewReceipts(): Promise<NewReceipt[]> {

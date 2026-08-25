@@ -1967,6 +1967,11 @@ async def get_new_receipts():
         except Exception as e:
             logger.warning(f"Vendor name resolve failed for chunk {chunk}: {e}")
 
+    # Aspire's External API cannot edit a receipt's vendor (POST is create-only;
+    # PATCH/PUT/DELETE all 404), so we deep-link to the receipt in the Aspire web app
+    # where the vendor can be changed manually.
+    web_base = (settings.ASPIRE_WEB_URL or "https://cloud.youraspire.com/app").rstrip("/")
+
     receipts = []
     for r in records:
         rid = r.get("ReceiptID")
@@ -1982,6 +1987,7 @@ async def get_new_receipts():
             "received_date":  (r.get("ReceivedDate") or "")[:10],
             "note_snippet":   note_snippet[:80],
             "total":          r.get("ReceiptTotalCost") or 0,
+            "aspire_url":     f"{web_base}/purchasing/purchase-receipts/details/{rid}" if rid else None,
         })
     return {"receipts": receipts}
 
