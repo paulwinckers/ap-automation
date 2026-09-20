@@ -111,13 +111,20 @@ class QBOClient:
         self._tax_codes: Optional[dict] = None
 
     async def _load_refresh_token_from_d1(self) -> None:
-        """On first API call, check D1 for a newer refresh token than the env var."""
-        if self._token_loaded_from_d1:
-            return
-        self._token_loaded_from_d1 = True
+        """Pull the latest refresh token from D1 into memory.
+
+        Read EVERY time we're about to refresh (not just once at startup), so
+        the several QBOClient instances in this process — invoice posting, email
+        intake, reconciliation, vendor sync — always refresh with the newest
+        token. Intuit rotates (and invalidates the previous) refresh token on
+        every refresh; if one instance kept a stale in-memory token it would
+        rotate a token another instance had already replaced, and within
+        Intuit's ~24h grace window they'd clobber each other until every token
+        was dead. Re-reading D1 first keeps all instances converged.
+        """
         stored = await get_setting("QBO_REFRESH_TOKEN")
         if stored and stored != self._refresh_token:
-            logger.info("QBO refresh token loaded from D1 (newer than env var)")
+            logger.info("QBO refresh token synced from D1")
             self._refresh_token = stored
 
     # ── OAuth2 token management ───────────────────────────────────────────────
@@ -129,7 +136,6 @@ class QBOClient:
         reconciliation) only one refresh attempt runs at a time. The rest wait
         and then reuse the freshly-issued token without hitting Intuit again.
         """
-        await self._load_refresh_token_from_d1()
         # Fast path — token still valid, no lock needed
         if self._access_token and time.time() < self._token_expiry - 60:
             return self._access_token
@@ -138,6 +144,9 @@ class QBOClient:
             # Re-check inside the lock: a previous waiter may have already refreshed
             if self._access_token and time.time() < self._token_expiry - 60:
                 return self._access_token
+            # Re-read the newest refresh token from D1 right before refreshing so
+            # concurrent QBOClient instances don't rotate a stale token.
+            await self._load_refresh_token_from_d1()
             return await self._refresh_access_token()
 
     async def _refresh_access_token(self) -> str:
@@ -154,6 +163,23 @@ class QBOClient:
             auth=(settings.QBO_CLIENT_ID, settings.QBO_CLIENT_SECRET),
             headers={"Accept": "application/json"},
         )
+        # A 400 means our refresh token was rejected. Another QBOClient instance
+        # (or replica) may have just rotated it between our D1 read and this call,
+        # so reload the newest token from D1 and retry once before giving up.
+        if resp.status_code == 400:
+            stored = await get_setting("QBO_REFRESH_TOKEN")
+            if stored and stored != self._refresh_token:
+                logger.warning("QBO refresh got 400 — retrying once with newer token from D1")
+                self._refresh_token = stored
+                resp = await self._http.post(
+                    INTUIT_TOKEN_URL,
+                    data={
+                        "grant_type":    "refresh_token",
+                        "refresh_token": self._refresh_token,
+                    },
+                    auth=(settings.QBO_CLIENT_ID, settings.QBO_CLIENT_SECRET),
+                    headers={"Accept": "application/json"},
+                )
         resp.raise_for_status()
         data = resp.json()
 
