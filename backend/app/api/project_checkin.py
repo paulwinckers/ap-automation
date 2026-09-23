@@ -1174,6 +1174,17 @@ async def get_checkin_form(token: str, db: Database = Depends(get_db)):
     }
 
 
+def _is_weekend() -> bool:
+    """True on Saturday/Sunday in the configured timezone.
+
+    Project Update emails to the team are suppressed on weekends (the crew's
+    check-in response is still saved — only the outbound notification is skipped),
+    so work logged on Sat/Sun doesn't trigger a weekend update.
+    """
+    tz = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    return datetime.now(tz).weekday() in (5, 6)  # Mon=0 … Sat=5, Sun=6
+
+
 @public_router.post("/{token}/respond")
 async def submit_checkin_response(
     token:           str,
@@ -1235,16 +1246,19 @@ async def submit_checkin_response(
         media           = _saved_media,
         opp_id          = c.get("opportunity_id"),
     )
-    try:
-        graph = GraphClient()
-        await graph.send_email(
-            mailbox=settings.ms_send_from,
-            to_addresses=notify_emails,
-            subject=f"✅ Project Update: {c['lead_name']} — {c['property_name'] or c['opportunity_name']}",
-            body_html=html,
-        )
-    except Exception as e:
-        logger.warning(f"Management notification failed after checkin submit: {e}")
+    if _is_weekend():
+        logger.info("Weekend — skipping Project Update email (response saved)")
+    else:
+        try:
+            graph = GraphClient()
+            await graph.send_email(
+                mailbox=settings.ms_send_from,
+                to_addresses=notify_emails,
+                subject=f"✅ Project Update: {c['lead_name']} — {c['property_name'] or c['opportunity_name']}",
+                body_html=html,
+            )
+        except Exception as e:
+            logger.warning(f"Management notification failed after checkin submit: {e}")
 
     return {"ok": True, "message": "Thanks — your update has been sent to the team.", "photo_ids": photo_ids}
 
@@ -2508,16 +2522,19 @@ async def _do_submit_project_response(
         media=_saved_media,
         opp_id=opp_id,
     )
-    try:
-        graph = GraphClient()
-        await graph.send_email(
-            mailbox=settings.ms_send_from,
-            to_addresses=notify_emails,
-            subject=f"✅ Project Update: {lead_name} — {prop_name or opp_name}",
-            body_html=html,
-        )
-    except Exception as e:
-        logger.warning(f"Management notification failed: {e}")
+    if _is_weekend():
+        logger.info("Weekend — skipping Project Update email (response saved)")
+    else:
+        try:
+            graph = GraphClient()
+            await graph.send_email(
+                mailbox=settings.ms_send_from,
+                to_addresses=notify_emails,
+                subject=f"✅ Project Update: {lead_name} — {prop_name or opp_name}",
+                body_html=html,
+            )
+        except Exception as e:
+            logger.warning(f"Management notification failed: {e}")
 
     return {
         "ok": True,
