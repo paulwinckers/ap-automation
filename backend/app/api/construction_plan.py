@@ -105,7 +105,7 @@ async def _fetch_opp_actuals(opp_ids: list[int]) -> dict[int, dict]:
                 "DivisionName,OpportunityType,SalesTypeName,"
                 "WonDollars,ActualEarnedRevenue,EstimatedDollars,"
                 "EstimatedLaborHours,ActualLaborHours,PercentComplete,"
-                "OpportunityStatusName,WonDate,StartDate,EndDate"
+                "OpportunityStatusName,WonDate,StartDate,EndDate,CompleteDate"
             ),
             "$top": "200",
         }
@@ -287,7 +287,7 @@ async def _fetch_construction_universe(month: str) -> dict[int, dict]:
         "OpportunityID,OpportunityName,PropertyName,OpportunityNumber,DivisionName,"
         "OpportunityType,SalesTypeName,OpportunityStatusName,"
         "WonDollars,ActualEarnedRevenue,EstimatedDollars,"
-        "EstimatedLaborHours,ActualLaborHours,PercentComplete,WonDate,StartDate,EndDate"
+        "EstimatedLaborHours,ActualLaborHours,PercentComplete,WonDate,StartDate,EndDate,CompleteDate"
     )
     out: dict[int, dict] = {}
     try:
@@ -304,6 +304,41 @@ async def _fetch_construction_universe(month: str) -> dict[int, dict]:
     except Exception as e:
         logger.warning(f"Construction universe fetch failed: {e}")
     return out
+
+
+async def _fetch_invoice_paid_map() -> dict[int, dict]:
+    """Map OpportunityID -> {'fully_paid': bool, 'paid_date': 'YYYY-MM-DD'} from recent Aspire
+    invoices. A job counts as fully paid only when it has >=1 invoice and EVERY invoice touching
+    it is at zero balance (AmountRemaining == 0) — so a paid deposit while progress invoices are
+    still outstanding does NOT count. paid_date = latest completed/invoice date among its invoices.
+    Aspire caps $top at 1000 (≈ the last few months), which is the drop-off window that matters;
+    older fully-paid jobs simply stay in the collapsed Completed archive.
+    """
+    try:
+        inv = _aspire._extract_list(
+            await _aspire._get("Invoices", {"$top": "1000", "$orderby": "InvoiceDate desc"})
+        )
+    except Exception as e:
+        logger.warning(f"Invoices fetch failed: {e}")
+        return {}
+    agg: dict[int, dict] = {}
+    for i in inv:
+        remaining = float(i.get("AmountRemaining") or 0)
+        idate = (i.get("CompletedDateTime") or i.get("InvoiceDate") or "")[:10]
+        for io in (i.get("InvoiceOpportunities") or []):
+            oid = io.get("OpportunityID")
+            if not oid:
+                continue
+            a = agg.setdefault(oid, {"count": 0, "unpaid": 0, "last": ""})
+            a["count"] += 1
+            if remaining > 0.005:
+                a["unpaid"] += 1
+            if idate > a["last"]:
+                a["last"] = idate
+    return {
+        oid: {"fully_paid": a["count"] > 0 and a["unpaid"] == 0, "paid_date": a["last"]}
+        for oid, a in agg.items()
+    }
 
 
 def _plan_bucket(stage: str, queued: bool, start_date: str, month: str, pct_complete: float | None) -> str:
@@ -383,9 +418,10 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
     target_rows_coro = db._q("SELECT * FROM construction_job_targets WHERE month = ? ORDER BY created_at", [month])
     scheduled_coro  = _fetch_scheduled_opp_ids(month)
     universe_coro   = _fetch_construction_universe(month)
+    invoice_coro    = _fetch_invoice_paid_map()
 
-    goal_rows, target_rows, scheduled_map, universe = await _aio.gather(
-        goal_rows_coro, target_rows_coro, scheduled_coro, universe_coro
+    goal_rows, target_rows, scheduled_map, universe, invoice_paid = await _aio.gather(
+        goal_rows_coro, target_rows_coro, scheduled_coro, universe_coro, invoice_coro
     )
 
     goal = dict(goal_rows[0]) if goal_rows else {
@@ -593,14 +629,25 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         j["queued"]             = queued_map.get(oid, False)
         j["bucket"]             = _plan_bucket(
             j["stage"], j["queued"], j.get("start_date") or "", month, j.get("pct_complete_job"))
+        # A Complete + fully-paid job (Aspire) belongs in Completed/out-of-production, even if
+        # its % or stage wouldn't otherwise place it there.
+        inv = invoice_paid.get(oid) or {}
+        if not j["queued"] and inv.get("fully_paid") and (actuals.get(oid) or {}).get("CompleteDate"):
+            j["bucket"] = "completed"
 
-    # Paid jobs drop off the plan in months AFTER the month they were paid.
+    # A job drops off the plan in months AFTER it was paid. "Paid" is detected from Aspire
+    # (job has a CompleteDate AND every invoice is fully collected — a deposit-only payment does
+    # NOT count), or manually when its Stage is set to Paid.
     dropped = []
     for oid, j in jobs.items():
-        if j["stage"] == "Paid":
-            paid_month = (paid_map.get(oid) or "")[:7]
-            if paid_month and month > paid_month:
-                dropped.append(oid)
+        paid_month = ""
+        inv = invoice_paid.get(oid) or {}
+        if inv.get("fully_paid") and (actuals.get(oid) or {}).get("CompleteDate"):
+            paid_month = (inv.get("paid_date") or "")[:7]
+        elif j["stage"] == "Paid":
+            paid_month = (paid_map.get(oid) or "")[:7]   # manual paid_at fallback
+        if paid_month and month > paid_month:
+            dropped.append(oid)
     for oid in dropped:
         jobs.pop(oid, None)
 
