@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
-  getJobChecklist, setChecklistStatus, uploadJobAttachment, API_BASE,
+  getJobChecklist, setChecklistStatus, setChecklistDate, uploadJobAttachment, API_BASE,
   type PrepItem, type PrepStatus,
 } from '../lib/api';
 
@@ -74,6 +74,17 @@ export default function JobPrepChecklist({ oppId, onProgress }: Props) {
     } finally { setBusy(null); }
   }
 
+  async function saveDate(item: PrepItem, field: 'due_date' | 'completed_date', value: string) {
+    const prev = items;
+    applyLocal(item.key, { [field]: value || null } as Partial<PrepItem>);
+    try {
+      await setChecklistDate(oppId, item.key, { [field]: value });
+    } catch {
+      setItems(prev);
+      alert('Could not save date — please try again.');
+    }
+  }
+
   async function handleFile(item: PrepItem, file: File | null) {
     pendingUploadKey.current = null;
     if (!file) return;
@@ -120,11 +131,12 @@ export default function JobPrepChecklist({ oppId, onProgress }: Props) {
             const na = it.status === 'na';
             return (
               <div key={it.key} style={{
-                display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px', borderRadius: 8,
+                display: 'flex', flexDirection: 'column', gap: 6, padding: '7px 8px', borderRadius: 8,
                 background: satisfied ? '#f0fdf4' : na ? '#f8fafc' : '#fff',
                 border: '1px solid ' + (satisfied ? '#bbf7d0' : '#e2e8f0'),
                 opacity: na ? 0.7 : 1,
               }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ flex: 1, fontSize: 13, color: satisfied ? '#166534' : '#334155', fontWeight: satisfied ? 600 : 400 }}>
                   {it.label}
                 </span>
@@ -160,6 +172,21 @@ export default function JobPrepChecklist({ oppId, onProgress }: Props) {
                   style={{ display: 'none' }}
                   onChange={e => handleFile(it, e.target.files?.[0] ?? null)}
                 />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14, paddingLeft: 2 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#64748b' }}>
+                    Due
+                    <input type="date" value={it.due_date ?? ''} disabled={busy === it.key}
+                      onChange={e => saveDate(it, 'due_date', e.target.value)}
+                      style={{ fontSize: 11, padding: '2px 6px', borderRadius: 6, border: '1px solid #d1d5db', fontFamily: 'inherit', color: '#374151' }} />
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#64748b' }}>
+                    Done
+                    <input type="date" value={it.completed_date ?? ''} disabled={busy === it.key}
+                      onChange={e => saveDate(it, 'completed_date', e.target.value)}
+                      style={{ fontSize: 11, padding: '2px 6px', borderRadius: 6, border: '1px solid #d1d5db', fontFamily: 'inherit', color: '#374151' }} />
+                  </label>
+                </div>
               </div>
             );
           })}

@@ -276,6 +276,11 @@ async def lifespan(app: FastAPI):
         ("job_prep_checklist", "attachment_id", "ALTER TABLE job_prep_checklist ADD COLUMN attachment_id INTEGER"),
         # job_planning.stage — workflow stage (New → Complete)
         ("job_planning", "stage", "ALTER TABLE job_planning ADD COLUMN stage TEXT"),
+        # job_planning.queued — parked jobs (1) drop to a "Queued / Parked" section; stay plannable
+        ("job_planning", "queued", "ALTER TABLE job_planning ADD COLUMN queued INTEGER NOT NULL DEFAULT 0"),
+        # job_prep_checklist — per-item due & completed dates
+        ("job_prep_checklist", "due_date",       "ALTER TABLE job_prep_checklist ADD COLUMN due_date TEXT"),
+        ("job_prep_checklist", "completed_date", "ALTER TABLE job_prep_checklist ADD COLUMN completed_date TEXT"),
         # company_documents.folder — optional folder/category for grouping (legacy text)
         ("company_documents", "folder", "ALTER TABLE company_documents ADD COLUMN folder TEXT"),
         # company_documents.folder_id — FK into document_folders (nested folder tree)

@@ -42,6 +42,35 @@ function fmtH(n: number | null | undefined): string {
   if (n == null) return '—';
   return `${n.toFixed(1)}h`;
 }
+function fmtDate(s: string | null | undefined): string {
+  if (!s) return '—';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+// Change orders are named like "… CO2 …" / "… CO 4 …" and share the base job's OpportunityNumber.
+const CO_RE = /\bco\s*\d+\b/i;
+function isChangeOrder(name: string | null | undefined): boolean {
+  return CO_RE.test(name || '');
+}
+interface JobGroup { base: PlanJob; children: PlanJob[]; }
+/** Group jobs by shared opp_number (base job first, change-order rows as children). */
+function groupJobs(list: PlanJob[]): JobGroup[] {
+  const groups = new Map<string, PlanJob[]>();
+  const order: string[] = [];
+  for (const j of list) {
+    const key = j.opp_number != null ? `n:${j.opp_number}` : `id:${j.opportunity_id}`;
+    if (!groups.has(key)) { groups.set(key, []); order.push(key); }
+    groups.get(key)!.push(j);
+  }
+  return order.map(key => {
+    const arr = [...groups.get(key)!].sort((a, b) => a.opportunity_id - b.opportunity_id);
+    const baseIdx = arr.findIndex(j => !isChangeOrder(j.opportunity_name));
+    const base = baseIdx >= 0 ? arr[baseIdx] : arr[0];
+    const children = arr.filter(j => j !== base);
+    return { base, children };
+  });
+}
 function currentMonth(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -594,8 +623,10 @@ export default function ConstructionPlan() {
   const [prepProgress,  setPrepProgress]  = useState<Record<number, { done: number; total: number }>>({});
   // Construction leads (for the per-job Lead dropdown)
   const [leads, setLeads] = useState<ConstructionLead[]>([]);
-  // Optimistic per-job planning state (lead / schedule confirmed / stage)
-  const [planningOverride, setPlanningOverride] = useState<Record<number, { lead_name?: string; schedule_confirmed?: boolean; stage?: string }>>({});
+  // Optimistic per-job planning state (lead / schedule confirmed / stage / queued)
+  const [planningOverride, setPlanningOverride] = useState<Record<number, { lead_name?: string; schedule_confirmed?: boolean; stage?: string; queued?: boolean }>>({});
+  // Stage filter for the active plan table ('all' = show every stage)
+  const [stageFilter, setStageFilter] = useState<string>('all');
   // Work queue — construction jobs not yet in this month's plan (pipeline)
   const [queue, setQueue]               = useState<PlanSuggestion[]>([]);
   const [queueLoading, setQueueLoading] = useState(false);
@@ -648,7 +679,7 @@ export default function ConstructionPlan() {
     try { return JSON.parse(localStorage.getItem('ap_user') || '{}').name || ''; } catch { return ''; }
   };
 
-  const updatePlanning = async (oppId: number, patch: { lead_name?: string; schedule_confirmed?: boolean; stage?: string }) => {
+  const updatePlanning = async (oppId: number, patch: { lead_name?: string; schedule_confirmed?: boolean; stage?: string; queued?: boolean }) => {
     setPlanningOverride(prev => ({ ...prev, [oppId]: { ...prev[oppId], ...patch } }));
     try { await setJobPlanning(oppId, { ...patch, updated_by: planUserName() || undefined }); }
     catch { alert('Could not save — please try again'); load(); }
@@ -668,6 +699,256 @@ export default function ConstructionPlan() {
   const atRisk     = jobs.filter(j => j.risk === 'at_risk');
   const onTrack    = jobs.filter(j => j.risk === 'on_track');
   const complete   = jobs.filter(j => j.risk === 'complete');
+
+  // Effective (override-aware) reads for optimistic UI
+  const effStage  = (j: PlanJob) => planningOverride[j.opportunity_id]?.stage ?? j.stage ?? 'New';
+  const effQueued = (j: PlanJob) => planningOverride[j.opportunity_id]?.queued ?? j.queued ?? false;
+  // Active table = not parked, matching the stage filter. Parked section = queued jobs.
+  const activeGroups = groupJobs(
+    jobs.filter(j => !effQueued(j) && (stageFilter === 'all' || effStage(j) === stageFilter))
+  );
+  const parkedJobs   = jobs.filter(j => effQueued(j));
+  const parkedGroups = groupJobs(parkedJobs);
+
+  // Render one job row (shared by the active table and the parked section).
+  const renderJobRow = (j: PlanJob, opts: { isChild: boolean; parked: boolean }) => {
+    const { isChild, parked } = opts;
+    return (
+      <React.Fragment key={j.opportunity_id}>
+        <tr style={{
+          borderBottom: '1px solid #f3f4f6',
+          background: parked ? '#fafafa'
+            : j.risk === 'over_budget' ? '#fff5f5' : j.risk === 'at_risk' ? '#fffbeb' : '#fff',
+        }}>
+          {/* Property / Job */}
+          <td style={{ padding: '8px 10px', verticalAlign: 'middle', paddingLeft: isChild ? 30 : 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              {isChild && <span style={{ color: '#9ca3af', fontSize: 12 }}>↳</span>}
+              {isChild && (
+                <span style={{ background: '#fef3c7', color: '#92400e', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8 }}>
+                  Change order
+                </span>
+              )}
+              <a
+                href={`/field/project/${j.opportunity_id}`}
+                title="Open Construction Job"
+                style={{ fontWeight: 600, fontSize: 13, color: '#111827', textDecoration: 'none' }}
+                onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+                onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+              >
+                {j.property_name || j.opportunity_name}
+              </a>
+              {j.source === 'scheduled' || j.source === 'both'
+                ? <span style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8 }}>
+                    📅 {j.completed_tickets}/{j.ticket_count} done
+                  </span>
+                : <span style={{ background: '#f5f3ff', color: '#7c3aed', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8 }}>
+                    📌 Added
+                  </span>
+              }
+            </div>
+            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+              <a
+                href={j.aspire_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open in Aspire"
+                style={{ color: '#2563eb', textDecoration: 'none' }}
+                onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+                onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+              >
+                {j.opportunity_name} ↗
+              </a>
+              {j.opp_number ? ` · #${j.opp_number}` : ''}
+            </div>
+          </td>
+
+          {/* Lead */}
+          <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
+            {(() => {
+              const lead = planningOverride[j.opportunity_id]?.lead_name ?? j.lead_name ?? '';
+              return (
+                <select
+                  value={lead}
+                  onChange={e => updatePlanning(j.opportunity_id, { lead_name: e.target.value })}
+                  style={{
+                    fontSize: 11, padding: '3px 6px', borderRadius: 6, fontFamily: 'inherit', maxWidth: 140,
+                    border: '1px solid ' + (lead ? '#c7d2fe' : '#e5e7eb'),
+                    background: lead ? '#eef2ff' : '#fff',
+                    color: lead ? '#3730a3' : '#9ca3af',
+                  }}
+                >
+                  <option value="">Assign…</option>
+                  {leads.map(l => {
+                    const nm = l.display_name || l.aspire_name;
+                    return <option key={l.id} value={nm}>{nm}</option>;
+                  })}
+                </select>
+              );
+            })()}
+          </td>
+
+          {/* Won date */}
+          <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle', fontSize: 12, color: '#4b5563', whiteSpace: 'nowrap' }}>
+            {fmtDate(j.won_date)}
+          </td>
+
+          {/* Start date */}
+          <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle', fontSize: 12, color: '#4b5563', whiteSpace: 'nowrap' }}>
+            {fmtDate(j.start_date)}
+          </td>
+
+          {/* % complete this month */}
+          <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: j.pct_complete >= 100 ? '#15803d' : '#1f2937' }}>
+              {j.ticket_count > 0 ? fmtPct(j.pct_complete) : '—'}
+            </div>
+            {j.ticket_count > 0 && (
+              <>
+                <div style={{ background: '#e5e7eb', borderRadius: 999, height: 5, width: 60, margin: '4px auto 0', overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${Math.min(j.pct_complete, 100)}%`, height: '100%', borderRadius: 999,
+                    background: j.pct_complete >= 100 ? '#16a34a' : j.pct_complete >= 50 ? '#f59e0b' : '#6b7280',
+                  }} />
+                </div>
+                <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
+                  {j.completed_tickets}/{j.ticket_count} tickets
+                </div>
+              </>
+            )}
+          </td>
+
+          {/* Hours */}
+          <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
+            {j.ticket_count > 0
+              ? <HrsBar act={j.hrs_act_month} est={j.hrs_est_month} />
+              : <span style={{ color: '#9ca3af', fontSize: 12 }}>—</span>
+            }
+          </td>
+
+          {/* Revenue */}
+          <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
+            {j.ticket_count > 0 ? (
+              <>
+                <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>
+                  {j.revenue_act_month > 0 ? fmt$(j.revenue_act_month) : '—'}
+                </div>
+                <div style={{ fontSize: 11, color: '#9ca3af' }}>of {fmt$(j.revenue_est_month)}</div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>—</div>
+                <div style={{ fontSize: 11, color: '#9ca3af' }}>of {fmt$(j.revenue_est)}</div>
+              </>
+            )}
+          </td>
+
+          {/* Stage */}
+          <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
+            {(() => {
+              const stage = effStage(j);
+              const c = STAGE_COLOR[stage] || STAGE_COLOR['New'];
+              return (
+                <select
+                  value={stage}
+                  onChange={e => updatePlanning(j.opportunity_id, { stage: e.target.value })}
+                  title="Job stage"
+                  style={{
+                    fontSize: 11, fontWeight: 700, padding: '4px 8px', borderRadius: 8,
+                    border: `1px solid ${c.text}33`, background: c.bg, color: c.text,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              );
+            })()}
+          </td>
+
+          {/* Prep checklist toggle */}
+          <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
+            {(() => {
+              const p = prepProgress[j.opportunity_id]
+                ?? { done: j.prep_done ?? 0, total: j.prep_total ?? 6 };
+              const ready = p.total > 0 && p.done === p.total;
+              const open  = prepFor === j.opportunity_id;
+              return (
+                <button
+                  onClick={() => setPrepFor(open ? null : j.opportunity_id)}
+                  title="Preparedness checklist"
+                  style={{
+                    padding: '3px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6,
+                    border: '1px solid ' + (ready ? '#86efac' : open ? '#2563eb' : '#e5e7eb'),
+                    background: ready ? '#dcfce7' : open ? '#eff6ff' : '#f8fafc',
+                    color: ready ? '#15803d' : open ? '#1d4ed8' : '#6b7280',
+                    cursor: 'pointer', whiteSpace: 'nowrap',
+                  }}
+                >
+                  {ready ? '✓ Ready' : `${p.done}/${p.total}`} {open ? '▲' : '▼'}
+                </button>
+              );
+            })()}
+          </td>
+
+          {/* Action — park (active) or restore / hard-remove (parked) */}
+          <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+            {parked ? (
+              <>
+                <button
+                  onClick={() => updatePlanning(j.opportunity_id, { queued: false })}
+                  title="Restore to the active plan"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a', fontSize: 16, padding: '2px 6px', borderRadius: 6 }}
+                >↑</button>
+                <button
+                  onClick={() => handleRemove(j.opportunity_id)}
+                  title="Remove from this month's plan"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#d1d5db', fontSize: 16, padding: '2px 6px', borderRadius: 6 }}
+                  onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                  onMouseLeave={e => (e.currentTarget.style.color = '#d1d5db')}
+                >✕</button>
+              </>
+            ) : (
+              <button
+                onClick={() => updatePlanning(j.opportunity_id, { queued: true })}
+                title="Park to Queued / Parked (stays plannable)"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#d1d5db', fontSize: 16, padding: '2px 6px', borderRadius: 6 }}
+                onMouseEnter={e => (e.currentTarget.style.color = '#d97706')}
+                onMouseLeave={e => (e.currentTarget.style.color = '#d1d5db')}
+              >✕</button>
+            )}
+          </td>
+        </tr>
+
+        {/* Preparedness checklist panel */}
+        {prepFor === j.opportunity_id && (
+          <tr>
+            <td colSpan={10} style={{ padding: '14px 16px', background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
+              <div style={{ maxWidth: 560 }}>
+                <JobPrepChecklist
+                  oppId={j.opportunity_id}
+                  onProgress={(done, total) =>
+                    setPrepProgress(prev => ({ ...prev, [j.opportunity_id]: { done, total } }))
+                  }
+                />
+                <a
+                  href={`/field/project/${j.opportunity_id}`}
+                  style={{
+                    display: 'inline-block', marginTop: 12, padding: '8px 14px',
+                    background: '#16a34a', color: '#fff', borderRadius: 8,
+                    fontSize: 13, fontWeight: 700, textDecoration: 'none',
+                  }}
+                >
+                  Open Construction Project →
+                </a>
+              </div>
+            </td>
+          </tr>
+        )}
+      </React.Fragment>
+    );
+  };
+
+  const TABLE_HEADERS = ['Property / Job', 'Lead', 'Won', 'Start', '% This Month', 'Hours', 'Revenue', 'Stage', 'Prep', ''];
 
   return (
     <div style={{
@@ -808,253 +1089,85 @@ export default function ConstructionPlan() {
         )}
 
         {jobs.length > 0 && (
-          <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
-                  {['Property / Job', 'Lead', 'Confirmed', '% This Month', 'Hours', 'Revenue', 'Stage', 'Prep', ''].map((h, i) => (
-                    <th key={i} style={{
-                      padding: '8px 10px', textAlign: i === 0 ? 'left' : 'center',
-                      fontSize: 11, fontWeight: 700, color: '#6b7280',
-                      letterSpacing: '0.06em', textTransform: 'uppercase',
-                      whiteSpace: 'nowrap',
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map((j, idx) => (
-                  <React.Fragment key={j.opportunity_id}>
-                  <tr style={{
-                    borderBottom: idx < jobs.length - 1 ? '1px solid #f3f4f6' : 'none',
-                    background: j.risk === 'over_budget' ? '#fff5f5' : j.risk === 'at_risk' ? '#fffbeb' : '#fff',
-                  }}>
-                    {/* Property / Job */}
-                    <td style={{ padding: '8px 10px', verticalAlign: 'middle' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        {/* Property name → opens the Construction Job in our system */}
-                        <a
-                          href={`/field/project/${j.opportunity_id}`}
-                          title="Open Construction Job"
-                          style={{ fontWeight: 600, fontSize: 13, color: '#111827', textDecoration: 'none' }}
-                          onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
-                          onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
-                        >
-                          {j.property_name || j.opportunity_name}
-                        </a>
-                        {j.source === 'scheduled' || j.source === 'both'
-                          ? <span style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8 }}>
-                              📅 {j.completed_tickets}/{j.ticket_count} done
-                            </span>
-                          : <span style={{ background: '#f5f3ff', color: '#7c3aed', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8 }}>
-                              📌 Added
-                            </span>
-                        }
-                      </div>
-                      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-                        {/* Opportunity name → opens the opportunity in Aspire */}
-                        <a
-                          href={j.aspire_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title="Open in Aspire"
-                          style={{ color: '#2563eb', textDecoration: 'none' }}
-                          onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
-                          onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
-                        >
-                          {j.opportunity_name} ↗
-                        </a>
-                        {j.opp_number ? ` · #${j.opp_number}` : ''}
-                      </div>
-                    </td>
+          <>
+            {/* Stage filter */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#6b7280' }}>Stage</span>
+              <select
+                value={stageFilter}
+                onChange={e => setStageFilter(e.target.value)}
+                style={{ fontSize: 12, fontWeight: 600, padding: '5px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', color: '#1f2937', fontFamily: 'inherit', cursor: 'pointer' }}
+              >
+                <option value="all">All stages</option>
+                {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              {stageFilter !== 'all' && (
+                <span style={{ fontSize: 12, color: '#9ca3af' }}>
+                  {activeGroups.length} job{activeGroups.length !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
 
-                    {/* Lead */}
-                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
-                      {(() => {
-                        const lead = planningOverride[j.opportunity_id]?.lead_name ?? j.lead_name ?? '';
-                        return (
-                          <select
-                            value={lead}
-                            onChange={e => updatePlanning(j.opportunity_id, { lead_name: e.target.value })}
-                            style={{
-                              fontSize: 11, padding: '3px 6px', borderRadius: 6, fontFamily: 'inherit', maxWidth: 140,
-                              border: '1px solid ' + (lead ? '#c7d2fe' : '#e5e7eb'),
-                              background: lead ? '#eef2ff' : '#fff',
-                              color: lead ? '#3730a3' : '#9ca3af',
-                            }}
-                          >
-                            <option value="">Assign…</option>
-                            {leads.map(l => {
-                              const nm = l.display_name || l.aspire_name;
-                              return <option key={l.id} value={nm}>{nm}</option>;
-                            })}
-                          </select>
-                        );
-                      })()}
-                    </td>
-
-                    {/* Confirmed (schedule confirmed with customer) */}
-                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
-                      {(() => {
-                        const confirmed = planningOverride[j.opportunity_id]?.schedule_confirmed ?? j.schedule_confirmed ?? false;
-                        return (
-                          <button
-                            onClick={() => updatePlanning(j.opportunity_id, { schedule_confirmed: !confirmed })}
-                            title={confirmed ? 'Customer-confirmed schedule' : 'Mark schedule confirmed with customer'}
-                            style={{
-                              fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 20, cursor: 'pointer', whiteSpace: 'nowrap',
-                              border: '1px solid ' + (confirmed ? '#86efac' : '#e5e7eb'),
-                              background: confirmed ? '#dcfce7' : '#f8fafc',
-                              color: confirmed ? '#15803d' : '#6b7280',
-                            }}
-                          >
-                            {confirmed ? '✅ Confirmed' : '📅 Confirm'}
-                          </button>
-                        );
-                      })()}
-                    </td>
-
-                    {/* % complete this month */}
-                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
-                      <div style={{ fontWeight: 700, fontSize: 15, color: j.pct_complete >= 100 ? '#15803d' : '#1f2937' }}>
-                        {j.ticket_count > 0 ? fmtPct(j.pct_complete) : '—'}
-                      </div>
-                      {j.ticket_count > 0 && (
-                        <>
-                          <div style={{ background: '#e5e7eb', borderRadius: 999, height: 5, width: 60, margin: '4px auto 0', overflow: 'hidden' }}>
-                            <div style={{
-                              width: `${Math.min(j.pct_complete, 100)}%`, height: '100%', borderRadius: 999,
-                              background: j.pct_complete >= 100 ? '#16a34a' : j.pct_complete >= 50 ? '#f59e0b' : '#6b7280',
-                            }} />
-                          </div>
-                          <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
-                            {j.completed_tickets}/{j.ticket_count} tickets
-                          </div>
-                        </>
-                      )}
-                    </td>
-
-                    {/* Hours — month-specific ticket hours, not lifetime job totals */}
-                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
-                      {j.ticket_count > 0
-                        ? <HrsBar act={j.hrs_act_month} est={j.hrs_est_month} />
-                        : <span style={{ color: '#9ca3af', fontSize: 12 }}>—</span>
-                      }
-                    </td>
-
-                    {/* Revenue — month-specific from WorkTicketRevenues */}
-                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
-                      {j.ticket_count > 0 ? (
-                        <>
-                          <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>
-                            {j.revenue_act_month > 0 ? fmt$(j.revenue_act_month) : '—'}
-                          </div>
-                          <div style={{ fontSize: 11, color: '#9ca3af' }}>of {fmt$(j.revenue_est_month)}</div>
-                        </>
-                      ) : (
-                        <>
-                          <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>—</div>
-                          <div style={{ fontSize: 11, color: '#9ca3af' }}>of {fmt$(j.revenue_est)}</div>
-                        </>
-                      )}
-                    </td>
-
-                    {/* Stage */}
-                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
-                      {(() => {
-                        const stage = planningOverride[j.opportunity_id]?.stage ?? j.stage ?? 'New';
-                        const c = STAGE_COLOR[stage] || STAGE_COLOR['New'];
-                        return (
-                          <select
-                            value={stage}
-                            onChange={e => updatePlanning(j.opportunity_id, { stage: e.target.value })}
-                            title="Job stage"
-                            style={{
-                              fontSize: 11, fontWeight: 700, padding: '4px 8px', borderRadius: 8,
-                              border: `1px solid ${c.text}33`, background: c.bg, color: c.text,
-                              cursor: 'pointer', fontFamily: 'inherit',
-                            }}
-                          >
-                            {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                        );
-                      })()}
-                    </td>
-
-                    {/* Prep checklist toggle */}
-                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
-                      {(() => {
-                        const p = prepProgress[j.opportunity_id]
-                          ?? { done: j.prep_done ?? 0, total: j.prep_total ?? 6 };
-                        const ready = p.total > 0 && p.done === p.total;
-                        const open  = prepFor === j.opportunity_id;
-                        return (
-                          <button
-                            onClick={() => setPrepFor(open ? null : j.opportunity_id)}
-                            title="Preparedness checklist"
-                            style={{
-                              padding: '3px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6,
-                              border: '1px solid ' + (ready ? '#86efac' : open ? '#2563eb' : '#e5e7eb'),
-                              background: ready ? '#dcfce7' : open ? '#eff6ff' : '#f8fafc',
-                              color: ready ? '#15803d' : open ? '#1d4ed8' : '#6b7280',
-                              cursor: 'pointer', whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {ready ? '✓ Ready' : `${p.done}/${p.total}`} {open ? '▲' : '▼'}
-                          </button>
-                        );
-                      })()}
-                    </td>
-
-                    {/* Remove — available on all jobs */}
-                    <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
-                      <button
-                        onClick={() => handleRemove(j.opportunity_id)}
-                        title={
-                          j.source === 'scheduled'
-                            ? 'Suppress from this month\'s plan (work ticket stays in Aspire)'
-                            : j.source === 'both'
-                            ? 'Remove manual pin and suppress from plan'
-                            : 'Remove from this month\'s plan'
-                        }
-                        style={{
-                          background: 'none', border: 'none', cursor: 'pointer',
-                          color: '#d1d5db', fontSize: 16, padding: '2px 6px', borderRadius: 6,
-                        }}
-                        onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
-                        onMouseLeave={e => (e.currentTarget.style.color = '#d1d5db')}
-                      >✕</button>
-                    </td>
+            <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
+                    {TABLE_HEADERS.map((h, i) => (
+                      <th key={i} style={{
+                        padding: '8px 10px', textAlign: i === 0 ? 'left' : 'center',
+                        fontSize: 11, fontWeight: 700, color: '#6b7280',
+                        letterSpacing: '0.06em', textTransform: 'uppercase',
+                        whiteSpace: 'nowrap',
+                      }}>{h}</th>
+                    ))}
                   </tr>
-                  {/* Preparedness checklist panel + link to the Construction Project page */}
-                  {prepFor === j.opportunity_id && (
-                    <tr>
-                      <td colSpan={10} style={{ padding: '14px 16px', background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
-                        <div style={{ maxWidth: 520 }}>
-                          <JobPrepChecklist
-                            oppId={j.opportunity_id}
-                            onProgress={(done, total) =>
-                              setPrepProgress(prev => ({ ...prev, [j.opportunity_id]: { done, total } }))
-                            }
-                          />
-                          <a
-                            href={`/field/project/${j.opportunity_id}`}
-                            style={{
-                              display: 'inline-block', marginTop: 12, padding: '8px 14px',
-                              background: '#16a34a', color: '#fff', borderRadius: 8,
-                              fontSize: 13, fontWeight: 700, textDecoration: 'none',
-                            }}
-                          >
-                            Open Construction Project →
-                          </a>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {activeGroups.length === 0 ? (
+                    <tr><td colSpan={10} style={{ padding: '20px', textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>
+                      No jobs in this stage.
+                    </td></tr>
+                  ) : activeGroups.flatMap(g => [
+                    renderJobRow(g.base, { isChild: false, parked: false }),
+                    ...g.children.map(c => renderJobRow(c, { isChild: true, parked: false })),
+                  ])}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {/* Queued / Parked jobs — parked from the active plan, still fully plannable */}
+        {parkedJobs.length > 0 && (
+          <div style={{ marginTop: 20 }}>
+            <h2 style={{ margin: '0 0 10px', fontSize: 15, fontWeight: 800, color: '#6b7280' }}>
+              \uD83C\uDD7F\uFE0F Queued / Parked
+              <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: '#9ca3af' }}>
+                {parkedJobs.length} parked
+              </span>
+            </h2>
+            <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
+                    {TABLE_HEADERS.map((h, i) => (
+                      <th key={i} style={{
+                        padding: '8px 10px', textAlign: i === 0 ? 'left' : 'center',
+                        fontSize: 11, fontWeight: 700, color: '#6b7280',
+                        letterSpacing: '0.06em', textTransform: 'uppercase',
+                        whiteSpace: 'nowrap',
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {parkedGroups.flatMap(g => [
+                    renderJobRow(g.base, { isChild: false, parked: true }),
+                    ...g.children.map(c => renderJobRow(c, { isChild: true, parked: true })),
+                  ])}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 

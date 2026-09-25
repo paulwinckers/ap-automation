@@ -346,6 +346,7 @@ export interface PlanJob {
   pct_complete_job: number;  // Aspire overall job % complete
   revenue_est: number;
   revenue_act: number;
+  won_date: string | null;
   start_date: string | null;
   end_date: string | null;
   scheduled_dates: string[];
@@ -361,6 +362,7 @@ export interface PlanJob {
   lead_name?: string;          // assigned construction lead
   schedule_confirmed?: boolean; // customer-confirmed schedule
   stage?: string;              // workflow stage
+  queued?: boolean;            // parked to the "Queued / Parked" section
 }
 
 export type PrepStatus = '' | 'na' | 'complete' | 'uploaded';
@@ -373,6 +375,8 @@ export interface PrepItem {
   attachment_url: string | null;   // relative path; prefix with API_BASE to open
   checked_by: string | null;
   checked_at: string | null;
+  due_date: string | null;
+  completed_date: string | null;
 }
 export interface JobChecklist {
   opportunity_id: number;
@@ -402,9 +406,16 @@ export async function uploadJobAttachment(
 
 export async function setJobPlanning(
   oppId: number,
-  patch: { lead_name?: string; schedule_confirmed?: boolean; stage?: string; updated_by?: string },
+  patch: { lead_name?: string; schedule_confirmed?: boolean; stage?: string; queued?: boolean; updated_by?: string },
 ): Promise<{ ok: boolean }> {
   return request('PUT', `/construction/plan/jobs/${oppId}/planning`, patch);
+}
+
+/** Set a checklist item's due and/or completed date ('' clears). */
+export async function setChecklistDate(
+  oppId: number, item_key: string, dates: { due_date?: string; completed_date?: string },
+): Promise<{ ok: boolean }> {
+  return request('POST', `/construction/plan/jobs/${oppId}/checklist/date`, { item_key, ...dates });
 }
 
 export interface PlanSuggestion {

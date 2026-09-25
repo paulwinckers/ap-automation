@@ -55,10 +55,16 @@ class PrepToggleIn(BaseModel):
     checked:       Optional[bool] = None  # legacy fallback (True → 'complete')
     checked_by:    Optional[str]  = None
 
+class PrepDateIn(BaseModel):
+    item_key:       str
+    due_date:       Optional[str] = None   # 'YYYY-MM-DD' or '' to clear
+    completed_date: Optional[str] = None   # 'YYYY-MM-DD' or '' to clear
+
 class PlanningIn(BaseModel):
     lead_name:          Optional[str]  = None   # assign a construction lead (None = leave unchanged)
     schedule_confirmed: Optional[bool] = None   # customer-confirmed schedule (None = leave unchanged)
     stage:              Optional[str]  = None   # workflow stage (None = leave unchanged)
+    queued:             Optional[bool] = None   # park to "Queued / Parked" section (None = leave unchanged)
     updated_by:         Optional[str]  = None
 
 # Workflow stages for a construction job on the planning board (ordered).
@@ -99,7 +105,7 @@ async def _fetch_opp_actuals(opp_ids: list[int]) -> dict[int, dict]:
                 "DivisionName,OpportunityType,SalesTypeName,"
                 "WonDollars,ActualEarnedRevenue,EstimatedDollars,"
                 "EstimatedLaborHours,ActualLaborHours,PercentComplete,"
-                "OpportunityStatusName,StartDate,EndDate"
+                "OpportunityStatusName,WonDate,StartDate,EndDate"
             ),
             "$top": "200",
         }
@@ -428,6 +434,7 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             "pct_complete_job":  pct,               # Aspire's overall job % complete
             "revenue_est":       rev_est,
             "revenue_act":       rev_act,
+            "won_date":          opp.get("WonDate"),
             "start_date":        opp.get("StartDate"),
             "end_date":          opp.get("EndDate"),
             "scheduled_dates":   sched_dates,
@@ -495,7 +502,7 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         ph2 = ",".join("?" for _ in jobs)
         try:
             plan_rows = await db._q(
-                f"""SELECT opportunity_id, lead_name, schedule_confirmed, stage
+                f"""SELECT opportunity_id, lead_name, schedule_confirmed, stage, queued
                     FROM job_planning WHERE opportunity_id IN ({ph2})""",
                 list(jobs.keys()),
             )
@@ -511,6 +518,7 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         j["lead_name"]          = p.get("lead_name") or ""
         j["schedule_confirmed"] = bool(p.get("schedule_confirmed"))
         j["stage"]              = p.get("stage") or DEFAULT_STAGE
+        j["queued"]             = bool(p.get("queued"))
 
     job_list = list(jobs.values())
     risk_order = {"over_budget": 0, "at_risk": 1, "on_track": 2, "complete": 3}
@@ -611,7 +619,8 @@ async def get_checklist(opportunity_id: int, db: Database = Depends(get_db)):
     """Preparedness checklist — fixed items merged with saved status + any uploaded doc."""
     try:
         rows = await db._q(
-            "SELECT item_key, checked, status, attachment_id, checked_by, checked_at "
+            "SELECT item_key, checked, status, attachment_id, checked_by, checked_at, "
+            "due_date, completed_date "
             "FROM job_prep_checklist WHERE opportunity_id = ?",
             [opportunity_id],
         )
@@ -648,6 +657,8 @@ async def get_checklist(opportunity_id: int, db: Database = Depends(get_db)):
             "attachment_url":  f"/checkin/job-attachment/{att_id}/file" if att_id else None,
             "checked_by":      r.get("checked_by"),
             "checked_at":      r.get("checked_at"),
+            "due_date":        r.get("due_date"),
+            "completed_date":  r.get("completed_date"),
         })
     # total excludes N/A items
     return {"opportunity_id": opportunity_id, "items": items, "done": done, "total": applicable}
@@ -680,6 +691,35 @@ async def toggle_checklist(opportunity_id: int, body: PrepToggleIn, db: Database
     return {"ok": True, "opportunity_id": opportunity_id, "item_key": body.item_key, "status": status}
 
 
+@router.post("/jobs/{opportunity_id}/checklist/date")
+async def set_checklist_date(opportunity_id: int, body: PrepDateIn, db: Database = Depends(get_db)):
+    """Set a checklist item's due and/or completed date (empty string clears)."""
+    if body.item_key not in {it["key"] for it in PREP_ITEMS}:
+        raise HTTPException(status_code=400, detail=f"Unknown checklist item: {body.item_key}")
+    sets, params = [], []
+    if body.due_date is not None:
+        sets.append("due_date = ?"); params.append(body.due_date or None)
+    if body.completed_date is not None:
+        sets.append("completed_date = ?"); params.append(body.completed_date or None)
+    if not sets:
+        return {"ok": True, "opportunity_id": opportunity_id, "item_key": body.item_key}
+    # Ensure a row exists (checked NOT NULL → seed 0), then set only the supplied dates.
+    await db._x(
+        "INSERT OR IGNORE INTO job_prep_checklist (opportunity_id, item_key, checked) VALUES (?, ?, 0)",
+        [opportunity_id, body.item_key],
+    )
+    params_full = params + [opportunity_id, body.item_key]
+    await db._x(
+        f"UPDATE job_prep_checklist SET {', '.join(sets)} "
+        "WHERE opportunity_id = ? AND item_key = ?",
+        params_full,
+    )
+    return {
+        "ok": True, "opportunity_id": opportunity_id, "item_key": body.item_key,
+        "due_date": body.due_date, "completed_date": body.completed_date,
+    }
+
+
 @router.put("/jobs/{opportunity_id}/planning")
 async def set_planning(opportunity_id: int, body: PlanningIn, db: Database = Depends(get_db)):
     """Assign the lead, set the customer-confirmed schedule flag, and/or set the stage."""
@@ -710,6 +750,8 @@ async def set_planning(opportunity_id: int, body: PlanningIn, db: Database = Dep
         sets.append("schedule_confirmed = ?"); params.append(sc)
     if body.stage is not None:
         sets.append("stage = ?"); params.append(body.stage)
+    if body.queued is not None:
+        sets.append("queued = ?"); params.append(1 if body.queued else 0)
     sets.append("updated_by = ?"); params.append(body.updated_by)
     sets.append("updated_at = datetime('now')")
     params.append(opportunity_id)
