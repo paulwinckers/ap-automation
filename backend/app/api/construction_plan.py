@@ -306,11 +306,16 @@ async def _fetch_construction_universe(month: str) -> dict[int, dict]:
     return out
 
 
-def _plan_bucket(stage: str, queued: bool, start_date: str, month: str) -> str:
-    """Which section a job belongs in: parked > completed (by Stage) > active/upcoming by Start Date."""
+def _plan_bucket(stage: str, queued: bool, start_date: str, month: str, pct_complete: float | None) -> str:
+    """Which section a job belongs in: parked > completed > active/upcoming by Start Date.
+
+    Completed / out of production when the user set a Complete+ Stage OR Aspire reports the
+    job 100% complete (PercentComplete is a 0–1 decimal), so finished jobs clear out of the
+    Active list without needing to be staged by hand.
+    """
     if queued:
         return "parked"
-    if stage in COMPLETE_STAGES:        # out of production — driven by the planning Stage
+    if stage in COMPLETE_STAGES or (pct_complete or 0) >= 1.0:
         return "completed"
     start_month = (start_date or "")[:7]
     if start_month and start_month <= month:
@@ -550,6 +555,7 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
     # Lead assignment + customer-confirmed schedule + stage — one query for all jobs.
     planning: dict[int, dict] = {}
     queued_map: dict[int, bool] = {}
+    paid_map: dict[int, str] = {}
     if jobs:
         ph2  = ",".join("?" for _ in jobs)
         keys = list(jobs.keys())
@@ -562,17 +568,18 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             planning = {r["opportunity_id"]: r for r in plan_rows}
         except Exception:
             planning = {}  # table may not exist yet on older deployments
-        # `queued` is a newer column — read it in a SEPARATE query so that, if the
-        # column hasn't been migrated in yet, its absence can't blow up the whole
+        # `queued` / `paid_at` are newer columns — read them in a SEPARATE query so that,
+        # if they haven't been migrated in yet, their absence can't blow up the whole
         # planning read and silently wipe lead/stage/schedule_confirmed for every job.
         try:
             q_rows = await db._q(
-                f"SELECT opportunity_id, queued FROM job_planning WHERE opportunity_id IN ({ph2})",
+                f"SELECT opportunity_id, queued, paid_at FROM job_planning WHERE opportunity_id IN ({ph2})",
                 keys,
             )
             queued_map = {r["opportunity_id"]: bool(r["queued"]) for r in q_rows}
+            paid_map   = {r["opportunity_id"]: (r.get("paid_at") or "") for r in q_rows}
         except Exception:
-            queued_map = {}
+            queued_map, paid_map = {}, {}
 
     for oid, j in jobs.items():
         c = prep_counts.get(oid, {"done": 0, "na": 0})
@@ -583,7 +590,18 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         j["schedule_confirmed"] = bool(p.get("schedule_confirmed"))
         j["stage"]              = p.get("stage") or DEFAULT_STAGE
         j["queued"]             = queued_map.get(oid, False)
-        j["bucket"]             = _plan_bucket(j["stage"], j["queued"], j.get("start_date") or "", month)
+        j["bucket"]             = _plan_bucket(
+            j["stage"], j["queued"], j.get("start_date") or "", month, j.get("pct_complete_job"))
+
+    # Paid jobs drop off the plan in months AFTER the month they were paid.
+    dropped = []
+    for oid, j in jobs.items():
+        if j["stage"] == "Paid":
+            paid_month = (paid_map.get(oid) or "")[:7]
+            if paid_month and month > paid_month:
+                dropped.append(oid)
+    for oid in dropped:
+        jobs.pop(oid, None)
 
     job_list = list(jobs.values())
     risk_order = {"over_budget": 0, "at_risk": 1, "on_track": 2, "complete": 3}
@@ -821,6 +839,11 @@ async def set_planning(opportunity_id: int, body: PlanningIn, db: Database = Dep
         sets.append("schedule_confirmed = ?"); params.append(sc)
     if body.stage is not None:
         sets.append("stage = ?"); params.append(body.stage)
+        # Stamp when the job first reaches Paid (drives drop-off in later months); clear if it leaves Paid.
+        if body.stage == "Paid" and prev_stage != "Paid":
+            sets.append("paid_at = datetime('now')")
+        elif body.stage != "Paid" and prev_stage == "Paid":
+            sets.append("paid_at = NULL")
     if body.queued is not None:
         sets.append("queued = ?"); params.append(1 if body.queued else 0)
     sets.append("updated_by = ?"); params.append(body.updated_by)

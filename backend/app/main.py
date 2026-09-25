@@ -278,6 +278,8 @@ async def lifespan(app: FastAPI):
         ("job_planning", "stage", "ALTER TABLE job_planning ADD COLUMN stage TEXT"),
         # job_planning.queued — parked jobs (1) drop to a "Queued / Parked" section; stay plannable
         ("job_planning", "queued", "ALTER TABLE job_planning ADD COLUMN queued INTEGER DEFAULT 0"),
+        # job_planning.paid_at — when the job's stage was set to Paid (drives Paid drop-off in later months)
+        ("job_planning", "paid_at", "ALTER TABLE job_planning ADD COLUMN paid_at TEXT"),
         # job_prep_checklist — per-item due & completed dates
         ("job_prep_checklist", "due_date",       "ALTER TABLE job_prep_checklist ADD COLUMN due_date TEXT"),
         ("job_prep_checklist", "completed_date", "ALTER TABLE job_prep_checklist ADD COLUMN completed_date TEXT"),

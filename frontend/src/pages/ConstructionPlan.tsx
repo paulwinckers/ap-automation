@@ -711,7 +711,7 @@ export default function ConstructionPlan() {
   // re-buckets the row immediately (optimistic), before the next reload.
   const effBucket = (j: PlanJob): 'active' | 'upcoming' | 'completed' | 'parked' => {
     if (effQueued(j)) return 'parked';
-    if (COMPLETE_STAGES.has(effStage(j))) return 'completed';
+    if (COMPLETE_STAGES.has(effStage(j)) || (j.pct_complete_job ?? 0) >= 1) return 'completed';
     const sm = (j.start_date || '').slice(0, 7);
     if (sm && sm <= month) return 'active';
     return 'upcoming';
