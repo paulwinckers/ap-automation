@@ -277,7 +277,7 @@ async def lifespan(app: FastAPI):
         # job_planning.stage — workflow stage (New → Complete)
         ("job_planning", "stage", "ALTER TABLE job_planning ADD COLUMN stage TEXT"),
         # job_planning.queued — parked jobs (1) drop to a "Queued / Parked" section; stay plannable
-        ("job_planning", "queued", "ALTER TABLE job_planning ADD COLUMN queued INTEGER NOT NULL DEFAULT 0"),
+        ("job_planning", "queued", "ALTER TABLE job_planning ADD COLUMN queued INTEGER DEFAULT 0"),
         # job_prep_checklist — per-item due & completed dates
         ("job_prep_checklist", "due_date",       "ALTER TABLE job_prep_checklist ADD COLUMN due_date TEXT"),
         ("job_prep_checklist", "completed_date", "ALTER TABLE job_prep_checklist ADD COLUMN completed_date TEXT"),
@@ -326,10 +326,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Document folder backfill skipped: {e}")
 
-    await seed_vendors_if_empty(_db)
-    await _db.close()
+    # Resilient startup: a transient D1 error (e.g. rate-limit) during seeding must
+    # NOT crash the app, or the container crash-loops and re-hammers D1 (see incident
+    # history). Log and continue so /health stays up and the app self-heals.
+    try:
+        await seed_vendors_if_empty(_db)
+    except Exception as e:
+        logger.error(f"Vendor seed skipped — startup continues (D1 error?): {e}")
+    try:
+        await _db.close()
+    except Exception:
+        pass
     # Start email polling on startup
-    await email_intake.start()
+    try:
+        await email_intake.start()
+    except Exception as e:
+        logger.error(f"Email intake start failed — startup continues: {e}")
     # Construction nightly Work Ticket Report is paused (a weekly report may
     # replace it later). The router/manual-send endpoint stays available.
     # start_construction_scheduler()
