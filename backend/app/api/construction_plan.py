@@ -496,19 +496,32 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         except Exception:
             prep_counts = {}  # table may not exist yet on older deployments
 
-    # Lead assignment + customer-confirmed schedule — one query for all jobs in the plan
+    # Lead assignment + customer-confirmed schedule + stage — one query for all jobs.
     planning: dict[int, dict] = {}
+    queued_map: dict[int, bool] = {}
     if jobs:
-        ph2 = ",".join("?" for _ in jobs)
+        ph2  = ",".join("?" for _ in jobs)
+        keys = list(jobs.keys())
         try:
             plan_rows = await db._q(
-                f"""SELECT opportunity_id, lead_name, schedule_confirmed, stage, queued
+                f"""SELECT opportunity_id, lead_name, schedule_confirmed, stage
                     FROM job_planning WHERE opportunity_id IN ({ph2})""",
-                list(jobs.keys()),
+                keys,
             )
             planning = {r["opportunity_id"]: r for r in plan_rows}
         except Exception:
             planning = {}  # table may not exist yet on older deployments
+        # `queued` is a newer column — read it in a SEPARATE query so that, if the
+        # column hasn't been migrated in yet, its absence can't blow up the whole
+        # planning read and silently wipe lead/stage/schedule_confirmed for every job.
+        try:
+            q_rows = await db._q(
+                f"SELECT opportunity_id, queued FROM job_planning WHERE opportunity_id IN ({ph2})",
+                keys,
+            )
+            queued_map = {r["opportunity_id"]: bool(r["queued"]) for r in q_rows}
+        except Exception:
+            queued_map = {}
 
     for oid, j in jobs.items():
         c = prep_counts.get(oid, {"done": 0, "na": 0})
@@ -518,7 +531,7 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         j["lead_name"]          = p.get("lead_name") or ""
         j["schedule_confirmed"] = bool(p.get("schedule_confirmed"))
         j["stage"]              = p.get("stage") or DEFAULT_STAGE
-        j["queued"]             = bool(p.get("queued"))
+        j["queued"]             = queued_map.get(oid, False)
 
     job_list = list(jobs.values())
     risk_order = {"over_budget": 0, "at_risk": 1, "on_track": 2, "complete": 3}
