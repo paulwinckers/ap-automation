@@ -535,14 +535,17 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
     # done = items complete/uploaded; total = applicable items (PREP_TOTAL minus N/A).
     prep_counts: dict[int, dict] = {}
     if jobs:
-        ph = ",".join("?" for _ in jobs)
+        # NOTE: read the whole (small) table — D1 caps a query at 100 bound params, and the
+        # plan can hold far more than 100 jobs, so a `WHERE id IN (…)` would blow up and be
+        # silently caught, wiping prep/lead/stage for every job. Filter in memory instead.
         try:
             prep_rows = await db._q(
-                f"""SELECT opportunity_id, item_key, checked, status
-                    FROM job_prep_checklist WHERE opportunity_id IN ({ph})""",
-                list(jobs.keys()),
+                "SELECT opportunity_id, item_key, checked, status FROM job_prep_checklist", []
             )
+            job_ids = set(jobs.keys())
             for r in prep_rows:
+                if r["opportunity_id"] not in job_ids:
+                    continue
                 c = prep_counts.setdefault(r["opportunity_id"], {"done": 0, "na": 0})
                 st = _item_status(r)
                 if st == "na":
@@ -557,13 +560,12 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
     queued_map: dict[int, bool] = {}
     paid_map: dict[int, str] = {}
     if jobs:
-        ph2  = ",".join("?" for _ in jobs)
-        keys = list(jobs.keys())
+        # Read the whole (small) job_planning table — a `WHERE id IN (…)` with one param
+        # per job would exceed D1's 100-bound-param limit once the plan has 100+ jobs and be
+        # silently caught, wiping every job's stage/lead. Filter in memory by member ids.
         try:
             plan_rows = await db._q(
-                f"""SELECT opportunity_id, lead_name, schedule_confirmed, stage
-                    FROM job_planning WHERE opportunity_id IN ({ph2})""",
-                keys,
+                "SELECT opportunity_id, lead_name, schedule_confirmed, stage FROM job_planning", []
             )
             planning = {r["opportunity_id"]: r for r in plan_rows}
         except Exception:
@@ -573,8 +575,7 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         # planning read and silently wipe lead/stage/schedule_confirmed for every job.
         try:
             q_rows = await db._q(
-                f"SELECT opportunity_id, queued, paid_at FROM job_planning WHERE opportunity_id IN ({ph2})",
-                keys,
+                "SELECT opportunity_id, queued, paid_at FROM job_planning", []
             )
             queued_map = {r["opportunity_id"]: bool(r["queued"]) for r in q_rows}
             paid_map   = {r["opportunity_id"]: (r.get("paid_at") or "") for r in q_rows}
