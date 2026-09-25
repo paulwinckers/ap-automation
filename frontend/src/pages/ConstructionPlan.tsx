@@ -16,6 +16,8 @@ import JobPrepChecklist from './JobPrepChecklist';
 // Workflow stages (must match the backend STAGES list)
 const STAGES = ['New', 'Planning', 'Set for Production', 'Lead Assigned', 'In Production',
                 'Complete', 'Ready to Invoice', 'Invoiced', 'Paid'] as const;
+// Stages that mean a job is out of production → Completed bucket (must match backend COMPLETE_STAGES)
+const COMPLETE_STAGES = new Set(['Complete', 'Ready to Invoice', 'Invoiced', 'Paid']);
 const STAGE_COLOR: Record<string, { bg: string; text: string }> = {
   'New':                { bg: '#f1f5f9', text: '#475569' },
   'Planning':           { bg: '#eff6ff', text: '#1d4ed8' },
@@ -631,6 +633,8 @@ export default function ConstructionPlan() {
   const [queue, setQueue]               = useState<PlanSuggestion[]>([]);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueOpen, setQueueOpen]       = useState(true);
+  const [showUpcoming,  setShowUpcoming]  = useState(true);
+  const [showCompleted, setShowCompleted] = useState(false);
   const activeMonthRef = useRef(month);
 
   const load = useCallback(async () => {
@@ -703,12 +707,20 @@ export default function ConstructionPlan() {
   // Effective (override-aware) reads for optimistic UI
   const effStage  = (j: PlanJob) => planningOverride[j.opportunity_id]?.stage ?? j.stage ?? 'New';
   const effQueued = (j: PlanJob) => planningOverride[j.opportunity_id]?.queued ?? j.queued ?? false;
-  // Active table = not parked, matching the stage filter. Parked section = queued jobs.
-  const activeGroups = groupJobs(
-    jobs.filter(j => !effQueued(j) && (stageFilter === 'all' || effStage(j) === stageFilter))
-  );
-  const parkedJobs   = jobs.filter(j => effQueued(j));
-  const parkedGroups = groupJobs(parkedJobs);
+  // Which bucket a job is in — mirrors the backend _plan_bucket so a stage/park change
+  // re-buckets the row immediately (optimistic), before the next reload.
+  const effBucket = (j: PlanJob): 'active' | 'upcoming' | 'completed' | 'parked' => {
+    if (effQueued(j)) return 'parked';
+    if (COMPLETE_STAGES.has(effStage(j))) return 'completed';
+    const sm = (j.start_date || '').slice(0, 7);
+    if (sm && sm <= month) return 'active';
+    return 'upcoming';
+  };
+  const activeGroups    = groupJobs(jobs.filter(j => effBucket(j) === 'active'
+                            && (stageFilter === 'all' || effStage(j) === stageFilter)));
+  const upcomingGroups  = groupJobs(jobs.filter(j => effBucket(j) === 'upcoming'));
+  const completedGroups = groupJobs(jobs.filter(j => effBucket(j) === 'completed'));
+  const parkedGroups    = groupJobs(jobs.filter(j => effBucket(j) === 'parked'));
 
   // Render one job row (shared by the active table and the parked section).
   const renderJobRow = (j: PlanJob, opts: { isChild: boolean; parked: boolean }) => {
@@ -950,6 +962,42 @@ export default function ConstructionPlan() {
 
   const TABLE_HEADERS = ['Property / Job', 'Lead', 'Won', 'Start', '% This Month', 'Hours', 'Revenue', 'Stage', 'Prep', ''];
 
+  // Render a bucket's table (shared by Active / Upcoming / Completed / Parked sections).
+  const renderBucketTable = (groups: JobGroup[], parked: boolean) => (
+    <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
+            {TABLE_HEADERS.map((h, i) => (
+              <th key={i} style={{
+                padding: '8px 10px', textAlign: i === 0 ? 'left' : 'center',
+                fontSize: 11, fontWeight: 700, color: '#6b7280',
+                letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap',
+              }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {groups.flatMap(g => [
+            renderJobRow(g.base, { isChild: false, parked }),
+            ...g.children.map(c => renderJobRow(c, { isChild: true, parked })),
+          ])}
+        </tbody>
+      </table>
+    </div>
+  );
+  const sectionHeader = (emoji: string, title: string, count: number, open: boolean, toggle: () => void) => (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '24px 0 10px', flexWrap: 'wrap', gap: 8 }}>
+      <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#0f172a' }}>
+        {emoji} {title}
+        <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: '#6b7280' }}>{count} job{count !== 1 ? 's' : ''}</span>
+      </h2>
+      <button onClick={toggle} style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', color: '#6b7280', cursor: 'pointer' }}>
+        {open ? 'Hide' : 'Show'}
+      </button>
+    </div>
+  );
+
   return (
     <div style={{
       minHeight: '100vh', background: '#f8fafc',
@@ -1101,136 +1149,51 @@ export default function ConstructionPlan() {
                 <option value="all">All stages</option>
                 {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-              {stageFilter !== 'all' && (
-                <span style={{ fontSize: 12, color: '#9ca3af' }}>
-                  {activeGroups.length} job{activeGroups.length !== 1 ? 's' : ''}
-                </span>
-              )}
+              <span style={{ fontSize: 12, color: '#9ca3af' }}>
+                {activeGroups.length} active job{activeGroups.length !== 1 ? 's' : ''}
+              </span>
             </div>
 
-            <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
-                    {TABLE_HEADERS.map((h, i) => (
-                      <th key={i} style={{
-                        padding: '8px 10px', textAlign: i === 0 ? 'left' : 'center',
-                        fontSize: 11, fontWeight: 700, color: '#6b7280',
-                        letterSpacing: '0.06em', textTransform: 'uppercase',
-                        whiteSpace: 'nowrap',
-                      }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {activeGroups.length === 0 ? (
-                    <tr><td colSpan={10} style={{ padding: '20px', textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>
-                      No jobs in this stage.
-                    </td></tr>
-                  ) : activeGroups.flatMap(g => [
-                    renderJobRow(g.base, { isChild: false, parked: false }),
-                    ...g.children.map(c => renderJobRow(c, { isChild: true, parked: false })),
-                  ])}
-                </tbody>
-              </table>
-            </div>
+            {activeGroups.length === 0 ? (
+              <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', padding: '20px 16px', textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>
+                No active jobs{stageFilter !== 'all' ? ' in this stage' : ' this month'}.
+              </div>
+            ) : renderBucketTable(activeGroups, false)}
           </>
         )}
 
-        {/* Queued / Parked jobs — parked from the active plan, still fully plannable */}
-        {parkedJobs.length > 0 && (
-          <div style={{ marginTop: 20 }}>
-            <h2 style={{ margin: '0 0 10px', fontSize: 15, fontWeight: 800, color: '#6b7280' }}>
-              \uD83C\uDD7F\uFE0F Queued / Parked
-              <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: '#9ca3af' }}>
-                {parkedJobs.length} parked
-              </span>
-            </h2>
-            <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
-                    {TABLE_HEADERS.map((h, i) => (
-                      <th key={i} style={{
-                        padding: '8px 10px', textAlign: i === 0 ? 'left' : 'center',
-                        fontSize: 11, fontWeight: 700, color: '#6b7280',
-                        letterSpacing: '0.06em', textTransform: 'uppercase',
-                        whiteSpace: 'nowrap',
-                      }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {parkedGroups.flatMap(g => [
-                    renderJobRow(g.base, { isChild: false, parked: true }),
-                    ...g.children.map(c => renderJobRow(c, { isChild: true, parked: true })),
-                  ])}
-                </tbody>
-              </table>
-            </div>
+        {/* Upcoming — future Start Date (or no date yet); fully plannable, incl. prep */}
+        {upcomingGroups.length > 0 && (
+          <div>
+            {sectionHeader('\uD83D\uDCC5', 'Upcoming', upcomingGroups.length, showUpcoming, () => setShowUpcoming(o => !o))}
+            {showUpcoming && renderBucketTable(upcomingGroups, false)}
+          </div>
+        )}
+
+        {/* Completed / Out of Production — Stage is Complete / Ready to Invoice / Invoiced / Paid */}
+        {completedGroups.length > 0 && (
+          <div>
+            {sectionHeader('\u2705', 'Completed / Out of Production', completedGroups.length, showCompleted, () => setShowCompleted(o => !o))}
+            {showCompleted && renderBucketTable(completedGroups, false)}
+          </div>
+        )}
+
+        {/* Queued / Parked — manually parked from the active plan, still fully plannable */}
+        {parkedGroups.length > 0 && (
+          <div>
+            {sectionHeader('\uD83C\uDD7F\uFE0F', 'Queued / Parked', parkedGroups.length, true, () => {})}
+            {renderBucketTable(parkedGroups, true)}
           </div>
         )}
 
         {/* Summary totals */}
         {jobs.length > 0 && (
-          <div style={{ marginTop: 12, fontSize: 13, color: '#6b7280' }}>
-            <strong style={{ color: overBudget.length ? '#dc2626' : atRisk.length ? '#d97706' : '#15803d' }}>
-              {complete.length} complete · {onTrack.length} on track · {atRisk.length} at risk · {overBudget.length} over budget
+          <div style={{ marginTop: 16, fontSize: 13, color: '#6b7280' }}>
+            <strong style={{ color: '#0f172a' }}>
+              {activeGroups.length} active \u00b7 {upcomingGroups.length} upcoming \u00b7 {completedGroups.length} completed{parkedGroups.length ? ` \u00b7 ${parkedGroups.length} parked` : ''}
             </strong>
           </div>
         )}
-
-        {/* ── Work Queue — construction jobs not yet in this month's plan ────────── */}
-        <div style={{ marginTop: 32 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a' }}>
-              📋 Work Queue
-              <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: '#6b7280' }}>
-                {queueLoading ? 'loading…' : `${queue.length} job${queue.length !== 1 ? 's' : ''} not yet in the plan`}
-              </span>
-            </h2>
-            <button
-              onClick={() => setQueueOpen(o => !o)}
-              style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', color: '#6b7280', cursor: 'pointer' }}
-            >
-              {queueOpen ? 'Hide' : 'Show'}
-            </button>
-          </div>
-
-          {queueOpen && (
-            queue.length === 0 && !queueLoading ? (
-              <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', padding: '20px 16px', textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>
-                Nothing in the queue — every active construction job is already in the plan.
-              </div>
-            ) : (
-              <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-                {queue.map((s, i) => (
-                  <div key={s.opportunity_id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: i ? '1px solid #f3f4f6' : 'none' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>
-                        {s.property_name || s.opportunity_name}
-                        {s.has_scheduled && (
-                          <span style={{ marginLeft: 8, background: '#eff6ff', color: '#1d4ed8', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8 }}>
-                            📅 {s.ticket_count} scheduled
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-                        {s.opportunity_name}{s.status ? ` · ${s.status}` : ''}{s.won_dollars ? ` · ${fmt$(s.won_dollars)}` : ''}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => addFromQueue(s)}
-                      style={{ padding: '6px 12px', background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
-                    >
-                      + Add to plan
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )
-          )}
-        </div>
       </div>
 
       {/* Modals */}

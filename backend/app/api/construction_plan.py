@@ -270,6 +270,54 @@ async def _fetch_construction_opps(exclude_ids: set[int] | None = None) -> list[
         return []
 
 
+# Planning stages that mean the job is out of production. This is driven by the
+# planning Stage the user sets (NOT the Aspire status) — see _plan_bucket.
+COMPLETE_STAGES = {"Complete", "Ready to Invoice", "Invoiced", "Paid"}
+
+
+async def _fetch_construction_universe(month: str) -> dict[int, dict]:
+    """Every in-production Construction opportunity (Aspire status 'Won'), keyed by
+    OpportunityID. Bucketing into Active / Upcoming / Completed is done from Start Date +
+    the planning Stage (a staged-Complete job stays 'Won' in Aspire, so it's still here).
+    Division is matched client-side; all fields the plan needs are selected here so no
+    per-id actuals round-trip is required.
+    """
+    branch = (settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction").lower()
+    select = (
+        "OpportunityID,OpportunityName,PropertyName,OpportunityNumber,DivisionName,"
+        "OpportunityType,SalesTypeName,OpportunityStatusName,"
+        "WonDollars,ActualEarnedRevenue,EstimatedDollars,"
+        "EstimatedLaborHours,ActualLaborHours,PercentComplete,WonDate,StartDate,EndDate"
+    )
+    out: dict[int, dict] = {}
+    try:
+        res = await _aspire._get("Opportunities", {
+            "$filter": "OpportunityStatusName eq 'Won'",
+            "$select": select,
+            "$top": "1000",
+            "$orderby": "OpportunityID desc",
+        })
+        for o in _aspire._extract_list(res):
+            oid = o.get("OpportunityID")
+            if oid and branch in (o.get("DivisionName") or "").lower():
+                out[oid] = o
+    except Exception as e:
+        logger.warning(f"Construction universe fetch failed: {e}")
+    return out
+
+
+def _plan_bucket(stage: str, queued: bool, start_date: str, month: str) -> str:
+    """Which section a job belongs in: parked > completed (by Stage) > active/upcoming by Start Date."""
+    if queued:
+        return "parked"
+    if stage in COMPLETE_STAGES:        # out of production — driven by the planning Stage
+        return "completed"
+    start_month = (start_date or "")[:7]
+    if start_month and start_month <= month:
+        return "active"
+    return "upcoming"  # future Start Date, or no date set yet
+
+
 def _risk_flag(opp: dict, pct_month: float | None = None) -> str:
     """Return a risk label based on hours burn vs monthly ticket completion.
 
@@ -329,9 +377,10 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
     goal_rows_coro  = db._q("SELECT * FROM construction_monthly_goals WHERE month = ?", [month])
     target_rows_coro = db._q("SELECT * FROM construction_job_targets WHERE month = ? ORDER BY created_at", [month])
     scheduled_coro  = _fetch_scheduled_opp_ids(month)
+    universe_coro   = _fetch_construction_universe(month)
 
-    goal_rows, target_rows, scheduled_map = await _aio.gather(
-        goal_rows_coro, target_rows_coro, scheduled_coro
+    goal_rows, target_rows, scheduled_map, universe = await _aio.gather(
+        goal_rows_coro, target_rows_coro, scheduled_coro, universe_coro
     )
 
     goal = dict(goal_rows[0]) if goal_rows else {
@@ -352,12 +401,17 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             if tid:
                 all_ticket_ids.add(tid)
 
-    # Fetch opportunity actuals and ticket revenues in parallel
-    all_opp_ids = list(scheduled_ids | manual_ids)
-    actuals, ticket_revenues = await _aio.gather(
-        _fetch_opp_actuals(all_opp_ids),
+    # Membership: the whole in-production construction universe (status 'Won'), plus any
+    # manually-pinned or currently-scheduled opps, minus user-suppressed ones.
+    member_ids = (set(universe.keys()) | scheduled_ids | manual_ids) - suppressed_ids
+    # The universe fetch already carries full opp fields; only member opps OUTSIDE it
+    # (a manual pin, or a scheduled ticket on a non-Won/older job) need an actuals lookup.
+    missing_ids = [oid for oid in member_ids if oid not in universe]
+    extra_actuals, ticket_revenues = await _aio.gather(
+        _fetch_opp_actuals(missing_ids),
         _fetch_ticket_revenues(month, all_ticket_ids),
     )
+    actuals = {**universe, **extra_actuals}
 
     def _make_job(oid: int, source: str, notes: str = "", committed_by: str = "", committed_at: str = "") -> dict:
         opp     = actuals.get(oid, {})
@@ -447,33 +501,30 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
             "risk":              _risk_flag(opp, pct_month if n_total else None),
         }
 
+    manual_by_id = {t["opportunity_id"]: t for t in manual_targets}
     jobs: dict[int, dict] = {}
 
-    # 1. Add scheduled jobs
-    for oid in scheduled_ids:
-        jobs[oid] = _make_job(oid, source="scheduled")
-
-    # 2. Merge manual jobs — upgrade source to "both" if already scheduled
-    for t in manual_targets:
-        oid = t["opportunity_id"]
-        if oid in jobs:
-            jobs[oid]["source"] = "both"
-            jobs[oid]["notes"]  = t.get("notes") or ""
-        else:
-            job = _make_job(
-                oid, source="manual",
-                notes=t.get("notes") or "",
-                committed_by=t.get("committed_by") or "",
-                committed_at=t.get("created_at") or "",
-            )
-            # Resilience: if Aspire didn't return a name (e.g. during an Aspire/D1 hiccup),
-            # fall back to the name/property captured when the job was committed.
-            if not job["opportunity_name"] or job["opportunity_name"] == f"Job #{oid}":
-                if t.get("opportunity_name"):
-                    job["opportunity_name"] = t["opportunity_name"]
-            if not job["property_name"] and t.get("property_name"):
-                job["property_name"] = t["property_name"]
-            jobs[oid] = job
+    # Build a job for every member (universe + scheduled + manual), tagging its source.
+    for oid in member_ids:
+        is_sched  = oid in scheduled_map
+        is_manual = oid in manual_ids
+        source = ("both" if (is_sched and is_manual)
+                  else "scheduled" if is_sched
+                  else "manual" if is_manual
+                  else "universe")
+        t = manual_by_id.get(oid, {})
+        job = _make_job(
+            oid, source=source,
+            notes=t.get("notes") or "",
+            committed_by=t.get("committed_by") or "",
+            committed_at=t.get("created_at") or "",
+        )
+        # Resilience: if Aspire didn't return a name, fall back to what was captured on commit.
+        if (not job["opportunity_name"] or job["opportunity_name"] == f"Job #{oid}") and t.get("opportunity_name"):
+            job["opportunity_name"] = t["opportunity_name"]
+        if not job["property_name"] and t.get("property_name"):
+            job["property_name"] = t["property_name"]
+        jobs[oid] = job
 
     # Preparedness checklist progress — one query for every job in the plan.
     # done = items complete/uploaded; total = applicable items (PREP_TOTAL minus N/A).
@@ -532,15 +583,22 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         j["schedule_confirmed"] = bool(p.get("schedule_confirmed"))
         j["stage"]              = p.get("stage") or DEFAULT_STAGE
         j["queued"]             = queued_map.get(oid, False)
+        j["bucket"]             = _plan_bucket(j["stage"], j["queued"], j.get("start_date") or "", month)
 
     job_list = list(jobs.values())
     risk_order = {"over_budget": 0, "at_risk": 1, "on_track": 2, "complete": 3}
     job_list.sort(key=lambda j: (risk_order.get(j["risk"], 9), j["property_name"]))
 
+    from collections import Counter as _Counter
+    bucket_counts = _Counter(j.get("bucket") for j in job_list)
     summary = {
         "job_count":         len(job_list),
         "scheduled_count":   len(scheduled_ids),
         "manual_count":      len(manual_ids - scheduled_ids),
+        "active_count":      bucket_counts.get("active", 0),
+        "upcoming_count":    bucket_counts.get("upcoming", 0),
+        "completed_count":   bucket_counts.get("completed", 0),
+        "parked_count":      bucket_counts.get("parked", 0),
         "days_left":         _days_left_in_month(month),
         "hrs_est":           sum(j["hrs_est"] for j in job_list),
         "hrs_act":           sum(j["hrs_act"] for j in job_list),
