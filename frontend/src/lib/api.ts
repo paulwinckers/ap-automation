@@ -1494,6 +1494,7 @@ export interface IncidentPayload {
   sent_to_medical?:    boolean;
   contributing_factors?: string[];
   employee_signed_off_by?: string;
+  signed_off_by?:      string;
   photos?:             File[];
 }
 export async function submitIncident(p: IncidentPayload): Promise<{ id: number }> {
@@ -1515,6 +1516,7 @@ export async function submitIncident(p: IncidentPayload): Promise<{ id: number }
   if (p.sent_to_medical !== undefined) form.append('sent_to_medical', p.sent_to_medical ? 'yes' : 'no');
   form.append('contributing_factors', JSON.stringify(p.contributing_factors || []));
   if (p.employee_signed_off_by) form.append('employee_signed_off_by', p.employee_signed_off_by);
+  if (p.signed_off_by) form.append('signed_off_by', p.signed_off_by);
   for (const f of (p.photos || [])) form.append('photos', f, f.name);
   return request('POST', '/safety/incidents', form, true);
 }

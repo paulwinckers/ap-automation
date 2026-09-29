@@ -123,6 +123,8 @@ export default function FieldIncident() {
   const [photos, setPhotos]     = useState<File[]>([]);
   const [empSignoff, setEmpSignoff] = useState('');
   const [ack, setAck]           = useState(false);
+  const [mgrSignoff, setMgrSignoff] = useState('');
+  const [mgrAck, setMgrAck]     = useState(false);
   const [employees, setEmployees] = useState<AspireEmployee[]>([]);
   const [busy, setBusy]         = useState(false);
   const [error, setError]       = useState('');
@@ -150,6 +152,7 @@ export default function FieldIncident() {
         property_damage_desc: damage ? (damageDesc.trim() || undefined) : undefined,
         witnesses: witnesses.length ? witnesses.join(', ') : undefined,
         employee_signed_off_by: (ack && empSignoff.trim()) ? empSignoff.trim() : undefined,
+        signed_off_by: (mgrAck && mgrSignoff.trim()) ? mgrSignoff.trim() : undefined,
         photos,
       });
       setDoneId(r.id);
@@ -180,7 +183,7 @@ export default function FieldIncident() {
           <div style={{ color: '#94a3b8', fontSize: 14, marginBottom: 6 }}>Incident #{doneId} has been sent to the safety team.</div>
           <div style={{ color: '#64748b', fontSize: 13, marginBottom: 28 }}>Thank you for reporting. If anyone is hurt, make sure they’re receiving care.</div>
           <button style={{ ...S.btn, background: '#1e293b', color: '#94a3b8', maxWidth: 260, margin: '0 auto', display: 'block' }}
-                  onClick={() => { setDoneId(null); setWhat(''); setInjury(''); setAction(''); setPeople([]); setWitnesses([]); setPhotos([]); setSentMedical(null); setFactors([]); setWorksafe(null); setDamage(null); setDamageDesc(''); setEmpSignoff(''); setAck(false); }}>
+                  onClick={() => { setDoneId(null); setWhat(''); setInjury(''); setAction(''); setPeople([]); setWitnesses([]); setPhotos([]); setSentMedical(null); setFactors([]); setWorksafe(null); setDamage(null); setDamageDesc(''); setEmpSignoff(''); setAck(false); setMgrSignoff(''); setMgrAck(false); }}>
             Report another
           </button>
           <a href="/" style={{ display: 'inline-block', marginTop: 14, color: '#94a3b8', fontSize: 13 }}>← Back to Home</a>
@@ -311,6 +314,16 @@ export default function FieldIncident() {
             <input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />
             I confirm this report is accurate to the best of my knowledge.
           </label>
+        </div>
+
+        <div style={S.card}>
+          <label style={S.label}>Manager sign-off <span style={{ color: '#64748b', fontWeight: 400 }}>(if a manager is present)</span></label>
+          <input style={S.input} value={mgrSignoff} onChange={e => setMgrSignoff(e.target.value)} placeholder="Manager name" />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, color: '#cbd5e1', fontSize: 13, cursor: 'pointer' }}>
+            <input type="checkbox" checked={mgrAck} onChange={e => setMgrAck(e.target.checked)} />
+            Manager has reviewed this report.
+          </label>
+          <div style={{ color: '#64748b', fontSize: 12, marginTop: 8 }}>A manager can also sign off later from the incident log.</div>
         </div>
 
         <button style={{ ...S.btn, background: busy ? '#475569' : '#dc2626', color: '#fff' }} disabled={busy} onClick={submit}>

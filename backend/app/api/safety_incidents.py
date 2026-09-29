@@ -79,6 +79,7 @@ async def submit_incident(
     sent_to_medical:      Optional[str] = Form(default=None),
     contributing_factors: str           = Form(default="[]"),  # JSON array
     employee_signed_off_by: Optional[str] = Form(default=None),
+    signed_off_by:          Optional[str] = Form(default=None),   # manager sign-off (if present at reporting)
     photos:           list[UploadFile] = File(default=[]),
 ):
     """Submit a field safety incident report. Saves the record, stores any photos in R2,
@@ -156,6 +157,12 @@ async def submit_incident(
                 await db._x(
                     "UPDATE safety_incidents SET employee_signed_off_by = ?, employee_signed_off_at = datetime('now') WHERE id = ?",
                     [emp, incident_id],
+                )
+            mgr = (signed_off_by or "").strip()
+            if mgr:
+                await db._x(
+                    "UPDATE safety_incidents SET signed_off_by = ?, signed_off_at = datetime('now') WHERE id = ?",
+                    [mgr, incident_id],
                 )
         except Exception as e:
             logger.warning("Incident %s extended fields not saved: %s", incident_id, e)
