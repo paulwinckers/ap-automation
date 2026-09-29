@@ -5,35 +5,89 @@
 import { useState } from 'react';
 import { submitVehicleInspection, VEHICLE_CHECKLIST } from '../lib/api';
 
-// ── Synthesized car horn (dual-tone, via Web Audio) ─────────────────────────────
+// ── Little Web-Audio sound kit (no assets needed) ───────────────────────────────
 let _actx: AudioContext | null = null;
-function honk(times = 1) {
+function audioCtx(): AudioContext | null {
   try {
     const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     _actx = _actx || new Ctor();
-    const ctx = _actx;
-    if (ctx.state === 'suspended') ctx.resume();
-    const now = ctx.currentTime;
-    const dur = 0.34, gap = 0.16;
-    for (let n = 0; n < times; n++) {
-      const t0 = now + n * (dur + gap);
-      const gain = ctx.createGain();
-      gain.connect(ctx.destination);
-      gain.gain.setValueAtTime(0.0001, t0);
-      gain.gain.exponentialRampToValueAtTime(0.22, t0 + 0.03);
-      gain.gain.setValueAtTime(0.22, t0 + dur - 0.06);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-      [349, 440].forEach(f => {            // F + A — classic dual-tone horn
-        const o = ctx.createOscillator();
-        o.type = 'sawtooth';
-        o.frequency.value = f;
-        o.connect(gain);
-        o.start(t0);
-        o.stop(t0 + dur);
-      });
-    }
-  } catch { /* audio unavailable — no-op */ }
+    if (_actx.state === 'suspended') _actx.resume();
+    return _actx;
+  } catch { return null; }
 }
+function blip(freq: number, t0: number, dur: number, type: OscillatorType, vol: number, slideTo?: number) {
+  const ctx = audioCtx(); if (!ctx) return;
+  const g = ctx.createGain(); g.connect(ctx.destination);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  const o = ctx.createOscillator(); o.type = type;
+  o.frequency.setValueAtTime(freq, t0);
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+  o.connect(g); o.start(t0); o.stop(t0 + dur);
+}
+function noise(t0: number, dur: number, vol: number, filterFreq: number, q = 1) {
+  const ctx = audioCtx(); if (!ctx) return;
+  const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * dur)), ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ctx.createBufferSource(); src.buffer = buf;
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = filterFreq; bp.Q.value = q;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(vol, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  src.connect(bp); bp.connect(g); g.connect(ctx.destination);
+  src.start(t0); src.stop(t0 + dur);
+}
+function honk(times = 1) {          // 📣 dual-tone car horn
+  const ctx = audioCtx(); if (!ctx) return;
+  const now = ctx.currentTime, dur = 0.34, gap = 0.16;
+  for (let n = 0; n < times; n++) {
+    const t0 = now + n * (dur + gap);
+    [349, 440].forEach(f => blip(f, t0, dur, 'sawtooth', 0.16));
+  }
+}
+function boing() {                  // 🛞 tire boing
+  const ctx = audioCtx(); if (!ctx) return;
+  blip(520, ctx.currentTime, 0.32, 'sine', 0.25, 120);
+}
+function spray() {                  // 💦 washer squirt
+  const ctx = audioCtx(); if (!ctx) return;
+  noise(ctx.currentTime, 0.38, 0.16, 3200, 0.6);
+}
+function swish() {                  // 🌧️ wiper swish (two passes)
+  const ctx = audioCtx(); if (!ctx) return;
+  noise(ctx.currentTime, 0.28, 0.12, 1400, 0.8);
+  noise(ctx.currentTime + 0.34, 0.28, 0.12, 1400, 0.8);
+}
+function beepBeep() {              // 🔔 reverse alarm
+  const ctx = audioCtx(); if (!ctx) return;
+  const now = ctx.currentTime;
+  [0, 0.22, 0.44].forEach(d => blip(1000, now + d, 0.13, 'square', 0.14));
+}
+function ding() {                  // 💡 lights ding
+  const ctx = audioCtx(); if (!ctx) return;
+  blip(1319, ctx.currentTime, 0.5, 'sine', 0.2);
+}
+function click() {                 // 🔒 seat-belt click
+  const ctx = audioCtx(); if (!ctx) return;
+  const now = ctx.currentTime;
+  blip(2200, now, 0.05, 'square', 0.12);
+  blip(1600, now + 0.07, 0.05, 'square', 0.12);
+}
+
+// Per-item feedback: emoji popup + sound when marked OK
+const ITEM_FX: Record<string, { emoji: string; play: () => void }> = {
+  horn:         { emoji: '📣', play: () => honk(1) },
+  tires:        { emoji: '🛞', play: boing },
+  wheels_fasteners: { emoji: '🛞', play: boing },
+  fluid_levels: { emoji: '💦', play: spray },
+  wipers:       { emoji: '🌧️', play: swish },
+  backup_alarm: { emoji: '🔔', play: beepBeep },
+  lights:       { emoji: '💡', play: ding },
+  dash_panel:   { emoji: '💡', play: ding },
+  seat_belts:   { emoji: '🔒', play: click },
+};
 
 function today(): string { return new Date().toISOString().slice(0, 10); }
 function userName(): string {
@@ -68,6 +122,7 @@ export default function FieldVehicleInspection() {
   const [busy, setBusy]         = useState(false);
   const [error, setError]       = useState('');
   const [done, setDone]         = useState<{ id: number; defects: number } | null>(null);
+  const [pop, setPop]           = useState<{ emoji: string; n: number } | null>(null);
 
   const answered = Object.values(items).filter(i => i.result !== '').length;
   const defects  = Object.values(items).filter(i => i.result === 'not_ok').length;
@@ -76,7 +131,11 @@ export default function FieldVehicleInspection() {
 
   function setResult(key: string, result: 'ok' | 'not_ok') {
     setItems(prev => ({ ...prev, [key]: { ...prev[key], result } }));
-    if (key === 'horn' && result === 'ok') honk(1);   // 🎉 test the horn!
+    const fx = ITEM_FX[key];
+    if (result === 'ok' && fx) {
+      fx.play();
+      setPop(p => ({ emoji: fx.emoji, n: (p?.n ?? 0) + 1 }));
+    }
   }
   function setNote(key: string, notes: string) {
     setItems(prev => ({ ...prev, [key]: { ...prev[key], notes } }));
@@ -140,6 +199,12 @@ export default function FieldVehicleInspection() {
   return (
     <div style={S.page}>
       {header()}
+      <style>{`@keyframes fxpop{0%{transform:scale(0.4);opacity:0}25%{transform:scale(1.3);opacity:1}70%{transform:scale(1);opacity:1}100%{transform:scale(1.15);opacity:0}}`}</style>
+      {pop && (
+        <div key={pop.n} style={{ position: 'fixed', top: '34%', left: 0, right: 0, textAlign: 'center', fontSize: 96, pointerEvents: 'none', zIndex: 2000, animation: 'fxpop 0.9s ease-out forwards' }}>
+          {pop.emoji}
+        </div>
+      )}
       <div style={S.body}>
         <div style={{ color: '#93c5fd', fontSize: 13, marginBottom: 12, textAlign: 'center' }}>
           🦺 Complete before operating the vehicle for the week. Ask for help or leave a note if unsure.
