@@ -20,6 +20,7 @@ const FIELD_LINKS = [
   { to: '/field/documents',        icon: '📋', label: 'Documents',           sub: 'Policies & procedures' },
   { to: '/field/inspection',       icon: '🔍', label: 'Site Inspection',      sub: 'Safety & compliance check' },
   { to: '/field/incident',         icon: '🚨', label: 'Incident Report',       sub: 'Report a safety incident' },
+  { to: '/field/vehicle-inspection', icon: '🚛', label: 'Vehicle Inspection',   sub: 'Weekly pre-use vehicle check' },
 ];
 
 const OFFICE_GROUPS = [
@@ -31,6 +32,7 @@ const OFFICE_GROUPS = [
       { to: '/ops/crew-schedule', icon: '👥', label: 'Crew Schedule',  sub: 'Assign staff to routes' },
       { to: '/ops/safety-talks',  icon: '🦺', label: 'Safety Talks',   sub: 'Toolbox talk records' },
       { to: '/ops/safety-incidents', icon: '🚨', label: 'Incident Reports', sub: 'Field safety incident log' },
+      { to: '/ops/vehicle-inspections', icon: '🚛', label: 'Vehicle Inspections', sub: 'Weekly vehicle inspection log' },
       { to: '/ops/documents',     icon: '🗂️', label: 'Documents Admin', sub: 'Upload & organise company documents' },
       { to: '/keys/admin',        icon: '🔑', label: 'Key Box Admin',  sub: 'Manage keys & view log' },
     ],

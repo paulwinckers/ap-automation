@@ -26,6 +26,7 @@ const NAV = [
       { label: 'Documents',             path: '/field/documents',      icon: '📋' },
       { label: 'Site Inspection',       path: '/field/inspection',     icon: '🔍' },
       { label: 'Incident Report',       path: '/field/incident',       icon: '🚨' },
+      { label: 'Vehicle Inspection',    path: '/field/vehicle-inspection', icon: '🚛' },
     ],
   },
   {
@@ -37,6 +38,7 @@ const NAV = [
       { label: 'Crew Schedule', path: '/ops/crew-schedule', icon: '👥' },
       { label: 'Safety Talks',  path: '/ops/safety-talks',  icon: '🦺' },
       { label: 'Incident Reports', path: '/ops/safety-incidents', icon: '🚨' },
+      { label: 'Vehicle Inspections', path: '/ops/vehicle-inspections', icon: '🚛' },
       { label: 'Documents Admin', path: '/ops/documents',   icon: '🗂️' },
       { label: 'Key Box Admin', path: '/keys/admin',        icon: '🔑' },
     ],

@@ -80,6 +80,8 @@ class Settings(BaseSettings):
 
     # Field safety incident report notifications (comma-separated; falls back to ISSUES_DIGEST_MGMT_RECIPIENTS)
     SAFETY_INCIDENT_RECIPIENTS: str = "paul@darios.ca"
+    # Vehicle inspection defect notifications (only emailed when an inspection has defects)
+    VEHICLE_INSPECTION_RECIPIENTS: str = "paul@darios.ca"
 
     # Issues digest
     ISSUES_DIGEST_MGMT_RECIPIENTS:  str = "paul@darios.ca"  # management summary recipients (comma-separated)

@@ -1541,6 +1541,57 @@ export async function signOffIncident(id: number, signed_off_by: string, role: '
   await request('PATCH', `/safety/incidents/${id}/signoff`, { signed_off_by, role });
 }
 
+// ── Weekly vehicle inspections ────────────────────────────────────────────────
+export const VEHICLE_CHECKLIST: { key: string; label: string }[] = [
+  { key: 'parking_brake',    label: 'Parking Brake — holds against slight acceleration' },
+  { key: 'foot_brake',       label: 'Foot Brake — holds, stops vehicle smoothly' },
+  { key: 'clutch_gearshift', label: 'Clutch & Gearshift — shifts smoothly, no jumping/jerking' },
+  { key: 'steering',         label: 'Steering — moves smoothly; no "play"' },
+  { key: 'lights',           label: 'Lights — headlights, warning, reverse, turn signals' },
+  { key: 'battery',          label: 'Battery — check for corrosion & connections' },
+  { key: 'dash_panel',       label: 'Dash Control Panel — gauges OK, no warning lights' },
+  { key: 'moving_parts',     label: 'All Moving Parts — no strange noises, no belt wear' },
+  { key: 'horn',             label: 'Horn — operational' },
+  { key: 'visibility',       label: 'Visibility — mirrors adjusted & clean; windows clean/intact' },
+  { key: 'wipers',           label: 'Wipers — functioning & intact' },
+  { key: 'tires',            label: 'Tires — pressure, tread depth, even wear' },
+  { key: 'wheels_fasteners', label: 'Wheels & fasteners — no rim defects, none loose/missing' },
+  { key: 'seat_belts',       label: 'Seat belts — in good condition' },
+  { key: 'backup_alarm',     label: 'Back-up alarm — operational (if applicable)' },
+  { key: 'hydraulics',       label: 'Hydraulic systems — no leaks, operate smoothly' },
+  { key: 'trans_fluid',      label: 'Auto transmission fluid (if applicable, running & in park)' },
+  { key: 'fluid_levels',     label: 'Fluid levels — oil, brakes, washer; check leaks, note %' },
+  { key: 'def_level',        label: 'DEF level (diesel vehicles)' },
+  { key: 'body',             label: 'Body — no new damage, no loose parts' },
+  { key: 'load_hitch',       label: 'Load — hitch in good condition' },
+  { key: 'first_aid_fire',   label: 'First Aid Kit + Fire extinguisher — stocked/charged' },
+];
+export interface VehicleInspectionItem { key: string; label: string; result: string; notes?: string | null; }
+export interface VehicleInspectionSummary {
+  id: number; vehicle_number: string | null; odometer: string | null;
+  completed_by: string; inspection_date: string; defect_count: number; created_at: string;
+}
+export interface VehicleInspectionDetail extends VehicleInspectionSummary {
+  items: VehicleInspectionItem[]; notes: string | null;
+}
+export interface VehicleInspectionPayload {
+  vehicle_number?: string; odometer?: string; completed_by: string;
+  inspection_date: string; notes?: string; items: VehicleInspectionItem[];
+}
+export async function submitVehicleInspection(p: VehicleInspectionPayload): Promise<{ id: number; defect_count: number }> {
+  return request('POST', '/vehicle/inspections', p);
+}
+export async function listVehicleInspections(params?: { vehicle_number?: string; only_defects?: boolean }): Promise<VehicleInspectionSummary[]> {
+  const qs = new URLSearchParams();
+  if (params?.vehicle_number) qs.set('vehicle_number', params.vehicle_number);
+  if (params?.only_defects) qs.set('only_defects', 'true');
+  const r = await request<{ inspections: VehicleInspectionSummary[] }>('GET', `/vehicle/inspections${qs.toString() ? '?' + qs : ''}`);
+  return r.inspections;
+}
+export async function getVehicleInspection(id: number): Promise<VehicleInspectionDetail> {
+  return request('GET', `/vehicle/inspections/${id}`);
+}
+
 // ── Key management ────────────────────────────────────────────────────────────
 
 export interface KeyEntry {

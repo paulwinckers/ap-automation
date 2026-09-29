@@ -412,6 +412,20 @@ CREATE TABLE IF NOT EXISTS safety_incidents (
 CREATE INDEX IF NOT EXISTS idx_incidents_date   ON safety_incidents(incident_date);
 CREATE INDEX IF NOT EXISTS idx_incidents_status ON safety_incidents(status);
 
+-- ── Weekly vehicle inspections ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS vehicle_inspections (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    vehicle_number  TEXT,
+    odometer        TEXT,
+    completed_by    TEXT NOT NULL,
+    inspection_date TEXT NOT NULL,              -- YYYY-MM-DD
+    items_json      TEXT,                       -- JSON array of {key,label,result,notes}
+    defect_count    INTEGER NOT NULL DEFAULT 0,
+    notes           TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_vehinsp_date ON vehicle_inspections(inspection_date);
+
 -- ── Push notification subscriptions ───────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS push_subscriptions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

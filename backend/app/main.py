@@ -37,6 +37,7 @@ from app.api.documents import router as documents_router
 from app.api.push import router as push_router
 from app.api.site_inspections import router as site_inspections_router
 from app.api.safety_incidents import router as safety_incidents_router
+from app.api.vehicle_inspections import router as vehicle_inspections_router
 from app.api.property_hazards import router as property_hazards_router
 from app.api.project_checkin import (
     router as checkin_router,
@@ -278,6 +279,19 @@ async def lifespan(app: FastAPI):
                 created_at         TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """,
+        "vehicle_inspections": """
+            CREATE TABLE IF NOT EXISTS vehicle_inspections (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                vehicle_number  TEXT,
+                odometer        TEXT,
+                completed_by    TEXT NOT NULL,
+                inspection_date TEXT NOT NULL,
+                items_json      TEXT,
+                defect_count    INTEGER NOT NULL DEFAULT 0,
+                notes           TEXT,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:
@@ -451,6 +465,7 @@ app.include_router(documents_router)
 app.include_router(push_router)
 app.include_router(site_inspections_router)
 app.include_router(safety_incidents_router)
+app.include_router(vehicle_inspections_router)
 app.include_router(property_hazards_router)
 app.include_router(checkin_router)
 app.include_router(checkin_public_router)
