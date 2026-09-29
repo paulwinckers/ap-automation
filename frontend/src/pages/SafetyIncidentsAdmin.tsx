@@ -53,15 +53,36 @@ function IncidentModal({ id, onClose, onChanged }: { id: number; onClose: () => 
     finally { setSaving(false); }
   }
 
-  async function doSignOff(clear = false) {
-    const name = clear ? '' : (currentUserName() || 'Manager');
+  async function doSignOff(role: 'manager' | 'employee', clear = false) {
+    const name = clear ? '' : (currentUserName() || (role === 'employee' ? 'Employee' : 'Manager'));
     setSigning(true);
     try {
-      await signOffIncident(id, name);
-      setD(p => p ? { ...p, signed_off_by: name || null, signed_off_at: name ? new Date().toISOString() : null } : p);
+      await signOffIncident(id, name, role);
+      setD(p => p ? {
+        ...p,
+        ...(role === 'employee'
+          ? { employee_signed_off_by: name || null, employee_signed_off_at: name ? new Date().toISOString() : null }
+          : { signed_off_by: name || null, signed_off_at: name ? new Date().toISOString() : null }),
+      } : p);
       onChanged();
     } finally { setSigning(false); }
   }
+
+  const signRow = (label: string, by: string | null, at: string | null, role: 'manager' | 'employee') => (
+    by ? (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ fontSize: 13, color: '#15803d', fontWeight: 700 }}>
+          ✓ {label} sign-off — {by}{at ? ` · ${new Date(at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
+        </div>
+        <button disabled={signing} onClick={() => doSignOff(role, true)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}>Clear</button>
+      </div>
+    ) : (
+      <button disabled={signing} onClick={() => doSignOff(role, false)}
+        style={{ width: '100%', padding: '10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', color: '#374151', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+        ✍️ {label} sign-off
+      </button>
+    )
+  );
 
   const row = (lbl: string, val?: string | null) => val ? (
     <div style={{ marginBottom: 12 }}>
@@ -121,20 +142,9 @@ function IncidentModal({ id, onClose, onChanged }: { id: number; onClose: () => 
                   </button>
                 ))}
               </div>
-              <div style={{ marginTop: 16, borderTop: '1px solid #f3f4f6', paddingTop: 16 }}>
-                {d.signed_off_by ? (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                    <div style={{ fontSize: 13, color: '#15803d', fontWeight: 700 }}>
-                      ✓ Signed off by {d.signed_off_by}{d.signed_off_at ? ` · ${new Date(d.signed_off_at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
-                    </div>
-                    <button disabled={signing} onClick={() => doSignOff(true)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}>Clear</button>
-                  </div>
-                ) : (
-                  <button disabled={signing} onClick={() => doSignOff(false)}
-                    style={{ width: '100%', padding: '11px', borderRadius: 8, border: 'none', background: '#111827', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
-                    {signing ? 'Signing…' : '✍️ Manager sign-off'}
-                  </button>
-                )}
+              <div style={{ marginTop: 16, borderTop: '1px solid #f3f4f6', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {signRow('Employee', d.employee_signed_off_by, d.employee_signed_off_at, 'employee')}
+                {signRow('Manager', d.signed_off_by, d.signed_off_at, 'manager')}
               </div>
             </>
           )}

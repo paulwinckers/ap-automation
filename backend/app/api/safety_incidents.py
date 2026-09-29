@@ -78,6 +78,7 @@ async def submit_incident(
     property_damage_desc: Optional[str] = Form(default=None),
     sent_to_medical:      Optional[str] = Form(default=None),
     contributing_factors: str           = Form(default="[]"),  # JSON array
+    employee_signed_off_by: Optional[str] = Form(default=None),
     photos:           list[UploadFile] = File(default=[]),
 ):
     """Submit a field safety incident report. Saves the record, stores any photos in R2,
@@ -150,6 +151,12 @@ async def submit_incident(
                 [rw, pd, (property_damage_desc or "").strip() or None, med,
                  json.dumps(factors), incident_id],
             )
+            emp = (employee_signed_off_by or "").strip()
+            if emp:
+                await db._x(
+                    "UPDATE safety_incidents SET employee_signed_off_by = ?, employee_signed_off_at = datetime('now') WHERE id = ?",
+                    [emp, incident_id],
+                )
         except Exception as e:
             logger.warning("Incident %s extended fields not saved: %s", incident_id, e)
     finally:
@@ -284,6 +291,7 @@ async def list_incidents(
                 "description": d.get("description"), "status": d.get("status"),
                 "created_at": d.get("created_at"), "photo_count": pc,
                 "signed_off_by": d.get("signed_off_by"),
+                "employee_signed_off_by": d.get("employee_signed_off_by"),
             })
         return {"incidents": out}
     finally:
@@ -353,24 +361,27 @@ async def set_incident_status(incident_id: int, body: StatusBody):
 
 class SignOffBody(BaseModel):
     signed_off_by: str
+    role: str = "manager"   # 'manager' | 'employee'
 
 
 @router.patch("/{incident_id}/signoff")
 async def sign_off_incident(incident_id: int, body: SignOffBody):
-    """Manager sign-off — stamps who signed and when. An empty name clears the sign-off."""
+    """Sign-off by manager or employee — stamps who signed and when. Empty name clears it."""
     name = (body.signed_off_by or "").strip()
+    col  = "employee_signed_off_by" if body.role == "employee" else "signed_off_by"
+    at   = "employee_signed_off_at" if body.role == "employee" else "signed_off_at"
     db = await _get_db()
     try:
         if name:
             await db._x(
-                "UPDATE safety_incidents SET signed_off_by = ?, signed_off_at = datetime('now') WHERE id = ?",
+                f"UPDATE safety_incidents SET {col} = ?, {at} = datetime('now') WHERE id = ?",
                 [name, incident_id],
             )
         else:
             await db._x(
-                "UPDATE safety_incidents SET signed_off_by = NULL, signed_off_at = NULL WHERE id = ?",
+                f"UPDATE safety_incidents SET {col} = NULL, {at} = NULL WHERE id = ?",
                 [incident_id],
             )
-        return {"id": incident_id, "signed_off_by": name or None}
+        return {"id": incident_id, "role": body.role, "signed_off_by": name or None}
     finally:
         await db.close()

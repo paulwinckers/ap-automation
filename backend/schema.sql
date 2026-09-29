@@ -402,6 +402,8 @@ CREATE TABLE IF NOT EXISTS safety_incidents (
     contributing_factors TEXT,                     -- JSON array (unsafe_act|unsafe_conditions|equipment_issue|lack_of_training)
     signed_off_by      TEXT,                       -- manager sign-off name
     signed_off_at      TEXT,
+    employee_signed_off_by TEXT,                   -- employee sign-off name
+    employee_signed_off_at TEXT,
     status             TEXT NOT NULL DEFAULT 'open',  -- open|reviewed|closed
     reviewed_by        TEXT,
     reviewed_at        TEXT,

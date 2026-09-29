@@ -1458,6 +1458,7 @@ export interface IncidentSummary {
   created_at:    string;
   photo_count:   number;
   signed_off_by: string | null;
+  employee_signed_off_by: string | null;
 }
 export interface IncidentDetail extends IncidentSummary {
   people_involved:    string | null;
@@ -1470,6 +1471,7 @@ export interface IncidentDetail extends IncidentSummary {
   sent_to_medical:    number | null;
   contributing_factors: string[];
   signed_off_at:      string | null;
+  employee_signed_off_at: string | null;
   reviewed_by:        string | null;
   reviewed_at:        string | null;
   photo_urls:         string[];
@@ -1491,6 +1493,7 @@ export interface IncidentPayload {
   property_damage_desc?: string;
   sent_to_medical?:    boolean;
   contributing_factors?: string[];
+  employee_signed_off_by?: string;
   photos?:             File[];
 }
 export async function submitIncident(p: IncidentPayload): Promise<{ id: number }> {
@@ -1511,6 +1514,7 @@ export async function submitIncident(p: IncidentPayload): Promise<{ id: number }
   if (p.property_damage_desc) form.append('property_damage_desc', p.property_damage_desc);
   if (p.sent_to_medical !== undefined) form.append('sent_to_medical', p.sent_to_medical ? 'yes' : 'no');
   form.append('contributing_factors', JSON.stringify(p.contributing_factors || []));
+  if (p.employee_signed_off_by) form.append('employee_signed_off_by', p.employee_signed_off_by);
   for (const f of (p.photos || [])) form.append('photos', f, f.name);
   return request('POST', '/safety/incidents', form, true);
 }
@@ -1533,8 +1537,8 @@ export async function getIncident(id: number): Promise<IncidentDetail> {
 export async function setIncidentStatus(id: number, status: string, reviewed_by?: string): Promise<void> {
   await request('PATCH', `/safety/incidents/${id}/status`, { status, reviewed_by });
 }
-export async function signOffIncident(id: number, signed_off_by: string): Promise<void> {
-  await request('PATCH', `/safety/incidents/${id}/signoff`, { signed_off_by });
+export async function signOffIncident(id: number, signed_off_by: string, role: 'manager' | 'employee' = 'manager'): Promise<void> {
+  await request('PATCH', `/safety/incidents/${id}/signoff`, { signed_off_by, role });
 }
 
 // ── Key management ────────────────────────────────────────────────────────────

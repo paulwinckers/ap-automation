@@ -3,8 +3,8 @@
  * Submits to POST /safety/incidents which stores the report + emails the safety team.
  */
 
-import { useState } from 'react';
-import { submitIncident } from '../lib/api';
+import { useState, useEffect } from 'react';
+import { submitIncident, getAspireEmployees, type AspireEmployee } from '../lib/api';
 
 const TYPES = [
   { v: 'injury',          l: 'Injury' },
@@ -47,6 +47,50 @@ function userName(): string {
   try { return JSON.parse(localStorage.getItem('ap_user') || '{}').name || ''; } catch { return ''; }
 }
 
+function PeoplePicker({ value, onChange, employees, placeholder }: {
+  value: string[]; onChange: (v: string[]) => void; employees: AspireEmployee[]; placeholder: string;
+}) {
+  const [q, setQ] = useState('');
+  const add = (name: string) => { const n = name.trim(); if (n && !value.includes(n)) onChange([...value, n]); setQ(''); };
+  const suggestions = q.trim()
+    ? employees.filter(e => e.FullName.toLowerCase().includes(q.toLowerCase()) && !value.includes(e.FullName)).slice(0, 6)
+    : [];
+  const exactMatch = employees.some(e => e.FullName.toLowerCase() === q.trim().toLowerCase());
+  return (
+    <div>
+      {value.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+          {value.map(n => (
+            <span key={n} style={{ background: '#1e3a5f', color: '#93c5fd', fontSize: 13, fontWeight: 600, padding: '4px 6px 4px 10px', borderRadius: 16, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {n}
+              <button type="button" onClick={() => onChange(value.filter(x => x !== n))} style={{ background: 'none', border: 'none', color: '#93c5fd', cursor: 'pointer', fontSize: 13, padding: 0 }}>✕</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input style={{ width: '100%', background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: '11px 12px', color: '#fff', fontSize: 15, boxSizing: 'border-box', fontFamily: 'inherit' }}
+        value={q} placeholder={placeholder}
+        onChange={e => setQ(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(q); } }} />
+      {suggestions.length > 0 && (
+        <div style={{ marginTop: 6, background: '#0f172a', border: '1px solid #334155', borderRadius: 8, overflow: 'hidden' }}>
+          {suggestions.map(e => (
+            <button key={e.ContactID} type="button" onClick={() => add(e.FullName)}
+              style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', color: '#e2e8f0', padding: '9px 12px', fontSize: 14, cursor: 'pointer' }}>
+              👤 {e.FullName}
+            </button>
+          ))}
+        </div>
+      )}
+      {q.trim() && !exactMatch && (
+        <button type="button" onClick={() => add(q)} style={{ marginTop: 6, background: 'none', border: '1px dashed #334155', color: '#94a3b8', padding: '7px 12px', borderRadius: 8, fontSize: 13, cursor: 'pointer', width: '100%' }}>
+          + Add “{q.trim()}”
+        </button>
+      )}
+    </div>
+  );
+}
+
 function YesNo({ value, onChange }: { value: boolean | null; onChange: (v: boolean) => void }) {
   const opt = (v: boolean, label: string) => (
     <button type="button" onClick={() => onChange(v)}
@@ -66,7 +110,7 @@ export default function FieldIncident() {
   const [location, setLocation] = useState('');
   const [itype, setItype]       = useState('near_miss');
   const [severity, setSeverity] = useState('minor');
-  const [people, setPeople]     = useState('');
+  const [people, setPeople]     = useState<string[]>([]);
   const [injury, setInjury]     = useState('');
   const [what, setWhat]         = useState('');
   const [action, setAction]     = useState('');
@@ -75,11 +119,16 @@ export default function FieldIncident() {
   const [worksafe, setWorksafe] = useState<boolean | null>(null);
   const [damage, setDamage]     = useState<boolean | null>(null);
   const [damageDesc, setDamageDesc] = useState('');
-  const [witnesses, setWitnesses] = useState('');
+  const [witnesses, setWitnesses] = useState<string[]>([]);
   const [photos, setPhotos]     = useState<File[]>([]);
+  const [empSignoff, setEmpSignoff] = useState('');
+  const [ack, setAck]           = useState(false);
+  const [employees, setEmployees] = useState<AspireEmployee[]>([]);
   const [busy, setBusy]         = useState(false);
   const [error, setError]       = useState('');
   const [doneId, setDoneId]     = useState<number | null>(null);
+
+  useEffect(() => { getAspireEmployees().then(setEmployees).catch(() => {}); }, []);
 
   async function submit() {
     setError('');
@@ -90,7 +139,7 @@ export default function FieldIncident() {
       const r = await submitIncident({
         incident_date: date, incident_time: time || undefined, reporter_name: reporter.trim(),
         location: location.trim() || undefined, incident_type: itype, severity,
-        people_involved: people.trim() || undefined,
+        people_involved: people.length ? people.join(', ') : undefined,
         injury_description: injury.trim() || undefined,
         description: what.trim(),
         immediate_action: action.trim() || undefined,
@@ -99,7 +148,8 @@ export default function FieldIncident() {
         reported_worksafe: worksafe ?? undefined,
         property_damage: damage ?? undefined,
         property_damage_desc: damage ? (damageDesc.trim() || undefined) : undefined,
-        witnesses: witnesses.trim() || undefined,
+        witnesses: witnesses.length ? witnesses.join(', ') : undefined,
+        employee_signed_off_by: (ack && empSignoff.trim()) ? empSignoff.trim() : undefined,
         photos,
       });
       setDoneId(r.id);
@@ -130,7 +180,7 @@ export default function FieldIncident() {
           <div style={{ color: '#94a3b8', fontSize: 14, marginBottom: 6 }}>Incident #{doneId} has been sent to the safety team.</div>
           <div style={{ color: '#64748b', fontSize: 13, marginBottom: 28 }}>Thank you for reporting. If anyone is hurt, make sure they’re receiving care.</div>
           <button style={{ ...S.btn, background: '#1e293b', color: '#94a3b8', maxWidth: 260, margin: '0 auto', display: 'block' }}
-                  onClick={() => { setDoneId(null); setWhat(''); setInjury(''); setAction(''); setPeople(''); setWitnesses(''); setPhotos([]); setSentMedical(null); setFactors([]); setWorksafe(null); setDamage(null); setDamageDesc(''); }}>
+                  onClick={() => { setDoneId(null); setWhat(''); setInjury(''); setAction(''); setPeople([]); setWitnesses([]); setPhotos([]); setSentMedical(null); setFactors([]); setWorksafe(null); setDamage(null); setDamageDesc(''); setEmpSignoff(''); setAck(false); }}>
             Report another
           </button>
           <a href="/" style={{ display: 'inline-block', marginTop: 14, color: '#94a3b8', fontSize: 13 }}>← Back to Home</a>
@@ -200,7 +250,7 @@ export default function FieldIncident() {
           )}
           <div style={{ marginTop: 12 }}>
             <label style={S.label}>People involved</label>
-            <input style={S.input} value={people} onChange={e => setPeople(e.target.value)} placeholder="Names of anyone involved" />
+            <PeoplePicker value={people} onChange={setPeople} employees={employees} placeholder="Search employees or type a name…" />
           </div>
           <div style={{ marginTop: 12 }}>
             <label style={S.label}>Immediate action taken</label>
@@ -212,7 +262,7 @@ export default function FieldIncident() {
           </div>
           <div style={{ marginTop: 12 }}>
             <label style={S.label}>Witnesses</label>
-            <input style={S.input} value={witnesses} onChange={e => setWitnesses(e.target.value)} placeholder="Names of any witnesses" />
+            <PeoplePicker value={witnesses} onChange={setWitnesses} employees={employees} placeholder="Search employees or type a name…" />
           </div>
         </div>
 
@@ -252,6 +302,15 @@ export default function FieldIncident() {
             onChange={e => setPhotos(Array.from(e.target.files || []))}
             style={{ color: '#94a3b8', fontSize: 13, width: '100%' }} />
           {photos.length > 0 && <div style={{ color: '#64748b', fontSize: 12, marginTop: 6 }}>{photos.length} photo(s) attached</div>}
+        </div>
+
+        <div style={S.card}>
+          <label style={S.label}>Employee sign-off</label>
+          <input style={S.input} value={empSignoff} onChange={e => setEmpSignoff(e.target.value)} placeholder="Type your name to sign" />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, color: '#cbd5e1', fontSize: 13, cursor: 'pointer' }}>
+            <input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />
+            I confirm this report is accurate to the best of my knowledge.
+          </label>
         </div>
 
         <button style={{ ...S.btn, background: busy ? '#475569' : '#dc2626', color: '#fff' }} disabled={busy} onClick={submit}>

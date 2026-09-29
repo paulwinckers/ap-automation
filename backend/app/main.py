@@ -270,6 +270,8 @@ async def lifespan(app: FastAPI):
                 contributing_factors TEXT,
                 signed_off_by      TEXT,
                 signed_off_at      TEXT,
+                employee_signed_off_by TEXT,
+                employee_signed_off_at TEXT,
                 status             TEXT NOT NULL DEFAULT 'open',
                 reviewed_by        TEXT,
                 reviewed_at        TEXT,
@@ -317,6 +319,8 @@ async def lifespan(app: FastAPI):
         ("safety_incidents", "contributing_factors", "ALTER TABLE safety_incidents ADD COLUMN contributing_factors TEXT"),
         ("safety_incidents", "signed_off_by",        "ALTER TABLE safety_incidents ADD COLUMN signed_off_by TEXT"),
         ("safety_incidents", "signed_off_at",        "ALTER TABLE safety_incidents ADD COLUMN signed_off_at TEXT"),
+        ("safety_incidents", "employee_signed_off_by", "ALTER TABLE safety_incidents ADD COLUMN employee_signed_off_by TEXT"),
+        ("safety_incidents", "employee_signed_off_at", "ALTER TABLE safety_incidents ADD COLUMN employee_signed_off_at TEXT"),
         # job_prep_checklist — per-item due & completed dates
         ("job_prep_checklist", "due_date",       "ALTER TABLE job_prep_checklist ADD COLUMN due_date TEXT"),
         ("job_prep_checklist", "completed_date", "ALTER TABLE job_prep_checklist ADD COLUMN completed_date TEXT"),
