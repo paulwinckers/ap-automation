@@ -380,6 +380,29 @@ CREATE INDEX IF NOT EXISTS idx_checklist_inspection ON inspection_checklist(insp
 CREATE INDEX IF NOT EXISTS idx_action_inspection    ON inspection_action_items(inspection_id);
 CREATE INDEX IF NOT EXISTS idx_action_status        ON inspection_action_items(status);
 
+-- ── Field safety incident reports ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS safety_incidents (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    incident_date      TEXT NOT NULL,              -- YYYY-MM-DD
+    incident_time      TEXT,                       -- optional HH:MM
+    reporter_name      TEXT NOT NULL,
+    location           TEXT,                       -- property / job site
+    incident_type      TEXT,                       -- injury|near_miss|property_damage|environmental|other
+    severity           TEXT,                       -- minor|moderate|serious|critical
+    people_involved    TEXT,
+    injury_description TEXT,
+    description        TEXT NOT NULL,              -- what happened
+    immediate_action   TEXT,
+    witnesses          TEXT,
+    photo_r2_keys      TEXT,                       -- JSON array of R2 keys
+    status             TEXT NOT NULL DEFAULT 'open',  -- open|reviewed|closed
+    reviewed_by        TEXT,
+    reviewed_at        TEXT,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_incidents_date   ON safety_incidents(incident_date);
+CREATE INDEX IF NOT EXISTS idx_incidents_status ON safety_incidents(status);
+
 -- ── Push notification subscriptions ───────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS push_subscriptions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1444,6 +1444,79 @@ export async function reopenActionItem(id: number): Promise<void> {
   await request('PATCH', `/safety/inspections/action-items/${id}/reopen`, {});
 }
 
+// ── Field safety incident reports ─────────────────────────────────────────────
+export interface IncidentSummary {
+  id:            number;
+  incident_date: string;
+  incident_time: string | null;
+  reporter_name: string;
+  location:      string | null;
+  incident_type: string;
+  severity:      string;
+  description:   string;
+  status:        string;
+  created_at:    string;
+  photo_count:   number;
+}
+export interface IncidentDetail extends IncidentSummary {
+  people_involved:    string | null;
+  injury_description: string | null;
+  immediate_action:   string | null;
+  witnesses:          string | null;
+  reviewed_by:        string | null;
+  reviewed_at:        string | null;
+  photo_urls:         string[];
+}
+export interface IncidentPayload {
+  incident_date:       string;
+  incident_time?:      string;
+  reporter_name:       string;
+  location?:           string;
+  incident_type:       string;
+  severity:            string;
+  people_involved?:    string;
+  injury_description?: string;
+  description:         string;
+  immediate_action?:   string;
+  witnesses?:          string;
+  photos?:             File[];
+}
+export async function submitIncident(p: IncidentPayload): Promise<{ id: number }> {
+  const form = new FormData();
+  form.append('incident_date', p.incident_date);
+  if (p.incident_time) form.append('incident_time', p.incident_time);
+  form.append('reporter_name', p.reporter_name);
+  if (p.location) form.append('location', p.location);
+  form.append('incident_type', p.incident_type);
+  form.append('severity', p.severity);
+  if (p.people_involved) form.append('people_involved', p.people_involved);
+  if (p.injury_description) form.append('injury_description', p.injury_description);
+  form.append('description', p.description);
+  if (p.immediate_action) form.append('immediate_action', p.immediate_action);
+  if (p.witnesses) form.append('witnesses', p.witnesses);
+  for (const f of (p.photos || [])) form.append('photos', f, f.name);
+  return request('POST', '/safety/incidents', form, true);
+}
+export async function listIncidents(params?: {
+  start_date?: string; end_date?: string; status?: string; severity?: string;
+}): Promise<IncidentSummary[]> {
+  const qs = new URLSearchParams();
+  if (params?.start_date) qs.set('start_date', params.start_date);
+  if (params?.end_date)   qs.set('end_date',   params.end_date);
+  if (params?.status)     qs.set('status',     params.status);
+  if (params?.severity)   qs.set('severity',   params.severity);
+  const r = await request<{ incidents: IncidentSummary[] }>(
+    'GET', `/safety/incidents${qs.toString() ? '?' + qs : ''}`
+  );
+  return r.incidents;
+}
+export async function getIncident(id: number): Promise<IncidentDetail> {
+  return request('GET', `/safety/incidents/${id}`);
+}
+export async function setIncidentStatus(id: number, status: string, reviewed_by?: string): Promise<void> {
+  await request('PATCH', `/safety/incidents/${id}/status`, { status, reviewed_by });
+}
+
 // ── Key management ────────────────────────────────────────────────────────────
 
 export interface KeyEntry {

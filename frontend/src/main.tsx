@@ -39,6 +39,8 @@ import KeysAdmin          from './pages/KeysAdmin';
 import SafetyTalksAdmin       from './pages/SafetyTalksAdmin';
 import FieldInspection        from './pages/FieldInspection';
 import SafetyInspectionsAdmin from './pages/SafetyInspectionsAdmin';
+import FieldIncident          from './pages/FieldIncident';
+import SafetyIncidentsAdmin   from './pages/SafetyIncidentsAdmin';
 import FieldCheckin           from './pages/FieldCheckin';
 import FieldProject          from './pages/FieldProject';
 import FieldProjectLookup   from './pages/FieldProjectLookup';
@@ -81,6 +83,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/field/safety"           element={<FieldSafetyTalk />} />
         <Route path="/field/documents"          element={<FieldDocuments />} />
         <Route path="/field/inspection"         element={<FieldInspection />} />
+        <Route path="/field/incident"           element={<FieldIncident />} />
         <Route path="/field/checkin/:token"     element={<FieldCheckin />} />
         <Route path="/field/project"            element={<FieldProjectLookup />} />
         <Route path="/field/project/:oppId"     element={<FieldProject />} />
@@ -96,6 +99,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/keys/admin"        element={<RequireAuth><Office><KeysAdmin /></Office></RequireAuth>} />
         <Route path="/ops/documents"          element={<RequireAuth><Office><DocumentsAdmin /></Office></RequireAuth>} />
         <Route path="/ops/safety-inspections" element={<RequireAuth><Office><SafetyInspectionsAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/safety-incidents"   element={<RequireAuth><Office><SafetyIncidentsAdmin /></Office></RequireAuth>} />
 
         {/* AP & Finance */}
         <Route path="/ap/invoice-summary" element={<RequireAuth><Office><InvoiceSummaryReport /></Office></RequireAuth>} />

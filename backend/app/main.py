@@ -36,6 +36,7 @@ from app.api.dashboard import start_digest_scheduler, stop_digest_scheduler
 from app.api.documents import router as documents_router
 from app.api.push import router as push_router
 from app.api.site_inspections import router as site_inspections_router
+from app.api.safety_incidents import router as safety_incidents_router
 from app.api.property_hazards import router as property_hazards_router
 from app.api.project_checkin import (
     router as checkin_router,
@@ -247,6 +248,27 @@ async def lifespan(app: FastAPI):
                 updated_at         TEXT
             )
         """,
+        "safety_incidents": """
+            CREATE TABLE IF NOT EXISTS safety_incidents (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_date      TEXT NOT NULL,
+                incident_time      TEXT,
+                reporter_name      TEXT NOT NULL,
+                location           TEXT,
+                incident_type      TEXT,
+                severity           TEXT,
+                people_involved    TEXT,
+                injury_description TEXT,
+                description        TEXT NOT NULL,
+                immediate_action   TEXT,
+                witnesses          TEXT,
+                photo_r2_keys      TEXT,
+                status             TEXT NOT NULL DEFAULT 'open',
+                reviewed_by        TEXT,
+                reviewed_at        TEXT,
+                created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:
@@ -409,6 +431,7 @@ app.include_router(customer_dashboard_router)
 app.include_router(documents_router)
 app.include_router(push_router)
 app.include_router(site_inspections_router)
+app.include_router(safety_incidents_router)
 app.include_router(property_hazards_router)
 app.include_router(checkin_router)
 app.include_router(checkin_public_router)

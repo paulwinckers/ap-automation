@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     # Construction daily check-in CC — all check-in emails are also sent to these addresses
     CONSTRUCTION_CHECKIN_CC: str = "rodger@darios.ca,dustin@darios.ca,keeland@darios.ca,paul@darios.ca"
 
+    # Field safety incident report notifications (comma-separated; falls back to ISSUES_DIGEST_MGMT_RECIPIENTS)
+    SAFETY_INCIDENT_RECIPIENTS: str = "paul@darios.ca"
+
     # Issues digest
     ISSUES_DIGEST_MGMT_RECIPIENTS:  str = "paul@darios.ca"  # management summary recipients (comma-separated)
     ISSUES_DIGEST_ACTIVITIES_URL:   str = "https://darios-accounting.pages.dev/dashboards/activities"
