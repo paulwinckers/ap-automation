@@ -263,6 +263,13 @@ async def lifespan(app: FastAPI):
                 immediate_action   TEXT,
                 witnesses          TEXT,
                 photo_r2_keys      TEXT,
+                reported_worksafe  INTEGER,
+                property_damage    INTEGER,
+                property_damage_desc TEXT,
+                sent_to_medical    INTEGER,
+                contributing_factors TEXT,
+                signed_off_by      TEXT,
+                signed_off_at      TEXT,
                 status             TEXT NOT NULL DEFAULT 'open',
                 reviewed_by        TEXT,
                 reviewed_at        TEXT,
@@ -302,6 +309,14 @@ async def lifespan(app: FastAPI):
         ("job_planning", "queued", "ALTER TABLE job_planning ADD COLUMN queued INTEGER DEFAULT 0"),
         # job_planning.paid_at — when the job's stage was set to Paid (drives Paid drop-off in later months)
         ("job_planning", "paid_at", "ALTER TABLE job_planning ADD COLUMN paid_at TEXT"),
+        # safety_incidents — extended fields (WorkSafeBC, damage, medical, factors, sign-off)
+        ("safety_incidents", "reported_worksafe",    "ALTER TABLE safety_incidents ADD COLUMN reported_worksafe INTEGER"),
+        ("safety_incidents", "property_damage",      "ALTER TABLE safety_incidents ADD COLUMN property_damage INTEGER"),
+        ("safety_incidents", "property_damage_desc", "ALTER TABLE safety_incidents ADD COLUMN property_damage_desc TEXT"),
+        ("safety_incidents", "sent_to_medical",      "ALTER TABLE safety_incidents ADD COLUMN sent_to_medical INTEGER"),
+        ("safety_incidents", "contributing_factors", "ALTER TABLE safety_incidents ADD COLUMN contributing_factors TEXT"),
+        ("safety_incidents", "signed_off_by",        "ALTER TABLE safety_incidents ADD COLUMN signed_off_by TEXT"),
+        ("safety_incidents", "signed_off_at",        "ALTER TABLE safety_incidents ADD COLUMN signed_off_at TEXT"),
         # job_prep_checklist — per-item due & completed dates
         ("job_prep_checklist", "due_date",       "ALTER TABLE job_prep_checklist ADD COLUMN due_date TEXT"),
         ("job_prep_checklist", "completed_date", "ALTER TABLE job_prep_checklist ADD COLUMN completed_date TEXT"),

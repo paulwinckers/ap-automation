@@ -395,6 +395,13 @@ CREATE TABLE IF NOT EXISTS safety_incidents (
     immediate_action   TEXT,
     witnesses          TEXT,
     photo_r2_keys      TEXT,                       -- JSON array of R2 keys
+    reported_worksafe  INTEGER,                    -- 1/0/null — reported to WorkSafeBC
+    property_damage    INTEGER,                    -- 1/0/null — property/equipment damage
+    property_damage_desc TEXT,                     -- description of the damage
+    sent_to_medical    INTEGER,                    -- 1/0/null — worker sent to hospital/clinic
+    contributing_factors TEXT,                     -- JSON array (unsafe_act|unsafe_conditions|equipment_issue|lack_of_training)
+    signed_off_by      TEXT,                       -- manager sign-off name
+    signed_off_at      TEXT,
     status             TEXT NOT NULL DEFAULT 'open',  -- open|reviewed|closed
     reviewed_by        TEXT,
     reviewed_at        TEXT,

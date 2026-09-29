@@ -27,6 +27,14 @@ MAX_PHOTO_SIZE = 20 * 1024 * 1024  # 20 MB per photo
 INCIDENT_TYPES = ("injury", "near_miss", "property_damage", "environmental", "other")
 SEVERITIES     = ("minor", "moderate", "serious", "critical")
 STATUSES       = ("open", "reviewed", "closed")
+CONTRIBUTING_FACTORS = ("unsafe_act", "unsafe_conditions", "equipment_issue", "lack_of_training")
+
+
+def _pbool(v) -> Optional[int]:
+    """Parse a form value into 1/0/None."""
+    if v is None or v == "":
+        return None
+    return 1 if str(v).strip().lower() in ("1", "true", "yes", "y", "on") else 0
 
 
 async def _get_db() -> Database:
@@ -65,6 +73,11 @@ async def submit_incident(
     injury_description: Optional[str] = Form(default=None),
     immediate_action: Optional[str] = Form(default=None),
     witnesses:        Optional[str] = Form(default=None),
+    reported_worksafe:    Optional[str] = Form(default=None),
+    property_damage:      Optional[str] = Form(default=None),
+    property_damage_desc: Optional[str] = Form(default=None),
+    sent_to_medical:      Optional[str] = Form(default=None),
+    contributing_factors: str           = Form(default="[]"),  # JSON array
     photos:           list[UploadFile] = File(default=[]),
 ):
     """Submit a field safety incident report. Saves the record, stores any photos in R2,
@@ -74,6 +87,14 @@ async def submit_incident(
         raise HTTPException(400, "A description of what happened is required")
     itype = incident_type if incident_type in INCIDENT_TYPES else "other"
     sev   = severity if severity in SEVERITIES else "minor"
+    rw, pd, med = _pbool(reported_worksafe), _pbool(property_damage), _pbool(sent_to_medical)
+    try:
+        factors = json.loads(contributing_factors) if contributing_factors else []
+        if not isinstance(factors, list):
+            factors = []
+    except Exception:
+        factors = []
+    factors = [f for f in factors if f in CONTRIBUTING_FACTORS]
 
     # Upload photos to R2
     photo_keys: list[str] = []
@@ -118,6 +139,19 @@ async def submit_incident(
             ],
         )
         incident_id = rows[0]["id"]
+        # Extended fields written separately so a not-yet-migrated column can never block the
+        # core report from being recorded (a safety report must always save).
+        try:
+            await db._x(
+                """UPDATE safety_incidents SET
+                     reported_worksafe = ?, property_damage = ?, property_damage_desc = ?,
+                     sent_to_medical = ?, contributing_factors = ?
+                   WHERE id = ?""",
+                [rw, pd, (property_damage_desc or "").strip() or None, med,
+                 json.dumps(factors), incident_id],
+            )
+        except Exception as e:
+            logger.warning("Incident %s extended fields not saved: %s", incident_id, e)
     finally:
         await db.close()
 
@@ -133,6 +167,8 @@ async def submit_incident(
                 reporter_name=reporter_name, location=location, incident_type=itype, severity=sev,
                 people_involved=people_involved, injury_description=injury_description,
                 description=description, immediate_action=immediate_action, witnesses=witnesses,
+                reported_worksafe=rw, property_damage=pd, property_damage_desc=property_damage_desc,
+                sent_to_medical=med, contributing_factors=factors,
                 photo_count=len(photo_keys),
             )
             sev_tag = "‼️ " if sev in ("serious", "critical") else ""
@@ -165,6 +201,14 @@ def _render_incident_email(**k) -> str:
 
     when = k["incident_date"] + (f" {k['incident_time']}" if k.get("incident_time") else "")
     photos = f"{k['photo_count']} photo(s) attached — view in the portal" if k.get("photo_count") else ""
+    _fl = {"unsafe_act": "Unsafe act", "unsafe_conditions": "Unsafe conditions",
+           "equipment_issue": "Equipment issue", "lack_of_training": "Lack of training"}
+    factors = ", ".join(_fl.get(f, f) for f in (k.get("contributing_factors") or []))
+    def yn(v):
+        return "Yes" if v == 1 else ("No" if v == 0 else "")
+    pd_line = yn(k.get("property_damage"))
+    if pd_line == "Yes" and k.get("property_damage_desc"):
+        pd_line = f"Yes — {k['property_damage_desc']}"
     return f"""
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:640px">
       <div style="background:#7f1d1d;color:#fff;padding:16px 20px;border-radius:12px 12px 0 0">
@@ -182,8 +226,12 @@ def _render_incident_email(**k) -> str:
           {row("Reported by", k["reporter_name"])}
           {row("People involved", k.get("people_involved"))}
           {row("Injury", k.get("injury_description"))}
+          {row("Sent to hospital/clinic", yn(k.get("sent_to_medical")))}
           {row("What happened", k["description"])}
           {row("Immediate action", k.get("immediate_action"))}
+          {row("Contributing factors", factors)}
+          {row("Property/equipment damage", pd_line)}
+          {row("Reported to WorkSafeBC", yn(k.get("reported_worksafe")))}
           {row("Witnesses", k.get("witnesses"))}
           {row("Photos", photos)}
         </table>
@@ -216,9 +264,7 @@ async def list_incidents(
             where.append("severity = ?"); params.append(severity)
         params.append(limit)
         rows = await db._q(
-            f"""SELECT id, incident_date, incident_time, reporter_name, location,
-                       incident_type, severity, description, status, created_at, photo_r2_keys
-                FROM safety_incidents
+            f"""SELECT * FROM safety_incidents
                 WHERE {' AND '.join(where)}
                 ORDER BY incident_date DESC, id DESC
                 LIMIT ?""",
@@ -228,11 +274,17 @@ async def list_incidents(
         for r in rows:
             d = _row(r)
             try:
-                d["photo_count"] = len(json.loads(d.get("photo_r2_keys") or "[]"))
+                pc = len(json.loads(d.get("photo_r2_keys") or "[]"))
             except Exception:
-                d["photo_count"] = 0
-            d.pop("photo_r2_keys", None)
-            out.append(d)
+                pc = 0
+            out.append({
+                "id": d["id"], "incident_date": d["incident_date"], "incident_time": d.get("incident_time"),
+                "reporter_name": d["reporter_name"], "location": d.get("location"),
+                "incident_type": d.get("incident_type"), "severity": d.get("severity"),
+                "description": d.get("description"), "status": d.get("status"),
+                "created_at": d.get("created_at"), "photo_count": pc,
+                "signed_off_by": d.get("signed_off_by"),
+            })
         return {"incidents": out}
     finally:
         await db.close()
@@ -258,6 +310,10 @@ async def get_incident(incident_id: int):
     except Exception:
         keys = []
     inc.pop("photo_r2_keys", None)
+    try:
+        inc["contributing_factors"] = json.loads(inc.get("contributing_factors") or "[]")
+    except Exception:
+        inc["contributing_factors"] = []
     photo_urls = []
     for key in keys:
         try:
@@ -291,5 +347,30 @@ async def set_incident_status(incident_id: int, body: StatusBody):
             [body.status, (body.reviewed_by or "").strip() or None, incident_id],
         )
         return {"id": incident_id, "status": body.status}
+    finally:
+        await db.close()
+
+
+class SignOffBody(BaseModel):
+    signed_off_by: str
+
+
+@router.patch("/{incident_id}/signoff")
+async def sign_off_incident(incident_id: int, body: SignOffBody):
+    """Manager sign-off — stamps who signed and when. An empty name clears the sign-off."""
+    name = (body.signed_off_by or "").strip()
+    db = await _get_db()
+    try:
+        if name:
+            await db._x(
+                "UPDATE safety_incidents SET signed_off_by = ?, signed_off_at = datetime('now') WHERE id = ?",
+                [name, incident_id],
+            )
+        else:
+            await db._x(
+                "UPDATE safety_incidents SET signed_off_by = NULL, signed_off_at = NULL WHERE id = ?",
+                [incident_id],
+            )
+        return {"id": incident_id, "signed_off_by": name or None}
     finally:
         await db.close()

@@ -4,9 +4,15 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import {
-  listIncidents, getIncident, setIncidentStatus,
+  listIncidents, getIncident, setIncidentStatus, signOffIncident,
   type IncidentSummary, type IncidentDetail,
 } from '../lib/api';
+
+const FACTOR_LABEL: Record<string, string> = {
+  unsafe_act: 'Unsafe act', unsafe_conditions: 'Unsafe conditions',
+  equipment_issue: 'Equipment issue', lack_of_training: 'Lack of training',
+};
+const yn = (v: number | null) => v === 1 ? 'Yes' : v === 0 ? 'No' : null;
 
 const TYPE_LABEL: Record<string, string> = {
   injury: 'Injury', near_miss: 'Near miss', property_damage: 'Property damage',
@@ -37,6 +43,7 @@ function IncidentModal({ id, onClose, onChanged }: { id: number; onClose: () => 
   const [d, setD] = useState<IncidentDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [signing, setSigning] = useState(false);
 
   useEffect(() => { getIncident(id).then(setD).finally(() => setLoading(false)); }, [id]);
 
@@ -44,6 +51,16 @@ function IncidentModal({ id, onClose, onChanged }: { id: number; onClose: () => 
     setSaving(true);
     try { await setIncidentStatus(id, status, currentUserName() || undefined); setD(p => p ? { ...p, status } : p); onChanged(); }
     finally { setSaving(false); }
+  }
+
+  async function doSignOff(clear = false) {
+    const name = clear ? '' : (currentUserName() || 'Manager');
+    setSigning(true);
+    try {
+      await signOffIncident(id, name);
+      setD(p => p ? { ...p, signed_off_by: name || null, signed_off_at: name ? new Date().toISOString() : null } : p);
+      onChanged();
+    } finally { setSigning(false); }
   }
 
   const row = (lbl: string, val?: string | null) => val ? (
@@ -73,8 +90,12 @@ function IncidentModal({ id, onClose, onChanged }: { id: number; onClose: () => 
               {row('Reported by', d.reporter_name)}
               {row('What happened', d.description)}
               {row('Injury details', d.injury_description)}
+              {row('Sent to hospital/clinic', yn(d.sent_to_medical))}
               {row('People involved', d.people_involved)}
               {row('Immediate action', d.immediate_action)}
+              {row('Contributing factors', (d.contributing_factors || []).map(f => FACTOR_LABEL[f] || f).join(', ') || null)}
+              {row('Property/equipment damage', d.property_damage === 1 ? (d.property_damage_desc ? `Yes — ${d.property_damage_desc}` : 'Yes') : yn(d.property_damage))}
+              {row('Reported to WorkSafeBC', yn(d.reported_worksafe))}
               {row('Witnesses', d.witnesses)}
               {d.photo_urls.length > 0 && (
                 <div style={{ marginBottom: 12 }}>
@@ -99,6 +120,21 @@ function IncidentModal({ id, onClose, onChanged }: { id: number; onClose: () => 
                     {s === 'open' ? 'Open' : s === 'reviewed' ? 'Mark reviewed' : 'Close'}
                   </button>
                 ))}
+              </div>
+              <div style={{ marginTop: 16, borderTop: '1px solid #f3f4f6', paddingTop: 16 }}>
+                {d.signed_off_by ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                    <div style={{ fontSize: 13, color: '#15803d', fontWeight: 700 }}>
+                      ✓ Signed off by {d.signed_off_by}{d.signed_off_at ? ` · ${new Date(d.signed_off_at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
+                    </div>
+                    <button disabled={signing} onClick={() => doSignOff(true)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}>Clear</button>
+                  </div>
+                ) : (
+                  <button disabled={signing} onClick={() => doSignOff(false)}
+                    style={{ width: '100%', padding: '11px', borderRadius: 8, border: 'none', background: '#111827', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+                    {signing ? 'Signing…' : '✍️ Manager sign-off'}
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -175,6 +211,7 @@ export default function SafetyIncidentsAdmin() {
                     {r.photo_count > 0 ? ` · 📷 ${r.photo_count}` : ''}
                   </div>
                 </div>
+                {r.signed_off_by && <span title={`Signed off by ${r.signed_off_by}`} style={{ color: '#15803d', fontSize: 15 }}>✍️</span>}
                 <Pill text={(r.status || 'open').toUpperCase()} bg={(STATUS_COLOR[r.status] || STATUS_COLOR.open).bg} c={(STATUS_COLOR[r.status] || STATUS_COLOR.open).c} />
                 <span style={{ color: '#d1d5db', fontSize: 16 }}>›</span>
               </div>

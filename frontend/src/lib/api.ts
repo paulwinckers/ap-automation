@@ -1457,12 +1457,19 @@ export interface IncidentSummary {
   status:        string;
   created_at:    string;
   photo_count:   number;
+  signed_off_by: string | null;
 }
 export interface IncidentDetail extends IncidentSummary {
   people_involved:    string | null;
   injury_description: string | null;
   immediate_action:   string | null;
   witnesses:          string | null;
+  reported_worksafe:  number | null;
+  property_damage:    number | null;
+  property_damage_desc: string | null;
+  sent_to_medical:    number | null;
+  contributing_factors: string[];
+  signed_off_at:      string | null;
   reviewed_by:        string | null;
   reviewed_at:        string | null;
   photo_urls:         string[];
@@ -1479,6 +1486,11 @@ export interface IncidentPayload {
   description:         string;
   immediate_action?:   string;
   witnesses?:          string;
+  reported_worksafe?:  boolean;
+  property_damage?:    boolean;
+  property_damage_desc?: string;
+  sent_to_medical?:    boolean;
+  contributing_factors?: string[];
   photos?:             File[];
 }
 export async function submitIncident(p: IncidentPayload): Promise<{ id: number }> {
@@ -1494,6 +1506,11 @@ export async function submitIncident(p: IncidentPayload): Promise<{ id: number }
   form.append('description', p.description);
   if (p.immediate_action) form.append('immediate_action', p.immediate_action);
   if (p.witnesses) form.append('witnesses', p.witnesses);
+  if (p.reported_worksafe !== undefined) form.append('reported_worksafe', p.reported_worksafe ? 'yes' : 'no');
+  if (p.property_damage !== undefined) form.append('property_damage', p.property_damage ? 'yes' : 'no');
+  if (p.property_damage_desc) form.append('property_damage_desc', p.property_damage_desc);
+  if (p.sent_to_medical !== undefined) form.append('sent_to_medical', p.sent_to_medical ? 'yes' : 'no');
+  form.append('contributing_factors', JSON.stringify(p.contributing_factors || []));
   for (const f of (p.photos || [])) form.append('photos', f, f.name);
   return request('POST', '/safety/incidents', form, true);
 }
@@ -1515,6 +1532,9 @@ export async function getIncident(id: number): Promise<IncidentDetail> {
 }
 export async function setIncidentStatus(id: number, status: string, reviewed_by?: string): Promise<void> {
   await request('PATCH', `/safety/incidents/${id}/status`, { status, reviewed_by });
+}
+export async function signOffIncident(id: number, signed_off_by: string): Promise<void> {
+  await request('PATCH', `/safety/incidents/${id}/signoff`, { signed_off_by });
 }
 
 // ── Key management ────────────────────────────────────────────────────────────

@@ -19,6 +19,12 @@ const SEVERITIES = [
   { v: 'serious',  l: 'Serious',  c: '#dc2626' },
   { v: 'critical', l: 'Critical', c: '#991b1b' },
 ];
+const FACTORS = [
+  { v: 'unsafe_act',        l: 'Unsafe act' },
+  { v: 'unsafe_conditions', l: 'Unsafe conditions' },
+  { v: 'equipment_issue',   l: 'Equipment issue' },
+  { v: 'lack_of_training',  l: 'Lack of training' },
+];
 
 const S: Record<string, React.CSSProperties> = {
   page:   { minHeight: '100vh', background: '#0f172a', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', padding: '0 0 48px' },
@@ -41,6 +47,18 @@ function userName(): string {
   try { return JSON.parse(localStorage.getItem('ap_user') || '{}').name || ''; } catch { return ''; }
 }
 
+function YesNo({ value, onChange }: { value: boolean | null; onChange: (v: boolean) => void }) {
+  const opt = (v: boolean, label: string) => (
+    <button type="button" onClick={() => onChange(v)}
+      style={{ flex: 1, padding: '10px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer',
+               border: '1px solid ' + (value === v ? '#3b82f6' : '#334155'),
+               background: value === v ? '#1e3a5f' : '#0f172a', color: value === v ? '#93c5fd' : '#94a3b8' }}>
+      {label}
+    </button>
+  );
+  return <div style={{ display: 'flex', gap: 8 }}>{opt(true, 'Yes')}{opt(false, 'No')}</div>;
+}
+
 export default function FieldIncident() {
   const [reporter, setReporter] = useState(userName());
   const [date, setDate]         = useState(today());
@@ -52,6 +70,11 @@ export default function FieldIncident() {
   const [injury, setInjury]     = useState('');
   const [what, setWhat]         = useState('');
   const [action, setAction]     = useState('');
+  const [sentMedical, setSentMedical] = useState<boolean | null>(null);
+  const [factors, setFactors]   = useState<string[]>([]);
+  const [worksafe, setWorksafe] = useState<boolean | null>(null);
+  const [damage, setDamage]     = useState<boolean | null>(null);
+  const [damageDesc, setDamageDesc] = useState('');
   const [witnesses, setWitnesses] = useState('');
   const [photos, setPhotos]     = useState<File[]>([]);
   const [busy, setBusy]         = useState(false);
@@ -71,6 +94,11 @@ export default function FieldIncident() {
         injury_description: injury.trim() || undefined,
         description: what.trim(),
         immediate_action: action.trim() || undefined,
+        sent_to_medical: sentMedical ?? undefined,
+        contributing_factors: factors,
+        reported_worksafe: worksafe ?? undefined,
+        property_damage: damage ?? undefined,
+        property_damage_desc: damage ? (damageDesc.trim() || undefined) : undefined,
         witnesses: witnesses.trim() || undefined,
         photos,
       });
@@ -102,7 +130,7 @@ export default function FieldIncident() {
           <div style={{ color: '#94a3b8', fontSize: 14, marginBottom: 6 }}>Incident #{doneId} has been sent to the safety team.</div>
           <div style={{ color: '#64748b', fontSize: 13, marginBottom: 28 }}>Thank you for reporting. If anyone is hurt, make sure they’re receiving care.</div>
           <button style={{ ...S.btn, background: '#1e293b', color: '#94a3b8', maxWidth: 260, margin: '0 auto', display: 'block' }}
-                  onClick={() => { setDoneId(null); setWhat(''); setInjury(''); setAction(''); setPeople(''); setWitnesses(''); setPhotos([]); }}>
+                  onClick={() => { setDoneId(null); setWhat(''); setInjury(''); setAction(''); setPeople(''); setWitnesses(''); setPhotos([]); setSentMedical(null); setFactors([]); setWorksafe(null); setDamage(null); setDamageDesc(''); }}>
             Report another
           </button>
           <a href="/" style={{ display: 'inline-block', marginTop: 14, color: '#94a3b8', fontSize: 13 }}>← Back to Home</a>
@@ -179,8 +207,42 @@ export default function FieldIncident() {
             <textarea style={{ ...S.area, minHeight: 70 }} value={action} onChange={e => setAction(e.target.value)} placeholder="What was done right away to make it safe" />
           </div>
           <div style={{ marginTop: 12 }}>
+            <label style={S.label}>Worker sent to hospital / clinic?</label>
+            <YesNo value={sentMedical} onChange={setSentMedical} />
+          </div>
+          <div style={{ marginTop: 12 }}>
             <label style={S.label}>Witnesses</label>
             <input style={S.input} value={witnesses} onChange={e => setWitnesses(e.target.value)} placeholder="Names of any witnesses" />
+          </div>
+        </div>
+
+        <div style={S.card}>
+          <label style={S.label}>Contributing factors</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {FACTORS.map(f => {
+              const on = factors.includes(f.v);
+              return (
+                <button key={f.v} type="button"
+                  onClick={() => setFactors(on ? factors.filter(x => x !== f.v) : [...factors, f.v])}
+                  style={{ padding: '8px 12px', borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                           border: '1px solid ' + (on ? '#3b82f6' : '#334155'),
+                           background: on ? '#1e3a5f' : '#0f172a', color: on ? '#93c5fd' : '#94a3b8' }}>
+                  {on ? '✓ ' : ''}{f.l}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <label style={S.label}>Reported to WorkSafeBC?</label>
+            <YesNo value={worksafe} onChange={setWorksafe} />
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <label style={S.label}>Property / equipment damage?</label>
+            <YesNo value={damage} onChange={setDamage} />
+            {damage && (
+              <textarea style={{ ...S.area, minHeight: 60, marginTop: 8 }} value={damageDesc}
+                onChange={e => setDamageDesc(e.target.value)} placeholder="Describe the property or equipment damage" />
+            )}
           </div>
         </div>
 
