@@ -194,6 +194,64 @@ def _clean_notes(s: str | None) -> str:
     return s.strip()
 
 
+def _clean_visit_note(text: str) -> str:
+    """Aspire embeds photo attachments in visit notes as BBCode
+    [Attachments][Attachment]NNN[/Attachment][/Attachments]; those files aren't
+    downloadable via the API, so show a '📷 N photos' indicator instead of raw tags.
+    Also strips any stray HTML and decodes entities."""
+    if not text:
+        return ""
+
+    def _repl(m):
+        n = len(re.findall(r"\[Attachment\]", m.group(0)))
+        return (f"📷 {n} photo" + ("s" if n != 1 else "")) if n else ""
+
+    text = re.sub(r"\[Attachments\].*?\[/Attachments\]", _repl, text, flags=re.I | re.S)
+    text = re.sub(r"\[/?Attachments?\]", "", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = _html.unescape(text)
+    text = re.sub(r"[ \t]{2,}", " ", text).strip()
+    return text
+
+
+async def _fetch_visit_notes_bulk(ticket_ids: list[int], public_only: bool = True) -> dict[int, list[dict]]:
+    """WorkTicketVisitNotes for the given tickets → {ticket_id: [{note, by, date}]}.
+    Customer-facing: by default only notes marked IsPublic are returned."""
+    import asyncio as _a
+    out: dict[int, list[dict]] = {}
+    if not ticket_ids:
+        return out
+    pub = " and IsPublic eq true" if public_only else ""
+
+    async def _chunk(chunk: list[int]) -> list[dict]:
+        or_filter = " or ".join(f"WorkTicketID eq {tid}" for tid in chunk)
+        try:
+            res = await _aspire._get("WorkTicketVisitNotes", {
+                "$filter":  f"({or_filter}){pub}",
+                "$orderby": "CreatedDateTime asc",
+                "$top":     "500",
+                "$select":  "WorkTicketVisitNoteID,WorkTicketID,Note,CreatedDateTime,CreatedByUserName,IsPublic",
+            })
+            return _aspire._extract_list(res)
+        except Exception as e:
+            logger.warning(f"Visit notes fetch failed: {e}")
+            return []
+
+    chunks = [ticket_ids[i:i + 20] for i in range(0, len(ticket_ids), 20)]
+    for rows in await _a.gather(*[_chunk(c) for c in chunks]):
+        for vn in rows:
+            tid = vn.get("WorkTicketID")
+            note = _clean_visit_note(vn.get("Note") or "")
+            if not tid or not note:
+                continue
+            out.setdefault(tid, []).append({
+                "note": note,
+                "by":   vn.get("CreatedByUserName") or "",
+                "date": (vn.get("CreatedDateTime") or "")[:10],
+            })
+    return out
+
+
 def _is_construction(div: str) -> bool:
     return (div or "").strip().lower() == "construction"
 
@@ -244,9 +302,19 @@ async def get_customer_report(company_id: int, week_start: str | None, db: Datab
             "crew":               t.get("CrewLeaderName") or "",
             "notes":              _clean_notes(t.get("Notes")),
             "photos":             photo_map.get(wt, []),
+            "visit_notes":        [],
         }
 
     shaped = [_shape(t) for t in tickets]
+
+    # Work visit notes (WorkTicketVisitNotes) for COMPLETED tickets.
+    # NOTE: in this Aspire tenant crews don't mark notes IsPublic, so public_only=True would
+    # return nothing. Showing all notes on this (internally viewed) dashboard. If the emailed
+    # report is sent to customers, revisit filtering to public-only.
+    completed_ids = [s["work_ticket_id"] for s in shaped if s["complete_date"] and s["work_ticket_id"]]
+    visit_notes_map = await _fetch_visit_notes_bulk(completed_ids, public_only=False)
+    for s in shaped:
+        s["visit_notes"] = visit_notes_map.get(s["work_ticket_id"], [])
     this_s, next_s = this_mon.strftime("%Y-%m-%d"), next_mon.strftime("%Y-%m-%d")
     next_e = next_end.strftime("%Y-%m-%d")
 
@@ -394,6 +462,7 @@ def _render_report_html(r: dict) -> str:
             <span style="font-size:11px;font-weight:700;color:#15803d">{esc(t.get('status'))}</span>
             {f'<span style="font-size:12px;color:#6b7280"> — {esc(meta)}</span>' if meta else ''}
             {f'<div style="font-size:13px;color:#374151;margin-top:3px">{esc(t.get("notes"))}</div>' if t.get('notes') else ''}
+            {"".join(f'<div style="font-size:13px;color:#374151;margin-top:4px;padding-left:8px;border-left:2px solid #d1d5db">🗒️ {esc(vn["note"])}<span style="color:#9ca3af;font-size:11px"> — {esc(vn.get("by"))}{(" · " + esc(vn.get("date"))) if vn.get("date") else ""}</span></div>' for vn in t.get("visit_notes", []))}
             <div style="margin-top:4px">{photos}</div>
           </td>
         </tr>"""

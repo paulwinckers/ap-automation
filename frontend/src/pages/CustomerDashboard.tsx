@@ -67,6 +67,12 @@ function TicketRow({ t }: { t: CustomerTicket }) {
         <span style={{ fontSize: 11, fontWeight: 700, color: '#15803d' }}>{t.status}</span>
         {meta && <span style={{ fontSize: 12, color: '#6b7280' }}> — {meta}</span>}
         {t.notes && <div style={{ fontSize: 13, color: '#374151', marginTop: 2, whiteSpace: 'pre-wrap' }}>{t.notes}</div>}
+        {t.visit_notes?.map((vn, i) => (
+          <div key={i} style={{ fontSize: 13, color: '#374151', marginTop: 4, paddingLeft: 8, borderLeft: '2px solid #d1d5db', whiteSpace: 'pre-wrap' }}>
+            🗒️ {vn.note}
+            {(vn.by || vn.date) && <span style={{ color: '#9ca3af', fontSize: 11 }}> — {[vn.by, vn.date].filter(Boolean).join(' · ')}</span>}
+          </div>
+        ))}
         <Thumbs t={t} />
       </div>
     </div>

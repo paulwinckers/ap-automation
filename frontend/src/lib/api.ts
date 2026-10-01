@@ -590,6 +590,7 @@ export interface CustomerTicket {
   crew: string;
   notes: string;
   photos: CustomerPhoto[];
+  visit_notes?: { note: string; by: string; date: string }[];
 }
 export interface CustomerDivisionGroup { division: string; count: number; tickets: CustomerTicket[]; }
 export interface CustomerConstructionProject {
