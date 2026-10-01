@@ -195,19 +195,14 @@ def _clean_notes(s: str | None) -> str:
 
 
 def _clean_visit_note(text: str) -> str:
-    """Aspire embeds photo attachments in visit notes as BBCode
-    [Attachments][Attachment]NNN[/Attachment][/Attachments]; those files aren't
-    downloadable via the API, so show a '📷 N photos' indicator instead of raw tags.
-    Also strips any stray HTML and decodes entities."""
+    """Reduce a visit note to readable plain text: strip the Aspire photo-attachment
+    BBCode ([Attachments][Attachment]NNN[/Attachment][/Attachments]) entirely, drop any
+    stray HTML, and decode entities."""
     if not text:
         return ""
-
-    def _repl(m):
-        n = len(re.findall(r"\[Attachment\]", m.group(0)))
-        return (f"📷 {n} photo" + ("s" if n != 1 else "")) if n else ""
-
-    text = re.sub(r"\[Attachments\].*?\[/Attachments\]", _repl, text, flags=re.I | re.S)
+    text = re.sub(r"\[Attachments\].*?\[/Attachments\]", "", text, flags=re.I | re.S)
     text = re.sub(r"\[/?Attachments?\]", "", text, flags=re.I)
+    text = re.sub(r"\[/?Attachment\]", "", text, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
     text = _html.unescape(text)
     text = re.sub(r"[ \t]{2,}", " ", text).strip()
@@ -338,8 +333,11 @@ async def get_customer_report(company_id: int, week_start: str | None, db: Datab
                  and s["scheduled_date"] and next_s <= s["scheduled_date"] < next_e]
 
     # 3. Construction — projects + visits (completed this week + scheduled out)
+    # Active construction projects only — exclude completed jobs (status 'delivered'
+    # or 100% complete) so the customer sees what's in progress / upcoming.
     constr_opps = [o for o in opps if _is_construction(o.get("DivisionName"))
-                   and (o.get("OpportunityStatusName") or "").lower() in ("won", "delivered", "in progress", "in production")]
+                   and (o.get("OpportunityStatusName") or "").lower() in ("won", "in progress", "in production")
+                   and float(o.get("PercentComplete") or 0) < 1.0]
     constr_projects = [{
         "opp_id":         o.get("OpportunityID"),
         "name":           o.get("OpportunityName") or "",
