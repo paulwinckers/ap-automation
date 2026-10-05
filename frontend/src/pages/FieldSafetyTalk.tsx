@@ -352,9 +352,14 @@ function TopicTips({ topic }: { topic: string }) {
   }, []);
 
   useEffect(() => {
-    if (!topic || topic === lastTopicRef.current) return;
-    lastTopicRef.current = topic;
-    load(topic);
+    const t = topic.trim();
+    // Debounce so a typed custom topic (e.g. "Ladders") doesn't fire an AI call per keystroke.
+    if (!t || t.length < 3 || t === lastTopicRef.current) return;
+    const id = setTimeout(() => {
+      lastTopicRef.current = t;
+      load(t);
+    }, 600);
+    return () => clearTimeout(id);
   }, [topic, load]);
 
   const videoUrl = TOPIC_VIDEOS[topic];
@@ -968,8 +973,8 @@ function StepTalkInfo({
             />
           )}
 
-          {/* AI talking points — shown for preset topics */}
-          {topic && !customTopic && <TopicTips topic={topic} />}
+          {/* AI talking points — shown for preset topics AND custom "Other" topics */}
+          {topic.trim() && <TopicTips topic={topic} />}
         </div>
 
         {/* Notes */}
