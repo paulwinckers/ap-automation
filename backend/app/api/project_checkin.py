@@ -2397,12 +2397,94 @@ async def delete_job_attachment(att_id: int, db: Database = Depends(get_db)):
     return {"ok": True}
 
 
+async def _get_or_create_today_checkin(db: Database, opp_id: int) -> dict:
+    """Find today's project_checkin for the opp (creating a stub if none), returning
+    {checkin_id, opp_name, prop_name, lead_name, lead_email, ai_tip}. Shared by the
+    update submit and the per-file media staging endpoint."""
+    today = _date.today().isoformat()
+    rows  = await db._q(
+        "SELECT * FROM project_checkins WHERE opportunity_id = ? AND date(sent_at) = ?",
+        [opp_id, today],
+    )
+    if rows:
+        return {
+            "checkin_id": rows[0]["id"],
+            "opp_name":   rows[0]["opportunity_name"] or f"Job #{opp_id}",
+            "prop_name":  rows[0]["property_name"] or "",
+            "lead_name":  rows[0]["lead_name"] or "Lead",
+            "lead_email": rows[0]["lead_email"] or "",
+            "ai_tip":     rows[0]["ai_tip"] or "",
+        }
+    tz    = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    month = datetime.now(tz).strftime("%Y-%m")
+    from app.api.construction_plan import _fetch_opp_actuals
+    actuals   = await _fetch_opp_actuals([opp_id])
+    opp       = actuals.get(opp_id, {})
+    opp_name  = opp.get("OpportunityName") or f"Job #{opp_id}"
+    prop_name = opp.get("PropertyName") or ""
+    tickets   = await _fetch_project_tickets(opp_id, month)
+    lead_name = next(((t.get("CrewLeaderName") or "").strip() for t in tickets if t.get("CrewLeaderName")), "Lead")
+    lead_rows = await db._q("SELECT email FROM construction_leads WHERE lower(aspire_name) = ?", [lead_name.lower()])
+    lead_email = lead_rows[0]["email"] if lead_rows else ""
+    token     = secrets.token_urlsafe(32)
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+    snapshot   = json.dumps([{
+        "WorkTicketID": t.get("WorkTicketID"),
+        "WorkTicketNumber": t.get("WorkTicketNumber"),
+        "WorkTicketStatusName": t.get("WorkTicketStatusName"),
+        "ScheduledStartDate": (t.get("ScheduledStartDate") or "")[:10],
+        "HoursEst": t.get("HoursEst"),
+        "HoursAct": t.get("HoursAct"),
+    } for t in tickets])
+    await db._x(
+        """INSERT INTO project_checkins
+           (token, opportunity_id, opportunity_name, property_name,
+            lead_name, lead_email, month, ai_tip, ticket_snapshot, expires_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        [token, opp_id, opp_name, prop_name, lead_name, "", month, "", snapshot, expires_at],
+    )
+    new_rows = await db._q("SELECT id FROM project_checkins WHERE token = ?", [token])
+    return {"checkin_id": new_rows[0]["id"], "opp_name": opp_name, "prop_name": prop_name,
+            "lead_name": lead_name, "lead_email": lead_email, "ai_tip": ""}
+
+
+@public_router.post("/project/{opp_id}/media")
+async def stage_project_media(
+    opp_id: int,
+    file:   UploadFile = File(...),
+    db:     Database   = Depends(get_db),
+):
+    """Upload ONE check-in photo/video ahead of submitting the update, so large videos
+    upload one-at-a-time (resilient) instead of all-in-one with the text. Returns the
+    saved media row; its id is passed back in `media_ids` on /respond to link it."""
+    if not _r2._r2_available():
+        raise HTTPException(status_code=503, detail="Media storage not configured")
+    ci = await _get_or_create_today_checkin(db, opp_id)
+    saved, skipped = await _save_checkin_media(db, ci["checkin_id"], None, [file])
+    if skipped:
+        raise HTTPException(status_code=413, detail=skipped[0]["reason"])
+    if not saved:
+        raise HTTPException(status_code=500, detail="Upload failed")
+    return saved[0]  # {id, file_name, ext, is_video}
+
+
+@public_router.delete("/project/media/{media_id}")
+async def delete_staged_media(media_id: int, db: Database = Depends(get_db)):
+    """Remove a still-unlinked (not-yet-submitted) staged media file."""
+    try:
+        await db._x("DELETE FROM checkin_photos WHERE id = ? AND response_id IS NULL", [media_id])
+    except Exception as e:
+        logger.warning(f"delete_staged_media failed: {e}")
+    return {"ok": True}
+
+
 @public_router.post("/project/{opp_id}/respond")
 async def submit_project_response(
     opp_id:          int,
     approach_notes:  str              = Form(...),
     remaining_hours: Optional[float]  = Form(default=None),
     blockers:        Optional[str]    = Form(default=None),
+    media_ids:       Optional[str]    = Form(default=None),   # comma-sep ids of pre-staged media
     photos:          list[UploadFile] = File(default=[]),
     db:              Database         = Depends(get_db),
 ):
@@ -2413,6 +2495,7 @@ async def submit_project_response(
             approach_notes=approach_notes,
             remaining_hours=remaining_hours,
             blockers=blockers,
+            media_ids=media_ids,
             photos=photos,
             db=db,
         )
@@ -2430,64 +2513,15 @@ async def _do_submit_project_response(
     blockers:        Optional[str],
     photos:          list[UploadFile],
     db:              Database,
+    media_ids:       Optional[str] = None,
 ):
     if not approach_notes or not approach_notes.strip():
         raise HTTPException(status_code=422, detail="approach_notes is required")
 
-    tz    = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
-    month = datetime.now(tz).strftime("%Y-%m")
-
-    # Find or create a today-scoped checkin record for this opp
-    today = _date.today().isoformat()
-    rows  = await db._q(
-        "SELECT * FROM project_checkins WHERE opportunity_id = ? AND date(sent_at) = ?",
-        [opp_id, today],
-    )
-
-    if rows:
-        checkin_id = rows[0]["id"]
-        opp_name   = rows[0]["opportunity_name"] or f"Job #{opp_id}"
-        prop_name  = rows[0]["property_name"] or ""
-        lead_name  = rows[0]["lead_name"] or "Lead"
-        lead_email = rows[0]["lead_email"] or ""
-        ai_tip     = rows[0]["ai_tip"] or ""
-    else:
-        # No email sent today — create a stub record so history is preserved
-        from app.api.construction_plan import _fetch_opp_actuals
-        actuals   = await _fetch_opp_actuals([opp_id])
-        opp       = actuals.get(opp_id, {})
-        opp_name  = opp.get("OpportunityName") or f"Job #{opp_id}"
-        prop_name = opp.get("PropertyName") or ""
-        tickets   = await _fetch_project_tickets(opp_id, month)
-
-        # Lead name + email from tickets / lead directory
-        lead_name = next(
-            ((t.get("CrewLeaderName") or "").strip() for t in tickets if t.get("CrewLeaderName")),
-            "Lead",
-        )
-        lead_rows  = await db._q("SELECT email FROM construction_leads WHERE lower(aspire_name) = ?", [lead_name.lower()])
-        lead_email = lead_rows[0]["email"] if lead_rows else ""
-        ai_tip    = ""
-        token     = secrets.token_urlsafe(32)
-        expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
-        snapshot   = json.dumps([{
-            "WorkTicketID": t.get("WorkTicketID"),
-            "WorkTicketNumber": t.get("WorkTicketNumber"),
-            "WorkTicketStatusName": t.get("WorkTicketStatusName"),
-            "ScheduledStartDate": (t.get("ScheduledStartDate") or "")[:10],
-            "HoursEst": t.get("HoursEst"),
-            "HoursAct": t.get("HoursAct"),
-        } for t in tickets])
-
-        await db._x(
-            """INSERT INTO project_checkins
-               (token, opportunity_id, opportunity_name, property_name,
-                lead_name, lead_email, month, ai_tip, ticket_snapshot, expires_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            [token, opp_id, opp_name, prop_name, lead_name, "", month, ai_tip, snapshot, expires_at],
-        )
-        new_rows  = await db._q("SELECT id FROM project_checkins WHERE token = ?", [token])
-        checkin_id = new_rows[0]["id"]
+    ci = await _get_or_create_today_checkin(db, opp_id)
+    checkin_id = ci["checkin_id"]
+    opp_name, prop_name = ci["opp_name"], ci["prop_name"]
+    lead_name, lead_email, ai_tip = ci["lead_name"], ci["lead_email"], ci["ai_tip"]
 
     # Save response
     response_id = await db._x(
@@ -2501,10 +2535,37 @@ async def _do_submit_project_response(
         "UPDATE project_checkins SET responded_at = datetime('now') WHERE id = ?", [checkin_id]
     )
 
-    # Stream photos/videos to R2 (large files stream, never fully buffered).
+    # Stream any inline photos/videos to R2 (legacy path / tokenized form).
     _saved_media, _skipped_media = await _save_checkin_media(db, checkin_id, response_id, photos)
     if photos and not _r2._r2_available():
         logger.warning("R2 not configured — skipping media upload for project response")
+
+    # Link any PRE-STAGED media (uploaded one-by-one before submit) to this response.
+    staged_media: list = []
+    if media_ids:
+        ids = [int(x) for x in media_ids.replace(",", " ").split() if x.strip().isdigit()]
+        if ids:
+            ph = ",".join("?" for _ in ids)
+            try:
+                await db._x(
+                    f"UPDATE checkin_photos SET response_id = ? "
+                    f"WHERE id IN ({ph}) AND checkin_id = ? AND response_id IS NULL",
+                    [response_id, *ids, checkin_id],
+                )
+                rows = await db._q(
+                    f"SELECT id, file_name, file_extension FROM checkin_photos "
+                    f"WHERE id IN ({ph}) AND response_id = ?",
+                    [*ids, response_id],
+                )
+                for r in rows:
+                    staged_media.append({
+                        "id": r["id"], "file_name": r["file_name"],
+                        "ext": r["file_extension"],
+                        "is_video": (r["file_extension"] or "").lower() in _VID_EXTS,
+                    })
+            except Exception as e:
+                logger.warning(f"Linking staged media failed: {e}")
+    all_media = _saved_media + staged_media
 
     # Notify the full construction team + the lead when a check-in is submitted
     today_str    = datetime.now().strftime("%B %d, %Y")
@@ -2519,7 +2580,7 @@ async def _do_submit_project_response(
         blockers=blockers,
         ai_tip=ai_tip,
         today_str=today_str,
-        media=_saved_media,
+        media=all_media,
         opp_id=opp_id,
     )
     if _is_weekend():
@@ -2539,7 +2600,7 @@ async def _do_submit_project_response(
     return {
         "ok": True,
         "message": "Thanks — your update has been sent to the team.",
-        "photos_saved": len(_saved_media),
+        "photos_saved": len(all_media),
         "skipped": _skipped_media,
     }
 

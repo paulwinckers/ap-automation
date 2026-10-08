@@ -13,6 +13,17 @@ import JobPrepChecklist from './JobPrepChecklist';
 
 const API = import.meta.env.VITE_API_URL ?? '';
 
+// A photo/video the crew added — uploaded one-at-a-time so a failure doesn't lose the rest.
+type MediaItem = {
+  key:     string;
+  file:    File;
+  url:     string;                               // object URL for preview
+  isVideo: boolean;
+  status:  'uploading' | 'done' | 'error';
+  mediaId?: number;                              // server id once uploaded
+  error?:  string;
+};
+
 interface Ticket {
   WorkTicketID:         number;
   WorkTicketNumber:     string | number;
@@ -376,20 +387,40 @@ export default function FieldProject() {
   const [blockers,       setBlockers]       = useState('');
   const [submitting,     setSubmitting]     = useState(false);
   const [submitMsg,      setSubmitMsg]      = useState('');
-  const [photos,         setPhotos]         = useState<File[]>([]);
-  const [previews,       setPreviews]       = useState<string[]>([]);
+  const [media,          setMedia]          = useState<MediaItem[]>([]);
   const [mediaWarning,   setMediaWarning]   = useState('');
-
-  // Build object-URL previews whenever photos list changes
-  useEffect(() => {
-    const urls = photos.map(f => URL.createObjectURL(f));
-    setPreviews(urls);
-    return () => urls.forEach(u => URL.revokeObjectURL(u));
-  }, [photos]);
 
   /** Add files, compressing images (videos pass through). Rejects files over the
    *  150 MB per-file limit up front with a clear message. */
   const MAX_MEDIA_BYTES = 150 * 1024 * 1024;
+
+  // Upload one file immediately (so videos go up one-at-a-time, not all-in-one on submit).
+  const uploadItem = async (it: MediaItem) => {
+    setMedia(prev => prev.map(m => m.key === it.key ? { ...m, status: 'uploading', error: undefined } : m));
+    try {
+      const fd = new FormData();
+      fd.append('file', it.file, it.file.name);
+      const r = await fetch(`${API}/checkin/project/${oppId}/media`, { method: 'POST', body: fd });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error((j as any).detail || `Upload failed (${r.status})`);
+      }
+      const j = await r.json();
+      setMedia(prev => prev.map(m => m.key === it.key ? { ...m, status: 'done', mediaId: (j as any).id } : m));
+    } catch (e: any) {
+      setMedia(prev => prev.map(m => m.key === it.key ? { ...m, status: 'error', error: e.message || 'Upload failed' } : m));
+    }
+  };
+
+  const removeMedia = (key: string) => {
+    setMedia(prev => {
+      const it = prev.find(m => m.key === key);
+      if (it?.url) URL.revokeObjectURL(it.url);
+      if (it?.mediaId) fetch(`${API}/checkin/project/media/${it.mediaId}`, { method: 'DELETE' }).catch(() => {});
+      return prev.filter(m => m.key !== key);
+    });
+  };
+
   const handlePhotos = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const arr = Array.from(files);
@@ -403,7 +434,13 @@ export default function FieldProject() {
     }
     if (!okFiles.length) return;
     const processed = await Promise.all(okFiles.map(f => compressImage(f)));
-    setPhotos(prev => [...prev, ...processed]);
+    const items: MediaItem[] = processed.map(f => ({
+      key: Math.random().toString(36).slice(2),
+      file: f, url: URL.createObjectURL(f),
+      isVideo: f.type.startsWith('video/'), status: 'uploading' as const,
+    }));
+    setMedia(prev => [...prev, ...items]);
+    items.forEach(it => { void uploadItem(it); });   // fire uploads immediately
   };
   // Smart prompt selections: promptId → selected option string
   const [promptSelections, setPromptSelections] = useState<Record<string, string>>({});
@@ -709,6 +746,10 @@ export default function FieldProject() {
     e.preventDefault();
     const notes = combinedNotes ?? approachNotes.trim();
     if (!notes) return;
+    if (media.some(m => m.status === 'uploading')) {
+      setSubmitMsg('⏳ Please wait — photos/videos are still uploading.');
+      return;
+    }
     setSubmitting(true);
     setSubmitMsg('');
     // Use the passed-in override (avoids stale React state when called from form submit)
@@ -718,7 +759,8 @@ export default function FieldProject() {
       fd.append('approach_notes', notes);
       if (effectiveRemainingHours) fd.append('remaining_hours', effectiveRemainingHours);
       if (blockers.trim()) fd.append('blockers', blockers.trim());
-      photos.forEach(f => fd.append('photos', f));
+      const doneIds = media.filter(m => m.status === 'done' && m.mediaId).map(m => m.mediaId);
+      if (doneIds.length) fd.append('media_ids', doneIds.join(','));
 
       const r = await fetch(`${API}/checkin/project/${oppId}/respond`, {
         method: 'POST',
@@ -736,7 +778,7 @@ export default function FieldProject() {
         ? ` · ⚠️ ${skipped.length} not uploaded: ${skipped.map(s => `${s.name} (${s.reason})`).join('; ')}`
         : '';
       setSubmitMsg(`✅ Update sent to the team.${photoMsg}${skipMsg}`);
-      setApproachNotes(''); setPlanTomorrow(''); setToolsMaterials(''); setRemainingHours(''); setBlockers(''); setPhotos([]); setMediaWarning('');
+      setApproachNotes(''); setPlanTomorrow(''); setToolsMaterials(''); setRemainingHours(''); setBlockers(''); setMedia([]); setMediaWarning('');
       setTab('history');
       load(true);   // refresh history quietly
     } catch (err: any) {
@@ -1433,21 +1475,35 @@ export default function FieldProject() {
               <div style={{ marginBottom: 22 }}>
                 <label style={LABEL}>Photos / Videos (optional · up to 150 MB each)</label>
 
-                {/* Thumbnails */}
-                {previews.length > 0 && (
+                {/* Thumbnails — each uploads on its own, with status + retry */}
+                {media.length > 0 && (
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-                    {previews.map((src, i) => (
-                      <div key={i} style={{ position: 'relative' }}>
-                        {photos[i]?.type.startsWith('video/') ? (
-                          <video src={src} style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, background: '#000' }} muted />
-                        ) : (
-                          <img src={src} alt="" style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8 }} />
+                    {media.map(m => (
+                      <div key={m.key} style={{ position: 'relative', width: 72, height: 72 }}>
+                        {m.isVideo
+                          ? <video src={m.url} muted style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, background: '#000', opacity: m.status === 'done' ? 1 : 0.55 }} />
+                          : <img src={m.url} alt="" style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, opacity: m.status === 'done' ? 1 : 0.55 }} />}
+                        {m.status === 'uploading' && (
+                          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.4)', borderRadius: 8, color: '#fff', fontSize: 10, fontWeight: 700, textAlign: 'center' }}>⏳ Uploading…</div>
                         )}
-                        <button type="button" onClick={() => setPhotos(prev => prev.filter((_, j) => j !== i))}
-                          style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%', background: '#ef4444', color: '#fff', border: 'none', fontSize: 12, lineHeight: '20px', textAlign: 'center', cursor: 'pointer', padding: 0 }}>×</button>
+                        {m.status === 'error' && (
+                          <button type="button" onClick={() => uploadItem(m)} title={m.error || 'Upload failed — tap to retry'}
+                            style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(127,29,29,0.78)', borderRadius: 8, color: '#fff', fontSize: 11, fontWeight: 700, border: 'none', cursor: 'pointer' }}>↻ Retry</button>
+                        )}
+                        {m.status === 'done' && (
+                          <div style={{ position: 'absolute', bottom: 3, left: 3, background: '#16a34a', color: '#fff', borderRadius: 5, fontSize: 11, fontWeight: 800, padding: '0 5px', lineHeight: '16px' }}>✓</div>
+                        )}
+                        {m.isVideo && (
+                          <div style={{ position: 'absolute', top: 3, left: 3, background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: 5, fontSize: 10, padding: '0 4px', lineHeight: '15px' }}>🎥</div>
+                        )}
+                        <button type="button" onClick={() => removeMedia(m.key)}
+                          style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%', background: '#ef4444', color: '#fff', border: 'none', fontSize: 12, lineHeight: '20px', textAlign: 'center', cursor: 'pointer', padding: 0, zIndex: 2 }}>×</button>
                       </div>
                     ))}
                   </div>
+                )}
+                {media.some(m => m.status === 'error') && (
+                  <div style={{ marginBottom: 8, fontSize: 12, color: '#b91c1c' }}>⚠️ Some files didn’t upload — tap <b>↻ Retry</b> on them, or remove and try again.</div>
                 )}
 
                 {/* Two-button row: Camera + Gallery */}
