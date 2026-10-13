@@ -52,6 +52,7 @@ const NAV = [
       { label: 'Reconciliation',  path: '/reconcile',          icon: '🔄' },
       { label: 'Dashboards',      path: '/dashboards',         icon: '📊' },
       { label: 'Users',           path: '/users',              icon: '👤' },
+      { label: 'Email Settings',  path: '/settings/email',     icon: '✉️' },
     ],
   },
 ];

@@ -43,6 +43,7 @@ import FieldIncident          from './pages/FieldIncident';
 import SafetyIncidentsAdmin   from './pages/SafetyIncidentsAdmin';
 import FieldVehicleInspection from './pages/FieldVehicleInspection';
 import VehicleInspectionsAdmin from './pages/VehicleInspectionsAdmin';
+import EmailSettings          from './pages/EmailSettings';
 import FieldCheckin           from './pages/FieldCheckin';
 import FieldProject          from './pages/FieldProject';
 import FieldProjectLookup   from './pages/FieldProjectLookup';
@@ -111,6 +112,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/vendors"   element={<RequireAuth><Office><VendorAdmin /></Office></RequireAuth>} />
         <Route path="/reconcile" element={<RequireAuth><Office><Reconcile /></Office></RequireAuth>} />
         <Route path="/users"     element={<RequireAuth><Office><UserAdmin /></Office></RequireAuth>} />
+        <Route path="/settings/email" element={<RequireAuth><Office><EmailSettings /></Office></RequireAuth>} />
 
         {/* Dashboards */}
         <Route path="/dashboards"              element={<RequireAuth><Office><DashboardsIndex /></Office></RequireAuth>} />

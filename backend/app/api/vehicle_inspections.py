@@ -30,11 +30,16 @@ def _row(r) -> dict:
     return dict(r) if r else {}
 
 
-def _recipients() -> list[str]:
-    raw = (getattr(settings, "VEHICLE_INSPECTION_RECIPIENTS", "") or "").strip() \
-        or (getattr(settings, "SAFETY_INCIDENT_RECIPIENTS", "") or "") \
-        or (settings.ISSUES_DIGEST_MGMT_RECIPIENTS or "")
-    return [e.strip() for e in raw.split(",") if e.strip()]
+async def _recipients() -> list[str]:
+    from app.services.email_settings import get_email_settings, recipients as _rl
+    cfg = await get_email_settings()
+    rl = _rl(cfg.get("vehicle_inspection", {}).get("recipients", ""))
+    if not rl:
+        raw = (getattr(settings, "VEHICLE_INSPECTION_RECIPIENTS", "") or "") \
+            or (getattr(settings, "SAFETY_INCIDENT_RECIPIENTS", "") or "") \
+            or (settings.ISSUES_DIGEST_MGMT_RECIPIENTS or "")
+        rl = [e.strip() for e in raw.split(",") if e.strip()]
+    return rl
 
 
 def _portal_base() -> str:
@@ -91,7 +96,7 @@ async def submit_vehicle_inspection(body: VehicleInspectionIn):
     # Email only when there are defects (routine clean inspections don't spam the inbox).
     if defects:
         try:
-            recipients = _recipients()
+            recipients = await _recipients()
             if recipients:
                 html = _render_defect_email(inspection_id, body, defects)
                 await GraphClient().send_email(

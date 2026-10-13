@@ -1595,6 +1595,20 @@ export async function getVehicleInspection(id: number): Promise<VehicleInspectio
   return request('GET', `/vehicle/inspections/${id}`);
 }
 
+// ── Email settings (timing + distribution) ────────────────────────────────────
+export interface EmailSettings {
+  safety_incident:     { recipients: string };
+  vehicle_inspection:  { recipients: string };
+  issues_digest:       { recipients: string; enabled: boolean; hour: number; skip_weekend: boolean };
+  project_checkin:     { cc: string; enabled: boolean; hour: number; skip_weekend: boolean };
+}
+export async function getEmailSettings(): Promise<EmailSettings> {
+  return request('GET', '/settings/email');
+}
+export async function saveEmailSettings(s: EmailSettings): Promise<EmailSettings> {
+  return request('PUT', '/settings/email', s as unknown as Record<string, unknown>);
+}
+
 // ── Key management ────────────────────────────────────────────────────────────
 
 export interface KeyEntry {

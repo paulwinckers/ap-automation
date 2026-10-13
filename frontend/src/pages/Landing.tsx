@@ -46,6 +46,7 @@ const OFFICE_GROUPS = [
       { to: '/reconcile',   icon: '🔄', label: 'Reconciliation', sub: 'Statement vs QBO reconcile' },
       { to: '/dashboards',  icon: '📊', label: 'Dashboards',     sub: 'Sales, ops & construction views' },
       { to: '/users',       icon: '👤', label: 'Users',          sub: 'Manage portal logins' },
+      { to: '/settings/email', icon: '✉️', label: 'Email Settings', sub: 'Timing & recipients of automated emails' },
     ],
   },
 ];

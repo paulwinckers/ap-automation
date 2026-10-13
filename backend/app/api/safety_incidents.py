@@ -47,11 +47,13 @@ def _row(r) -> dict:
     return dict(r) if r else {}
 
 
-def _incident_recipients() -> list[str]:
-    raw = (getattr(settings, "SAFETY_INCIDENT_RECIPIENTS", "") or "").strip()
-    if not raw:
-        raw = settings.ISSUES_DIGEST_MGMT_RECIPIENTS or ""
-    return [e.strip() for e in raw.split(",") if e.strip()]
+async def _incident_recipients() -> list[str]:
+    from app.services.email_settings import get_email_settings, recipients as _rl
+    cfg = await get_email_settings()
+    rl = _rl(cfg.get("safety_incident", {}).get("recipients", ""))
+    if not rl:
+        rl = [e.strip() for e in (settings.ISSUES_DIGEST_MGMT_RECIPIENTS or "").split(",") if e.strip()]
+    return rl
 
 
 def _portal_base() -> str:
@@ -174,7 +176,7 @@ async def submit_incident(
 
     # Email notification — best effort
     try:
-        recipients = _incident_recipients()
+        recipients = await _incident_recipients()
         if recipients:
             html = _render_incident_email(
                 incident_id=incident_id, incident_date=incident_date, incident_time=incident_time,

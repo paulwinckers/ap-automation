@@ -1745,7 +1745,10 @@ Write the summary now (2-3 sentences maximum):"""
     sent_to: list[str] = []
     skipped: list[str] = []
 
-    mgmt_recipients = [r.strip() for r in cfg.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if r.strip()]
+    from app.services.email_settings import get_email_settings as _ges, recipients as _rl
+    _ecfg = await _ges()
+    mgmt_recipients = _rl(_ecfg.get("issues_digest", {}).get("recipients", "")) or \
+        [r.strip() for r in cfg.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if r.strip()]
 
     # preview_for: skip management email, send only that person's individual
     # digest to the management recipients list (not the real employee email)
@@ -1886,22 +1889,30 @@ async def _digest_scheduler_loop():
 
     tz = _zi.ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
     _last_run_date: str = ""          # e.g. "2026-05-11"
-    FIRE_HOUR   = 19                  # 7 PM local
-    WINDOW_MINS = 30                  # fire any time in [19:00, 19:30)
+    WINDOW_MINS = 30                  # fire any time in [hour:00, hour:30)
 
     while True:
         await asyncio.sleep(5 * 60)   # poll every 5 minutes
         now       = _dt.now(tz)
         today_str = now.strftime("%Y-%m-%d")
 
-        in_window = (now.hour == FIRE_HOUR and now.minute < WINDOW_MINS)
+        # Timing + on/off are admin-configurable (Email Settings → D1).
+        try:
+            from app.services.email_settings import get_email_settings
+            dcfg = (await get_email_settings()).get("issues_digest", {})
+        except Exception:
+            dcfg = {}
+        if not dcfg.get("enabled", True):
+            continue
+        fire_hour = int(dcfg.get("hour", 19))
+
+        in_window = (now.hour == fire_hour and now.minute < WINDOW_MINS)
         if not in_window or _last_run_date == today_str:
             continue
 
         # Mark fired before awaiting so a crash mid-send doesn't re-trigger
         _last_run_date = today_str
-        # No nightly send on Friday (4) or Saturday (5) evenings.
-        if now.weekday() in (4, 5):
+        if dcfg.get("skip_weekend", True) and now.weekday() in (4, 5):
             logger.info(f"Issues digest scheduler: skipping {now.strftime('%A')} evening")
             continue
         logger.info(f"Issues digest scheduler: firing for {today_str} at {now.strftime('%H:%M %Z')}")

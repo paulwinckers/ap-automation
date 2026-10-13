@@ -37,6 +37,7 @@ from app.api.documents import router as documents_router
 from app.api.push import router as push_router
 from app.api.site_inspections import router as site_inspections_router
 from app.api.safety_incidents import router as safety_incidents_router
+from app.api.email_settings_api import router as email_settings_router
 from app.api.vehicle_inspections import router as vehicle_inspections_router
 from app.api.property_hazards import router as property_hazards_router
 from app.api.project_checkin import (
@@ -465,6 +466,7 @@ app.include_router(documents_router)
 app.include_router(push_router)
 app.include_router(site_inspections_router)
 app.include_router(safety_incidents_router)
+app.include_router(email_settings_router)
 app.include_router(vehicle_inspections_router)
 app.include_router(property_hazards_router)
 app.include_router(checkin_router)

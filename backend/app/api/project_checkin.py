@@ -1229,7 +1229,8 @@ async def submit_checkin_response(
 
     # Notify the full construction team + the lead when a check-in is submitted
     today_str    = datetime.now().strftime("%B %d, %Y")
-    cc_list      = [e.strip() for e in settings.CONSTRUCTION_CHECKIN_CC.split(",") if e.strip()]
+    from app.services.email_settings import get_email_settings as _ges_cc, recipients as _rl_cc
+    cc_list      = _rl_cc((await _ges_cc()).get("project_checkin", {}).get("cc", "")) or [e.strip() for e in settings.CONSTRUCTION_CHECKIN_CC.split(",") if e.strip()]
     if not cc_list:
         cc_list  = [e.strip() for e in settings.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if e.strip()]
     lead_email   = c.get("lead_email") or ""
@@ -2569,7 +2570,8 @@ async def _do_submit_project_response(
 
     # Notify the full construction team + the lead when a check-in is submitted
     today_str    = datetime.now().strftime("%B %d, %Y")
-    cc_list      = [e.strip() for e in settings.CONSTRUCTION_CHECKIN_CC.split(",") if e.strip()]
+    from app.services.email_settings import get_email_settings as _ges_cc, recipients as _rl_cc
+    cc_list      = _rl_cc((await _ges_cc()).get("project_checkin", {}).get("cc", "")) or [e.strip() for e in settings.CONSTRUCTION_CHECKIN_CC.split(",") if e.strip()]
     if not cc_list:
         cc_list  = [e.strip() for e in settings.ISSUES_DIGEST_MGMT_RECIPIENTS.split(",") if e.strip()]
     notify_emails = list({lead_email, *cc_list} - {""})  # deduplicate, drop blanks
@@ -2947,19 +2949,28 @@ async def _scheduler_loop():
     """
     tz = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
     _last_run_date: str = ""
-    FIRE_HOUR   = 6
     WINDOW_MINS = 30
 
     while True:
         await asyncio.sleep(5 * 60)
         now       = datetime.now(tz)
         today_str = now.strftime("%Y-%m-%d")
-        in_window = (now.hour == FIRE_HOUR and now.minute < WINDOW_MINS)
+
+        # Timing + on/off are admin-configurable (Email Settings → D1).
+        try:
+            from app.services.email_settings import get_email_settings
+            pcfg = (await get_email_settings()).get("project_checkin", {})
+        except Exception:
+            pcfg = {}
+        if not pcfg.get("enabled", True):
+            continue
+        fire_hour = int(pcfg.get("hour", 6))
+
+        in_window = (now.hour == fire_hour and now.minute < WINDOW_MINS)
         if not in_window or _last_run_date == today_str:
             continue
         _last_run_date = today_str
-        # No check-ins on Saturday (5) or Sunday (6).
-        if now.weekday() in (5, 6):
+        if pcfg.get("skip_weekend", True) and now.weekday() in (5, 6):
             logger.info(f"Check-in scheduler: skipping {now.strftime('%A')}")
             continue
         logger.info(f"Check-in scheduler: firing for {today_str} at {now.strftime('%H:%M %Z')}")
