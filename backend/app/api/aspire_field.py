@@ -1905,15 +1905,24 @@ async def create_field_purchase_order(
     except (ValueError, TypeError):
         receipt_id = None
 
-    # Aspire POST /Receipts returns a number that is consistently 1 higher than the
-    # "Purchase Receipt #N" display number shown in the Aspire UI.
-    # (Two tests: POST→1721 displayed as #1720; POST→1723 displayed as #1722.)
-    # A follow-up GET returns the *next* receipt's number, making things worse.
-    # Until Aspire documents this clearly, we subtract 1 from the POST result.
-    display_number = (receipt_id - 1) if receipt_id is not None else None
+    # The PO number shown in Aspire is ReceiptNumber — a SEPARATE field from ReceiptID.
+    # ReceiptID runs ahead of ReceiptNumber by a NON-constant offset (was 1, now 2, and it
+    # drifts as credits/revisions consume ReceiptIDs). So read ReceiptNumber back from the
+    # created receipt rather than guessing an offset.
+    display_number = None
+    if receipt_id is not None:
+        try:
+            _rows = _aspire._extract_list(await _aspire._get("Receipts", {
+                "$filter": f"ReceiptID eq {receipt_id}",
+                "$select": "ReceiptID,ReceiptNumber",
+            }))
+            if _rows and _rows[0].get("ReceiptNumber") is not None:
+                display_number = int(_rows[0]["ReceiptNumber"])
+        except Exception as e:
+            logger.warning(f"Could not read ReceiptNumber for receipt {receipt_id}: {e}")
     receipt_number = display_number  # alias for the return payload
 
-    logger.info(f"POST /Receipts raw result: {result}")  # log once to confirm offset
+    logger.info(f"POST /Receipts raw result: {result}")
 
     logger.info(
         f"Field PO created: ReceiptID={receipt_id} ReceiptNumber={receipt_number} "
@@ -1981,7 +1990,7 @@ async def get_new_receipts():
         vid = r.get("VendorID")
         receipts.append({
             "receipt_id":     rid,
-            "display_number": (rid - 1) if rid else None,
+            "display_number": r.get("ReceiptNumber"),   # authoritative Aspire PO number
             "vendor_id":      vid,
             "vendor_name":    r.get("VendorName") or vendor_names.get(vid) or "Unknown Vendor",
             "received_date":  (r.get("ReceivedDate") or "")[:10],
@@ -2019,13 +2028,14 @@ async def amend_po_vendor(
         raise HTTPException(status_code=404, detail=f"Receipt {receipt_id} not found")
 
     existing = records[0]
+    display_num = existing.get("ReceiptNumber")   # authoritative PO number
 
     # 2. Guard — only allow amendments on New receipts
     status = (existing.get("ReceiptStatusName") or "").strip().lower()
     if status != "new":
         raise HTTPException(
             status_code=400,
-            detail=f"Receipt #{receipt_id - 1} has status '{existing.get('ReceiptStatusName')}'. "
+            detail=f"Receipt #{display_num} has status '{existing.get('ReceiptStatusName')}'. "
                    f"Only 'New' receipts can be amended.",
         )
 
@@ -2043,13 +2053,13 @@ async def amend_po_vendor(
         raise HTTPException(status_code=502, detail=f"Failed to update receipt in Aspire: {e}")
 
     logger.info(
-        f"Amend PO vendor: receipt_id={receipt_id} display=#{receipt_id - 1} "
+        f"Amend PO vendor: receipt_id={receipt_id} display=#{display_num} "
         f"old_vendor={old_vendor!r} new_vendor={vendor_name}({vendor_id})"
     )
     return {
         "success":        True,
         "receipt_id":     receipt_id,
-        "display_number": receipt_id - 1,
+        "display_number": display_num,
         "old_vendor":     old_vendor,
         "vendor_name":    vendor_name,
     }

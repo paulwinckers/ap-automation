@@ -1117,9 +1117,9 @@ async def get_job_materials(opportunity_id: int):
     pos = []
     for r in receipts:
         rid = r.get("ReceiptID")
-        # ReceiptNumber in Aspire is display_number + 1
+        # ReceiptNumber IS the PO number shown in Aspire — use it directly (no offset).
         receipt_num = r.get("ReceiptNumber")
-        display_num = (receipt_num - 1) if receipt_num else None
+        display_num = receipt_num
         raw_items   = r.get("ReceiptItems") or []
         po_items = []
         if isinstance(raw_items, list):
