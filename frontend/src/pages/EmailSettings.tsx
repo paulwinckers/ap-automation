@@ -29,11 +29,32 @@ export default function EmailSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [newDiv, setNewDiv] = useState('');
 
   useEffect(() => { getEmailSettings().then(setS).catch(() => setMsg('Could not load settings.')).finally(() => setLoading(false)); }, []);
 
   function upd<K extends keyof ES>(key: K, patch: Partial<ES[K]>) {
     setS(prev => prev ? { ...prev, [key]: { ...prev[key], ...patch } } : prev);
+  }
+
+  function setDivision(name: string, csv: string) {
+    setS(prev => prev ? { ...prev, daily_reports: { ...prev.daily_reports, divisions: { ...prev.daily_reports.divisions, [name]: csv } } } : prev);
+  }
+  function addDivision() {
+    const n = newDiv.trim();
+    if (!n) return;
+    setS(prev => (prev && !(n in (prev.daily_reports.divisions || {})))
+      ? { ...prev, daily_reports: { ...prev.daily_reports, divisions: { ...prev.daily_reports.divisions, [n]: '' } } }
+      : prev);
+    setNewDiv('');
+  }
+  function removeDivision(name: string) {
+    setS(prev => {
+      if (!prev) return prev;
+      const d = { ...prev.daily_reports.divisions };
+      delete d[name];
+      return { ...prev, daily_reports: { ...prev.daily_reports, divisions: d } };
+    });
   }
 
   async function save() {
@@ -102,6 +123,60 @@ export default function EmailSettings() {
           <label style={label}>CC recipients</label>
           <input style={input} value={s.project_checkin.cc} onChange={e => upd('project_checkin', { cc: e.target.value })} placeholder="name@darios.ca" />
           {scheduleRow(s.project_checkin, 'project_checkin')}
+        </div>
+
+        {/* Daily Division Reports */}
+        <div style={card}>
+          <div style={{ fontWeight: 800, fontSize: 15, color: '#111827', marginBottom: 2 }}>📋 Daily Division Reports</div>
+          <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 14 }}>
+            One report per division, sent each day (skipped for a division with no completed tickets that day).
+            Leave a division blank to disable it. Everyone below is also CC'd the management copy.
+          </div>
+
+          {Object.entries(s.daily_reports?.divisions || {}).map(([name, csv]) => (
+            <div key={name} style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <label style={{ ...label, marginBottom: 0 }}>{name}</label>
+                <button
+                  onClick={() => removeDivision(name)}
+                  title={`Remove ${name}`}
+                  style={{ background: 'none', border: 'none', color: '#b91c1c', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Remove
+                </button>
+              </div>
+              <input
+                style={input}
+                value={csv}
+                onChange={e => setDivision(name, e.target.value)}
+                placeholder="name@darios.ca, name2@darios.ca (leave blank to disable)"
+              />
+            </div>
+          ))}
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4, marginBottom: 16 }}>
+            <input
+              style={{ ...input, flex: 1 }}
+              value={newDiv}
+              onChange={e => setNewDiv(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addDivision(); } }}
+              placeholder="Add a division (must match Aspire division name, e.g. Snow)"
+            />
+            <button
+              onClick={addDivision}
+              style={{ padding: '10px 16px', borderRadius: 8, border: '1px solid #d1d5db', background: '#f9fafb', color: '#374151', fontWeight: 700, fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap' }}
+            >
+              + Add
+            </button>
+          </div>
+
+          <label style={label}>CC on every division report</label>
+          <input
+            style={input}
+            value={s.daily_reports?.cc || ''}
+            onChange={e => setS(prev => prev ? { ...prev, daily_reports: { ...prev.daily_reports, cc: e.target.value } } : prev)}
+            placeholder="paul@darios.ca"
+          />
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 8 }}>

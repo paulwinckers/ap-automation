@@ -3756,14 +3756,16 @@ function filterReport(q) {{
 
 
 # ── Daily Report Email Recipients ─────────────────────────────────────────────
-# Add / edit divisions and recipients here; cron calls /daily-report/send-email
-# with ?division=<key> for each entry.
+# Divisions + recipients are managed at runtime in the Email Settings page
+# (D1-backed, see app/services/email_settings.py). The dict below is only a
+# fallback used if settings can't be read. Cron calls /daily-report/send-all.
 
-# Always CC'd on every division report (management oversight)
+# Fallback CC if settings are unavailable
 DAILY_REPORT_CC: list[str] = [
     "paul@darios.ca",
 ]
 
+# Fallback recipients if settings are unavailable
 DAILY_REPORT_RECIPIENTS: dict[str, list[str]] = {
     "Construction": [
         "rodger@darios.ca",
@@ -3792,6 +3794,18 @@ DAILY_REPORT_RECIPIENTS: dict[str, list[str]] = {
 }
 
 
+async def _daily_report_distribution() -> tuple[dict[str, list[str]], list[str]]:
+    """Resolve (divisions_map, cc_list) from settings, with a hardcoded fallback."""
+    try:
+        from app.services.email_settings import daily_report_recipients
+        divs, cc = await daily_report_recipients()
+        if divs:
+            return divs, (cc or DAILY_REPORT_CC)
+    except Exception as e:
+        logger.warning(f"daily report distribution from settings failed — using fallback: {e}")
+    return DAILY_REPORT_RECIPIENTS, DAILY_REPORT_CC
+
+
 @router.post("/daily-report/send-all")
 async def send_all_daily_reports(date: str = Query(None)):
     """
@@ -3799,8 +3813,9 @@ async def send_all_daily_reports(date: str = Query(None)):
     The Railway cron job should call this endpoint — no need for a separate
     cron entry per division.
     """
+    divisions, _ = await _daily_report_distribution()
     results = []
-    for division in DAILY_REPORT_RECIPIENTS:
+    for division in divisions:
         try:
             result = await send_daily_report_email(date=date, division=division)
             results.append(result)
@@ -3822,12 +3837,13 @@ async def send_daily_report_email(
     from datetime import datetime, timezone, timedelta
     from app.services.email_intake import GraphClient
 
-    recipients = DAILY_REPORT_RECIPIENTS.get(division)
+    divisions, cc_list = await _daily_report_distribution()
+    recipients = divisions.get(division)
     if not recipients:
         raise HTTPException(
             status_code=400,
             detail=f"No recipients configured for division '{division}'. "
-                   f"Add it to DAILY_REPORT_RECIPIENTS in dashboard.py.",
+                   f"Add it in the Email Settings page.",
         )
 
     if not settings.MS_TENANT_ID or not settings.MS_CLIENT_ID or not settings.MS_CLIENT_SECRET:
@@ -3856,7 +3872,7 @@ async def send_daily_report_email(
         to_addresses=recipients,
         subject=f"📋 {division} Daily Report — {display_date}",
         body_html=html_body,
-        cc_addresses=DAILY_REPORT_CC or None,
+        cc_addresses=cc_list or None,
     )
 
     logger.info(

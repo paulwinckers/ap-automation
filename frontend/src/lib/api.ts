@@ -1601,6 +1601,7 @@ export interface EmailSettings {
   vehicle_inspection:  { recipients: string };
   issues_digest:       { recipients: string; enabled: boolean; hour: number; skip_weekend: boolean };
   project_checkin:     { cc: string; enabled: boolean; hour: number; skip_weekend: boolean };
+  daily_reports:       { cc: string; divisions: Record<string, string> };
 }
 export async function getEmailSettings(): Promise<EmailSettings> {
   return request('GET', '/settings/email');
