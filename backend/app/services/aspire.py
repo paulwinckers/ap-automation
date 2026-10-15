@@ -553,34 +553,56 @@ class AspireClient:
             "SalesRepContactName", "OperationsManagerContactName",
             "PropertyName", "BranchName",
         ])
+        # Filter to the Construction division SERVER-SIDE. Previously this pulled
+        # the newest 1000 opps across ALL divisions and filtered in Python — but
+        # the tenant wins ~1000 opps/year across all divisions, so a plain
+        # $top=1000 window only reached back a few months and silently dropped
+        # every construction job won in a prior year (including cross-year jobs
+        # completed or in production this year). A division filter keeps the whole
+        # construction history in scope under the same 1000-row cap.
         try:
             result = await self._get("Opportunities", {
+                "$filter":  "DivisionName eq 'Construction'",
                 "$top":     "1000",
                 "$orderby": "WonDate desc",
                 "$select":  select_fields,
             })
             all_opps = self._extract_list(result)
         except Exception as e:
-            logger.error(f"Opportunities fetch failed: {e}", exc_info=True)
-            return []
+            logger.warning(f"Division-filtered opp fetch failed ({e}); falling back to unfiltered")
+            all_opps = []
 
-        logger.info(f"Fetched {len(all_opps)} total opps from Aspire")
+        # Fallback: if the server-side filter returns nothing (e.g. an OData
+        # quirk on this tenant), fetch unfiltered and filter in Python.
+        if not all_opps:
+            try:
+                result = await self._get("Opportunities", {
+                    "$top":     "1000",
+                    "$orderby": "WonDate desc",
+                    "$select":  select_fields,
+                })
+                all_opps = self._extract_list(result)
+            except Exception as e:
+                logger.error(f"Opportunities fetch failed: {e}", exc_info=True)
+                return []
 
-        # Log unique statuses and divisions for diagnostics
-        seen_statuses  = {o.get("OpportunityStatusName") for o in all_opps}
-        seen_divisions = {o.get("DivisionName") for o in all_opps}
-        logger.info(f"Statuses: {seen_statuses}")
-        logger.info(f"Divisions: {seen_divisions}")
+        logger.info(f"Fetched {len(all_opps)} opps from Aspire")
+        if len(all_opps) >= 1000:
+            logger.warning(
+                "Construction opp fetch hit the 1000-row cap — oldest jobs may be "
+                "truncated; consider paginating with $skip."
+            )
 
-        # Filter to Construction division only — return ALL statuses so
-        # dashboard.py can see every status name and filter appropriately.
+        # Keep Construction only (the server-side filter already narrows this, but
+        # guard the fallback path and any DivisionID-only rows). Return ALL statuses
+        # so dashboard.py can bucket them.
         construction = [
             o for o in all_opps
             if (o.get("DivisionName") or "").lower() == "construction"
             or o.get("DivisionID") == 8
         ]
         logger.info(
-            f"{len(all_opps)} total opps → {len(construction)} Construction "
+            f"{len(all_opps)} fetched → {len(construction)} Construction "
             f"(statuses: { {o.get('OpportunityStatusName') for o in construction} })"
         )
         return construction
