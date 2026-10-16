@@ -159,7 +159,7 @@ async def pha_prefill(opportunity_id: int):
         phone = _first(detail, "MobilePhone", "OfficePhone", "HomePhone")
         email = detail.get("Email")
         bits = [b for b in [cname, phone, email] if b]
-        out["client_contact"] = " · ".join(bits) if bits else (cname or None)
+        out["client_contact"] = " | ".join(bits) if bits else (cname or None)
         if not out["client_name"]:
             out["client_name"] = detail.get("CompanyName") or cname or None
 
