@@ -8,10 +8,36 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   getMonthlyPlan, setMonthlyGoal, addJobToMonth, removeJobFromMonth, getPlanSuggestions,
   listConstructionLeads, upsertConstructionLead, deleteConstructionLead,
-  sendCheckins, getCheckinStatus, setJobPlanning,
+  sendCheckins, getCheckinStatus, setJobPlanning, listPHA,
   MonthlyPlan, PlanJob, PlanSuggestion, ConstructionLead, CheckinStatus,
 } from '../lib/api';
 import JobPrepChecklist from './JobPrepChecklist';
+import ProjectHazardAssessment from '../components/ProjectHazardAssessment';
+
+// opportunity_id → best PHA status (submitted beats draft)
+type PHAStatus = 'outstanding' | 'draft' | 'completed';
+type PHAInfo = { status: PHAStatus; id: number };
+type PHAMap = Map<number, PHAInfo>;
+
+function PHABadge({ info, onClick }: { info: PHAInfo | undefined; onClick: () => void }) {
+  const cfg = info?.status === 'completed'
+    ? { bg: '#dcfce7', fg: '#15803d', label: '✅ PHA' }
+    : info?.status === 'draft'
+    ? { bg: '#dbeafe', fg: '#1d4ed8', label: '📝 PHA draft' }
+    : { bg: '#fef3c7', fg: '#92400e', label: '⚠ No PHA' };
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); onClick(); }}
+      title={info?.status === 'completed' ? 'PHA submitted — view' : info?.status === 'draft' ? 'PHA in draft — continue' : 'Create project hazard assessment'}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4, background: cfg.bg, color: cfg.fg,
+        border: 'none', borderRadius: 8, padding: '1px 7px', fontSize: 10, fontWeight: 700, cursor: 'pointer',
+      }}
+    >
+      {cfg.label}
+    </button>
+  );
+}
 
 // Workflow stages (must match the backend STAGES list)
 const STAGES = ['New', 'Planning', 'Set for Production', 'Lead Assigned', 'In Production',
@@ -635,6 +661,8 @@ export default function ConstructionPlan() {
   const [queueOpen, setQueueOpen]       = useState(true);
   const [showUpcoming,  setShowUpcoming]  = useState(true);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [phaMap,        setPhaMap]        = useState<PHAMap>(new Map());
+  const [phaModalJob,   setPhaModalJob]   = useState<PlanJob | null>(null);
   const activeMonthRef = useRef(month);
 
   const load = useCallback(async () => {
@@ -705,6 +733,23 @@ export default function ConstructionPlan() {
   const complete   = jobs.filter(j => j.risk === 'complete');
 
   // Effective (override-aware) reads for optimistic UI
+  async function loadPha() {
+    try {
+      const all = await listPHA();
+      const m: PHAMap = new Map();
+      for (const a of all) {
+        if (a.opportunity_id == null) continue;
+        const status: PHAStatus = a.status === 'submitted' ? 'completed' : 'draft';
+        const prev = m.get(a.opportunity_id);
+        if (!prev || (prev.status !== 'completed' && status === 'completed')) {
+          m.set(a.opportunity_id, { status, id: a.id });
+        }
+      }
+      setPhaMap(m);
+    } catch { /* non-fatal — badges fall back to "No PHA" */ }
+  }
+  useEffect(() => { loadPha(); }, []);
+
   const effStage  = (j: PlanJob) => planningOverride[j.opportunity_id]?.stage ?? j.stage ?? 'New';
   const effQueued = (j: PlanJob) => planningOverride[j.opportunity_id]?.queued ?? j.queued ?? false;
   // Which bucket a job is in — mirrors the backend _plan_bucket so a stage/park change
@@ -773,6 +818,11 @@ export default function ConstructionPlan() {
               </a>
               {j.opp_number ? ` · #${j.opp_number}` : ''}
             </div>
+            {!isChild && (
+              <div style={{ marginTop: 4 }}>
+                <PHABadge info={phaMap.get(j.opportunity_id)} onClick={() => setPhaModalJob(j)} />
+              </div>
+            )}
           </td>
 
           {/* Lead */}
@@ -1042,6 +1092,37 @@ export default function ConstructionPlan() {
           </div>
         </div>
 
+        {/* PHA safety summary — across active + upcoming jobs */}
+        {(() => {
+          const bases = [...activeGroups, ...upcomingGroups].map(g => g.base);
+          const total = bases.length;
+          if (!total) return null;
+          let done = 0, draft = 0;
+          for (const b of bases) {
+            const st = phaMap.get(b.opportunity_id)?.status;
+            if (st === 'completed') done++;
+            else if (st === 'draft') draft++;
+          }
+          const outstanding = total - done - draft;
+          const pill = (bg: string, fg: string, label: string, n: number) => (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: bg, color: fg, padding: '4px 12px', borderRadius: 999, fontSize: 13, fontWeight: 800 }}>
+              <span style={{ fontSize: 15 }}>{n}</span>{label}
+            </span>
+          );
+          return (
+            <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', padding: '12px 18px', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', textTransform: 'uppercase', letterSpacing: 0.4 }}>🦺 Hazard Assessments</div>
+              <div style={{ fontSize: 13, color: '#6b7280' }}>{done + draft} of {total} active &amp; upcoming jobs started</div>
+              <div style={{ flex: 1 }} />
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {outstanding > 0 && pill('#fef3c7', '#92400e', 'outstanding', outstanding)}
+                {draft > 0 && pill('#dbeafe', '#1d4ed8', 'draft', draft)}
+                {pill('#dcfce7', '#15803d', 'submitted', done)}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Goal progress bars + projected totals */}
         <div style={{
           background: '#fff', borderRadius: 14, padding: '20px 24px',
@@ -1205,6 +1286,38 @@ export default function ConstructionPlan() {
       )}
       {showLeads && <LeadsModal onClose={() => setShowLeads(false)} />}
       {showCheckin && <CheckinStatusPanel month={month} onClose={() => setShowCheckin(false)} />}
+
+      {/* PHA modal — create / review a project hazard assessment for a job */}
+      {phaModalJob && (
+        <div
+          onClick={() => { setPhaModalJob(null); loadPha(); }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '24px 12px', overflowY: 'auto' }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 16, width: '100%', maxWidth: 980, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid #e5e7eb', position: 'sticky', top: 0, background: '#fff', borderRadius: '16px 16px 0 0', zIndex: 2 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, color: '#0f172a' }}>
+                {phaModalJob.property_name || phaModalJob.opportunity_name || 'Project'}
+                <span style={{ color: '#9ca3af', fontWeight: 500, fontSize: 13, marginLeft: 8 }}>#{phaModalJob.opp_number ?? '—'}</span>
+              </div>
+              <button onClick={() => { setPhaModalJob(null); loadPha(); }}
+                style={{ background: 'none', border: 'none', fontSize: 22, color: '#6b7280', cursor: 'pointer', lineHeight: 1, padding: 4 }}>×</button>
+            </div>
+            <div style={{ padding: '18px 20px' }}>
+              <ProjectHazardAssessment
+                oppId={phaModalJob.opportunity_id}
+                prefill={{
+                  project_name:    phaModalJob.opportunity_name || undefined,
+                  site_address:    phaModalJob.property_name || undefined,
+                  job_number:      phaModalJob.opp_number != null ? String(phaModalJob.opp_number) : undefined,
+                  crew_lead:       phaModalJob.lead_name || undefined,
+                  planned_start:   phaModalJob.start_date ? phaModalJob.start_date.slice(0, 10) : undefined,
+                }}
+                onSaved={loadPha}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
