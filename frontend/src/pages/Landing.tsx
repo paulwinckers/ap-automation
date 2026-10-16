@@ -48,6 +48,7 @@ const OFFICE_GROUPS = [
       { to: '/dashboards',  icon: '📊', label: 'Dashboards',     sub: 'Sales, ops & construction views' },
       { to: '/users',       icon: '👤', label: 'Users',          sub: 'Manage portal logins' },
       { to: '/settings/email', icon: '✉️', label: 'Email Settings', sub: 'Timing & recipients of automated emails' },
+      { to: '/ops/backups',    icon: '💾', label: 'Backups',        sub: 'Database snapshots & restore points' },
     ],
   },
 ];

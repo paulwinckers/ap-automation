@@ -1659,6 +1659,35 @@ export async function deletePHA(id: number): Promise<{ ok: boolean }> {
   return request('DELETE', `/safety/pha/${id}`);
 }
 
+// ── Database backups (D1 → R2) ─────────────────────────────────────────────────
+export interface BackupFile { key: string; bytes: number; last_modified: string | null; }
+export interface BackupSettings {
+  enabled: boolean; hour: number; retention: number;
+  weekly_email_to: string; weekly_email_day: number;
+  _latest?: BackupFile | null; _count?: number;
+}
+export interface BackupRunResult {
+  ok: boolean; key: string; bytes: number; table_count: number; row_count: number;
+  table_counts: Record<string, number>; generated_at: string; pruned: number;
+}
+export async function runBackup(): Promise<BackupRunResult> {
+  return request('POST', '/admin/backup/run');
+}
+export async function listBackups(): Promise<BackupFile[]> {
+  const r = await request<{ backups: BackupFile[] }>('GET', '/admin/backup/list');
+  return r.backups;
+}
+export async function getBackupDownloadUrl(key: string): Promise<string> {
+  const r = await request<{ url: string }>('GET', `/admin/backup/download?key=${encodeURIComponent(key)}`);
+  return r.url;
+}
+export async function getBackupSettings(): Promise<BackupSettings> {
+  return request('GET', '/admin/backup/settings');
+}
+export async function saveBackupSettings(s: Partial<BackupSettings>): Promise<BackupSettings> {
+  return request('PUT', '/admin/backup/settings', s);
+}
+
 // ── Email settings (timing + distribution) ────────────────────────────────────
 export interface EmailSettings {
   safety_incident:     { recipients: string };

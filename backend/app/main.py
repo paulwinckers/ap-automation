@@ -40,6 +40,7 @@ from app.api.safety_incidents import router as safety_incidents_router
 from app.api.email_settings_api import router as email_settings_router
 from app.api.vehicle_inspections import router as vehicle_inspections_router
 from app.api.safety_pha import router as safety_pha_router
+from app.api.backup import router as backup_router, start_backup_scheduler, stop_backup_scheduler
 from app.api.property_hazards import router as property_hazards_router
 from app.api.project_checkin import (
     router as checkin_router,
@@ -423,11 +424,17 @@ async def lifespan(app: FastAPI):
     # start_construction_scheduler()
     # Start issues digest nightly scheduler (fires 7 PM Pacific)
     start_digest_scheduler()
+    # Start nightly database backup scheduler (D1 → R2)
+    try:
+        start_backup_scheduler()
+    except Exception as e:
+        logger.error(f"Backup scheduler start failed — startup continues: {e}")
     yield
     # Stop on shutdown
     await email_intake.stop()
     stop_construction_scheduler()
     stop_digest_scheduler()
+    stop_backup_scheduler()
 
 
 app = FastAPI(
@@ -487,6 +494,7 @@ app.include_router(safety_incidents_router)
 app.include_router(email_settings_router)
 app.include_router(vehicle_inspections_router)
 app.include_router(safety_pha_router)
+app.include_router(backup_router)
 app.include_router(property_hazards_router)
 app.include_router(checkin_router)
 app.include_router(checkin_public_router)

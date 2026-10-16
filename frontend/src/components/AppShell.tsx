@@ -54,6 +54,7 @@ const NAV = [
       { label: 'Dashboards',      path: '/dashboards',         icon: '📊' },
       { label: 'Users',           path: '/users',              icon: '👤' },
       { label: 'Email Settings',  path: '/settings/email',     icon: '✉️' },
+      { label: 'Backups',         path: '/ops/backups',        icon: '💾' },
     ],
   },
 ];
