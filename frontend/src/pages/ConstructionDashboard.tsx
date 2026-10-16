@@ -9,7 +9,35 @@ import {
   getConstructionDashboard,
   ConstructionDashboardData,
   ConstructionJob,
+  listPHA,
 } from '../lib/api';
+import ProjectHazardAssessment from '../components/ProjectHazardAssessment';
+
+// opportunity_id → best PHA status for that job (submitted beats draft)
+type PHAStatus = 'outstanding' | 'draft' | 'completed';
+type PHAInfo = { status: PHAStatus; id: number };
+type PHAMap = Map<number, PHAInfo>;
+
+function PHABadge({ info, onClick }: { info: PHAInfo | undefined; onClick: () => void }) {
+  const cfg = info?.status === 'completed'
+    ? { bg: '#dcfce7', fg: '#15803d', label: '✅ PHA' }
+    : info?.status === 'draft'
+    ? { bg: '#dbeafe', fg: '#1d4ed8', label: '📝 Draft' }
+    : { bg: '#fef3c7', fg: '#92400e', label: '⚠ No PHA' };
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); onClick(); }}
+      title={info?.status === 'completed' ? 'PHA submitted — view' : info?.status === 'draft' ? 'PHA in draft — continue' : 'Create project hazard assessment'}
+      style={{
+        marginTop: 3, display: 'inline-flex', alignItems: 'center', gap: 4,
+        background: cfg.bg, color: cfg.fg, border: 'none', borderRadius: 999,
+        padding: '2px 9px', fontSize: 10.5, fontWeight: 800, cursor: 'pointer', letterSpacing: 0.2,
+      }}
+    >
+      {cfg.label}
+    </button>
+  );
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -201,7 +229,7 @@ function FooterTd({ children, align = 'left', colSpan }: { children: React.React
 
 // ── Job name cell (shared across all sections) ────────────────────────────────
 
-function JobNameCell({ job }: { job: ConstructionJob }) {
+function JobNameCell({ job, pha, onOpenPHA }: { job: ConstructionJob; pha?: PHAInfo; onOpenPHA?: (job: ConstructionJob) => void }) {
   const display = job.PropertyName || job.OpportunityName || '(unnamed)';
   const sub     = job.PropertyName ? job.OpportunityName : null;
   return (
@@ -217,6 +245,7 @@ function JobNameCell({ job }: { job: ConstructionJob }) {
         {display}
       </a>
       {sub && <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>{sub}</div>}
+      {onOpenPHA && <PHABadge info={pha} onClick={() => onOpenPHA(job)} />}
     </Td>
   );
 }
@@ -314,7 +343,7 @@ function HoursCell({ actual, estimated }: { actual: number | null | undefined; e
 
 // ── Completed jobs table ──────────────────────────────────────────────────────
 
-function CompletedTable({ jobs }: { jobs: ConstructionJob[] }) {
+function CompletedTable({ jobs, phaMap, onOpenPHA }: { jobs: ConstructionJob[]; phaMap: PHAMap; onOpenPHA: (job: ConstructionJob) => void }) {
   const { sorted, sortField, sortDir, onSort } = useSorted(jobs, 'WonDollars');
   if (!jobs.length) {
     return <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No completed jobs this year.</div>;
@@ -343,7 +372,7 @@ function CompletedTable({ jobs }: { jobs: ConstructionJob[] }) {
           {sorted.map((job, i) => (
             <tr key={job.OpportunityID} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
               <Td align="right" muted>{job.OpportunityNumber ?? '—'}</Td>
-              <JobNameCell job={job} />
+              <JobNameCell job={job} pha={phaMap.get(job.OpportunityID)} onOpenPHA={onOpenPHA} />
               <ContractedCell job={job} />
               <Td align="right" bold>{fmt$(job.ActualEarnedRevenue)}</Td>
               <Td align="right" bold style={{ color: (job.ActualGrossMarginDollars ?? 0) < 0 ? '#dc2626' : '#374151' }}>
@@ -371,7 +400,7 @@ function CompletedTable({ jobs }: { jobs: ConstructionJob[] }) {
 
 // ── In Production table ───────────────────────────────────────────────────────
 
-function InProductionTable({ jobs }: { jobs: ConstructionJob[] }) {
+function InProductionTable({ jobs, phaMap, onOpenPHA }: { jobs: ConstructionJob[]; phaMap: PHAMap; onOpenPHA: (job: ConstructionJob) => void }) {
   const { sorted, sortField, sortDir, onSort } = useSorted(jobs, 'WonDollars');
   if (!jobs.length) {
     return <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No jobs currently in production.</div>;
@@ -400,7 +429,7 @@ function InProductionTable({ jobs }: { jobs: ConstructionJob[] }) {
           {sorted.map((job, i) => (
             <tr key={job.OpportunityID} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
               <Td align="right" muted>{job.OpportunityNumber ?? '—'}</Td>
-              <JobNameCell job={job} />
+              <JobNameCell job={job} pha={phaMap.get(job.OpportunityID)} onOpenPHA={onOpenPHA} />
               <ContractedCell job={job} />
               <Td align="right" bold style={{ color: '#2563eb' }}>{fmt$(job.ActualEarnedRevenue)}</Td>
               <Td align="right" bold style={{ color: '#2563eb' }}>{fmt$(job.ActualGrossMarginDollars)}</Td>
@@ -426,7 +455,7 @@ function InProductionTable({ jobs }: { jobs: ConstructionJob[] }) {
 
 // ── In Queue table ────────────────────────────────────────────────────────────
 
-function InQueueTable({ jobs }: { jobs: ConstructionJob[] }) {
+function InQueueTable({ jobs, phaMap, onOpenPHA }: { jobs: ConstructionJob[]; phaMap: PHAMap; onOpenPHA: (job: ConstructionJob) => void }) {
   const { sorted, sortField, sortDir, onSort } = useSorted(jobs, 'StartDate');
   if (!jobs.length) {
     return <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No jobs in queue.</div>;
@@ -454,7 +483,7 @@ function InQueueTable({ jobs }: { jobs: ConstructionJob[] }) {
           {sorted.map((job, i) => (
             <tr key={job.OpportunityID} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
               <Td align="right" muted>{job.OpportunityNumber ?? '—'}</Td>
-              <JobNameCell job={job} />
+              <JobNameCell job={job} pha={phaMap.get(job.OpportunityID)} onOpenPHA={onOpenPHA} />
               {/* Readiness: tags-based indicator — to be wired up once tag field names confirmed */}
               <Td><span style={{ color: '#9ca3af', fontSize: 12 }}>—</span></Td>
               <ContractedCell job={job} />
@@ -487,6 +516,8 @@ export default function ConstructionDashboard() {
   const [showProjected, setShowProjected] = useState(false);
   const [year, setYear]               = useState(2026);
   const [search, setSearch]           = useState('');
+  const [phaMap, setPhaMap]           = useState<PHAMap>(new Map());
+  const [modalJob, setModalJob]       = useState<ConstructionJob | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -497,6 +528,24 @@ export default function ConstructionDashboard() {
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, [year]);
+
+  async function loadPha() {
+    try {
+      const all = await listPHA();
+      const m: PHAMap = new Map();
+      for (const a of all) {
+        if (a.opportunity_id == null) continue;
+        const status: PHAStatus = a.status === 'submitted' ? 'completed' : 'draft';
+        const prev = m.get(a.opportunity_id);
+        // submitted beats draft; otherwise keep the most recent (list is newest-first)
+        if (!prev || (prev.status !== 'completed' && status === 'completed')) {
+          m.set(a.opportunity_id, { status, id: a.id });
+        }
+      }
+      setPhaMap(m);
+    } catch { /* non-fatal — badges just show "No PHA" */ }
+  }
+  useEffect(() => { loadPha(); }, []);
 
   const q = search.trim().toLowerCase();
   function filterJobs(jobs: ConstructionJob[]) {
@@ -666,19 +715,52 @@ export default function ConstructionDashboard() {
 
             {/* Three job sections */}
             <Section title="✅ Completed Jobs" count={completedJobs.length} accent="#16a34a">
-              <CompletedTable jobs={completedJobs} />
+              <CompletedTable jobs={completedJobs} phaMap={phaMap} onOpenPHA={setModalJob} />
             </Section>
 
             <Section title="🔨 In Production" count={inProductionJobs.length} accent="#2563eb">
-              <InProductionTable jobs={inProductionJobs} />
+              <InProductionTable jobs={inProductionJobs} phaMap={phaMap} onOpenPHA={setModalJob} />
             </Section>
 
             <Section title="📋 In Queue" count={inQueueJobs.length} accent="#f59e0b">
-              <InQueueTable jobs={inQueueJobs} />
+              <InQueueTable jobs={inQueueJobs} phaMap={phaMap} onOpenPHA={setModalJob} />
             </Section>
           </>
         )}
       </div>
+
+      {/* PHA modal — create / review a project hazard assessment for a job */}
+      {modalJob && (
+        <div
+          onClick={() => { setModalJob(null); loadPha(); }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '24px 12px', overflowY: 'auto' }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 16, width: '100%', maxWidth: 980, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid #e5e7eb', position: 'sticky', top: 0, background: '#fff', borderRadius: '16px 16px 0 0', zIndex: 2 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, color: '#0f172a' }}>
+                {modalJob.PropertyName || modalJob.OpportunityName || 'Project'}
+                <span style={{ color: '#9ca3af', fontWeight: 500, fontSize: 13, marginLeft: 8 }}>#{modalJob.OpportunityNumber ?? '—'}</span>
+              </div>
+              <button onClick={() => { setModalJob(null); loadPha(); }}
+                style={{ background: 'none', border: 'none', fontSize: 22, color: '#6b7280', cursor: 'pointer', lineHeight: 1, padding: 4 }}>×</button>
+            </div>
+            <div style={{ padding: '18px 20px' }}>
+              <ProjectHazardAssessment
+                oppId={modalJob.OpportunityID}
+                prefill={{
+                  project_name:    modalJob.OpportunityName || undefined,
+                  site_address:    modalJob.PropertyName || undefined,
+                  job_number:      modalJob.OpportunityNumber != null ? String(modalJob.OpportunityNumber) : undefined,
+                  project_manager: modalJob.OperationsManagerContactName || undefined,
+                  planned_start:   modalJob.StartDate ? modalJob.StartDate.slice(0, 10) : undefined,
+                  estimated_end:   modalJob.EndDate ? modalJob.EndDate.slice(0, 10) : undefined,
+                }}
+                onSaved={loadPha}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
