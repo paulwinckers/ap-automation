@@ -39,6 +39,7 @@ from app.api.site_inspections import router as site_inspections_router
 from app.api.safety_incidents import router as safety_incidents_router
 from app.api.email_settings_api import router as email_settings_router
 from app.api.vehicle_inspections import router as vehicle_inspections_router
+from app.api.safety_pha import router as safety_pha_router
 from app.api.property_hazards import router as property_hazards_router
 from app.api.project_checkin import (
     router as checkin_router,
@@ -293,6 +294,23 @@ async def lifespan(app: FastAPI):
                 created_at      TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """,
+        "project_hazard_assessments": """
+            CREATE TABLE IF NOT EXISTS project_hazard_assessments (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                opportunity_id INTEGER,
+                pha_number     TEXT,
+                project_name   TEXT,
+                site_address   TEXT,
+                status         TEXT NOT NULL DEFAULT 'draft',
+                payload        TEXT,
+                photo_r2_keys  TEXT,
+                created_by     TEXT,
+                submitted_by   TEXT,
+                submitted_at   TEXT,
+                created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at     TEXT
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:
@@ -468,6 +486,7 @@ app.include_router(site_inspections_router)
 app.include_router(safety_incidents_router)
 app.include_router(email_settings_router)
 app.include_router(vehicle_inspections_router)
+app.include_router(safety_pha_router)
 app.include_router(property_hazards_router)
 app.include_router(checkin_router)
 app.include_router(checkin_public_router)

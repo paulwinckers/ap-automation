@@ -99,6 +99,14 @@ export default function EmailSettings() {
           <input style={input} value={s.safety_incident.recipients} onChange={e => upd('safety_incident', { recipients: e.target.value })} placeholder="name@darios.ca, name2@darios.ca" />
         </div>
 
+        {/* Project Hazard Assessment */}
+        <div style={card}>
+          <div style={{ fontWeight: 800, fontSize: 15, color: '#111827', marginBottom: 2 }}>🦺 Project Hazard Assessments (PHA)</div>
+          <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12 }}>Sent when a project hazard assessment is submitted from a project.</div>
+          <label style={label}>Recipients</label>
+          <input style={input} value={s.project_hazard_assessment.recipients} onChange={e => upd('project_hazard_assessment', { recipients: e.target.value })} placeholder="name@darios.ca, name2@darios.ca" />
+        </div>
+
         {/* Vehicle Inspection */}
         <div style={card}>
           <div style={{ fontWeight: 800, fontSize: 15, color: '#111827', marginBottom: 2 }}>🚛 Vehicle Inspections (defects)</div>

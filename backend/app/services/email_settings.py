@@ -33,6 +33,7 @@ _DAILY_REPORT_DIVISION_DEFAULTS: dict[str, str] = {
 def _defaults() -> dict:
     return {
         "safety_incident":     {"recipients": settings.SAFETY_INCIDENT_RECIPIENTS or ""},
+        "project_hazard_assessment": {"recipients": settings.SAFETY_INCIDENT_RECIPIENTS or ""},
         "vehicle_inspection":  {"recipients": settings.VEHICLE_INSPECTION_RECIPIENTS or ""},
         "issues_digest":       {"recipients": settings.ISSUES_DIGEST_MGMT_RECIPIENTS or "",
                                 "enabled": True, "hour": 19, "skip_weekend": True},

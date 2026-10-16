@@ -1595,9 +1595,71 @@ export async function getVehicleInspection(id: number): Promise<VehicleInspectio
   return request('GET', `/vehicle/inspections/${id}`);
 }
 
+// ── Project Hazard Assessment (PHA) ───────────────────────────────────────────
+export interface PHAPhoto { key: string; url: string | null; }
+export interface PHARecord {
+  id:              number;
+  opportunity_id:  number | null;
+  pha_number:      string | null;
+  project_name:    string | null;
+  site_address:    string | null;
+  status:          'draft' | 'submitted';
+  created_by:      string | null;
+  created_at:      string | null;
+  updated_at:      string | null;
+  submitted_at:    string | null;
+  submitted_by:    string | null;
+  payload:         Record<string, unknown>;
+  photos:          PHAPhoto[];
+}
+export interface PHASummary {
+  id:              number;
+  opportunity_id:  number | null;
+  pha_number:      string | null;
+  project_name:    string | null;
+  site_address:    string | null;
+  status:          'draft' | 'submitted';
+  created_by:      string | null;
+  created_at:      string | null;
+  updated_at:      string | null;
+  submitted_at:    string | null;
+  submitted_by:    string | null;
+  photo_count:     number;
+  hazard_count:    number;
+  assessment_date: string | null;
+}
+export async function createPHA(body: { opportunity_id?: number | null; project_name?: string; site_address?: string; created_by?: string; payload?: Record<string, unknown> }): Promise<PHARecord> {
+  return request('POST', '/safety/pha', body);
+}
+export async function updatePHA(id: number, body: { opportunity_id?: number | null; project_name?: string; site_address?: string; payload?: Record<string, unknown> }): Promise<PHARecord> {
+  return request('PUT', `/safety/pha/${id}`, body);
+}
+export async function submitPHA(id: number, submitted_by?: string): Promise<PHARecord> {
+  return request('POST', `/safety/pha/${id}/submit`, { submitted_by });
+}
+export async function getPHA(id: number): Promise<PHARecord> {
+  return request('GET', `/safety/pha/${id}`);
+}
+export async function listPHA(params?: { opportunity_id?: number; status?: string }): Promise<PHASummary[]> {
+  const qs = new URLSearchParams();
+  if (params?.opportunity_id != null) qs.set('opportunity_id', String(params.opportunity_id));
+  if (params?.status) qs.set('status', params.status);
+  const r = await request<{ assessments: PHASummary[] }>('GET', `/safety/pha${qs.toString() ? '?' + qs : ''}`);
+  return r.assessments;
+}
+export async function uploadPHAPhoto(id: number, file: File): Promise<PHAPhoto> {
+  const form = new FormData();
+  form.append('file', file);
+  return request('POST', `/safety/pha/${id}/photo`, form, true);
+}
+export async function deletePHAPhoto(id: number, key: string): Promise<{ ok: boolean }> {
+  return request('DELETE', `/safety/pha/${id}/photo`, { key });
+}
+
 // ── Email settings (timing + distribution) ────────────────────────────────────
 export interface EmailSettings {
   safety_incident:     { recipients: string };
+  project_hazard_assessment: { recipients: string };
   vehicle_inspection:  { recipients: string };
   issues_digest:       { recipients: string; enabled: boolean; hour: number; skip_weekend: boolean };
   project_checkin:     { cc: string; enabled: boolean; hour: number; skip_weekend: boolean };

@@ -38,6 +38,7 @@ const NAV = [
       { label: 'Crew Schedule', path: '/ops/crew-schedule', icon: '👥' },
       { label: 'Safety Talks',  path: '/ops/safety-talks',  icon: '🦺' },
       { label: 'Incident Reports', path: '/ops/safety-incidents', icon: '🚨' },
+      { label: 'Hazard Assessments', path: '/ops/safety-pha', icon: '🦺' },
       { label: 'Vehicle Inspections', path: '/ops/vehicle-inspections', icon: '🚛' },
       { label: 'Documents Admin', path: '/ops/documents',   icon: '🗂️' },
       { label: 'Key Box Admin', path: '/keys/admin',        icon: '🔑' },

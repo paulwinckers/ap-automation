@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import FieldConversations from './FieldConversations';
 import JobPrepChecklist from './JobPrepChecklist';
+import ProjectHazardAssessment from '../components/ProjectHazardAssessment';
 
 
 const API = import.meta.env.VITE_API_URL ?? '';
@@ -477,9 +478,9 @@ export default function FieldProject() {
     return ageMs < 24 * 60 * 60 * 1000;
   }
 
-  // Tab: 'scope' | 'tickets' | 'update' | 'materials' | 'history' | 'conversations'
-  type ProjectTab = 'scope' | 'tickets' | 'update' | 'materials' | 'history' | 'conversations';
-  const validTabs: ProjectTab[] = ['scope', 'tickets', 'update', 'materials', 'history', 'conversations'];
+  // Tab: 'scope' | 'tickets' | 'update' | 'materials' | 'history' | 'conversations' | 'safety'
+  type ProjectTab = 'scope' | 'tickets' | 'update' | 'materials' | 'history' | 'conversations' | 'safety';
+  const validTabs: ProjectTab[] = ['scope', 'tickets', 'update', 'materials', 'history', 'conversations', 'safety'];
   const [tab, setTab] = useState<ProjectTab>(
     _urlTab && validTabs.includes(_urlTab as ProjectTab) ? (_urlTab as ProjectTab) : 'scope'
   );
@@ -879,6 +880,7 @@ export default function FieldProject() {
             { key: 'update',        label: '✏️ Update' },
             { key: 'materials',     label: '🧰 Resources' },
             { key: 'history',       label: `📝 History (${(data.activities || []).filter(a => (a.ActivityType || '').toLowerCase() !== 'email').length + responded + (data.advisor_log || []).length})` },
+            { key: 'safety',        label: '🦺 Safety' },
           ] as const).map(({ key, label }) => (
             <button
               key={key}
@@ -901,6 +903,19 @@ export default function FieldProject() {
         </div>
 
         <div style={{ padding: '20px 16px' }}>
+
+          {/* ── Safety tab (Project Hazard Assessment) ───────────────────── */}
+          {tab === 'safety' && (
+            <ProjectHazardAssessment
+              oppId={data.opportunity_id}
+              prefill={{
+                project_name:    data.opportunity_name,
+                site_address:    data.property_name,
+                job_number:      data.opp_number != null ? String(data.opp_number) : undefined,
+                crew_lead:       data.tickets?.[0]?.CrewLeaderName || undefined,
+              }}
+            />
+          )}
 
           {/* ── Scope tab ────────────────────────────────────────────────── */}
           {tab === 'scope' && (
