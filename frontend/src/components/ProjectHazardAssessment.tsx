@@ -394,6 +394,17 @@ export default function ProjectHazardAssessment({
     setPhotos(prev => prev.filter(ph => ph.key !== key));
   }
 
+  function printPHA() {
+    const html = buildPrintHtml(p, { pha_number: phaNumber, status, photos });
+    const w = window.open('', '_blank');
+    if (!w) { setMsg('❌ Allow pop-ups to print / save as PDF'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    // give images a moment to load before the print dialog
+    setTimeout(() => w.print(), 400);
+  }
+
   if (loading) return <div style={{ padding: 30, textAlign: 'center', color: '#9ca3af' }}>Loading assessment…</div>;
 
   const locked = status === 'submitted';
@@ -411,6 +422,10 @@ export default function ProjectHazardAssessment({
         <span style={{ background: locked ? '#dcfce7' : '#fef3c7', color: locked ? '#15803d' : '#92400e', padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 800 }}>
           {locked ? 'SUBMITTED' : 'DRAFT'}
         </span>
+        <button onClick={printPHA} title="Print or save as PDF"
+          style={{ marginLeft: 'auto', padding: '6px 14px', borderRadius: 8, border: `1.5px solid ${C.navy}`, background: '#fff', color: C.navy, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+          🖨 Print / PDF
+        </button>
       </div>
       <p style={{ margin: '0 0 16px', color: '#6b7280', fontSize: 13 }}>
         Complete BEFORE mobilization. Review with the full crew on Day 1. Save a draft any time and finish later.
@@ -700,6 +715,77 @@ export default function ProjectHazardAssessment({
 }
 
 const delBtn: React.CSSProperties = { background: 'none', border: 'none', color: '#dc2626', fontSize: 14, cursor: 'pointer', fontWeight: 700, flexShrink: 0 };
+
+// ── Print / Save-as-PDF ─────────────────────────────────────────────────────────
+function esc(s: unknown): string {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function buildPrintHtml(p: Payload, meta: { pha_number: string | null; status: string; photos: PHAPhoto[] }): string {
+  const info = p.project_info;
+  const INFO_FIELDS: [string, string][] = [
+    ['Project Name', 'project_name'], ['Work Order / Job #', 'job_number'], ['Assessment Date', 'assessment_date'],
+    ['Site Address', 'site_address'], ['Municipality', 'municipality'], ['Zoning / Property Type', 'zoning'],
+    ['Client', 'client_name'], ['Client Contact', 'client_contact'], ['On-Site Rep', 'onsite_client_rep'],
+    ['Project Manager', 'project_manager'], ['Crew Lead', 'crew_lead'], ['Crew Size', 'crew_size'],
+    ['Planned Start', 'planned_start'], ['Estimated End', 'estimated_end'], ['Duration', 'est_duration'],
+    ['General Contractor / Owner', 'general_contractor'], ["Dario's Role", 'darios_role'],
+  ];
+  const infoRows = INFO_FIELDS.filter(([, k]) => info[k])
+    .map(([lbl, k]) => `<tr><td class="l">${esc(lbl)}</td><td>${esc(info[k])}${k === 'darios_role' && info.darios_role === 'Trade Contractor' && info.trade_under ? ' — under ' + esc(info.trade_under) : ''}</td></tr>`).join('');
+
+  const phases = p.scope_phases.filter(x => x.included)
+    .map(x => `<li>${esc(x.label)}${x.notes ? ` <span class="muted">— ${esc(x.notes)}</span>` : ''}</li>`).join('');
+  const conditions = p.site_conditions.filter(x => x.assessment || x.action)
+    .map(x => `<tr><td class="l">${esc(x.label)}</td><td>${esc(x.assessment)}</td><td>${esc(x.action)}</td></tr>`).join('');
+  const permits = p.permits.filter(x => x.required || x.status)
+    .map(x => `<tr><td class="l">${esc(x.label)}</td><td>${x.required === 'yes' ? 'Required' : x.required === 'na' ? 'N/A' : ''}</td><td>${esc(x.status)}</td><td>${esc(x.responsible)}</td></tr>`).join('');
+  const hazards = p.hazards.filter(x => x.present)
+    .map(x => `<tr><td class="l">${esc(x.label)}${x.swps ? ` <span class="swp">${esc(x.swps)}</span>` : ''}</td><td class="c">${esc(x.risk_before)}</td><td>${esc(x.controls)}</td><td class="c">${esc(x.risk_after)}</td></tr>`).join('');
+  const ppe = p.ppe.filter(x => x.checked).map(x => `<li>${esc(x.label)}</li>`).join('');
+  const em = p.emergency;
+  const emRows = ([['Muster Point', em.muster_point], ['Nearest Cross Street', em.cross_street], ['Nearest Hospital', em.nearest_hospital], ['Nearest Urgent Care', em.nearest_urgent_care], ['PM Cell', em.pm_cell], ['First Aid Attendant', em.first_aid_attendant], ['First Aid Level', em.first_aid_level], ['Kit Location', em.kit_location]] as [string, string][])
+    .filter(([, v]) => v).map(([l, v]) => `<tr><td class="l">${esc(l)}</td><td>${esc(v)}</td></tr>`).join('');
+  const scenarios = em.scenarios.filter(x => x.plan).map(x => `<tr><td class="l">${esc(x.label)}</td><td>${esc(x.plan)}</td></tr>`).join('');
+  const actions = p.action_items.filter(x => x.action)
+    .map(x => `<tr><td>${x.done ? '☑' : '☐'} ${esc(x.action)}</td><td>${esc(x.assigned_to)}</td><td>${esc(x.due_date)}</td></tr>`).join('');
+  const signoffs = p.signoffs.filter(x => x.role || x.name)
+    .map(x => `<tr><td class="l">${esc(x.role)}</td><td>${esc(x.name)}</td><td style="width:140px">${esc(x.date) || '________________'}</td></tr>`).join('');
+  const photos = meta.photos.filter(ph => ph.url).map(ph => `<img src="${esc(ph.url)}" />`).join('');
+
+  const sec = (title: string, body: string) => body ? `<h2>${esc(title)}</h2>${body}` : '';
+  return `<!doctype html><html><head><meta charset="utf-8"><title>PHA ${esc(meta.pha_number || '')}</title>
+  <style>
+    @page { margin: 16mm; }
+    body { font-family: -apple-system, Arial, sans-serif; color: #111; font-size: 12px; line-height: 1.4; }
+    h1 { font-size: 18px; color: #1A5376; margin: 0 0 2px; }
+    h2 { font-size: 13px; color: #fff; background: #1A5376; padding: 5px 9px; border-radius: 4px; margin: 16px 0 8px; }
+    .sub { color: #555; font-size: 12px; margin: 0 0 4px; }
+    .status { display: inline-block; padding: 2px 10px; border-radius: 10px; font-weight: 700; font-size: 11px; background: #dcfce7; color: #15803d; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+    td, th { border: 1px solid #ddd; padding: 5px 8px; vertical-align: top; text-align: left; }
+    td.l { font-weight: 600; color: #333; width: 32%; }
+    td.c { text-align: center; width: 48px; font-weight: 700; }
+    th { background: #eef2f6; font-size: 11px; }
+    ul { margin: 2px 0 8px; padding-left: 20px; } li { margin: 2px 0; }
+    .muted { color: #777; } .swp { color: #7c3aed; font-weight: 700; font-size: 10px; }
+    .photos img { max-width: 30%; max-height: 180px; margin: 4px; border: 1px solid #ccc; border-radius: 4px; }
+    h2, tr, img { page-break-inside: avoid; }
+  </style></head><body>
+    <h1>Project Hazard Assessment</h1>
+    <div class="sub">Dario's Landscape Services &nbsp;|&nbsp; ${esc(meta.pha_number || '')} &nbsp; <span class="status">${meta.status === 'submitted' ? 'SUBMITTED' : 'DRAFT'}</span></div>
+    ${sec('1. Project Information', `<table>${infoRows}</table>`)}
+    ${sec('2. Project Scope & Phases', phases ? `<ul>${phases}</ul>` : '')}
+    ${sec('3. Site Conditions', conditions ? `<table><tr><th>Condition</th><th>Assessment</th><th>Action required</th></tr>${conditions}</table>` : '')}
+    ${sec('4. Permits & Regulatory', permits ? `<table><tr><th>Requirement</th><th>Req.</th><th>Status</th><th>Responsible</th></tr>${permits}</table>` : '')}
+    ${sec('5. Hazard Assessment', hazards ? `<table><tr><th>Hazard</th><th>Before</th><th>Controls</th><th>After</th></tr>${hazards}</table>` : '')}
+    ${sec('6. PPE & Safety Equipment', ppe ? `<ul>${ppe}</ul>` : '')}
+    ${sec('7. Emergency Preparedness', (emRows ? `<table>${emRows}</table>` : '') + (scenarios ? `<table><tr><th>Scenario</th><th>Response plan</th></tr>${scenarios}</table>` : '') + '<div class="muted">WorkSafeBC emergency: 1-888-621-7233</div>')}
+    ${sec('8. Action Items', actions ? `<table><tr><th>Action</th><th>Assigned</th><th>Due</th></tr>${actions}</table>` : '')}
+    ${sec('9. Sign-Off', signoffs ? `<table><tr><th>Role</th><th>Name</th><th>Date</th></tr>${signoffs}</table>` : '')}
+    ${(p.day1.date || p.day1.briefed_by || p.day1.num_workers) ? `<p><b>Day 1 Crew Briefing:</b> ${esc(p.day1.date)} · briefed by ${esc(p.day1.briefed_by)} · ${esc(p.day1.num_workers)} workers</p>` : ''}
+    ${sec('Reference Photos', photos ? `<div class="photos">${photos}</div>` : '')}
+  </body></html>`;
+}
 
 function AddRow({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string) => void }) {
   const [v, setV] = useState('');

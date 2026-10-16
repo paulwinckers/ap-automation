@@ -15,7 +15,7 @@ import ProjectHazardAssessment from '../components/ProjectHazardAssessment';
 
 // opportunity_id → best PHA status for that job (submitted beats draft)
 type PHAStatus = 'outstanding' | 'draft' | 'completed';
-type PHAInfo = { status: PHAStatus; id: number };
+type PHAInfo = { status: PHAStatus; id: number; submitted_at?: string | null };
 type PHAMap = Map<number, PHAInfo>;
 
 function PHABadge({ info, onClick }: { info: PHAInfo | undefined; onClick: () => void }) {
@@ -24,10 +24,11 @@ function PHABadge({ info, onClick }: { info: PHAInfo | undefined; onClick: () =>
     : info?.status === 'draft'
     ? { bg: '#dbeafe', fg: '#1d4ed8', label: '📝 Draft' }
     : { bg: '#fef3c7', fg: '#92400e', label: '⚠ No PHA' };
+  const submittedOn = info?.submitted_at ? new Date(info.submitted_at).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
   return (
     <button
       onClick={e => { e.stopPropagation(); onClick(); }}
-      title={info?.status === 'completed' ? 'PHA submitted — view' : info?.status === 'draft' ? 'PHA in draft — continue' : 'Create project hazard assessment'}
+      title={info?.status === 'completed' ? `PHA submitted${submittedOn ? ' ' + submittedOn : ''} — view` : info?.status === 'draft' ? 'PHA in draft — continue' : 'Create project hazard assessment'}
       style={{
         marginTop: 3, display: 'inline-flex', alignItems: 'center', gap: 4,
         background: cfg.bg, color: cfg.fg, border: 'none', borderRadius: 999,
@@ -539,7 +540,7 @@ export default function ConstructionDashboard() {
         const prev = m.get(a.opportunity_id);
         // submitted beats draft; otherwise keep the most recent (list is newest-first)
         if (!prev || (prev.status !== 'completed' && status === 'completed')) {
-          m.set(a.opportunity_id, { status, id: a.id });
+          m.set(a.opportunity_id, { status, id: a.id, submitted_at: a.submitted_at });
         }
       }
       setPhaMap(m);
