@@ -1655,6 +1655,9 @@ export async function uploadPHAPhoto(id: number, file: File): Promise<PHAPhoto> 
 export async function deletePHAPhoto(id: number, key: string): Promise<{ ok: boolean }> {
   return request('DELETE', `/safety/pha/${id}/photo`, { key });
 }
+export async function deletePHA(id: number): Promise<{ ok: boolean }> {
+  return request('DELETE', `/safety/pha/${id}`);
+}
 
 // ── Email settings (timing + distribution) ────────────────────────────────────
 export interface EmailSettings {

@@ -5,7 +5,7 @@
  * Lists all PHAs, opens one for review/edit, and can create a new one.
  */
 import { useEffect, useState } from 'react';
-import { listPHA, type PHASummary } from '../lib/api';
+import { listPHA, deletePHA, type PHASummary } from '../lib/api';
 import ProjectHazardAssessment from '../components/ProjectHazardAssessment';
 
 function fmt(s: string | null): string {
@@ -27,6 +27,13 @@ export default function SafetyPHAAdmin() {
     try { setRows(await listPHA(statusFilter ? { status: statusFilter } : undefined)); }
     catch (e) { setErr((e as Error).message); }
     finally { setLoading(false); }
+  }
+
+  async function onDelete(e: React.MouseEvent, r: PHASummary) {
+    e.stopPropagation();
+    if (!confirm(`Delete ${r.pha_number || '#' + r.id}${r.project_name ? ' — ' + r.project_name : ''}? This cannot be undone.`)) return;
+    try { await deletePHA(r.id); setRows(prev => prev.filter(x => x.id !== r.id)); }
+    catch (err) { alert((err as Error).message); }
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [statusFilter]);
 
@@ -96,7 +103,10 @@ export default function SafetyPHAAdmin() {
                         <td style={{ padding: '10px 12px', textAlign: 'center', fontSize: 13, color: r.hazard_count ? '#b91c1c' : '#9ca3af', fontWeight: r.hazard_count ? 700 : 400 }}>{r.hazard_count || '—'}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', fontSize: 13, color: '#6b7280' }}>{r.photo_count || '—'}</td>
                         <td style={{ padding: '10px 12px', fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}>{fmt(r.updated_at || r.created_at)}</td>
-                        <td style={{ padding: '10px 12px', textAlign: 'right', color: '#9ca3af', fontSize: 16 }}>›</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <button onClick={e => onDelete(e, r)} title="Delete" style={{ background: 'none', border: 'none', color: '#dc2626', fontSize: 13, cursor: 'pointer', fontWeight: 700, marginRight: 8 }}>Delete</button>
+                          <span style={{ color: '#9ca3af', fontSize: 16 }}>›</span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

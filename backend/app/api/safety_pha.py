@@ -414,6 +414,22 @@ class DeletePhotoBody(BaseModel):
     key: str
 
 
+@router.delete("/{pha_id}")
+async def delete_pha(pha_id: int):
+    """Delete a PHA record (used to remove a mistaken draft). The R2 photo
+    objects are left in place."""
+    db = await _get_db()
+    try:
+        rows = await db._q("SELECT id FROM project_hazard_assessments WHERE id = ?", [pha_id])
+        if not rows:
+            raise HTTPException(404, "PHA not found")
+        await db._x("DELETE FROM project_hazard_assessments WHERE id = ?", [pha_id])
+    finally:
+        await db.close()
+    logger.info("PHA #%s deleted", pha_id)
+    return {"ok": True, "id": pha_id}
+
+
 @router.delete("/{pha_id}/photo")
 async def delete_pha_photo(pha_id: int, body: DeletePhotoBody):
     """Remove a photo reference from the PHA (the R2 object is left in place)."""
