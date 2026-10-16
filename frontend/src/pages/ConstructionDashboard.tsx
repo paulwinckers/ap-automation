@@ -686,6 +686,37 @@ export default function ConstructionDashboard() {
               </div>
             </div>
 
+            {/* PHA safety summary — across active jobs (in production + in queue) */}
+            {(() => {
+              const active = [...(data.in_production_jobs || []), ...(data.in_queue_jobs || [])];
+              const total = active.length;
+              if (!total) return null;
+              let done = 0, draft = 0;
+              for (const j of active) {
+                const st = phaMap.get(j.OpportunityID)?.status;
+                if (st === 'completed') done++;
+                else if (st === 'draft') draft++;
+              }
+              const outstanding = total - done - draft;
+              const pill = (bg: string, fg: string, label: string, n: number) => (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: bg, color: fg, padding: '4px 12px', borderRadius: 999, fontSize: 13, fontWeight: 800 }}>
+                  <span style={{ fontSize: 15 }}>{n}</span>{label}
+                </span>
+              );
+              return (
+                <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', padding: '14px 18px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', textTransform: 'uppercase', letterSpacing: 0.4 }}>🦺 Hazard Assessments</div>
+                  <div style={{ fontSize: 13, color: '#6b7280' }}>{done + draft} of {total} active jobs started</div>
+                  <div style={{ flex: 1 }} />
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {outstanding > 0 && pill('#fef3c7', '#92400e', 'outstanding', outstanding)}
+                    {draft > 0 && pill('#dbeafe', '#1d4ed8', 'draft', draft)}
+                    {pill('#dcfce7', '#15803d', 'submitted', done)}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Search bar */}
             <div style={{ position: 'relative', marginBottom: 20 }}>
               <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', fontSize: 16, color: '#9ca3af', pointerEvents: 'none' }}>🔍</span>
