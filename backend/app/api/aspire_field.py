@@ -58,6 +58,114 @@ def _html_to_text(s: str) -> str:
     return s.strip()
 
 
+@router.get("/pha-prefill/{opportunity_id}")
+async def pha_prefill(opportunity_id: int):
+    """Resolve client / property details from Aspire to pre-fill a Project Hazard
+    Assessment: client name + contact, on-site rep, site address, municipality,
+    zoning, and project manager. Best-effort — any lookup that fails just leaves
+    that field blank rather than erroring the whole call."""
+    _check_credentials()
+
+    def _first(d: dict, *keys):
+        for k in keys:
+            v = d.get(k)
+            if v not in (None, ""):
+                return v
+        return None
+
+    # ── 1. Opportunity (fetch the full row; no $select to avoid field-name guessing)
+    opp: dict = {}
+    try:
+        res = await _aspire._get("Opportunities", {
+            "$filter": f"OpportunityID eq {opportunity_id}", "$top": "1",
+        })
+        rows = _aspire._extract_list(res)
+        if rows:
+            opp = rows[0]
+    except Exception as e:
+        logger.warning(f"PHA prefill: opportunity {opportunity_id} fetch failed: {e}")
+
+    property_id = _first(opp, "PropertyID")
+    out = {
+        "project_name":    _first(opp, "OpportunityName"),
+        "project_manager": _first(opp, "OperationsManagerContactName"),
+        "client_name":     _first(opp, "BillingCompanyName", "CompanyName"),
+        "site_address":    None, "municipality": None, "zoning": None,
+        "client_contact":  None, "onsite_client_rep": None,
+    }
+
+    # ── 2. Property → address, city (municipality), zoning, and its contacts
+    prop: dict = {}
+    if property_id:
+        try:
+            pres = await _aspire._get("Properties", {
+                "$filter": f"PropertyID eq {property_id}", "$top": "1",
+            })
+            prows = _aspire._extract_list(pres)
+            if prows:
+                prop = prows[0]
+        except Exception as e:
+            logger.warning(f"PHA prefill: property {property_id} fetch failed: {e}")
+
+    if prop:
+        addr_parts = [
+            prop.get("PropertyAddressLine1") or "",
+            prop.get("PropertyAddressCity") or "",
+            prop.get("PropertyAddressStateProvinceCode") or "",
+            prop.get("PropertyAddressZipCode") or "",
+        ]
+        out["site_address"] = ", ".join(x for x in addr_parts if x) or _first(opp, "PropertyName")
+        out["municipality"] = prop.get("PropertyAddressCity") or None
+        # Zoning isn't a standard field name — scan for a zoning / property-type key.
+        for k, v in prop.items():
+            if v and isinstance(v, str) and ("zon" in k.lower() or k.lower() in ("propertytype", "propertytypename")):
+                out["zoning"] = v
+                break
+        if not out["client_name"]:
+            out["client_name"] = prop.get("CompanyName") or None
+    else:
+        out["site_address"] = out["site_address"] or _first(opp, "PropertyName")
+
+    # ── 3. Primary property contact → name + phone/email
+    contacts = prop.get("PropertyContacts") or []
+    primary = None
+    for pc in contacts:
+        if pc.get("PrimaryContact"):
+            primary = pc; break
+    if not primary:
+        for pc in contacts:
+            if pc.get("BillingContact"):
+                primary = pc; break
+    if not primary and contacts:
+        primary = contacts[0]
+
+    if primary:
+        cname = (primary.get("ContactName") or "").strip()
+        out["onsite_client_rep"] = cname or None
+        cid = primary.get("ContactID")
+        detail = {}
+        if cid:
+            try:
+                cres = await _aspire._get("Contacts", {
+                    "$filter": f"ContactID eq {cid}",
+                    "$select": "ContactID,MobilePhone,OfficePhone,HomePhone,Email,CompanyName",
+                    "$top": "1",
+                })
+                crows = _aspire._extract_list(cres)
+                if crows:
+                    detail = crows[0]
+            except Exception as e:
+                logger.warning(f"PHA prefill: contact {cid} fetch failed: {e}")
+        phone = _first(detail, "MobilePhone", "OfficePhone", "HomePhone")
+        email = detail.get("Email")
+        bits = [b for b in [cname, phone, email] if b]
+        out["client_contact"] = " · ".join(bits) if bits else (cname or None)
+        if not out["client_name"]:
+            out["client_name"] = detail.get("CompanyName") or cname or None
+
+    return out
+
+
 @router.get("/contact-lookup")
 async def contact_lookup(q: str = Query(..., min_length=2)):
     """

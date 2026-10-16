@@ -12,7 +12,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import {
-  createPHA, updatePHA, submitPHA, getPHA, listPHA,
+  createPHA, updatePHA, submitPHA, getPHA, listPHA, getPHAPrefill,
   uploadPHAPhoto, deletePHAPhoto,
   type PHARecord, type PHAPhoto,
 } from '../lib/api';
@@ -283,6 +283,25 @@ export default function ProjectHazardAssessment({
           setPhaId(rec.id); setPhaNumber(rec.pha_number); setStatus(rec.status);
           setP(mergePayload(rec.payload as Partial<Payload>, prefill));
           setPhotos(rec.photos || []);
+        } else if (oppId != null) {
+          // Fresh PHA — pull client / property details from Aspire into blank fields.
+          try {
+            const pf = await getPHAPrefill(oppId);
+            if (cancelled) return;
+            setP(prev => {
+              const info = { ...prev.project_info };
+              const fill = (k: string, v: string | null | undefined) => { if (v && !info[k]) info[k] = v; };
+              fill('project_name', pf.project_name);
+              fill('project_manager', pf.project_manager);
+              fill('client_name', pf.client_name);
+              fill('client_contact', pf.client_contact);
+              fill('onsite_client_rep', pf.onsite_client_rep);
+              fill('site_address', pf.site_address);
+              fill('municipality', pf.municipality);
+              fill('zoning', pf.zoning);
+              return { ...prev, project_info: info };
+            });
+          } catch { /* prefill is best-effort */ }
         }
       } catch (e) {
         if (!cancelled) setMsg(`Could not load: ${(e as Error).message}`);

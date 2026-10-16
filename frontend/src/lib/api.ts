@@ -1658,6 +1658,14 @@ export async function deletePHAPhoto(id: number, key: string): Promise<{ ok: boo
 export async function deletePHA(id: number): Promise<{ ok: boolean }> {
   return request('DELETE', `/safety/pha/${id}`);
 }
+export interface PHAPrefill {
+  project_name: string | null; project_manager: string | null;
+  client_name: string | null; client_contact: string | null; onsite_client_rep: string | null;
+  site_address: string | null; municipality: string | null; zoning: string | null;
+}
+export async function getPHAPrefill(oppId: number): Promise<PHAPrefill> {
+  return request('GET', `/aspire/field/pha-prefill/${oppId}`);
+}
 
 // ── Database backups (D1 → R2) ─────────────────────────────────────────────────
 export interface BackupFile { key: string; bytes: number; last_modified: string | null; }
