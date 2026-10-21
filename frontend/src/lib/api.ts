@@ -1739,6 +1739,42 @@ export async function deleteLabel(id: number): Promise<{ ok: boolean }> {
 export async function getJobScope(oppId: number): Promise<{ opportunity_id: number; scope: string }> {
   return request('GET', `/construction/schedule/job/${oppId}/scope`);
 }
+
+// ── Client Experience (comms) ─────────────────────────────────────────────────
+export interface CxSettings {
+  scheduler_name: string; scheduler_email: string; supervisor_name: string; supervisor_email: string;
+  designer_name: string; designer_email: string; sales_name: string; sales_email: string;
+  company_phone: string; survey_link: string; review_link: string;
+}
+export interface CxTemplate {
+  id: number; key: string; title: string; subject: string; body?: string; from_role: string;
+  cc?: string; optional: boolean; stage_order: number; active?: boolean;
+  sent_count?: number; last_sent_at?: string | null;
+}
+export interface CxProject {
+  opportunity_id: number; context: Record<string, string>; templates: CxTemplate[];
+  sends: { template_key: string; subject: string; to_addresses: string; from_name: string; sent_by: string | null; sent_at: string }[];
+}
+export interface CxRender {
+  template_key: string; subject: string; body: string; to: string; cc: string;
+  from_email: string; from_name: string; from_role: string;
+}
+export async function getCxSettings(): Promise<CxSettings> { return request('GET', '/construction/cx/settings'); }
+export async function saveCxSettings(s: Partial<CxSettings>): Promise<CxSettings> { return request('PUT', '/construction/cx/settings', s); }
+export async function listCxTemplates(): Promise<CxTemplate[]> {
+  const r = await request<{ templates: CxTemplate[] }>('GET', '/construction/cx/templates');
+  return r.templates;
+}
+export async function updateCxTemplate(id: number, body: Partial<Pick<CxTemplate, 'title' | 'subject' | 'body' | 'from_role' | 'cc' | 'active'>>): Promise<{ ok: boolean }> {
+  return request('PUT', `/construction/cx/templates/${id}`, body);
+}
+export async function getProjectCx(oppId: number): Promise<CxProject> { return request('GET', `/construction/cx/project/${oppId}`); }
+export async function renderCxEmail(oppId: number, template_key: string, overrides?: Record<string, string>): Promise<CxRender> {
+  return request('POST', `/construction/cx/project/${oppId}/render`, { template_key, overrides });
+}
+export async function sendCxEmail(oppId: number, p: { template_key: string; subject: string; body: string; to: string; cc?: string; from_email: string; from_name: string; from_role?: string; sent_by?: string }): Promise<{ ok: boolean }> {
+  return request('POST', `/construction/cx/project/${oppId}/send`, p);
+}
 export async function archiveJob(opportunity_id: number): Promise<{ ok: boolean }> {
   return request('POST', '/construction/schedule/archive', { opportunity_id });
 }

@@ -14,6 +14,7 @@ import {
 } from '../lib/api';
 import JobPrepChecklist from './JobPrepChecklist';
 import ProjectHazardAssessment from '../components/ProjectHazardAssessment';
+import { ClientCommsModal, CxSetupModal } from '../components/ClientComms';
 
 // opportunity_id → best PHA status (submitted beats draft)
 type PHAStatus = 'outstanding' | 'draft' | 'completed';
@@ -674,6 +675,8 @@ export default function ConstructionPlan() {
   const [phaMap,        setPhaMap]        = useState<PHAMap>(new Map());
   const [phaModalJob,   setPhaModalJob]   = useState<PlanJob | null>(null);
   const [view,          setView]          = useState<'pipeline' | 'monthly'>('pipeline');
+  const [commsJob,      setCommsJob]      = useState<PlanJob | null>(null);
+  const [showCxSetup,   setShowCxSetup]   = useState(false);
   const activeMonthRef = useRef(month);
 
   const load = useCallback(async () => {
@@ -1184,6 +1187,9 @@ export default function ConstructionPlan() {
           </button>
           {/* PHA */}
           <PHABadge info={phaMap.get(j.opportunity_id)} onClick={() => setPhaModalJob(j)} />
+          {/* Client comms */}
+          <button onClick={() => setCommsJob(j)} title="Client comms — send a touchpoint"
+            style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '2px 8px', fontSize: 12, cursor: 'pointer', color: '#6b7280' }}>✉️</button>
           {/* Revenue */}
           <div style={{ fontSize: 12, color: '#6b7280', minWidth: 80, textAlign: 'right' }}>{fmt$(j.revenue_est || j.revenue_est_month || 0)}</div>
         </div>
@@ -1267,6 +1273,7 @@ export default function ConstructionPlan() {
             <a href="/dashboards/construction/board" style={{ ...secondaryBtn, textDecoration: 'none', display: 'inline-block' }}>📅 Weekly Board</a>
             <button onClick={() => setShowLeads(true)}   style={secondaryBtn}>👷 Leads</button>
             <button onClick={() => setShowCheckin(true)} style={secondaryBtn}>📤 Check-ins</button>
+            <button onClick={() => setShowCxSetup(true)} style={secondaryBtn}>✉️ Comms</button>
             <button onClick={() => setShowGoal(true)}    style={secondaryBtn}>⚙️ Goals</button>
             <button onClick={() => setShowAdd(true)}     style={primaryBtn}>+ Add Job</button>
           </div>
@@ -1470,6 +1477,8 @@ export default function ConstructionPlan() {
       )}
       {showLeads && <LeadsModal onClose={() => setShowLeads(false)} />}
       {showCheckin && <CheckinStatusPanel month={month} onClose={() => setShowCheckin(false)} />}
+      {showCxSetup && <CxSetupModal onClose={() => setShowCxSetup(false)} />}
+      {commsJob && <ClientCommsModal oppId={commsJob.opportunity_id} jobName={commsJob.property_name || commsJob.opportunity_name} onClose={() => setCommsJob(null)} />}
 
       {/* PHA modal — create / review a project hazard assessment for a job */}
       {phaModalJob && (

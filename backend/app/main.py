@@ -41,6 +41,7 @@ from app.api.email_settings_api import router as email_settings_router
 from app.api.vehicle_inspections import router as vehicle_inspections_router
 from app.api.safety_pha import router as safety_pha_router
 from app.api.schedule import router as schedule_router
+from app.api.cx import router as cx_router
 from app.api.backup import router as backup_router, start_backup_scheduler, stop_backup_scheduler
 from app.api.property_hazards import router as property_hazards_router
 from app.api.project_checkin import (
@@ -310,6 +311,35 @@ async def lifespan(app: FastAPI):
                 updated_at     TEXT
             )
         """,
+        "cx_templates": """
+            CREATE TABLE IF NOT EXISTS cx_templates (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                key         TEXT UNIQUE NOT NULL,
+                title       TEXT,
+                stage_order INTEGER DEFAULT 0,
+                subject     TEXT,
+                body        TEXT,
+                from_role   TEXT,
+                cc          TEXT,
+                optional    INTEGER DEFAULT 0,
+                active      INTEGER NOT NULL DEFAULT 1,
+                updated_at  TEXT
+            )
+        """,
+        "cx_sends": """
+            CREATE TABLE IF NOT EXISTS cx_sends (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                opportunity_id INTEGER NOT NULL,
+                template_key   TEXT,
+                subject        TEXT,
+                to_addresses   TEXT,
+                cc             TEXT,
+                from_email     TEXT,
+                from_name      TEXT,
+                sent_by        TEXT,
+                sent_at        TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
         "schedule_crew": """
             CREATE TABLE IF NOT EXISTS schedule_crew (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -549,6 +579,7 @@ app.include_router(email_settings_router)
 app.include_router(vehicle_inspections_router)
 app.include_router(safety_pha_router)
 app.include_router(schedule_router)
+app.include_router(cx_router)
 app.include_router(backup_router)
 app.include_router(property_hazards_router)
 app.include_router(checkin_router)
