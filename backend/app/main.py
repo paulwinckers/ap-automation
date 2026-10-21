@@ -330,6 +330,7 @@ async def lifespan(app: FastAPI):
                 include_friday INTEGER DEFAULT 0,
                 employees      TEXT,
                 note           TEXT,
+                status         TEXT NOT NULL DEFAULT 'tentative',
                 created_by     TEXT,
                 created_at     TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at     TEXT
@@ -402,6 +403,8 @@ async def lifespan(app: FastAPI):
         ("company_documents", "folder", "ALTER TABLE company_documents ADD COLUMN folder TEXT"),
         # company_documents.folder_id — FK into document_folders (nested folder tree)
         ("company_documents", "folder_id", "ALTER TABLE company_documents ADD COLUMN folder_id INTEGER"),
+        # schedule_blocks.status — tentative (movable) vs confirmed (locked)
+        ("schedule_blocks", "status", "ALTER TABLE schedule_blocks ADD COLUMN status TEXT DEFAULT 'tentative'"),
     ]
     for tbl, col, sql in _COLUMN_MIGRATIONS:
         try:

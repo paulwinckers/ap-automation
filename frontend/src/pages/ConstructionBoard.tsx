@@ -13,7 +13,7 @@ import { Link } from 'react-router-dom';
 import {
   getScheduleWeek, createBlock, updateBlock, deleteBlock, createLabel, deleteLabel,
   listCrew, addCrew, updateCrew, deleteCrew,
-  type ScheduleWeek, type ScheduleBlock, type ScheduleBacklogJob, type BlockInput, type CrewMember,
+  type ScheduleWeek, type ScheduleBlock, type ScheduleBacklogJob, type BlockInput, type CrewMember, type ScheduleStatus,
 } from '../lib/api';
 
 const NAVY = '#1A5376';
@@ -54,6 +54,7 @@ type Draft = {
   mode: 'create' | 'edit'; id?: number;
   opportunity_id: number | null; job_label: string; start_date: string;
   hours: string; hours_per_day: string; include_friday: boolean; employees: Set<string>; note: string;
+  status: ScheduleStatus;
 };
 
 export default function ConstructionBoard() {
@@ -113,13 +114,13 @@ export default function ConstructionBoard() {
   function openCreate(job: ScheduleBacklogJob, startDate: string, row?: string) {
     setDraft({ mode: 'create', opportunity_id: job.opportunity_id, job_label: job.label, start_date: startDate,
       hours: job.hours_est != null ? String(job.hours_est) : '', hours_per_day: '10', include_friday: false,
-      employees: new Set(row && activeCrewNames.includes(row) ? [row] : row ? [row] : []), note: '' });
+      employees: new Set(row ? [row] : []), note: '', status: 'tentative' });
   }
   function openEdit(b: ScheduleBlock) {
     setCtx(null);
     setDraft({ mode: 'edit', id: b.id, opportunity_id: b.opportunity_id, job_label: b.job_label, start_date: b.start_date,
       hours: b.hours != null ? String(b.hours) : '', hours_per_day: String(b.hours_per_day || 10),
-      include_friday: b.include_friday, employees: new Set(b.employees), note: b.note || '' });
+      include_friday: b.include_friday, employees: new Set(b.employees), note: b.note || '', status: b.status });
   }
 
   async function saveDraft() {
@@ -129,7 +130,7 @@ export default function ConstructionBoard() {
     const payload: BlockInput = {
       opportunity_id: draft.opportunity_id, job_label: draft.job_label, start_date: draft.start_date,
       hours: draft.hours ? Number(draft.hours) : null, hours_per_day: Number(draft.hours_per_day) || 10,
-      include_friday: draft.include_friday, employees: Array.from(draft.employees), note: draft.note };
+      include_friday: draft.include_friday, employees: Array.from(draft.employees), note: draft.note, status: draft.status };
     try {
       if (draft.mode === 'create') await createBlock(payload); else await updateBlock(draft.id!, payload);
       setDraft(null); await reloadKeepBacklog();
@@ -137,7 +138,12 @@ export default function ConstructionBoard() {
   }
   async function toggleFridays(b: ScheduleBlock) { setCtx(null); setBusy(true); try { await updateBlock(b.id, { include_friday: !b.include_friday }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
   async function removeBlock(b: ScheduleBlock) { setCtx(null); setBusy(true); try { await deleteBlock(b.id); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
-  async function moveStart(b: ScheduleBlock, delta: number) { setCtx(null); setBusy(true); try { await updateBlock(b.id, { start_date: addDays(b.start_date, delta) }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
+  async function moveStart(b: ScheduleBlock, delta: number) {
+    setCtx(null);
+    if (b.status === 'confirmed' && !window.confirm('This job is confirmed (locked). Move it anyway?')) return;
+    setBusy(true); try { await updateBlock(b.id, { start_date: addDays(b.start_date, delta) }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  async function setStatus(b: ScheduleBlock, status: ScheduleStatus) { setCtx(null); setBusy(true); try { await updateBlock(b.id, { status }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
   async function addLabel(row: string, day: string) {
     const label = window.prompt('Label for this cell (e.g. Away, Shop, Vacation):'); if (!label || !label.trim()) return;
     setBusy(true); try { await createLabel({ work_date: day, lead_name: row, job_label: label.trim() }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
@@ -175,13 +181,14 @@ export default function ConstructionBoard() {
                     {here.map(b => {
                       const c = blockColor(b.id);
                       const isStart = b.dates[0] === day;
+                      const confirmed = b.status === 'confirmed';
                       return (
                         <div key={b.id}
                           onContextMenu={e => { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, block: b }); }}
                           onClick={() => openEdit(b)}
-                          title={`${b.job_label}${b.hours ? ` · ${b.hours}h` : ''} · ${b.days_needed} day(s) · right-click to edit`}
-                          style={{ background: c.bg, color: c.fg, borderLeft: `3px solid ${c.border}`, borderRadius: 5, padding: '3px 6px', marginBottom: 4, fontSize: 12, fontWeight: 700, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {isStart ? b.job_label : <span style={{ opacity: 0.75 }}>↳ {b.job_label}</span>}
+                          title={`${b.job_label}${b.hours ? ` · ${b.hours}h` : ''} · ${b.days_needed} day(s) · ${confirmed ? 'CONFIRMED (locked)' : 'tentative'} · right-click to edit`}
+                          style={{ background: c.bg, color: c.fg, border: confirmed ? `1.5px solid ${c.border}` : `1px dashed ${c.border}`, borderLeft: `3px solid ${c.border}`, borderRadius: 5, padding: '3px 6px', marginBottom: 4, fontSize: 12, fontWeight: 700, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {confirmed && '🔒 '}{isStart ? b.job_label : <span style={{ opacity: 0.75 }}>↳ {b.job_label}</span>}
                         </div>
                       );
                     })}
@@ -229,7 +236,7 @@ export default function ConstructionBoard() {
       {week && (
         <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
           <div style={{ width: 240, flexShrink: 0, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 12, maxHeight: '82vh', overflowY: 'auto', position: 'sticky', top: 12 }}>
-            <div style={{ fontWeight: 800, fontSize: 13, color: '#0f172a', marginBottom: 8 }}>📥 Backlog <span style={{ color: '#9ca3af', fontWeight: 500 }}>({backlog.length})</span></div>
+            <div style={{ fontWeight: 800, fontSize: 13, color: '#0f172a', marginBottom: 8 }}>📥 Unscheduled <span style={{ color: '#9ca3af', fontWeight: 500 }}>({backlog.length})</span></div>
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search jobs…" style={{ width: '100%', boxSizing: 'border-box', padding: '7px 9px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, marginBottom: 10 }} />
             {backlog.map(j => (
               <div key={j.opportunity_id} draggable onDragStart={() => { drag.current = j; }} onClick={() => openCreate(j, days[0])}
@@ -243,6 +250,11 @@ export default function ConstructionBoard() {
           </div>
 
           <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 10, fontSize: 12, color: '#6b7280', alignItems: 'center' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><span style={{ width: 20, height: 12, borderRadius: 4, border: '1px dashed #64748b', background: '#e2e8f0' }} /> Tentative (movable)</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><span style={{ width: 20, height: 12, borderRadius: 4, border: '1.5px solid #64748b', background: '#e2e8f0' }} /> 🔒 Confirmed (locked)</span>
+              <span>· Unscheduled jobs sit in the list on the left.</span>
+            </div>
             {chunk(days, 6).map((slice, i) => renderGrid(slice, i))}
             <div style={{ fontSize: 11, color: '#9ca3af' }}>* Fridays are off by default — enable per job when scheduling or via right-click.</div>
           </div>
@@ -253,6 +265,9 @@ export default function ConstructionBoard() {
         <div style={{ position: 'fixed', top: ctx.y, left: ctx.x, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 1200, minWidth: 200, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
           {[
             { label: '✏️ Edit job…', fn: () => openEdit(ctx.block) },
+            ctx.block.status === 'confirmed'
+              ? { label: '🔓 Unlock (set tentative)', fn: () => setStatus(ctx.block, 'tentative') }
+              : { label: '✅ Confirm (lock)', fn: () => setStatus(ctx.block, 'confirmed') },
             { label: ctx.block.include_friday ? '📅 Fridays: on → turn off' : '📅 Add Fridays', fn: () => toggleFridays(ctx.block) },
             { label: '◀ Move start earlier (1 day)', fn: () => moveStart(ctx.block, -1) },
             { label: '▶ Move start later (1 day)', fn: () => moveStart(ctx.block, 1) },
@@ -300,9 +315,14 @@ function BlockModal({ draft, setDraft, crew, onSave, busy }: {
               {crew.length === 0 && <div style={{ color: '#9ca3af', fontSize: 13 }}>No crew in the roster.</div>}
             </div>
           </div>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#374151' }}>
-            <input type="checkbox" checked={draft.include_friday} onChange={e => setDraft({ ...draft, include_friday: e.target.checked })} />Work Fridays on this job
-          </label>
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#374151' }}>
+              <input type="checkbox" checked={draft.include_friday} onChange={e => setDraft({ ...draft, include_friday: e.target.checked })} />Work Fridays on this job
+            </label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#374151' }}>
+              <input type="checkbox" checked={draft.status === 'confirmed'} onChange={e => setDraft({ ...draft, status: e.target.checked ? 'confirmed' : 'tentative' })} />🔒 Confirmed (locked — don't move)
+            </label>
+          </div>
           <div style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#374151' }}>
             {empCount === 0 ? 'Pick at least one employee to see the span.'
               : <><b>{dates.length} working day{dates.length === 1 ? '' : 's'}</b> · {fmtDay(dates[0])} → {fmtDay(dates[dates.length - 1])}<span style={{ color: '#9ca3af' }}> ({draft.hours || '0'}h ÷ {empCount} × {draft.hours_per_day || 10}h/day)</span></>}

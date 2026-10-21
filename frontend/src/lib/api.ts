@@ -1670,10 +1670,11 @@ export async function getPHAPrefill(oppId: number): Promise<PHAPrefill> {
 // ── Construction Weekly Schedule board ────────────────────────────────────────
 export interface ScheduleCrew { id?: number; name: string; }
 export interface CrewMember { id: number; name: string; active: boolean; sort_order: number; }
+export type ScheduleStatus = 'tentative' | 'confirmed';
 export interface ScheduleBlock {
   id: number; opportunity_id: number | null; job_label: string; start_date: string;
   hours: number | null; hours_per_day: number; include_friday: boolean;
-  employees: string[]; note: string | null;
+  employees: string[]; note: string | null; status: ScheduleStatus;
   dates: string[]; days_needed: number; end_date: string;
 }
 export interface ScheduleLabel {
@@ -1709,7 +1710,7 @@ export async function deleteCrew(id: number): Promise<{ ok: boolean }> {
 export type BlockInput = {
   opportunity_id?: number | null; job_label: string; start_date: string;
   hours?: number | null; hours_per_day?: number; include_friday?: boolean;
-  employees?: string[]; note?: string;
+  employees?: string[]; note?: string; status?: ScheduleStatus;
 };
 export async function createBlock(body: BlockInput): Promise<ScheduleBlock> {
   return request('POST', '/construction/schedule/block', body);

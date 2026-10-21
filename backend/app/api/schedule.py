@@ -102,6 +102,7 @@ def _shape_block(r: dict) -> dict:
         "include_friday": inc_fri,
         "employees": employees,
         "note": r.get("note"),
+        "status": r.get("status") or "tentative",
         "dates": dates,
         "days_needed": len(dates),
         "end_date": dates[-1] if dates else r.get("start_date"),
@@ -244,10 +245,18 @@ async def get_week(start: Optional[str] = Query(None), weeks: int = Query(1)):
             "id": r["id"], "work_date": r["work_date"], "lead_name": r["lead_name"],
             "job_label": r.get("job_label"), "note": r.get("note"),
         } for r in (_row(x) for x in asg_rows)]
+
+        # Any job that already has a block (anywhere, any week) is "scheduled" and
+        # drops out of the unscheduled backlog.
+        try:
+            sched = await db._q("SELECT DISTINCT opportunity_id FROM schedule_blocks WHERE opportunity_id IS NOT NULL", [])
+            scheduled_ids = {r["opportunity_id"] for r in sched}
+        except Exception:
+            scheduled_ids = set()
     finally:
         await db.close()
 
-    backlog = await _backlog()
+    backlog = [j for j in await _backlog() if j.get("opportunity_id") not in scheduled_ids]
     return {"week_start": mon.isoformat(), "days": days, "crew": crew,
             "blocks": blocks, "labels": labels, "backlog": backlog}
 
@@ -288,23 +297,25 @@ class BlockBody(BaseModel):
     include_friday: bool = False
     employees:      list[str] = []
     note:           Optional[str] = None
+    status:         str = "tentative"
 
 
 @router.post("/block")
 async def create_block(body: BlockBody):
     if not body.job_label or not body.start_date:
         raise HTTPException(400, "job_label and start_date are required")
+    status = body.status if body.status in ("tentative", "confirmed") else "tentative"
     db = await _db()
     try:
         rows = await db._q(
             """INSERT INTO schedule_blocks
-               (opportunity_id, job_label, start_date, hours, hours_per_day, include_friday, employees, note, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+               (opportunity_id, job_label, start_date, hours, hours_per_day, include_friday, employees, note, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
                RETURNING *""",
             [body.opportunity_id, body.job_label.strip(), body.start_date[:10],
              body.hours, body.hours_per_day or DEFAULT_HOURS_PER_DAY,
              1 if body.include_friday else 0, json.dumps(body.employees or []),
-             (body.note or "").strip() or None],
+             (body.note or "").strip() or None, status],
         )
         return _shape_block(_row(rows[0]))
     finally:
@@ -319,6 +330,7 @@ class BlockPatch(BaseModel):
     include_friday: Optional[bool] = None
     employees:      Optional[list[str]] = None
     note:           Optional[str] = None
+    status:         Optional[str] = None
 
 
 @router.put("/block/{block_id}")
@@ -331,6 +343,8 @@ async def update_block(block_id: int, body: BlockPatch):
     if body.include_friday is not None:sets.append("include_friday = ?");params.append(1 if body.include_friday else 0)
     if body.employees is not None:     sets.append("employees = ?");     params.append(json.dumps(body.employees))
     if body.note is not None:          sets.append("note = ?");          params.append((body.note or "").strip() or None)
+    if body.status is not None and body.status in ("tentative", "confirmed"):
+        sets.append("status = ?"); params.append(body.status)
     params.append(block_id)
     db = await _db()
     try:
