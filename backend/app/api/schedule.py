@@ -34,11 +34,16 @@ logger = logging.getLogger(__name__)
 _aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)
 DEFAULT_HOURS_PER_DAY = 10.0
 
+# Shared, connect-once DB. A fresh Database()+connect() per request re-runs the
+# entire schema.sql over D1 (dozens of HTTP round-trips ≈ 8s/request); reusing a
+# single connected instance makes each call fast.
+_DB = Database()
+
 
 async def _db() -> Database:
-    db = Database()
-    await db.connect()
-    return db
+    if _DB._db is None:
+        await _DB.connect()
+    return _DB
 
 
 def _row(r) -> dict:
@@ -111,12 +116,20 @@ def _shape_block(r: dict) -> dict:
 
 # ── Crew roster (portal-owned, independent of Aspire) ─────────────────────────────
 
+_crew_seeded = False
+
+
 async def _ensure_crew_seeded(db: Database) -> None:
     """On first use, seed the schedule crew from the existing construction leads
-    so the board isn't empty. After that the roster is managed in the portal."""
+    so the board isn't empty. After that the roster is managed in the portal.
+    Runs at most once per process."""
+    global _crew_seeded
+    if _crew_seeded:
+        return
     try:
         existing = await db._q("SELECT COUNT(*) AS n FROM schedule_crew", [])
         if existing and (existing[0].get("n") or 0) > 0:
+            _crew_seeded = True
             return
         leads = await db._q("SELECT aspire_name, display_name FROM construction_leads ORDER BY aspire_name", [])
         seen = set()
@@ -130,6 +143,7 @@ async def _ensure_crew_seeded(db: Database) -> None:
             i += 1
         if i:
             logger.info(f"schedule: seeded {i} crew from construction_leads")
+        _crew_seeded = True
     except Exception as e:
         logger.warning(f"schedule crew seed skipped: {e}")
 
@@ -148,7 +162,7 @@ async def list_crew(include_inactive: bool = Query(False)):
         rows = await db._q(f"SELECT id, name, active, sort_order FROM schedule_crew {where} ORDER BY active DESC, sort_order, name", [])
         return {"crew": [{"id": r["id"], "name": r["name"], "active": bool(r["active"]), "sort_order": r.get("sort_order") or 0} for r in rows]}
     finally:
-        await db.close()
+        pass  # shared connection — do not close
 
 
 class CrewBody(BaseModel):
@@ -167,7 +181,7 @@ async def add_crew(body: CrewBody):
         rows = await db._q("INSERT INTO schedule_crew (name, active, sort_order) VALUES (?, 1, ?) RETURNING id", [name, order])
         return {"id": rows[0]["id"], "name": name, "active": True}
     finally:
-        await db.close()
+        pass  # shared connection — do not close
 
 
 class CrewPatch(BaseModel):
@@ -184,7 +198,7 @@ async def delete_crew(crew_id: int):
         await db._x("DELETE FROM schedule_crew WHERE id = ?", [crew_id])
         return {"ok": True, "id": crew_id}
     finally:
-        await db.close()
+        pass  # shared connection — do not close
 
 
 @router.put("/crew/{crew_id}")
@@ -200,7 +214,7 @@ async def update_crew(crew_id: int, body: CrewPatch):
         await db._x(f"UPDATE schedule_crew SET {', '.join(sets)} WHERE id = ?", params)
         return {"ok": True, "id": crew_id}
     finally:
-        await db.close()
+        pass  # shared connection — do not close
 
 
 # ── Week view ───────────────────────────────────────────────────────────────────
@@ -254,7 +268,7 @@ async def get_week(start: Optional[str] = Query(None), weeks: int = Query(1)):
         except Exception:
             scheduled_ids = set()
     finally:
-        await db.close()
+        pass  # shared connection — do not close
 
     backlog = [j for j in await _backlog() if j.get("opportunity_id") not in scheduled_ids]
     return {"week_start": mon.isoformat(), "days": days, "crew": crew,
@@ -319,7 +333,7 @@ async def create_block(body: BlockBody):
         )
         return _shape_block(_row(rows[0]))
     finally:
-        await db.close()
+        pass  # shared connection — do not close
 
 
 class BlockPatch(BaseModel):
@@ -353,7 +367,7 @@ async def update_block(block_id: int, body: BlockPatch):
             raise HTTPException(404, "Block not found")
         return _shape_block(_row(rows[0]))
     finally:
-        await db.close()
+        pass  # shared connection — do not close
 
 
 @router.delete("/block/{block_id}")
@@ -363,7 +377,7 @@ async def delete_block(block_id: int):
         await db._x("DELETE FROM schedule_blocks WHERE id = ?", [block_id])
         return {"ok": True, "id": block_id}
     finally:
-        await db.close()
+        pass  # shared connection — do not close
 
 
 # ── Free labels (Away / Shop / Vacation) ──────────────────────────────────────────
@@ -390,7 +404,7 @@ async def create_label(body: LabelBody):
         )
         return {"id": rows[0]["id"]}
     finally:
-        await db.close()
+        pass  # shared connection — do not close
 
 
 @router.delete("/assignment/{assignment_id}")
@@ -400,4 +414,4 @@ async def delete_label(assignment_id: int):
         await db._x("DELETE FROM schedule_assignments WHERE id = ?", [assignment_id])
         return {"ok": True, "id": assignment_id}
     finally:
-        await db.close()
+        pass  # shared connection — do not close

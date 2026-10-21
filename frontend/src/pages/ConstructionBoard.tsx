@@ -60,7 +60,7 @@ type Draft = {
 export default function ConstructionBoard() {
   const [week, setWeek] = useState<ScheduleWeek | null>(null);
   const [start, setStart] = useState<string | undefined>(undefined);
-  const [weeks, setWeeks] = useState(2);
+  const [weeks, setWeeks] = useState(12);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
