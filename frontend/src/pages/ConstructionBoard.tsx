@@ -40,6 +40,14 @@ function blockDates(startIso: string, hours: number | null | undefined, empCount
   const need = h > 0 ? Math.max(1, Math.ceil(h / (emp * per))) : 1;
   return workingDates(startIso, need, includeFriday);
 }
+function nextWorkingDay(iso: string, includeFriday: boolean): string {
+  return workingDates(iso, 1, includeFriday)[0] || iso;
+}
+function shiftWorkingDays(iso: string, n: number, includeFriday: boolean): string {
+  if (n <= 0) return iso;
+  const arr = workingDates(iso, n + 1, includeFriday);
+  return arr[arr.length - 1] || iso;
+}
 function blockColor(id: number) {
   const hue = (id * 57) % 360;
   return { bg: `hsl(${hue},70%,93%)`, fg: `hsl(${hue},55%,28%)`, border: `hsl(${hue},55%,48%)` };
@@ -73,6 +81,7 @@ export default function ConstructionBoard() {
   const [showCrew, setShowCrew] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [backlogOpen, setBacklogOpen] = useState(() => { try { return window.innerWidth >= 768; } catch { return true; } });
+  const [cascade, setCascade] = useState<{ extended: ScheduleBlock; delta: number; affected: ScheduleBlock[] } | null>(null);
 
   async function load(s?: string, w?: number) {
     setLoading(true); setErr('');
@@ -152,7 +161,44 @@ export default function ConstructionBoard() {
     setBusy(true); try { await updateBlock(b.id, { start_date: addDays(b.start_date, delta) }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }
   async function setStatus(b: ScheduleBlock, status: ScheduleStatus) { setCtx(null); setBusy(true); try { await updateBlock(b.id, { status }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
-  async function extendDays(b: ScheduleBlock, delta: number) { setCtx(null); setBusy(true); try { await updateBlock(b.id, { extra_days: Math.max(0, (b.extra_days || 0) + delta) }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
+  async function extendDays(b: ScheduleBlock, delta: number) {
+    setCtx(null); setBusy(true);
+    try {
+      const updated = await updateBlock(b.id, { extra_days: Math.max(0, (b.extra_days || 0) + delta) });
+      if (delta > 0) {
+        // Subsequent jobs on the same crew that this extension could push into.
+        const affected = blocks.filter(x => x.id !== b.id && x.start_date >= b.start_date
+          && x.employees.some(e => b.employees.includes(e)));
+        if (affected.length) { setCascade({ extended: updated, delta, affected }); setBusy(false); return; }
+      }
+      await reloadKeepBacklog();
+    } catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function applyCascade(mode: 'push' | 'reflow' | 'leave') {
+    const c = cascade; setCascade(null);
+    if (!c) return;
+    setBusy(true);
+    try {
+      if (mode === 'push') {
+        for (const b of c.affected) {
+          await updateBlock(b.id, { start_date: shiftWorkingDays(b.start_date, c.delta, b.include_friday) });
+        }
+      } else if (mode === 'reflow') {
+        const ordered = [...c.affected].sort((a, b) => a.start_date.localeCompare(b.start_date));
+        let cursorEnd = c.extended.end_date;
+        for (const b of ordered) {
+          const ns = nextWorkingDay(addDays(cursorEnd, 1), b.include_friday);
+          await updateBlock(b.id, { start_date: ns });
+          const span = workingDates(ns, b.days_needed, b.include_friday);
+          cursorEnd = span[span.length - 1] || ns;
+        }
+      }
+      // 'leave' → nothing
+    } catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); await reloadKeepBacklog(); }
+  }
   async function removeFromDay(b: ScheduleBlock, row: string, day: string) {
     setCtx(null); setBusy(true);
     const ex = Array.from(new Set([...(b.exceptions || []), `${row}|${day}`]));
@@ -343,6 +389,36 @@ export default function ConstructionBoard() {
         </div>
       )}
 
+      {cascade && (
+        <div onClick={() => applyCascade('leave')} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', zIndex: 1260, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '28px 12px' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: '100%', maxWidth: 460, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid #e5e7eb', fontWeight: 800, fontSize: 15, color: '#0f172a' }}>
+              ⚠ “{cascade.extended.job_label}” now runs {cascade.delta} day{cascade.delta === 1 ? '' : 's'} longer
+            </div>
+            <div style={{ padding: 20 }}>
+              <div style={{ fontSize: 13, color: '#374151', marginBottom: 12 }}>
+                {cascade.affected.length} later job{cascade.affected.length === 1 ? '' : 's'} on the same crew could be affected:
+                <div style={{ marginTop: 6, color: '#6b7280' }}>{cascade.affected.map(a => a.job_label).join(', ')}</div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <button onClick={() => applyCascade('push')} style={cascBtn(NAVY, true)}>
+                  ⏭ Push the following jobs back {cascade.delta} day{cascade.delta === 1 ? '' : 's'}
+                  <div style={cascSub}>Shift every later job on this crew by the same amount.</div>
+                </button>
+                <button onClick={() => applyCascade('reflow')} style={cascBtn(NAVY, false)}>
+                  🔗 Reflow — chain them after this job
+                  <div style={cascSub}>Each following job starts right after the one before (by its hours).</div>
+                </button>
+                <button onClick={() => applyCascade('leave')} style={cascBtn('#6b7280', false)}>
+                  ✋ Leave them as-is
+                  <div style={cascSub}>Just extend this job; move nothing (may overlap).</div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {draft && <BlockModal draft={draft} setDraft={setDraft} crew={modalCrew} onSave={saveDraft} busy={busy} />}
       {showCrew && <CrewModal onClose={() => { setShowCrew(false); reloadKeepBacklog(); }} />}
 
@@ -521,3 +597,11 @@ const hcell: React.CSSProperties = { padding: '8px', textAlign: 'center', border
 const lcell: React.CSSProperties = { padding: '8px', fontWeight: 700, fontSize: 13, color: '#0f172a', borderBottom: '1px solid #f1f5f9', background: '#fafafa', display: 'flex', alignItems: 'center' };
 const dcell: React.CSSProperties = { padding: 6, borderBottom: '1px solid #f1f5f9', borderLeft: '1px solid #f1f5f9', minHeight: 54, display: 'flex', flexDirection: 'column' };
 const mlbl: React.CSSProperties = { display: 'block', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 5 };
+const cascSub: React.CSSProperties = { fontSize: 11, fontWeight: 500, color: '#9ca3af', marginTop: 3 };
+function cascBtn(color: string, primary: boolean): React.CSSProperties {
+  return {
+    textAlign: 'left', padding: '11px 14px', borderRadius: 10, cursor: 'pointer',
+    border: `1.5px solid ${primary ? color : '#e5e7eb'}`, background: primary ? color : '#fff',
+    color: primary ? '#fff' : '#111827', fontWeight: 800, fontSize: 14,
+  };
+}
