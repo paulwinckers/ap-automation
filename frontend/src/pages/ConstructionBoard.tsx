@@ -82,6 +82,7 @@ export default function ConstructionBoard() {
   const [showArchived, setShowArchived] = useState(false);
   const [backlogOpen, setBacklogOpen] = useState(() => { try { return window.innerWidth >= 768; } catch { return true; } });
   const [cascade, setCascade] = useState<{ extended: ScheduleBlock; delta: number; affected: ScheduleBlock[] } | null>(null);
+  const [conflict, setConflict] = useState<{ block: ScheduleBlock; conflicts: ScheduleBlock[] } | null>(null);
 
   async function load(s?: string, w?: number) {
     setLoading(true); setErr('');
@@ -98,6 +99,16 @@ export default function ConstructionBoard() {
 
   async function doArchive(job: ScheduleBacklogJob) { setBctx(null); setBusy(true); try { await archiveJob(job.opportunity_id); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
   async function doUnarchive(job: ScheduleBacklogJob) { setBctx(null); setBusy(true); try { await unarchiveJob(job.opportunity_id); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
+
+  // Two blocks collide when they share an employee AND a calendar day.
+  function overlaps(a: ScheduleBlock, b: ScheduleBlock): boolean {
+    if (!a.employees.some(e => b.employees.includes(e))) return false;
+    const bd = new Set(b.dates);
+    return a.dates.some(d => bd.has(d));
+  }
+  function conflictsFor(target: ScheduleBlock): ScheduleBlock[] {
+    return blocks.filter(b => b.id !== target.id && overlaps(b, target));
+  }
 
   async function reloadKeepBacklog() {
     // Endpoint is fast (~0.25s) — just refresh everything so backlog/archived
@@ -149,8 +160,10 @@ export default function ConstructionBoard() {
       include_friday: draft.include_friday, employees: Array.from(draft.employees), note: draft.note, status: draft.status,
       extra_days: draft.extra_days, exceptions: draft.exceptions };
     try {
-      if (draft.mode === 'create') await createBlock(payload); else await updateBlock(draft.id!, payload);
+      const saved = draft.mode === 'create' ? await createBlock(payload) : await updateBlock(draft.id!, payload);
+      const hits = (saved && saved.employees) ? conflictsFor(saved) : [];
       setDraft(null); await reloadKeepBacklog();
+      if (hits.length) setConflict({ block: saved, conflicts: hits });
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }
   async function toggleFridays(b: ScheduleBlock) { setCtx(null); setBusy(true); try { await updateBlock(b.id, { include_friday: !b.include_friday }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
@@ -158,7 +171,31 @@ export default function ConstructionBoard() {
   async function moveStart(b: ScheduleBlock, delta: number) {
     setCtx(null);
     if (b.status === 'confirmed' && !window.confirm('This job is confirmed (locked). Move it anyway?')) return;
-    setBusy(true); try { await updateBlock(b.id, { start_date: addDays(b.start_date, delta) }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+    setBusy(true);
+    try {
+      const updated = await updateBlock(b.id, { start_date: addDays(b.start_date, delta) });
+      const hits = (updated && updated.employees) ? conflictsFor(updated) : [];
+      await reloadKeepBacklog();
+      if (hits.length) setConflict({ block: updated, conflicts: hits });
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  async function applyConflict(mode: 'push' | 'leave') {
+    const c = conflict; setConflict(null);
+    if (!c || mode === 'leave') return;
+    setBusy(true);
+    try {
+      // Push each conflicting job to start after this one ends (chained so they
+      // don't collide with each other either).
+      const ordered = [...c.conflicts].sort((a, b) => a.start_date.localeCompare(b.start_date));
+      let cursorEnd = c.block.end_date;
+      for (const b of ordered) {
+        const ns = nextWorkingDay(addDays(cursorEnd, 1), b.include_friday);
+        await updateBlock(b.id, { start_date: ns });
+        const span = workingDates(ns, b.days_needed, b.include_friday);
+        cursorEnd = span[span.length - 1] || ns;
+      }
+    } catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); await reloadKeepBacklog(); }
   }
   async function setStatus(b: ScheduleBlock, status: ScheduleStatus) { setCtx(null); setBusy(true); try { await updateBlock(b.id, { status }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
   async function extendDays(b: ScheduleBlock, delta: number) {
@@ -412,6 +449,32 @@ export default function ConstructionBoard() {
                 <button onClick={() => applyCascade('leave')} style={cascBtn('#6b7280', false)}>
                   ✋ Leave them as-is
                   <div style={cascSub}>Just extend this job; move nothing (may overlap).</div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {conflict && (
+        <div onClick={() => applyConflict('leave')} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', zIndex: 1260, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '28px 12px' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: '100%', maxWidth: 460, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid #e5e7eb', fontWeight: 800, fontSize: 15, color: '#b45309' }}>
+              ⚠ Double-booked crew
+            </div>
+            <div style={{ padding: 20 }}>
+              <div style={{ fontSize: 13, color: '#374151', marginBottom: 12 }}>
+                “{conflict.block.job_label}” overlaps {conflict.conflicts.length} job{conflict.conflicts.length === 1 ? '' : 's'} already on the schedule for the same crew:
+                <div style={{ marginTop: 6, color: '#6b7280' }}>{conflict.conflicts.map(a => a.job_label).join(', ')}</div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <button onClick={() => applyConflict('push')} style={cascBtn(NAVY, true)}>
+                  ⏭ Push the other job(s) to after this one
+                  <div style={cascSub}>Clears the overlap — they restart when this job finishes.</div>
+                </button>
+                <button onClick={() => applyConflict('leave')} style={cascBtn('#6b7280', false)}>
+                  ✋ Leave as double-booked
+                  <div style={cascSub}>Keep both on the same days (you'll sort it out).</div>
                 </button>
               </div>
             </div>
