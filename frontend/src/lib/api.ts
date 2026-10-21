@@ -361,8 +361,13 @@ export interface PlanJob {
   prep_total?: number;  // total preparedness checklist items
   lead_name?: string;          // assigned construction lead
   schedule_confirmed?: boolean; // customer-confirmed schedule
-  stage?: string;              // workflow stage
+  stage?: string;              // workflow stage (legacy manual field)
   queued?: boolean;            // parked to the "Queued / Parked" section
+  // Phase A overhaul — auto-derived lifecycle + schedule window (board-driven)
+  lifecycle?: 'intake' | 'planning' | 'scheduled' | 'confirmed' | 'in_production' | 'complete' | 'paid' | 'parked';
+  sched_status?: 'unscheduled' | 'tentative' | 'confirmed';
+  sched_start?: string | null;   // earliest block start for this job
+  window_week?: string | null;   // Monday of the tentative block ("Week of …")
 }
 
 export type PrepStatus = '' | 'na' | 'complete' | 'uploaded';

@@ -664,6 +664,7 @@ export default function ConstructionPlan() {
   const [showCompleted, setShowCompleted] = useState(false);
   const [phaMap,        setPhaMap]        = useState<PHAMap>(new Map());
   const [phaModalJob,   setPhaModalJob]   = useState<PlanJob | null>(null);
+  const [view,          setView]          = useState<'pipeline' | 'monthly'>('pipeline');
   const activeMonthRef = useRef(month);
 
   const load = useCallback(async () => {
@@ -1049,6 +1050,104 @@ export default function ConstructionPlan() {
     </div>
   );
 
+  // ── Lifecycle pipeline (Phase A overhaul) ──────────────────────────────────
+  const LIFECYCLE: { key: string; label: string; accent: string; hint?: string }[] = [
+    { key: 'intake',        label: '🆕 Intake',                accent: '#64748b', hint: 'Just won — not planned yet' },
+    { key: 'planning',      label: '📝 Planning',              accent: '#7c3aed', hint: 'Getting ready to schedule' },
+    { key: 'scheduled',     label: '🗓️ Scheduled (tentative)', accent: '#2563eb', hint: 'On the board — client has a window' },
+    { key: 'confirmed',     label: '✅ Confirmed',             accent: '#15803d', hint: 'Dates locked with the client' },
+    { key: 'in_production', label: '🔨 In Production',         accent: '#d97706' },
+    { key: 'complete',      label: '🏁 Complete',              accent: '#16a34a' },
+    { key: 'paid',          label: '💰 Paid',                  accent: '#0891b2' },
+    { key: 'parked',        label: '⏸️ Parked',                accent: '#9ca3af' },
+  ];
+  const lifeOf = (j: PlanJob): string => {
+    if (j.lifecycle) return j.lifecycle;
+    // Fallback from existing fields until the backend lifecycle field is live.
+    if (effQueued(j)) return 'parked';
+    const b = effBucket(j);
+    if (b === 'completed') return 'complete';
+    if (b === 'active') return 'in_production';
+    return 'planning';
+  };
+
+  const windowText = (j: PlanJob): string => {
+    if (j.sched_status === 'confirmed') return `Confirmed · ${fmtDate(j.sched_start)}`;
+    if (j.sched_status === 'tentative') return `Week of ${fmtDate(j.window_week || j.sched_start)}`;
+    if (j.start_date) return `Starts ${fmtDate(j.start_date)}`;
+    return 'No date yet';
+  };
+
+  const renderPipelineRow = (j: PlanJob, children: PlanJob[]) => {
+    const lead = planningOverride[j.opportunity_id]?.lead_name ?? j.lead_name ?? '';
+    const prep = prepProgress[j.opportunity_id] ?? { done: j.prep_done ?? 0, total: j.prep_total ?? 6 };
+    const ready = prep.total > 0 && prep.done === prep.total;
+    const open = prepFor === j.opportunity_id;
+    return (
+      <div key={j.opportunity_id} style={{ borderTop: '1px solid #f3f4f6', padding: '10px 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ flex: 2, minWidth: 180 }}>
+            <a href={`/field/project/${j.opportunity_id}`} style={{ fontWeight: 700, fontSize: 13.5, color: '#111827', textDecoration: 'none' }}
+               onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')} onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}>
+              {j.property_name || j.opportunity_name}
+            </a>
+            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>
+              {j.opportunity_name}{j.opp_number ? ` · #${j.opp_number}` : ''}{children.length ? ` · +${children.length} CO` : ''}
+            </div>
+          </div>
+          {/* Lead */}
+          <select value={lead} onChange={e => updatePlanning(j.opportunity_id, { lead_name: e.target.value })}
+            style={{ fontSize: 11, padding: '4px 6px', borderRadius: 6, maxWidth: 130, border: '1px solid ' + (lead ? '#c7d2fe' : '#e5e7eb'), background: lead ? '#eef2ff' : '#fff', color: lead ? '#3730a3' : '#9ca3af' }}>
+            <option value="">Assign…</option>
+            {leads.map(l => { const nm = l.display_name || l.aspire_name; return <option key={l.id} value={nm}>{nm}</option>; })}
+          </select>
+          {/* Window / date */}
+          <a href="/dashboards/construction/board" title="Open the schedule board"
+             style={{ fontSize: 11.5, fontWeight: 700, color: j.sched_status === 'confirmed' ? '#15803d' : j.sched_status === 'tentative' ? '#1d4ed8' : '#9ca3af', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+            {windowText(j)}
+          </a>
+          {/* Readiness */}
+          <button onClick={() => setPrepFor(open ? null : j.opportunity_id)} title="Preparedness checklist"
+            style={{ padding: '3px 9px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: '1px solid ' + (ready ? '#86efac' : open ? '#2563eb' : '#e5e7eb'), background: ready ? '#dcfce7' : open ? '#eff6ff' : '#f8fafc', color: ready ? '#15803d' : open ? '#1d4ed8' : '#6b7280', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            {ready ? '✓ Ready' : `Prep ${prep.done}/${prep.total}`}
+          </button>
+          {/* PHA */}
+          <PHABadge info={phaMap.get(j.opportunity_id)} onClick={() => setPhaModalJob(j)} />
+          {/* Revenue */}
+          <div style={{ fontSize: 12, color: '#6b7280', minWidth: 80, textAlign: 'right' }}>{fmt$(j.revenue_est || j.revenue_est_month || 0)}</div>
+        </div>
+        {open && (
+          <div style={{ marginTop: 10, background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, maxWidth: 560 }}>
+            <JobPrepChecklist oppId={j.opportunity_id} onProgress={(done, total) => setPrepProgress(prev => ({ ...prev, [j.opportunity_id]: { done, total } }))} />
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderPipeline = () => {
+    const groups = groupJobs(jobs);
+    return (
+      <div>
+        {LIFECYCLE.map(stage => {
+          const rows = groups.filter(g => lifeOf(g.base) === stage.key);
+          if (!rows.length) return null;
+          return (
+            <div key={stage.key} style={{ background: '#fff', border: '1px solid #e5e7eb', borderTop: `3px solid ${stage.accent}`, borderRadius: 12, marginBottom: 16, overflow: 'hidden' }}>
+              <div style={{ padding: '10px 14px', background: '#fafafa', display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 800, fontSize: 14, color: '#0f172a' }}>{stage.label}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: stage.accent }}>{rows.length}</span>
+                {stage.hint && <span style={{ fontSize: 11, color: '#9ca3af' }}>— {stage.hint}</span>}
+              </div>
+              {rows.map(g => renderPipelineRow(g.base, g.children))}
+            </div>
+          );
+        })}
+        {groups.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No construction jobs in the plan.</div>}
+      </div>
+    );
+  };
+
   return (
     <div style={{
       minHeight: '100vh', background: '#f8fafc',
@@ -1086,6 +1185,14 @@ export default function ConstructionPlan() {
           </div>
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'inline-flex', border: '1px solid #d1d5db', borderRadius: 8, overflow: 'hidden' }}>
+              {(['pipeline', 'monthly'] as const).map(v => (
+                <button key={v} onClick={() => setView(v)}
+                  style={{ padding: '8px 14px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13, background: view === v ? '#1d4ed8' : '#fff', color: view === v ? '#fff' : '#374151' }}>
+                  {v === 'pipeline' ? '📋 Pipeline' : '🎯 Monthly'}
+                </button>
+              ))}
+            </div>
             <a href="/dashboards/construction/board" style={{ ...secondaryBtn, textDecoration: 'none', display: 'inline-block' }}>📅 Weekly Board</a>
             <button onClick={() => setShowLeads(true)}   style={secondaryBtn}>👷 Leads</button>
             <button onClick={() => setShowCheckin(true)} style={secondaryBtn}>📤 Check-ins</button>
@@ -1094,6 +1201,9 @@ export default function ConstructionPlan() {
           </div>
         </div>
 
+        {view === 'pipeline' && renderPipeline()}
+
+        {view === 'monthly' && (<>
         {/* PHA safety summary — across active + upcoming jobs */}
         {(() => {
           const bases = [...activeGroups, ...upcomingGroups].map(g => g.base);
@@ -1277,6 +1387,7 @@ export default function ConstructionPlan() {
             </strong>
           </div>
         )}
+        </>)}
       </div>
 
       {/* Modals */}
