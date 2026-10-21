@@ -358,6 +358,40 @@ def _plan_bucket(stage: str, queued: bool, start_date: str, month: str, pct_comp
     return "upcoming"  # future Start Date, or no date set yet
 
 
+def _monday_iso(d: str) -> str:
+    """Monday of the week containing ISO date d (for 'Week of …' windows)."""
+    from datetime import datetime as _dt, timedelta as _td
+    try:
+        dd = _dt.strptime((d or "")[:10], "%Y-%m-%d").date()
+        return (dd - _td(days=dd.weekday())).isoformat()
+    except Exception:
+        return ""
+
+
+# Lifecycle stage — the single, auto-derived status the overhauled pipeline uses.
+# Order of precedence (first match wins): paid > parked > complete > in_production
+# > confirmed > scheduled > planning > intake. Scheduling (confirmed/scheduled)
+# comes from the board; production/complete/paid from Aspire; the rest from readiness.
+def _lifecycle(sched_status: str | None, queued: bool, hrs_act: float | None,
+               is_complete: bool, is_paid: bool, prep_done: int,
+               lead_name: str, source: str | None) -> str:
+    if is_paid:
+        return "paid"
+    if queued:
+        return "parked"
+    if is_complete:
+        return "complete"
+    if (hrs_act or 0) > 0:
+        return "in_production"
+    if sched_status == "confirmed":
+        return "confirmed"
+    if sched_status == "tentative":
+        return "scheduled"
+    if (prep_done or 0) > 0 or (lead_name or "") or source == "manual":
+        return "planning"
+    return "intake"
+
+
 def _risk_flag(opp: dict, pct_month: float | None = None) -> str:
     """Return a risk label based on hours burn vs monthly ticket completion.
 
@@ -618,6 +652,28 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         except Exception:
             queued_map, paid_map = {}, {}
 
+    # Schedule status + window from the board — the single source of truth for
+    # scheduling (confirmed beats tentative; earliest start within that status).
+    sched_map: dict[int, dict] = {}
+    if jobs:
+        try:
+            sb_rows = await db._q(
+                "SELECT opportunity_id, start_date, status FROM schedule_blocks WHERE opportunity_id IS NOT NULL", []
+            )
+            for r in sb_rows:
+                oid2 = r["opportunity_id"]
+                st   = (r.get("status") or "tentative")
+                sd   = (r.get("start_date") or "")[:10]
+                cur  = sched_map.get(oid2)
+                if not cur:
+                    sched_map[oid2] = {"status": st, "start": sd}
+                elif st == "confirmed" and cur["status"] != "confirmed":
+                    sched_map[oid2] = {"status": "confirmed", "start": sd}
+                elif st == cur["status"] and sd and (not cur["start"] or sd < cur["start"]):
+                    cur["start"] = sd
+        except Exception:
+            sched_map = {}
+
     for oid, j in jobs.items():
         c = prep_counts.get(oid, {"done": 0, "na": 0})
         j["prep_done"]  = c["done"]
@@ -632,8 +688,21 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         # A Complete + fully-paid job (Aspire) belongs in Completed/out-of-production, even if
         # its % or stage wouldn't otherwise place it there.
         inv = invoice_paid.get(oid) or {}
-        if not j["queued"] and inv.get("fully_paid") and (actuals.get(oid) or {}).get("CompleteDate"):
+        complete_date = (actuals.get(oid) or {}).get("CompleteDate")
+        if not j["queued"] and inv.get("fully_paid") and complete_date:
             j["bucket"] = "completed"
+
+        # ── Lifecycle (the overhauled pipeline's auto-derived status) ──────────────
+        sm = sched_map.get(oid) or {}
+        sched_status = sm.get("status")  # 'confirmed' | 'tentative' | None
+        j["sched_status"] = sched_status or "unscheduled"
+        j["sched_start"]  = sm.get("start") or None
+        j["window_week"]  = _monday_iso(sm.get("start") or "") or None
+        is_complete = bool(complete_date) or (float(j.get("pct_complete_job") or 0) >= 1.0)
+        is_paid     = bool((inv.get("fully_paid") and complete_date)) or (j["stage"] == "Paid")
+        j["lifecycle"] = _lifecycle(
+            sched_status, j["queued"], j.get("hrs_act"), is_complete, is_paid,
+            c["done"], j["lead_name"], j.get("source"))
 
     # A job drops off the plan in months AFTER it was paid. "Paid" is detected from Aspire
     # (job has a CompleteDate AND every invoice is fully collected — a deposit-only payment does
