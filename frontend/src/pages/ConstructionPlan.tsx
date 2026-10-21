@@ -1135,28 +1135,21 @@ export default function ConstructionPlan() {
   }
 
   const renderPipelineRow = (j: PlanJob, children: PlanJob[]) => {
-    const lead = planningOverride[j.opportunity_id]?.lead_name ?? j.lead_name ?? '';
     const prep = prepProgress[j.opportunity_id] ?? { done: j.prep_done ?? 0, total: j.prep_total ?? 6 };
     const ready = prep.total > 0 && prep.done === prep.total;
     const open = prepFor === j.opportunity_id;
     return (
-      <div key={j.opportunity_id} style={{ borderTop: '1px solid #f3f4f6', padding: '10px 12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ flex: 2, minWidth: 180 }}>
-            <a href={`/field/project/${j.opportunity_id}`} style={{ fontWeight: 700, fontSize: 13.5, color: '#111827', textDecoration: 'none' }}
+      <div key={j.opportunity_id} style={{ borderTop: '1px solid #f3f4f6', padding: '5px 10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ flex: 2, minWidth: 200, lineHeight: 1.3 }}>
+            <a href={`/field/project/${j.opportunity_id}`} style={{ fontWeight: 700, fontSize: 13, color: '#111827', textDecoration: 'none' }}
                onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')} onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}>
               {j.property_name || j.opportunity_name}
             </a>
-            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>
-              {j.opportunity_name}{j.opp_number ? ` · #${j.opp_number}` : ''}{children.length ? ` · +${children.length} CO` : ''}
-            </div>
+            <span style={{ fontSize: 11.5, color: '#9ca3af' }}>
+              {j.opp_number ? `  ·  #${j.opp_number}` : ''}{j.property_name && j.opportunity_name ? `  ·  ${j.opportunity_name}` : ''}{children.length ? `  ·  +${children.length} CO` : ''}
+            </span>
           </div>
-          {/* Lead */}
-          <select value={lead} onChange={e => updatePlanning(j.opportunity_id, { lead_name: e.target.value })}
-            style={{ fontSize: 11, padding: '4px 6px', borderRadius: 6, maxWidth: 130, border: '1px solid ' + (lead ? '#c7d2fe' : '#e5e7eb'), background: lead ? '#eef2ff' : '#fff', color: lead ? '#3730a3' : '#9ca3af' }}>
-            <option value="">Assign…</option>
-            {leads.map(l => { const nm = l.display_name || l.aspire_name; return <option key={l.id} value={nm}>{nm}</option>; })}
-          </select>
           {/* Window / date + confirm action */}
           {(() => {
             const s = schedOf(j);
@@ -1236,10 +1229,10 @@ export default function ConstructionPlan() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 200 }}>
             <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#0f172a' }}>
-              🏗️ Construction Monthly Plan
+              🏗️ Construction Planning
             </h1>
             <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: 13 }}>
-              Commit jobs, track progress, update leads
+              Jobs from intake through completion
             </p>
           </div>
 

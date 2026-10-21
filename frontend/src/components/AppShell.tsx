@@ -35,6 +35,7 @@ const NAV = [
       { label: 'Daily Schedule', path: '/dashboards/schedule', icon: '🗺️' },
       { label: 'Weekly Schedule', path: '/dashboards/schedule/week', icon: '📆' },
       { label: 'Construction Schedule', path: '/dashboards/construction/board', icon: '📅' },
+      { label: 'Construction Planning', path: '/dashboards/construction/plan', icon: '🏗️' },
       { label: 'Field Chat',    path: '/ops/issues',        icon: '💬' },
       { label: 'Crew Schedule', path: '/ops/crew-schedule', icon: '👥' },
       { label: 'Safety Talks',  path: '/ops/safety-talks',  icon: '🦺' },

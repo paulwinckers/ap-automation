@@ -29,6 +29,7 @@ const OFFICE_GROUPS = [
     items: [
       { to: '/dashboards/schedule', icon: '🗺️', label: 'Daily Schedule', sub: 'Sites visited today by division & lead' },
       { to: '/dashboards/construction/board', icon: '📅', label: 'Construction Schedule', sub: 'Crew × day board — drag jobs onto the week' },
+      { to: '/dashboards/construction/plan', icon: '🏗️', label: 'Construction Planning', sub: 'Pipeline from intake to completion' },
       { to: '/ops/issues',        icon: '💬', label: 'Field Chat',     sub: 'All crew conversations' },
       { to: '/ops/crew-schedule', icon: '👥', label: 'Crew Schedule',  sub: 'Assign staff to routes' },
       { to: '/ops/safety-talks',  icon: '🦺', label: 'Safety Talks',   sub: 'Toolbox talk records' },
