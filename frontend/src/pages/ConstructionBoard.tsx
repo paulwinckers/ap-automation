@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   getScheduleWeek, createBlock, updateBlock, deleteBlock, createLabel, deleteLabel,
-  listCrew, addCrew, updateCrew,
+  listCrew, addCrew, updateCrew, deleteCrew,
   type ScheduleWeek, type ScheduleBlock, type ScheduleBacklogJob, type BlockInput, type CrewMember,
 } from '../lib/api';
 
@@ -329,6 +329,7 @@ function CrewModal({ onClose }: { onClose: () => void }) {
   async function add() { if (!name.trim()) return; setBusy(true); try { await addCrew(name.trim()); setName(''); await load(); } finally { setBusy(false); } }
   async function toggle(c: CrewMember) { setBusy(true); try { await updateCrew(c.id, { active: !c.active }); await load(); } finally { setBusy(false); } }
   async function rename(c: CrewMember) { const n = window.prompt('Rename crew member:', c.name); if (!n || !n.trim() || n === c.name) return; setBusy(true); try { await updateCrew(c.id, { name: n.trim() }); await load(); } finally { setBusy(false); } }
+  async function remove(c: CrewMember) { if (!confirm(`Delete "${c.name}" from the roster? (Use Deactivate for staff who left — this is for typos.)`)) return; setBusy(true); try { await deleteCrew(c.id); await load(); } finally { setBusy(false); } }
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', zIndex: 1250, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '28px 12px', overflowY: 'auto' }}>
@@ -353,6 +354,7 @@ function CrewModal({ onClose }: { onClose: () => void }) {
                   <button onClick={() => toggle(c)} style={{ background: 'none', border: '1px solid #d1d5db', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 700, color: c.active ? '#b91c1c' : '#15803d' }}>
                     {c.active ? 'Deactivate' : 'Reactivate'}
                   </button>
+                  <button onClick={() => remove(c)} title="Delete (typos only)" style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', fontSize: 13 }}>🗑</button>
                 </div>
               ))}
               {crew.length === 0 && <div style={{ padding: 12, color: '#9ca3af', fontSize: 13 }}>No crew yet.</div>}

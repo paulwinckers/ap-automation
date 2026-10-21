@@ -1703,6 +1703,9 @@ export async function addCrew(name: string): Promise<{ id: number; name: string 
 export async function updateCrew(id: number, body: { name?: string; active?: boolean }): Promise<{ ok: boolean }> {
   return request('PUT', `/construction/schedule/crew/${id}`, body);
 }
+export async function deleteCrew(id: number): Promise<{ ok: boolean }> {
+  return request('DELETE', `/construction/schedule/crew/${id}`);
+}
 export type BlockInput = {
   opportunity_id?: number | null; job_label: string; start_date: string;
   hours?: number | null; hours_per_day?: number; include_friday?: boolean;

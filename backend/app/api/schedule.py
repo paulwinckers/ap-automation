@@ -174,6 +174,18 @@ class CrewPatch(BaseModel):
     active: Optional[bool] = None
 
 
+@router.delete("/crew/{crew_id}")
+async def delete_crew(crew_id: int):
+    """Hard-delete a roster entry (for a typo/test). Existing blocks store the
+    name as text, so their history is unaffected. Prefer deactivate for real staff."""
+    db = await _db()
+    try:
+        await db._x("DELETE FROM schedule_crew WHERE id = ?", [crew_id])
+        return {"ok": True, "id": crew_id}
+    finally:
+        await db.close()
+
+
 @router.put("/crew/{crew_id}")
 async def update_crew(crew_id: int, body: CrewPatch):
     sets, params = [], []
