@@ -9,6 +9,7 @@ import {
   getMonthlyPlan, setMonthlyGoal, addJobToMonth, removeJobFromMonth, getPlanSuggestions,
   listConstructionLeads, upsertConstructionLead, deleteConstructionLead,
   sendCheckins, getCheckinStatus, setJobPlanning, listPHA,
+  getScheduleWeek, updateBlock,
   MonthlyPlan, PlanJob, PlanSuggestion, ConstructionLead, CheckinStatus,
 } from '../lib/api';
 import JobPrepChecklist from './JobPrepChecklist';
@@ -18,6 +19,14 @@ import ProjectHazardAssessment from '../components/ProjectHazardAssessment';
 type PHAStatus = 'outstanding' | 'draft' | 'completed';
 type PHAInfo = { status: PHAStatus; id: number; submitted_at?: string | null };
 type PHAMap = Map<number, PHAInfo>;
+
+// opportunity_id → its schedule block (from the board; the window's source of truth)
+type BlockInfo = { id: number; status: 'tentative' | 'confirmed'; start: string; window_week: string };
+type BlockMap = Map<number, BlockInfo>;
+function mondayOf(iso: string): string {
+  try { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.toISOString().slice(0, 10); }
+  catch { return iso; }
+}
 
 function PHABadge({ info, onClick }: { info: PHAInfo | undefined; onClick: () => void }) {
   const cfg = info?.status === 'completed'
@@ -752,6 +761,29 @@ export default function ConstructionPlan() {
   }
   useEffect(() => { loadPha(); }, []);
 
+  // Schedule blocks from the board = the window's source of truth. Loaded client-side
+  // (the board endpoints are live) so the pipeline's Scheduled/Confirmed + windows work
+  // regardless of whether the backend lifecycle field has deployed yet.
+  const [blockMap, setBlockMap] = useState<BlockMap>(new Map());
+  async function loadBlocks() {
+    try {
+      const wk = await getScheduleWeek(undefined, 14); // ~3-month horizon from this week
+      const m: BlockMap = new Map();
+      for (const b of wk.blocks) {
+        if (b.opportunity_id == null) continue;
+        const info: BlockInfo = { id: b.id, status: b.status, start: b.start_date, window_week: mondayOf(b.start_date) };
+        const prev = m.get(b.opportunity_id);
+        // confirmed beats tentative; else earliest start
+        if (!prev || (prev.status !== 'confirmed' && info.status === 'confirmed') ||
+            (prev.status === info.status && info.start < prev.start)) {
+          m.set(b.opportunity_id, info);
+        }
+      }
+      setBlockMap(m);
+    } catch { /* non-fatal — windows fall back to the job's start date */ }
+  }
+  useEffect(() => { loadBlocks(); }, []);
+
   const effStage  = (j: PlanJob) => planningOverride[j.opportunity_id]?.stage ?? j.stage ?? 'New';
   const effQueued = (j: PlanJob) => planningOverride[j.opportunity_id]?.queued ?? j.queued ?? false;
   // Which bucket a job is in — mirrors the backend _plan_bucket so a stage/park change
@@ -1061,22 +1093,43 @@ export default function ConstructionPlan() {
     { key: 'paid',          label: '💰 Paid',                  accent: '#0891b2' },
     { key: 'parked',        label: '⏸️ Parked',                accent: '#9ca3af' },
   ];
+  const schedOf = (j: PlanJob) => blockMap.get(j.opportunity_id);
+
+  // Lifecycle is computed from reliable existing fields + the live board blocks, so it
+  // is correct even before the backend lifecycle field deploys.
   const lifeOf = (j: PlanJob): string => {
-    if (j.lifecycle) return j.lifecycle;
-    // Fallback from existing fields until the backend lifecycle field is live.
+    if (j.lifecycle === 'paid') return 'paid';
     if (effQueued(j)) return 'parked';
-    const b = effBucket(j);
-    if (b === 'completed') return 'complete';
-    if (b === 'active') return 'in_production';
-    return 'planning';
+    if (j.lifecycle === 'complete' || j.risk === 'complete' || (j.pct_complete_job || 0) >= 1) return 'complete';
+    if ((j.hrs_act || 0) > 0) return 'in_production';
+    const s = schedOf(j);
+    if (s?.status === 'confirmed') return 'confirmed';
+    if (s?.status === 'tentative') return 'scheduled';
+    if (j.lifecycle === 'intake') return 'intake';
+    if ((j.prep_done || 0) > 0 || (planningOverride[j.opportunity_id]?.lead_name ?? j.lead_name)) return 'planning';
+    return j.source === 'manual' ? 'planning' : 'intake';
   };
 
   const windowText = (j: PlanJob): string => {
-    if (j.sched_status === 'confirmed') return `Confirmed · ${fmtDate(j.sched_start)}`;
-    if (j.sched_status === 'tentative') return `Week of ${fmtDate(j.window_week || j.sched_start)}`;
+    const s = schedOf(j);
+    if (s?.status === 'confirmed') return `Confirmed · ${fmtDate(s.start)}`;
+    if (s?.status === 'tentative') return `Week of ${fmtDate(s.window_week)}`;
     if (j.start_date) return `Starts ${fmtDate(j.start_date)}`;
     return 'No date yet';
   };
+
+  // Days until a tentative block starts (for the "confirm soon" nudge).
+  const daysUntil = (iso: string): number => {
+    try { return Math.round((new Date(iso + 'T00:00:00').getTime() - Date.now()) / 86400000); }
+    catch { return 9999; }
+  };
+
+  async function confirmDates(j: PlanJob, confirmed: boolean) {
+    const s = schedOf(j);
+    if (!s) return;
+    try { await updateBlock(s.id, { status: confirmed ? 'confirmed' : 'tentative' }); await loadBlocks(); }
+    catch { /* ignore */ }
+  }
 
   const renderPipelineRow = (j: PlanJob, children: PlanJob[]) => {
     const lead = planningOverride[j.opportunity_id]?.lead_name ?? j.lead_name ?? '';
@@ -1101,11 +1154,29 @@ export default function ConstructionPlan() {
             <option value="">Assign…</option>
             {leads.map(l => { const nm = l.display_name || l.aspire_name; return <option key={l.id} value={nm}>{nm}</option>; })}
           </select>
-          {/* Window / date */}
-          <a href="/dashboards/construction/board" title="Open the schedule board"
-             style={{ fontSize: 11.5, fontWeight: 700, color: j.sched_status === 'confirmed' ? '#15803d' : j.sched_status === 'tentative' ? '#1d4ed8' : '#9ca3af', textDecoration: 'none', whiteSpace: 'nowrap' }}>
-            {windowText(j)}
-          </a>
+          {/* Window / date + confirm action */}
+          {(() => {
+            const s = schedOf(j);
+            const soon = s?.status === 'tentative' && daysUntil(s.start) <= 14;
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+                <a href="/dashboards/construction/board" title="Open the schedule board"
+                   style={{ fontSize: 11.5, fontWeight: 700, color: s?.status === 'confirmed' ? '#15803d' : s?.status === 'tentative' ? '#1d4ed8' : '#9ca3af', textDecoration: 'none' }}>
+                  {windowText(j)}
+                </a>
+                {soon && <span title="Starts within 2 weeks — confirm the date with the client" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10, fontWeight: 800, padding: '1px 6px', borderRadius: 8 }}>confirm soon</span>}
+                {s?.status === 'tentative' && (
+                  <button onClick={() => confirmDates(j, true)} title="Lock these dates with the client"
+                    style={{ fontSize: 10.5, fontWeight: 800, padding: '2px 8px', borderRadius: 6, border: '1px solid #86efac', background: '#dcfce7', color: '#15803d', cursor: 'pointer' }}>Confirm</button>
+                )}
+                {s?.status === 'confirmed' && (
+                  <button onClick={() => confirmDates(j, false)} title="Unlock (back to tentative)"
+                    style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', color: '#6b7280', cursor: 'pointer' }}>🔓</button>
+                )}
+                {!s && <a href="/dashboards/construction/board" style={{ fontSize: 10.5, fontWeight: 700, color: '#1d4ed8', textDecoration: 'none' }}>Schedule →</a>}
+              </div>
+            );
+          })()}
           {/* Readiness */}
           <button onClick={() => setPrepFor(open ? null : j.opportunity_id)} title="Preparedness checklist"
             style={{ padding: '3px 9px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: '1px solid ' + (ready ? '#86efac' : open ? '#2563eb' : '#e5e7eb'), background: ready ? '#dcfce7' : open ? '#eff6ff' : '#f8fafc', color: ready ? '#15803d' : open ? '#1d4ed8' : '#6b7280', cursor: 'pointer', whiteSpace: 'nowrap' }}>
