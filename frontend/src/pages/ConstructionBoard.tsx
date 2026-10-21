@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   getScheduleWeek, createBlock, updateBlock, deleteBlock, createLabel, deleteLabel,
-  listCrew, addCrew, updateCrew, deleteCrew, getJobScope,
+  listCrew, addCrew, updateCrew, deleteCrew, getJobScope, archiveJob, unarchiveJob,
   type ScheduleWeek, type ScheduleBlock, type ScheduleBacklogJob, type BlockInput, type CrewMember, type ScheduleStatus,
 } from '../lib/api';
 
@@ -69,7 +69,9 @@ export default function ConstructionBoard() {
   const drag = useRef<ScheduleBacklogJob | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [ctx, setCtx] = useState<{ x: number; y: number; block: ScheduleBlock } | null>(null);
+  const [bctx, setBctx] = useState<{ x: number; y: number; job: ScheduleBacklogJob; archived: boolean } | null>(null);
   const [showCrew, setShowCrew] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [backlogOpen, setBacklogOpen] = useState(() => { try { return window.innerWidth >= 768; } catch { return true; } });
 
   async function load(s?: string, w?: number) {
@@ -80,16 +82,18 @@ export default function ConstructionBoard() {
   }
   useEffect(() => { load(start, weeks); /* eslint-disable-next-line */ }, []);
   useEffect(() => {
-    const close = () => setCtx(null);
+    const close = () => { setCtx(null); setBctx(null); };
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
   }, []);
 
+  async function doArchive(job: ScheduleBacklogJob) { setBctx(null); setBusy(true); try { await archiveJob(job.opportunity_id); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
+  async function doUnarchive(job: ScheduleBacklogJob) { setBctx(null); setBusy(true); try { await unarchiveJob(job.opportunity_id); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
+
   async function reloadKeepBacklog() {
-    try {
-      const w = await getScheduleWeek(start, weeks);
-      setWeek(prev => prev ? { ...w, backlog: prev.backlog.length ? prev.backlog : w.backlog } : w);
-    } catch { /* ignore */ }
+    // Endpoint is fast (~0.25s) — just refresh everything so backlog/archived
+    // reflect scheduling and archive changes immediately.
+    try { setWeek(await getScheduleWeek(start, weeks)); } catch { /* ignore */ }
   }
 
   if (loading && !week) return <div style={{ padding: 40, color: '#9ca3af' }}>Loading the schedule…</div>;
@@ -106,8 +110,9 @@ export default function ConstructionBoard() {
   for (const l of labels) if (l.lead_name && !rowNames.includes(l.lead_name)) rowNames.push(l.lead_name);
   const crewOptions = rowNames.length ? rowNames : activeCrewNames;
 
-  const backlog = (week?.backlog ?? []).filter(j =>
-    !q.trim() || (j.label || '').toLowerCase().includes(q.toLowerCase()) || String(j.opp_number ?? '').includes(q));
+  const matchQ = (j: ScheduleBacklogJob) => !q.trim() || (j.label || '').toLowerCase().includes(q.toLowerCase()) || String(j.opp_number ?? '').includes(q);
+  const backlog = (week?.backlog ?? []).filter(matchQ);
+  const archived = (week?.archived ?? []).filter(matchQ);
 
   // Modal employee options = active crew ∪ whoever's already on the block being edited.
   const modalCrew = Array.from(new Set([...activeCrewNames, ...(draft ? Array.from(draft.employees) : [])]));
@@ -248,13 +253,35 @@ export default function ConstructionBoard() {
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search jobs…" style={{ width: '100%', boxSizing: 'border-box', padding: '7px 9px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, marginBottom: 10 }} />
             {backlog.map(j => (
               <div key={j.opportunity_id} draggable onDragStart={() => { drag.current = j; }} onClick={() => openCreate(j, days[0])}
-                title="Drag onto a crew/day, or click to schedule"
+                onContextMenu={e => { e.preventDefault(); setBctx({ x: e.clientX, y: e.clientY, job: j, archived: false }); }}
+                title="Drag onto a crew/day, click to schedule, or right-click to archive"
                 style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', marginBottom: 7, cursor: 'grab', background: '#f9fafb' }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{j.label}</div>
                 <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{j.opp_number ? `#${j.opp_number}` : ''}{j.hours_est ? ` · ${j.hours_est}h` : ''}{j.start_date ? ` · ${fmtDay(j.start_date)}` : ''}</div>
               </div>
             ))}
             {backlog.length === 0 && <div style={{ color: '#9ca3af', fontSize: 13 }}>No matching jobs.</div>}
+
+            {(archived.length > 0 || showArchived) && (
+              <div style={{ marginTop: 12, borderTop: '1px solid #f1f5f9', paddingTop: 10 }}>
+                <button onClick={() => setShowArchived(s => !s)}
+                  style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: 0 }}>
+                  {showArchived ? '▾' : '▸'} 🗄 Archived ({archived.length})
+                </button>
+                {showArchived && archived.map(j => (
+                  <div key={j.opportunity_id}
+                    onContextMenu={e => { e.preventDefault(); setBctx({ x: e.clientX, y: e.clientY, job: j, archived: true }); }}
+                    title="Right-click to unarchive"
+                    style={{ border: '1px dashed #e5e7eb', borderRadius: 8, padding: '7px 10px', marginTop: 7, background: '#fafafa', opacity: 0.75 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700, color: '#6b7280', textDecoration: 'line-through' }}>{j.label}</span>
+                      <button onClick={() => doUnarchive(j)} title="Unarchive" style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: 13 }}>↩</button>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>{j.opp_number ? `#${j.opp_number}` : ''}{j.hours_est ? ` · ${j.hours_est}h` : ''}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           )}
 
@@ -284,6 +311,15 @@ export default function ConstructionBoard() {
           ].map((it, i) => (
             <button key={i} onClick={it.fn} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: it.danger ? '#dc2626' : '#111827', borderTop: i ? '1px solid #f1f5f9' : 'none' }}>{it.label}</button>
           ))}
+        </div>
+      )}
+
+      {bctx && (
+        <div style={{ position: 'fixed', top: bctx.y, left: bctx.x, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 1200, minWidth: 170, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+          <button onClick={() => bctx.archived ? doUnarchive(bctx.job) : doArchive(bctx.job)}
+            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: '#111827' }}>
+            {bctx.archived ? '↩ Unarchive' : '🗄 Archive (hide from queue)'}
+          </button>
         </div>
       )}
 

@@ -267,12 +267,19 @@ async def get_week(start: Optional[str] = Query(None), weeks: int = Query(1)):
             scheduled_ids = {r["opportunity_id"] for r in sched}
         except Exception:
             scheduled_ids = set()
+        try:
+            arch = await db._q("SELECT opportunity_id FROM schedule_archived_jobs", [])
+            archived_ids = {r["opportunity_id"] for r in arch}
+        except Exception:
+            archived_ids = set()
     finally:
         pass  # shared connection — do not close
 
-    backlog = [j for j in await _backlog() if j.get("opportunity_id") not in scheduled_ids]
+    raw = [j for j in await _backlog() if j.get("opportunity_id") not in scheduled_ids]
+    backlog  = [j for j in raw if j.get("opportunity_id") not in archived_ids]
+    archived = [j for j in raw if j.get("opportunity_id") in archived_ids]
     return {"week_start": mon.isoformat(), "days": days, "crew": crew,
-            "blocks": blocks, "labels": labels, "backlog": backlog}
+            "blocks": blocks, "labels": labels, "backlog": backlog, "archived": archived}
 
 
 _scope_cache: dict[int, tuple[str, float]] = {}
@@ -436,5 +443,31 @@ async def delete_label(assignment_id: int):
     try:
         await db._x("DELETE FROM schedule_assignments WHERE id = ?", [assignment_id])
         return {"ok": True, "id": assignment_id}
+    finally:
+        pass  # shared connection — do not close
+
+
+# ── Archive (hide queue jobs we're ignoring) ──────────────────────────────────────
+
+class ArchiveBody(BaseModel):
+    opportunity_id: int
+
+
+@router.post("/archive")
+async def archive_job(body: ArchiveBody):
+    db = await _db()
+    try:
+        await db._x("INSERT OR IGNORE INTO schedule_archived_jobs (opportunity_id) VALUES (?)", [body.opportunity_id])
+        return {"ok": True, "opportunity_id": body.opportunity_id}
+    finally:
+        pass  # shared connection — do not close
+
+
+@router.delete("/archive/{opportunity_id}")
+async def unarchive_job(opportunity_id: int):
+    db = await _db()
+    try:
+        await db._x("DELETE FROM schedule_archived_jobs WHERE opportunity_id = ?", [opportunity_id])
+        return {"ok": True, "opportunity_id": opportunity_id}
     finally:
         pass  # shared connection — do not close

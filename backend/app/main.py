@@ -319,6 +319,12 @@ async def lifespan(app: FastAPI):
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """,
+        "schedule_archived_jobs": """
+            CREATE TABLE IF NOT EXISTS schedule_archived_jobs (
+                opportunity_id INTEGER PRIMARY KEY,
+                created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
         "schedule_blocks": """
             CREATE TABLE IF NOT EXISTS schedule_blocks (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,

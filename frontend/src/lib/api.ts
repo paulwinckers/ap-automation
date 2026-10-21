@@ -1686,7 +1686,8 @@ export interface ScheduleBacklogJob {
 }
 export interface ScheduleWeek {
   week_start: string; days: string[]; crew: ScheduleCrew[];
-  blocks: ScheduleBlock[]; labels: ScheduleLabel[]; backlog: ScheduleBacklogJob[];
+  blocks: ScheduleBlock[]; labels: ScheduleLabel[];
+  backlog: ScheduleBacklogJob[]; archived: ScheduleBacklogJob[];
 }
 export async function getScheduleWeek(start?: string, weeks = 1): Promise<ScheduleWeek> {
   const qs = new URLSearchParams();
@@ -1729,6 +1730,12 @@ export async function deleteLabel(id: number): Promise<{ ok: boolean }> {
 }
 export async function getJobScope(oppId: number): Promise<{ opportunity_id: number; scope: string }> {
   return request('GET', `/construction/schedule/job/${oppId}/scope`);
+}
+export async function archiveJob(opportunity_id: number): Promise<{ ok: boolean }> {
+  return request('POST', '/construction/schedule/archive', { opportunity_id });
+}
+export async function unarchiveJob(opportunity_id: number): Promise<{ ok: boolean }> {
+  return request('DELETE', `/construction/schedule/archive/${opportunity_id}`);
 }
 
 // ── Database backups (D1 → R2) ─────────────────────────────────────────────────
