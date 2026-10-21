@@ -337,6 +337,8 @@ async def lifespan(app: FastAPI):
                 employees      TEXT,
                 note           TEXT,
                 status         TEXT NOT NULL DEFAULT 'tentative',
+                extra_days     INTEGER DEFAULT 0,
+                exceptions     TEXT,
                 created_by     TEXT,
                 created_at     TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at     TEXT
@@ -411,6 +413,9 @@ async def lifespan(app: FastAPI):
         ("company_documents", "folder_id", "ALTER TABLE company_documents ADD COLUMN folder_id INTEGER"),
         # schedule_blocks.status — tentative (movable) vs confirmed (locked)
         ("schedule_blocks", "status", "ALTER TABLE schedule_blocks ADD COLUMN status TEXT DEFAULT 'tentative'"),
+        # schedule_blocks — manual extend beyond budget + per-day employee exceptions
+        ("schedule_blocks", "extra_days", "ALTER TABLE schedule_blocks ADD COLUMN extra_days INTEGER DEFAULT 0"),
+        ("schedule_blocks", "exceptions", "ALTER TABLE schedule_blocks ADD COLUMN exceptions TEXT"),
     ]
     for tbl, col, sql in _COLUMN_MIGRATIONS:
         try:

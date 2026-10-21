@@ -75,7 +75,7 @@ def _working_dates(start: date, count: int, include_friday: bool) -> list[str]:
     return out
 
 
-def _block_dates(hours, employees: list, hours_per_day, include_friday: bool, start_iso: str) -> list[str]:
+def _budget_days(hours, emp_count: int, hours_per_day) -> int:
     try:
         h = float(hours or 0)
     except (TypeError, ValueError):
@@ -84,33 +84,53 @@ def _block_dates(hours, employees: list, hours_per_day, include_friday: bool, st
         hpd = float(hours_per_day or DEFAULT_HOURS_PER_DAY) or DEFAULT_HOURS_PER_DAY
     except (TypeError, ValueError):
         hpd = DEFAULT_HOURS_PER_DAY
-    emp = max(1, len(employees or []))
-    days_needed = max(1, math.ceil(h / (emp * hpd))) if h > 0 else 1
-    return _working_dates(_parse(start_iso), days_needed, include_friday)
+    emp = max(1, emp_count)
+    return max(1, math.ceil(h / (emp * hpd))) if h > 0 else 1
 
 
 def _shape_block(r: dict) -> dict:
-    employees = []
     try:
         employees = json.loads(r.get("employees") or "[]")
     except Exception:
         employees = []
+    try:
+        exceptions = json.loads(r.get("exceptions") or "[]")
+    except Exception:
+        exceptions = []
     inc_fri = bool(r.get("include_friday"))
-    dates = _block_dates(r.get("hours"), employees, r.get("hours_per_day"), inc_fri, r.get("start_date"))
+    extra = int(r.get("extra_days") or 0)
+    budget = _budget_days(r.get("hours"), len(employees), r.get("hours_per_day"))
+    total_days = max(1, budget + max(0, extra))
+    dates = _working_dates(_parse(r.get("start_date")), total_days, inc_fri)
+    # Scheduled capacity = person-day cells (minus per-day exceptions) × hours/day.
+    hpd = float(r.get("hours_per_day") or DEFAULT_HOURS_PER_DAY) or DEFAULT_HOURS_PER_DAY
+    cells = max(0, len(employees) * len(dates) - len(exceptions))
+    scheduled_hours = cells * hpd
+    try:
+        budget_hours = float(r.get("hours") or 0)
+    except (TypeError, ValueError):
+        budget_hours = 0.0
     return {
         "id": r["id"],
         "opportunity_id": r.get("opportunity_id"),
         "job_label": r.get("job_label"),
         "start_date": r.get("start_date"),
         "hours": r.get("hours"),
-        "hours_per_day": r.get("hours_per_day") or DEFAULT_HOURS_PER_DAY,
+        "hours_per_day": hpd,
         "include_friday": inc_fri,
         "employees": employees,
+        "exceptions": exceptions,
+        "extra_days": extra,
         "note": r.get("note"),
         "status": r.get("status") or "tentative",
         "dates": dates,
         "days_needed": len(dates),
+        "budget_days": budget,
         "end_date": dates[-1] if dates else r.get("start_date"),
+        "scheduled_hours": scheduled_hours,
+        "budget_hours": budget_hours,
+        # Over the estimate when the span runs longer than budgeted days.
+        "over_budget": extra > 0,
     }
 
 
@@ -342,6 +362,8 @@ class BlockBody(BaseModel):
     employees:      list[str] = []
     note:           Optional[str] = None
     status:         str = "tentative"
+    extra_days:     int = 0
+    exceptions:     list[str] = []
 
 
 @router.post("/block")
@@ -353,13 +375,14 @@ async def create_block(body: BlockBody):
     try:
         rows = await db._q(
             """INSERT INTO schedule_blocks
-               (opportunity_id, job_label, start_date, hours, hours_per_day, include_friday, employees, note, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+               (opportunity_id, job_label, start_date, hours, hours_per_day, include_friday, employees, note, status, extra_days, exceptions, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
                RETURNING *""",
             [body.opportunity_id, body.job_label.strip(), body.start_date[:10],
              body.hours, body.hours_per_day or DEFAULT_HOURS_PER_DAY,
              1 if body.include_friday else 0, json.dumps(body.employees or []),
-             (body.note or "").strip() or None, status],
+             (body.note or "").strip() or None, status,
+             max(0, int(body.extra_days or 0)), json.dumps(body.exceptions or [])],
         )
         return _shape_block(_row(rows[0]))
     finally:
@@ -375,6 +398,8 @@ class BlockPatch(BaseModel):
     employees:      Optional[list[str]] = None
     note:           Optional[str] = None
     status:         Optional[str] = None
+    extra_days:     Optional[int] = None
+    exceptions:     Optional[list[str]] = None
 
 
 @router.put("/block/{block_id}")
@@ -389,6 +414,8 @@ async def update_block(block_id: int, body: BlockPatch):
     if body.note is not None:          sets.append("note = ?");          params.append((body.note or "").strip() or None)
     if body.status is not None and body.status in ("tentative", "confirmed"):
         sets.append("status = ?"); params.append(body.status)
+    if body.extra_days is not None:    sets.append("extra_days = ?");    params.append(max(0, int(body.extra_days)))
+    if body.exceptions is not None:    sets.append("exceptions = ?");    params.append(json.dumps(body.exceptions))
     params.append(block_id)
     db = await _db()
     try:

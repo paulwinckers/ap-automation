@@ -1674,8 +1674,10 @@ export type ScheduleStatus = 'tentative' | 'confirmed';
 export interface ScheduleBlock {
   id: number; opportunity_id: number | null; job_label: string; start_date: string;
   hours: number | null; hours_per_day: number; include_friday: boolean;
-  employees: string[]; note: string | null; status: ScheduleStatus;
-  dates: string[]; days_needed: number; end_date: string;
+  employees: string[]; exceptions: string[]; extra_days: number;
+  note: string | null; status: ScheduleStatus;
+  dates: string[]; days_needed: number; budget_days: number; end_date: string;
+  scheduled_hours: number; budget_hours: number; over_budget: boolean;
 }
 export interface ScheduleLabel {
   id: number; work_date: string; lead_name: string; job_label: string | null; note: string | null;
@@ -1712,6 +1714,7 @@ export type BlockInput = {
   opportunity_id?: number | null; job_label: string; start_date: string;
   hours?: number | null; hours_per_day?: number; include_friday?: boolean;
   employees?: string[]; note?: string; status?: ScheduleStatus;
+  extra_days?: number; exceptions?: string[];
 };
 export async function createBlock(body: BlockInput): Promise<ScheduleBlock> {
   return request('POST', '/construction/schedule/block', body);

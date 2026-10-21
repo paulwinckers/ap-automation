@@ -54,7 +54,7 @@ type Draft = {
   mode: 'create' | 'edit'; id?: number;
   opportunity_id: number | null; job_label: string; start_date: string;
   hours: string; hours_per_day: string; include_friday: boolean; employees: Set<string>; note: string;
-  status: ScheduleStatus;
+  status: ScheduleStatus; extra_days: number; exceptions: string[];
 };
 
 export default function ConstructionBoard() {
@@ -68,7 +68,7 @@ export default function ConstructionBoard() {
   const [dragOver, setDragOver] = useState('');
   const drag = useRef<ScheduleBacklogJob | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [ctx, setCtx] = useState<{ x: number; y: number; block: ScheduleBlock } | null>(null);
+  const [ctx, setCtx] = useState<{ x: number; y: number; block: ScheduleBlock; row: string; day: string } | null>(null);
   const [bctx, setBctx] = useState<{ x: number; y: number; job: ScheduleBacklogJob; archived: boolean } | null>(null);
   const [showCrew, setShowCrew] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -120,13 +120,14 @@ export default function ConstructionBoard() {
   function openCreate(job: ScheduleBacklogJob, startDate: string, row?: string) {
     setDraft({ mode: 'create', opportunity_id: job.opportunity_id, job_label: job.label, start_date: startDate,
       hours: job.hours_est != null ? String(job.hours_est) : '', hours_per_day: '10', include_friday: false,
-      employees: new Set(row ? [row] : []), note: '', status: 'tentative' });
+      employees: new Set(row ? [row] : []), note: '', status: 'tentative', extra_days: 0, exceptions: [] });
   }
   function openEdit(b: ScheduleBlock) {
     setCtx(null);
     setDraft({ mode: 'edit', id: b.id, opportunity_id: b.opportunity_id, job_label: b.job_label, start_date: b.start_date,
       hours: b.hours != null ? String(b.hours) : '', hours_per_day: String(b.hours_per_day || 10),
-      include_friday: b.include_friday, employees: new Set(b.employees), note: b.note || '', status: b.status });
+      include_friday: b.include_friday, employees: new Set(b.employees), note: b.note || '', status: b.status,
+      extra_days: b.extra_days || 0, exceptions: b.exceptions || [] });
   }
 
   async function saveDraft() {
@@ -136,7 +137,8 @@ export default function ConstructionBoard() {
     const payload: BlockInput = {
       opportunity_id: draft.opportunity_id, job_label: draft.job_label, start_date: draft.start_date,
       hours: draft.hours ? Number(draft.hours) : null, hours_per_day: Number(draft.hours_per_day) || 10,
-      include_friday: draft.include_friday, employees: Array.from(draft.employees), note: draft.note, status: draft.status };
+      include_friday: draft.include_friday, employees: Array.from(draft.employees), note: draft.note, status: draft.status,
+      extra_days: draft.extra_days, exceptions: draft.exceptions };
     try {
       if (draft.mode === 'create') await createBlock(payload); else await updateBlock(draft.id!, payload);
       setDraft(null); await reloadKeepBacklog();
@@ -150,6 +152,20 @@ export default function ConstructionBoard() {
     setBusy(true); try { await updateBlock(b.id, { start_date: addDays(b.start_date, delta) }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }
   async function setStatus(b: ScheduleBlock, status: ScheduleStatus) { setCtx(null); setBusy(true); try { await updateBlock(b.id, { status }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
+  async function extendDays(b: ScheduleBlock, delta: number) { setCtx(null); setBusy(true); try { await updateBlock(b.id, { extra_days: Math.max(0, (b.extra_days || 0) + delta) }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
+  async function removeFromDay(b: ScheduleBlock, row: string, day: string) {
+    setCtx(null); setBusy(true);
+    const ex = Array.from(new Set([...(b.exceptions || []), `${row}|${day}`]));
+    try { await updateBlock(b.id, { exceptions: ex }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  async function removeFromJob(b: ScheduleBlock, row: string) {
+    setCtx(null);
+    if (b.employees.length <= 1) { setErr('A job needs at least one employee — delete it instead.'); return; }
+    setBusy(true);
+    const employees = b.employees.filter(e => e !== row);
+    const ex = (b.exceptions || []).filter(k => !k.startsWith(`${row}|`));
+    try { await updateBlock(b.id, { employees, exceptions: ex }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
   async function addLabel(row: string, day: string) {
     const label = window.prompt('Label for this cell (e.g. Away, Shop, Vacation):'); if (!label || !label.trim()) return;
     setBusy(true); try { await createLabel({ work_date: day, lead_name: row, job_label: label.trim() }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
@@ -176,7 +192,7 @@ export default function ConstructionBoard() {
               <div style={lcell}>{row}</div>
               {slice.map(day => {
                 const key = `${row}|${day}`;
-                const here = blocks.filter(b => b.employees.includes(row) && b.dates.includes(day));
+                const here = blocks.filter(b => b.employees.includes(row) && b.dates.includes(day) && !(b.exceptions || []).includes(`${row}|${day}`));
                 const labelsHere = labels.filter(l => l.lead_name === row && l.work_date === day);
                 return (
                   <div key={key}
@@ -190,11 +206,11 @@ export default function ConstructionBoard() {
                       const confirmed = b.status === 'confirmed';
                       return (
                         <div key={b.id}
-                          onContextMenu={e => { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, block: b }); }}
+                          onContextMenu={e => { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, block: b, row, day }); }}
                           onClick={() => openEdit(b)}
-                          title={`${b.job_label}${b.hours ? ` · ${b.hours}h` : ''} · ${b.days_needed} day(s) · ${confirmed ? 'CONFIRMED (locked)' : 'tentative'} · right-click to edit`}
+                          title={`${b.job_label}${b.hours ? ` · ${b.hours}h` : ''} · ${b.days_needed} day(s)${b.over_budget ? ` (budget ${b.budget_days})` : ''} · ${confirmed ? 'CONFIRMED (locked)' : 'tentative'} · right-click for options`}
                           style={{ background: c.bg, color: c.fg, border: confirmed ? `1.5px solid ${c.border}` : `1px dashed ${c.border}`, borderLeft: `3px solid ${c.border}`, borderRadius: 5, padding: '3px 6px', marginBottom: 4, fontSize: 12, fontWeight: 700, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {confirmed && '🔒 '}{isStart ? b.job_label : <span style={{ opacity: 0.75 }}>↳ {b.job_label}</span>}
+                          {confirmed && '🔒 '}{b.over_budget && '⚠ '}{isStart ? b.job_label : <span style={{ opacity: 0.75 }}>↳ {b.job_label}</span>}
                         </div>
                       );
                     })}
@@ -304,6 +320,10 @@ export default function ConstructionBoard() {
             ctx.block.status === 'confirmed'
               ? { label: '🔓 Unlock (set tentative)', fn: () => setStatus(ctx.block, 'tentative') }
               : { label: '✅ Confirm (lock)', fn: () => setStatus(ctx.block, 'confirmed') },
+            { label: `➖ Remove ${ctx.row} from ${fmtDay(ctx.day)}`, fn: () => removeFromDay(ctx.block, ctx.row, ctx.day) },
+            { label: `👤 Remove ${ctx.row} from whole job`, fn: () => removeFromJob(ctx.block, ctx.row) },
+            { label: '✚ Extend 1 day (past budget)', fn: () => extendDays(ctx.block, 1) },
+            ...(ctx.block.extra_days > 0 ? [{ label: '✂️ Shorten 1 day', fn: () => extendDays(ctx.block, -1) }] : []),
             { label: ctx.block.include_friday ? '📅 Fridays: on → turn off' : '📅 Add Fridays', fn: () => toggleFridays(ctx.block) },
             { label: '◀ Move start earlier (1 day)', fn: () => moveStart(ctx.block, -1) },
             { label: '▶ Move start later (1 day)', fn: () => moveStart(ctx.block, 1) },
@@ -335,7 +355,12 @@ function BlockModal({ draft, setDraft, crew, onSave, busy }: {
   draft: Draft; setDraft: (d: Draft | null) => void; crew: string[]; onSave: () => void; busy: boolean;
 }) {
   const empCount = draft.employees.size;
-  const dates = blockDates(draft.start_date, draft.hours ? Number(draft.hours) : 0, empCount, Number(draft.hours_per_day) || 10, draft.include_friday);
+  const hpd = Number(draft.hours_per_day) || 10;
+  const budgetDates = blockDates(draft.start_date, draft.hours ? Number(draft.hours) : 0, empCount, hpd, draft.include_friday);
+  const dates = workingDates(draft.start_date, budgetDates.length + Math.max(0, draft.extra_days), draft.include_friday);
+  const cells = Math.max(0, empCount * dates.length - draft.exceptions.length);
+  const scheduledHours = cells * hpd;
+  const budgetHours = Number(draft.hours) || 0;
   const toggleEmp = (name: string) => { const s = new Set(draft.employees); s.has(name) ? s.delete(name) : s.add(name); setDraft({ ...draft, employees: s }); };
   const inp: React.CSSProperties = { padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 14, fontFamily: 'inherit' };
   return (
@@ -369,9 +394,38 @@ function BlockModal({ draft, setDraft, crew, onSave, busy }: {
               <input type="checkbox" checked={draft.status === 'confirmed'} onChange={e => setDraft({ ...draft, status: e.target.checked ? 'confirmed' : 'tentative' })} />🔒 Confirmed (locked — don't move)
             </label>
           </div>
+          {/* Duration / extend */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <label style={{ ...mlbl, marginBottom: 0 }}>Duration</label>
+            <button type="button" onClick={() => setDraft({ ...draft, extra_days: Math.max(0, draft.extra_days - 1) })} disabled={draft.extra_days <= 0}
+              style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid #d1d5db', background: '#fff', cursor: draft.extra_days > 0 ? 'pointer' : 'default', fontSize: 15, fontWeight: 800 }}>−</button>
+            <span style={{ fontSize: 13, color: '#374151' }}>{budgetDates.length} budget{draft.extra_days > 0 ? ` + ${draft.extra_days} extra` : ''} = <b>{dates.length} days</b></span>
+            <button type="button" onClick={() => setDraft({ ...draft, extra_days: draft.extra_days + 1 })}
+              style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: 15, fontWeight: 800 }}>+</button>
+          </div>
+          {draft.exceptions.length > 0 && (
+            <div>
+              <label style={mlbl}>Day exceptions (person off a day)</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {draft.exceptions.map(k => {
+                  const [emp, d] = k.split('|');
+                  return (
+                    <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#fef3c7', color: '#92400e', borderRadius: 8, padding: '3px 8px', fontSize: 12, fontWeight: 700 }}>
+                      {emp} off {fmtDay(d)}
+                      <button type="button" onClick={() => setDraft({ ...draft, exceptions: draft.exceptions.filter(x => x !== k) })} style={{ background: 'none', border: 'none', color: '#92400e', cursor: 'pointer', fontSize: 12, padding: 0 }}>×</button>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#374151' }}>
             {empCount === 0 ? 'Pick at least one employee to see the span.'
-              : <><b>{dates.length} working day{dates.length === 1 ? '' : 's'}</b> · {fmtDay(dates[0])} → {fmtDay(dates[dates.length - 1])}<span style={{ color: '#9ca3af' }}> ({draft.hours || '0'}h ÷ {empCount} × {draft.hours_per_day || 10}h/day)</span></>}
+              : <>
+                  <div><b>{dates.length} working day{dates.length === 1 ? '' : 's'}</b> · {fmtDay(dates[0])} → {fmtDay(dates[dates.length - 1])}</div>
+                  <div style={{ color: '#9ca3af', marginTop: 2 }}>Scheduled {scheduledHours}h vs budget {budgetHours || '0'}h{draft.exceptions.length ? ` · ${draft.exceptions.length} day exception(s)` : ''}</div>
+                  {draft.extra_days > 0 && <div style={{ color: '#b45309', fontWeight: 700, marginTop: 4 }}>⚠ Scheduled {draft.extra_days} day{draft.extra_days === 1 ? '' : 's'} past the budgeted time.</div>}
+                </>}
           </div>
         </div>
         <div style={{ padding: '12px 20px', borderTop: '1px solid #e5e7eb', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
