@@ -1271,11 +1271,9 @@ export default function ConstructionPlan() {
               ))}
             </div>
             <a href="/dashboards/construction/board" style={{ ...secondaryBtn, textDecoration: 'none', display: 'inline-block' }}>📅 Weekly Board</a>
-            <button onClick={() => setShowLeads(true)}   style={secondaryBtn}>👷 Leads</button>
             <button onClick={() => setShowCheckin(true)} style={secondaryBtn}>📤 Check-ins</button>
             <button onClick={() => setShowCxSetup(true)} style={secondaryBtn}>✉️ Comms</button>
             <button onClick={() => setShowGoal(true)}    style={secondaryBtn}>⚙️ Goals</button>
-            <button onClick={() => setShowAdd(true)}     style={primaryBtn}>+ Add Job</button>
           </div>
         </div>
 
@@ -1400,10 +1398,8 @@ export default function ConstructionPlan() {
             border: '1px solid #e5e7eb', textAlign: 'center',
             color: '#9ca3af', fontSize: 14,
           }}>
-            No jobs committed to {monthLabel(month)} yet.<br />
-            <button onClick={() => setShowAdd(true)} style={{ ...primaryBtn, marginTop: 16 }}>
-              + Add First Job
-            </button>
+            No construction jobs for {monthLabel(month)} yet.<br />
+            <span style={{ fontSize: 13 }}>Won jobs flow in automatically from Aspire and the schedule board.</span>
           </div>
         )}
 
@@ -1472,10 +1468,6 @@ export default function ConstructionPlan() {
       {showGoal && plan && (
         <GoalEditor month={month} goal={goal} onSave={handleSaveGoal} onClose={() => setShowGoal(false)} />
       )}
-      {showAdd && (
-        <AddJobPanel month={month} onAdded={() => { setShowAdd(false); load(); }} onClose={() => setShowAdd(false)} />
-      )}
-      {showLeads && <LeadsModal onClose={() => setShowLeads(false)} />}
       {showCheckin && <CheckinStatusPanel month={month} onClose={() => setShowCheckin(false)} />}
       {showCxSetup && <CxSetupModal onClose={() => setShowCxSetup(false)} />}
       {commsJob && <ClientCommsModal oppId={commsJob.opportunity_id} jobName={commsJob.property_name || commsJob.opportunity_name} onClose={() => setCommsJob(null)} />}
