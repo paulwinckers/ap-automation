@@ -62,7 +62,7 @@ type Draft = {
   mode: 'create' | 'edit'; id?: number;
   opportunity_id: number | null; job_label: string; start_date: string;
   hours: string; hours_per_day: string; include_friday: boolean; employees: Set<string>; note: string;
-  status: ScheduleStatus; extra_days: number; exceptions: string[];
+  status: ScheduleStatus; extra_days: number; exceptions: string[]; lead: string;
 };
 
 export default function ConstructionBoard() {
@@ -140,14 +140,14 @@ export default function ConstructionBoard() {
   function openCreate(job: ScheduleBacklogJob, startDate: string, row?: string) {
     setDraft({ mode: 'create', opportunity_id: job.opportunity_id, job_label: job.label, start_date: startDate,
       hours: job.hours_est != null ? String(job.hours_est) : '', hours_per_day: '10', include_friday: false,
-      employees: new Set(row ? [row] : []), note: '', status: 'tentative', extra_days: 0, exceptions: [] });
+      employees: new Set(row ? [row] : []), note: '', status: 'tentative', extra_days: 0, exceptions: [], lead: row || '' });
   }
   function openEdit(b: ScheduleBlock) {
     setCtx(null);
     setDraft({ mode: 'edit', id: b.id, opportunity_id: b.opportunity_id, job_label: b.job_label, start_date: b.start_date,
       hours: b.hours != null ? String(b.hours) : '', hours_per_day: String(b.hours_per_day || 10),
       include_friday: b.include_friday, employees: new Set(b.employees), note: b.note || '', status: b.status,
-      extra_days: b.extra_days || 0, exceptions: b.exceptions || [] });
+      extra_days: b.extra_days || 0, exceptions: b.exceptions || [], lead: b.lead_name || '' });
   }
 
   async function saveDraft() {
@@ -158,7 +158,8 @@ export default function ConstructionBoard() {
       opportunity_id: draft.opportunity_id, job_label: draft.job_label, start_date: draft.start_date,
       hours: draft.hours ? Number(draft.hours) : null, hours_per_day: Number(draft.hours_per_day) || 10,
       include_friday: draft.include_friday, employees: Array.from(draft.employees), note: draft.note, status: draft.status,
-      extra_days: draft.extra_days, exceptions: draft.exceptions };
+      extra_days: draft.extra_days, exceptions: draft.exceptions,
+      lead_name: draft.employees.has(draft.lead) ? draft.lead : (Array.from(draft.employees)[0] || '') };
     try {
       const saved = draft.mode === 'create' ? await createBlock(payload) : await updateBlock(draft.id!, payload);
       const hits = (saved && saved.employees) ? conflictsFor(saved) : [];
@@ -293,7 +294,7 @@ export default function ConstructionBoard() {
                           onClick={() => openEdit(b)}
                           title={`${b.job_label}${b.hours ? ` · ${b.hours}h` : ''} · ${b.days_needed} day(s)${b.over_budget ? ` (budget ${b.budget_days})` : ''} · ${confirmed ? 'CONFIRMED (locked)' : 'tentative'} · right-click for options`}
                           style={{ background: c.bg, color: c.fg, border: confirmed ? `1.5px solid ${c.border}` : `1px dashed ${c.border}`, borderLeft: `3px solid ${c.border}`, borderRadius: 5, padding: '3px 6px', marginBottom: 4, fontSize: 12, fontWeight: 700, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {confirmed && '🔒 '}{b.over_budget && '⚠ '}{isStart ? b.job_label : <span style={{ opacity: 0.75 }}>↳ {b.job_label}</span>}
+                          {confirmed && '🔒 '}{b.over_budget && '⚠ '}{b.lead_name === row && <span title="Job lead" style={{ color: '#f59e0b' }}>★ </span>}{isStart ? b.job_label : <span style={{ opacity: 0.75 }}>↳ {b.job_label}</span>}
                         </div>
                       );
                     })}
@@ -515,13 +516,24 @@ function BlockModal({ draft, setDraft, crew, onSave, busy }: {
             <div style={{ width: 150 }}><label style={mlbl}>Start date</label><input style={{ ...inp, width: '100%', boxSizing: 'border-box' }} type="date" value={draft.start_date} onChange={e => setDraft({ ...draft, start_date: e.target.value })} /></div>
           </div>
           <div>
-            <label style={mlbl}>Employees ({empCount})</label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 4, maxHeight: 160, overflowY: 'auto', border: '1px solid #f1f5f9', borderRadius: 8, padding: 8 }}>
-              {crew.map(name => (
-                <label key={name} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, color: '#374151', cursor: 'pointer', padding: '2px 0' }}>
-                  <input type="checkbox" checked={draft.employees.has(name)} onChange={() => toggleEmp(name)} />{name}
-                </label>
-              ))}
+            <label style={mlbl}>Employees ({empCount}) — ★ marks the job lead</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 4, maxHeight: 180, overflowY: 'auto', border: '1px solid #f1f5f9', borderRadius: 8, padding: 8 }}>
+              {crew.map(name => {
+                const on = draft.employees.has(name);
+                const isLead = on && (draft.lead === name || (!draft.employees.has(draft.lead) && Array.from(draft.employees)[0] === name));
+                return (
+                  <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#374151', padding: '2px 0' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1, minWidth: 0 }}>
+                      <input type="checkbox" checked={on} onChange={() => toggleEmp(name)} />
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                    </label>
+                    {on && (
+                      <button type="button" title={isLead ? 'Job lead' : 'Make lead'} onClick={() => setDraft({ ...draft, lead: name })}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: isLead ? '#f59e0b' : '#d1d5db', padding: 0, lineHeight: 1 }}>★</button>
+                    )}
+                  </div>
+                );
+              })}
               {crew.length === 0 && <div style={{ color: '#9ca3af', fontSize: 13 }}>No crew in the roster.</div>}
             </div>
           </div>

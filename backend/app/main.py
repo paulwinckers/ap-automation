@@ -365,6 +365,7 @@ async def lifespan(app: FastAPI):
                 hours_per_day  REAL DEFAULT 10,
                 include_friday INTEGER DEFAULT 0,
                 employees      TEXT,
+                lead_name      TEXT,
                 note           TEXT,
                 status         TEXT NOT NULL DEFAULT 'tentative',
                 extra_days     INTEGER DEFAULT 0,
@@ -446,6 +447,7 @@ async def lifespan(app: FastAPI):
         # schedule_blocks — manual extend beyond budget + per-day employee exceptions
         ("schedule_blocks", "extra_days", "ALTER TABLE schedule_blocks ADD COLUMN extra_days INTEGER DEFAULT 0"),
         ("schedule_blocks", "exceptions", "ALTER TABLE schedule_blocks ADD COLUMN exceptions TEXT"),
+        ("schedule_blocks", "lead_name",  "ALTER TABLE schedule_blocks ADD COLUMN lead_name TEXT"),
     ]
     for tbl, col, sql in _COLUMN_MIGRATIONS:
         try:

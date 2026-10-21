@@ -1679,7 +1679,7 @@ export type ScheduleStatus = 'tentative' | 'confirmed';
 export interface ScheduleBlock {
   id: number; opportunity_id: number | null; job_label: string; start_date: string;
   hours: number | null; hours_per_day: number; include_friday: boolean;
-  employees: string[]; exceptions: string[]; extra_days: number;
+  employees: string[]; lead_name: string; exceptions: string[]; extra_days: number;
   note: string | null; status: ScheduleStatus;
   dates: string[]; days_needed: number; budget_days: number; end_date: string;
   scheduled_hours: number; budget_hours: number; over_budget: boolean;
@@ -1718,7 +1718,7 @@ export async function deleteCrew(id: number): Promise<{ ok: boolean }> {
 export type BlockInput = {
   opportunity_id?: number | null; job_label: string; start_date: string;
   hours?: number | null; hours_per_day?: number; include_friday?: boolean;
-  employees?: string[]; note?: string; status?: ScheduleStatus;
+  employees?: string[]; lead_name?: string; note?: string; status?: ScheduleStatus;
   extra_days?: number; exceptions?: string[];
 };
 export async function createBlock(body: BlockInput): Promise<ScheduleBlock> {

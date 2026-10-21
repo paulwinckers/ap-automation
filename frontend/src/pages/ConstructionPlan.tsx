@@ -22,7 +22,7 @@ type PHAInfo = { status: PHAStatus; id: number; submitted_at?: string | null };
 type PHAMap = Map<number, PHAInfo>;
 
 // opportunity_id → its schedule block (from the board; the window's source of truth)
-type BlockInfo = { id: number; status: 'tentative' | 'confirmed'; start: string; window_week: string };
+type BlockInfo = { id: number; status: 'tentative' | 'confirmed'; start: string; window_week: string; lead: string };
 type BlockMap = Map<number, BlockInfo>;
 function mondayOf(iso: string): string {
   try { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.toISOString().slice(0, 10); }
@@ -774,7 +774,7 @@ export default function ConstructionPlan() {
       const m: BlockMap = new Map();
       for (const b of wk.blocks) {
         if (b.opportunity_id == null) continue;
-        const info: BlockInfo = { id: b.id, status: b.status, start: b.start_date, window_week: mondayOf(b.start_date) };
+        const info: BlockInfo = { id: b.id, status: b.status, start: b.start_date, window_week: mondayOf(b.start_date), lead: b.lead_name || '' };
         const prev = m.get(b.opportunity_id);
         // confirmed beats tentative; else earliest start
         if (!prev || (prev.status !== 'confirmed' && info.status === 'confirmed') ||
@@ -1148,6 +1148,7 @@ export default function ConstructionPlan() {
             </a>
             <span style={{ fontSize: 11.5, color: '#9ca3af' }}>
               {j.opp_number ? `  ·  #${j.opp_number}` : ''}{j.property_name && j.opportunity_name ? `  ·  ${j.opportunity_name}` : ''}{children.length ? `  ·  +${children.length} CO` : ''}
+              {schedOf(j)?.lead ? <span style={{ color: '#b45309', fontWeight: 700 }}>{'  ·  ★ '}{schedOf(j)!.lead}</span> : ''}
             </span>
           </div>
           {/* Window / date + confirm action */}
