@@ -40,6 +40,7 @@ from app.api.safety_incidents import router as safety_incidents_router
 from app.api.email_settings_api import router as email_settings_router
 from app.api.vehicle_inspections import router as vehicle_inspections_router
 from app.api.safety_pha import router as safety_pha_router
+from app.api.schedule import router as schedule_router
 from app.api.backup import router as backup_router, start_backup_scheduler, stop_backup_scheduler
 from app.api.property_hazards import router as property_hazards_router
 from app.api.project_checkin import (
@@ -295,6 +296,20 @@ async def lifespan(app: FastAPI):
                 created_at      TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """,
+        "schedule_assignments": """
+            CREATE TABLE IF NOT EXISTS schedule_assignments (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                work_date      TEXT NOT NULL,
+                lead_name      TEXT NOT NULL,
+                opportunity_id INTEGER,
+                job_label      TEXT,
+                note           TEXT,
+                sort_order     INTEGER DEFAULT 0,
+                created_by     TEXT,
+                created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at     TEXT
+            )
+        """,
         "project_hazard_assessments": """
             CREATE TABLE IF NOT EXISTS project_hazard_assessments (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -494,6 +509,7 @@ app.include_router(safety_incidents_router)
 app.include_router(email_settings_router)
 app.include_router(vehicle_inspections_router)
 app.include_router(safety_pha_router)
+app.include_router(schedule_router)
 app.include_router(backup_router)
 app.include_router(property_hazards_router)
 app.include_router(checkin_router)

@@ -1086,6 +1086,7 @@ export default function ConstructionPlan() {
           </div>
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <a href="/dashboards/construction/board" style={{ ...secondaryBtn, textDecoration: 'none', display: 'inline-block' }}>📅 Weekly Board</a>
             <button onClick={() => setShowLeads(true)}   style={secondaryBtn}>👷 Leads</button>
             <button onClick={() => setShowCheckin(true)} style={secondaryBtn}>📤 Check-ins</button>
             <button onClick={() => setShowGoal(true)}    style={secondaryBtn}>⚙️ Goals</button>

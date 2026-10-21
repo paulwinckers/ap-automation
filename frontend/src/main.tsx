@@ -15,6 +15,7 @@ import SalesDashboard         from './pages/SalesDashboard';
 import OpsDashboard           from './pages/OpsDashboard';
 import ConstructionDashboard  from './pages/ConstructionDashboard';
 import ConstructionPlan       from './pages/ConstructionPlan';
+import ConstructionBoard      from './pages/ConstructionBoard';
 import DailySchedule          from './pages/DailySchedule';
 import CustomerDashboard      from './pages/CustomerDashboard';
 import WeeklySchedule         from './pages/WeeklySchedule';
@@ -127,6 +128,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/dashboards/schedule/week" element={<RequireAuth><Office><WeeklySchedule /></Office></RequireAuth>} />
         <Route path="/dashboards/construction" element={<RequireAuth><Office><ConstructionDashboard /></Office></RequireAuth>} />
         <Route path="/dashboards/construction/plan" element={<RequireAuth><Office><ConstructionPlan /></Office></RequireAuth>} />
+        <Route path="/dashboards/construction/board" element={<RequireAuth><Office><ConstructionBoard /></Office></RequireAuth>} />
         <Route path="/dashboards/estimating"   element={<RequireAuth><Office><EstimatingDashboard /></Office></RequireAuth>} />
         <Route path="/dashboards/activities"   element={<RequireAuth><Office><ActivitiesDashboard /></Office></RequireAuth>} />
 

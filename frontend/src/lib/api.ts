@@ -1667,6 +1667,33 @@ export async function getPHAPrefill(oppId: number): Promise<PHAPrefill> {
   return request('GET', `/aspire/field/pha-prefill/${oppId}`);
 }
 
+// ── Construction Weekly Schedule board ────────────────────────────────────────
+export interface ScheduleLead { name: string; aspire_name: string; }
+export interface ScheduleAssignment {
+  id: number; work_date: string; lead_name: string;
+  opportunity_id: number | null; job_label: string | null; note: string | null; sort_order: number;
+}
+export interface ScheduleBacklogJob {
+  opportunity_id: number; label: string; opportunity_name: string | null;
+  opp_number: number | null; hours_est: number | null; start_date: string | null;
+}
+export interface ScheduleWeek {
+  week_start: string; days: string[]; leads: ScheduleLead[];
+  assignments: ScheduleAssignment[]; backlog: ScheduleBacklogJob[];
+}
+export async function getScheduleWeek(start?: string): Promise<ScheduleWeek> {
+  return request('GET', `/schedule/week${start ? `?start=${start}` : ''}`);
+}
+export async function createAssignment(body: { work_date: string; lead_name: string; opportunity_id?: number | null; job_label: string; note?: string }): Promise<{ id: number }> {
+  return request('POST', '/schedule/assignment', body);
+}
+export async function updateAssignment(id: number, body: Partial<{ work_date: string; lead_name: string; opportunity_id: number | null; job_label: string; note: string; sort_order: number }>): Promise<{ ok: boolean }> {
+  return request('PUT', `/schedule/assignment/${id}`, body);
+}
+export async function deleteAssignment(id: number): Promise<{ ok: boolean }> {
+  return request('DELETE', `/schedule/assignment/${id}`);
+}
+
 // ── Database backups (D1 → R2) ─────────────────────────────────────────────────
 export interface BackupFile { key: string; bytes: number; last_modified: string | null; }
 export interface BackupSettings {
