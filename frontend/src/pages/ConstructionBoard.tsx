@@ -70,6 +70,7 @@ export default function ConstructionBoard() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [ctx, setCtx] = useState<{ x: number; y: number; block: ScheduleBlock } | null>(null);
   const [showCrew, setShowCrew] = useState(false);
+  const [backlogOpen, setBacklogOpen] = useState(() => { try { return window.innerWidth >= 768; } catch { return true; } });
 
   async function load(s?: string, w?: number) {
     setLoading(true); setErr('');
@@ -216,6 +217,9 @@ export default function ConstructionBoard() {
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#0f172a' }}>📅 Construction Weekly Schedule</h1>
           <p style={{ margin: '3px 0 0', color: '#6b7280', fontSize: 13 }}>Drag a job onto a crew/day to schedule it. Right-click a block to edit.</p>
         </div>
+        <button onClick={() => setBacklogOpen(o => !o)} style={{ ...navBtn, background: backlogOpen ? '#eff6ff' : '#fff', borderColor: backlogOpen ? '#bfdbfe' : '#e5e7eb' }}>
+          📥 Unscheduled ({backlog.length})
+        </button>
         <button onClick={() => setShowCrew(true)} style={navBtn}>👷 Crew</button>
         <Link to="/dashboards/construction/plan" style={{ textDecoration: 'none', padding: '8px 16px', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', color: '#374151', fontWeight: 700, fontSize: 13 }}>📋 Monthly Plan</Link>
         <select value={weeks} onChange={e => { const w = Number(e.target.value); setWeeks(w); load(start, w); }}
@@ -235,8 +239,12 @@ export default function ConstructionBoard() {
 
       {week && (
         <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+          {backlogOpen && (
           <div style={{ width: 240, flexShrink: 0, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 12, maxHeight: '82vh', overflowY: 'auto', position: 'sticky', top: 12 }}>
-            <div style={{ fontWeight: 800, fontSize: 13, color: '#0f172a', marginBottom: 8 }}>📥 Unscheduled <span style={{ color: '#9ca3af', fontWeight: 500 }}>({backlog.length})</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div style={{ fontWeight: 800, fontSize: 13, color: '#0f172a' }}>📥 Unscheduled <span style={{ color: '#9ca3af', fontWeight: 500 }}>({backlog.length})</span></div>
+              <button onClick={() => setBacklogOpen(false)} title="Hide list" style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 2 }}>‹</button>
+            </div>
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search jobs…" style={{ width: '100%', boxSizing: 'border-box', padding: '7px 9px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, marginBottom: 10 }} />
             {backlog.map(j => (
               <div key={j.opportunity_id} draggable onDragStart={() => { drag.current = j; }} onClick={() => openCreate(j, days[0])}
@@ -248,6 +256,7 @@ export default function ConstructionBoard() {
             ))}
             {backlog.length === 0 && <div style={{ color: '#9ca3af', fontSize: 13 }}>No matching jobs.</div>}
           </div>
+          )}
 
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 10, fontSize: 12, color: '#6b7280', alignItems: 'center' }}>
