@@ -21,7 +21,7 @@ from app.core.config import settings
 from app.core.database import Database
 from app.services.aspire import AspireClient
 
-router = APIRouter(prefix="/schedule", tags=["schedule"])
+router = APIRouter(prefix="/construction/schedule", tags=["construction-schedule"])
 logger = logging.getLogger(__name__)
 
 _aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)

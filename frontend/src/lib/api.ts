@@ -1682,16 +1682,16 @@ export interface ScheduleWeek {
   assignments: ScheduleAssignment[]; backlog: ScheduleBacklogJob[];
 }
 export async function getScheduleWeek(start?: string): Promise<ScheduleWeek> {
-  return request('GET', `/schedule/week${start ? `?start=${start}` : ''}`);
+  return request('GET', `/construction/schedule/week${start ? `?start=${start}` : ''}`);
 }
 export async function createAssignment(body: { work_date: string; lead_name: string; opportunity_id?: number | null; job_label: string; note?: string }): Promise<{ id: number }> {
-  return request('POST', '/schedule/assignment', body);
+  return request('POST', '/construction/schedule/assignment', body);
 }
 export async function updateAssignment(id: number, body: Partial<{ work_date: string; lead_name: string; opportunity_id: number | null; job_label: string; note: string; sort_order: number }>): Promise<{ ok: boolean }> {
-  return request('PUT', `/schedule/assignment/${id}`, body);
+  return request('PUT', `/construction/schedule/assignment/${id}`, body);
 }
 export async function deleteAssignment(id: number): Promise<{ ok: boolean }> {
-  return request('DELETE', `/schedule/assignment/${id}`);
+  return request('DELETE', `/construction/schedule/assignment/${id}`);
 }
 
 // ── Database backups (D1 → R2) ─────────────────────────────────────────────────
