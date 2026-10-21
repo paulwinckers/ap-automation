@@ -1668,7 +1668,8 @@ export async function getPHAPrefill(oppId: number): Promise<PHAPrefill> {
 }
 
 // ── Construction Weekly Schedule board ────────────────────────────────────────
-export interface ScheduleCrew { name: string; aspire_name: string; }
+export interface ScheduleCrew { id?: number; name: string; }
+export interface CrewMember { id: number; name: string; active: boolean; sort_order: number; }
 export interface ScheduleBlock {
   id: number; opportunity_id: number | null; job_label: string; start_date: string;
   hours: number | null; hours_per_day: number; include_friday: boolean;
@@ -1686,8 +1687,21 @@ export interface ScheduleWeek {
   week_start: string; days: string[]; crew: ScheduleCrew[];
   blocks: ScheduleBlock[]; labels: ScheduleLabel[]; backlog: ScheduleBacklogJob[];
 }
-export async function getScheduleWeek(start?: string): Promise<ScheduleWeek> {
-  return request('GET', `/construction/schedule/week${start ? `?start=${start}` : ''}`);
+export async function getScheduleWeek(start?: string, weeks = 1): Promise<ScheduleWeek> {
+  const qs = new URLSearchParams();
+  if (start) qs.set('start', start);
+  if (weeks > 1) qs.set('weeks', String(weeks));
+  return request('GET', `/construction/schedule/week${qs.toString() ? '?' + qs : ''}`);
+}
+export async function listCrew(includeInactive = false): Promise<CrewMember[]> {
+  const r = await request<{ crew: CrewMember[] }>('GET', `/construction/schedule/crew${includeInactive ? '?include_inactive=true' : ''}`);
+  return r.crew;
+}
+export async function addCrew(name: string): Promise<{ id: number; name: string }> {
+  return request('POST', '/construction/schedule/crew', { name });
+}
+export async function updateCrew(id: number, body: { name?: string; active?: boolean }): Promise<{ ok: boolean }> {
+  return request('PUT', `/construction/schedule/crew/${id}`, body);
 }
 export type BlockInput = {
   opportunity_id?: number | null; job_label: string; start_date: string;

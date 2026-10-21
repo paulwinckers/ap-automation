@@ -108,25 +108,108 @@ def _shape_block(r: dict) -> dict:
     }
 
 
+# ── Crew roster (portal-owned, independent of Aspire) ─────────────────────────────
+
+async def _ensure_crew_seeded(db: Database) -> None:
+    """On first use, seed the schedule crew from the existing construction leads
+    so the board isn't empty. After that the roster is managed in the portal."""
+    try:
+        existing = await db._q("SELECT COUNT(*) AS n FROM schedule_crew", [])
+        if existing and (existing[0].get("n") or 0) > 0:
+            return
+        leads = await db._q("SELECT aspire_name, display_name FROM construction_leads ORDER BY aspire_name", [])
+        seen = set()
+        i = 0
+        for r in leads:
+            name = (r.get("display_name") or r.get("aspire_name") or "").strip()
+            if not name or name.lower() in seen:
+                continue
+            seen.add(name.lower())
+            await db._x("INSERT INTO schedule_crew (name, active, sort_order) VALUES (?, 1, ?)", [name, i])
+            i += 1
+        if i:
+            logger.info(f"schedule: seeded {i} crew from construction_leads")
+    except Exception as e:
+        logger.warning(f"schedule crew seed skipped: {e}")
+
+
+async def _active_crew(db: Database) -> list[dict]:
+    rows = await db._q("SELECT id, name, active, sort_order FROM schedule_crew WHERE active = 1 ORDER BY sort_order, name", [])
+    return [{"id": r["id"], "name": r["name"]} for r in rows]
+
+
+@router.get("/crew")
+async def list_crew(include_inactive: bool = Query(False)):
+    db = await _db()
+    try:
+        await _ensure_crew_seeded(db)
+        where = "" if include_inactive else "WHERE active = 1"
+        rows = await db._q(f"SELECT id, name, active, sort_order FROM schedule_crew {where} ORDER BY active DESC, sort_order, name", [])
+        return {"crew": [{"id": r["id"], "name": r["name"], "active": bool(r["active"]), "sort_order": r.get("sort_order") or 0} for r in rows]}
+    finally:
+        await db.close()
+
+
+class CrewBody(BaseModel):
+    name: str
+
+
+@router.post("/crew")
+async def add_crew(body: CrewBody):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "name is required")
+    db = await _db()
+    try:
+        mx = await db._q("SELECT COALESCE(MAX(sort_order), 0) AS m FROM schedule_crew", [])
+        order = (mx[0].get("m") or 0) + 1 if mx else 0
+        rows = await db._q("INSERT INTO schedule_crew (name, active, sort_order) VALUES (?, 1, ?) RETURNING id", [name, order])
+        return {"id": rows[0]["id"], "name": name, "active": True}
+    finally:
+        await db.close()
+
+
+class CrewPatch(BaseModel):
+    name:   Optional[str] = None
+    active: Optional[bool] = None
+
+
+@router.put("/crew/{crew_id}")
+async def update_crew(crew_id: int, body: CrewPatch):
+    sets, params = [], []
+    if body.name is not None:   sets.append("name = ?");   params.append(body.name.strip())
+    if body.active is not None: sets.append("active = ?"); params.append(1 if body.active else 0)
+    if not sets:
+        return {"ok": True, "id": crew_id}
+    params.append(crew_id)
+    db = await _db()
+    try:
+        await db._x(f"UPDATE schedule_crew SET {', '.join(sets)} WHERE id = ?", params)
+        return {"ok": True, "id": crew_id}
+    finally:
+        await db.close()
+
+
 # ── Week view ───────────────────────────────────────────────────────────────────
 
 @router.get("/week")
-async def get_week(start: Optional[str] = Query(None)):
+async def get_week(start: Optional[str] = Query(None), weeks: int = Query(1)):
     try:
         base = _parse(start) if start else date.today()
     except ValueError:
         base = date.today()
+    weeks = max(1, min(14, weeks))
     mon = _monday(base)
-    days = [(mon + timedelta(days=i)).isoformat() for i in range(6)]  # Mon..Sat
+    days = [(mon + timedelta(days=7 * w + i)).isoformat() for w in range(weeks) for i in range(6)]  # Mon..Sat per week
     wk_set = set(days)
     lower = (mon - timedelta(days=60)).isoformat()
     upper = days[-1]
 
     db = await _db()
     try:
+        await _ensure_crew_seeded(db)
         try:
-            crew_rows = await db._q("SELECT aspire_name, email, display_name FROM construction_leads ORDER BY aspire_name", [])
-            crew = [{"name": r["display_name"] or r["aspire_name"], "aspire_name": r["aspire_name"]} for r in crew_rows]
+            crew = await _active_crew(db)
         except Exception as e:
             logger.warning(f"schedule: crew load failed: {e}")
             crew = []
