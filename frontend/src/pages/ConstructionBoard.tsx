@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   getScheduleWeek, createBlock, updateBlock, deleteBlock, createLabel, deleteLabel,
-  listCrew, addCrew, updateCrew, deleteCrew,
+  listCrew, addCrew, updateCrew, deleteCrew, getJobScope,
   type ScheduleWeek, type ScheduleBlock, type ScheduleBacklogJob, type BlockInput, type CrewMember, type ScheduleStatus,
 } from '../lib/api';
 
@@ -307,6 +307,7 @@ function BlockModal({ draft, setDraft, crew, onSave, busy }: {
       <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: '100%', maxWidth: 520, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
         <div style={{ padding: '14px 20px', borderBottom: '1px solid #e5e7eb', fontWeight: 800, fontSize: 15, color: '#0f172a' }}>{draft.mode === 'create' ? 'Schedule job' : 'Edit scheduled job'}</div>
         <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {draft.opportunity_id != null && <JobScopePanel oppId={draft.opportunity_id} />}
           <div><label style={mlbl}>Job</label><input style={{ ...inp, width: '100%', boxSizing: 'border-box' }} value={draft.job_label} onChange={e => setDraft({ ...draft, job_label: e.target.value })} /></div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 110 }}><label style={mlbl}>Total hours</label><input style={{ ...inp, width: '100%', boxSizing: 'border-box' }} type="number" value={draft.hours} onChange={e => setDraft({ ...draft, hours: e.target.value })} /></div>
@@ -342,6 +343,33 @@ function BlockModal({ draft, setDraft, crew, onSave, busy }: {
           <button onClick={onSave} disabled={busy || empCount === 0} style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: (busy || empCount === 0) ? '#94a3b8' : NAVY, color: '#fff', fontWeight: 800, fontSize: 14, cursor: busy || empCount === 0 ? 'default' : 'pointer' }}>{draft.mode === 'create' ? 'Schedule' : 'Save'}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function JobScopePanel({ oppId }: { oppId: number }) {
+  const [scope, setScope] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    getJobScope(oppId).then(r => { if (!cancelled) setScope(r.scope || ''); })
+      .catch(() => { if (!cancelled) setScope(''); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [oppId]);
+  return (
+    <div style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 10, padding: '12px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>📋 Scope</span>
+        <a href={`/field/project/${oppId}?tab=scope`} target="_blank" rel="noopener noreferrer"
+          style={{ fontSize: 12, fontWeight: 700, color: NAVY, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+          Open Construction Job ↗
+        </a>
+      </div>
+      {loading ? <div style={{ fontSize: 13, color: '#9ca3af' }}>Loading scope…</div>
+        : scope ? <div style={{ fontSize: 13, color: '#374151', whiteSpace: 'pre-wrap', lineHeight: 1.5, maxHeight: 180, overflowY: 'auto' }}>{scope}</div>
+        : <div style={{ fontSize: 13, color: '#9ca3af' }}>No scope notes in Aspire — open the job for full detail.</div>}
     </div>
   );
 }

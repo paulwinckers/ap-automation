@@ -275,6 +275,29 @@ async def get_week(start: Optional[str] = Query(None), weeks: int = Query(1)):
             "blocks": blocks, "labels": labels, "backlog": backlog}
 
 
+_scope_cache: dict[int, tuple[str, float]] = {}
+_SCOPE_TTL = 24 * 3600  # 1 day
+
+
+@router.get("/job/{opp_id}/scope")
+async def job_scope(opp_id: int):
+    """Scope for the board popup — the SAME summary shown on the Construction Job
+    (Projects) tab, so they match. Cached in-memory for a day so repeat clicks
+    are instant and we don't re-summarise on every open."""
+    import time as _t
+    hit = _scope_cache.get(opp_id)
+    if hit and (_t.time() - hit[1]) < _SCOPE_TTL:
+        return {"opportunity_id": opp_id, "scope": hit[0], "cached": True}
+    scope = ""
+    try:
+        from app.api.project_checkin import _fetch_scope_notes
+        scope = await _fetch_scope_notes(opp_id)
+    except Exception as e:
+        logger.warning(f"scope fetch failed for {opp_id}: {e}")
+    _scope_cache[opp_id] = (scope or "", _t.time())
+    return {"opportunity_id": opp_id, "scope": scope or "", "cached": False}
+
+
 async def _backlog() -> list[dict]:
     try:
         opps = await _aspire.get_construction_opportunities(year=date.today().year)

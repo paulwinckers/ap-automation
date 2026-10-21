@@ -1727,6 +1727,9 @@ export async function createLabel(body: { work_date: string; lead_name: string; 
 export async function deleteLabel(id: number): Promise<{ ok: boolean }> {
   return request('DELETE', `/construction/schedule/assignment/${id}`);
 }
+export async function getJobScope(oppId: number): Promise<{ opportunity_id: number; scope: string }> {
+  return request('GET', `/construction/schedule/job/${oppId}/scope`);
+}
 
 // ── Database backups (D1 → R2) ─────────────────────────────────────────────────
 export interface BackupFile { key: string; bytes: number; last_modified: string | null; }
