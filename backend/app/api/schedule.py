@@ -1,16 +1,23 @@
 """
-Construction Weekly Schedule board — the crew × day grid that drives the week.
+Construction Weekly Schedule board — crew × day grid (replaces the spreadsheet).
 
-The portal is the source of truth for scheduling (replaces the spreadsheet):
-Won construction jobs flow in from Aspire as a backlog; the office drags them
-onto a crew/day grid. Assignments live in D1 (schedule_assignments).
+The portal is the source of truth for scheduling. A job is scheduled as a
+*block*: total hours ÷ (employees × hours/day) = the number of working days it
+spans. Crews work 10-hour days, Mon–Thu by default; Fridays are optional per
+block. The block stretches across the chosen employees' rows automatically and
+can be edited afterwards (move start, toggle Fridays, add/remove employees) —
+the span recomputes.
 
-GET    /schedule/week?start=YYYY-MM-DD   — one week (Mon start): days, crew, assignments, backlog
-POST   /schedule/assignment              — place a job (or a free label like "Away") on a cell
-PUT    /schedule/assignment/{id}         — move / edit an assignment
-DELETE /schedule/assignment/{id}         — remove it
+GET    /construction/schedule/week?start=YYYY-MM-DD   — week: days, crew, blocks, labels, backlog
+POST   /construction/schedule/block                   — schedule a job (employees + hours → span)
+PUT    /construction/schedule/block/{id}              — move / edit a block (span recomputes)
+DELETE /construction/schedule/block/{id}              — remove a block
+POST   /construction/schedule/assignment              — a free label on a cell (Away/Shop)
+DELETE /construction/schedule/assignment/{id}         — remove a free label
 """
+import json
 import logging
+import math
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -25,6 +32,7 @@ router = APIRouter(prefix="/construction/schedule", tags=["construction-schedule
 logger = logging.getLogger(__name__)
 
 _aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)
+DEFAULT_HOURS_PER_DAY = 10.0
 
 
 async def _db() -> Database:
@@ -41,51 +49,115 @@ def _monday(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
+def _parse(iso: str) -> date:
+    return datetime.strptime(iso[:10], "%Y-%m-%d").date()
+
+
+def _working_dates(start: date, count: int, include_friday: bool) -> list[str]:
+    """Return `count` working dates from `start`. Working = Mon–Thu, plus Fri when
+    include_friday. Sat/Sun excluded. If start lands on a non-working day, the
+    span begins on the next working day."""
+    out: list[str] = []
+    d = start
+    guard = 0
+    while len(out) < count and guard < 400:
+        wd = d.weekday()  # Mon=0 … Sun=6
+        working = wd <= 3 or (wd == 4 and include_friday)
+        if working:
+            out.append(d.isoformat())
+        d += timedelta(days=1)
+        guard += 1
+    return out
+
+
+def _block_dates(hours, employees: list, hours_per_day, include_friday: bool, start_iso: str) -> list[str]:
+    try:
+        h = float(hours or 0)
+    except (TypeError, ValueError):
+        h = 0.0
+    try:
+        hpd = float(hours_per_day or DEFAULT_HOURS_PER_DAY) or DEFAULT_HOURS_PER_DAY
+    except (TypeError, ValueError):
+        hpd = DEFAULT_HOURS_PER_DAY
+    emp = max(1, len(employees or []))
+    days_needed = max(1, math.ceil(h / (emp * hpd))) if h > 0 else 1
+    return _working_dates(_parse(start_iso), days_needed, include_friday)
+
+
+def _shape_block(r: dict) -> dict:
+    employees = []
+    try:
+        employees = json.loads(r.get("employees") or "[]")
+    except Exception:
+        employees = []
+    inc_fri = bool(r.get("include_friday"))
+    dates = _block_dates(r.get("hours"), employees, r.get("hours_per_day"), inc_fri, r.get("start_date"))
+    return {
+        "id": r["id"],
+        "opportunity_id": r.get("opportunity_id"),
+        "job_label": r.get("job_label"),
+        "start_date": r.get("start_date"),
+        "hours": r.get("hours"),
+        "hours_per_day": r.get("hours_per_day") or DEFAULT_HOURS_PER_DAY,
+        "include_friday": inc_fri,
+        "employees": employees,
+        "note": r.get("note"),
+        "dates": dates,
+        "days_needed": len(dates),
+        "end_date": dates[-1] if dates else r.get("start_date"),
+    }
+
+
 # ── Week view ───────────────────────────────────────────────────────────────────
 
 @router.get("/week")
 async def get_week(start: Optional[str] = Query(None)):
-    """Return one week of the board. `start` is any date in the week (defaults to
-    this week); it's snapped back to Monday. Days are Mon–Sat."""
     try:
-        base = datetime.strptime(start, "%Y-%m-%d").date() if start else date.today()
+        base = _parse(start) if start else date.today()
     except ValueError:
         base = date.today()
     mon = _monday(base)
     days = [(mon + timedelta(days=i)).isoformat() for i in range(6)]  # Mon..Sat
-    week_end = days[-1]
+    wk_set = set(days)
+    lower = (mon - timedelta(days=60)).isoformat()
+    upper = days[-1]
 
     db = await _db()
     try:
-        # Crew rows — the construction leads directory
         try:
-            lead_rows = await db._q("SELECT aspire_name, email, display_name FROM construction_leads ORDER BY aspire_name", [])
-            leads = [{"name": r["display_name"] or r["aspire_name"], "aspire_name": r["aspire_name"]} for r in lead_rows]
+            crew_rows = await db._q("SELECT aspire_name, email, display_name FROM construction_leads ORDER BY aspire_name", [])
+            crew = [{"name": r["display_name"] or r["aspire_name"], "aspire_name": r["aspire_name"]} for r in crew_rows]
         except Exception as e:
-            logger.warning(f"schedule: leads load failed: {e}")
-            leads = []
+            logger.warning(f"schedule: crew load failed: {e}")
+            crew = []
 
-        # Assignments for the week
-        rows = await db._q(
-            "SELECT * FROM schedule_assignments WHERE work_date >= ? AND work_date <= ? ORDER BY sort_order, id",
-            [days[0], week_end],
+        block_rows = await db._q(
+            "SELECT * FROM schedule_blocks WHERE start_date >= ? AND start_date <= ? ORDER BY start_date, id",
+            [lower, upper],
         )
-        assignments = [{
+        blocks = []
+        for r in block_rows:
+            b = _shape_block(_row(r))
+            if any(d in wk_set for d in b["dates"]):
+                blocks.append(b)
+
+        asg_rows = await db._q(
+            "SELECT * FROM schedule_assignments WHERE work_date >= ? AND work_date <= ? ORDER BY id",
+            [days[0], upper],
+        )
+        labels = [{
             "id": r["id"], "work_date": r["work_date"], "lead_name": r["lead_name"],
-            "opportunity_id": r.get("opportunity_id"), "job_label": r.get("job_label"),
-            "note": r.get("note"), "sort_order": r.get("sort_order") or 0,
-        } for r in (_row(x) for x in rows)]
+            "job_label": r.get("job_label"), "note": r.get("note"),
+        } for r in (_row(x) for x in asg_rows)]
     finally:
         await db.close()
 
     backlog = await _backlog()
-
-    return {"week_start": mon.isoformat(), "days": days, "leads": leads,
-            "assignments": assignments, "backlog": backlog}
+    return {"week_start": mon.isoformat(), "days": days, "crew": crew,
+            "blocks": blocks, "labels": labels, "backlog": backlog}
 
 
 async def _backlog() -> list[dict]:
-    """Active Won construction jobs available to schedule (not yet complete)."""
     try:
         opps = await _aspire.get_construction_opportunities(year=date.today().year)
     except Exception as e:
@@ -93,8 +165,7 @@ async def _backlog() -> list[dict]:
         return []
     out = []
     for o in opps:
-        status = (o.get("OpportunityStatusName") or "").lower()
-        if status != "won":
+        if (o.get("OpportunityStatusName") or "").lower() != "won":
             continue
         js = (o.get("JobStatusName") or "").lower()
         if o.get("CompleteDate") or "complete" in js or float(o.get("PercentComplete") or 0) >= 1:
@@ -107,23 +178,96 @@ async def _backlog() -> list[dict]:
             "hours_est": o.get("EstimatedLaborHours"),
             "start_date": (o.get("StartDate") or "")[:10] or None,
         })
-    # Soonest start first, then biggest
     out.sort(key=lambda x: (x["start_date"] or "9999", -(x["hours_est"] or 0)))
     return out
 
 
-# ── Mutations ─────────────────────────────────────────────────────────────────
+# ── Blocks ──────────────────────────────────────────────────────────────────────
 
-class AssignmentBody(BaseModel):
-    work_date:      str
-    lead_name:      str
+class BlockBody(BaseModel):
     opportunity_id: Optional[int] = None
     job_label:      str
+    start_date:     str
+    hours:          Optional[float] = None
+    hours_per_day:  Optional[float] = DEFAULT_HOURS_PER_DAY
+    include_friday: bool = False
+    employees:      list[str] = []
     note:           Optional[str] = None
 
 
+@router.post("/block")
+async def create_block(body: BlockBody):
+    if not body.job_label or not body.start_date:
+        raise HTTPException(400, "job_label and start_date are required")
+    db = await _db()
+    try:
+        rows = await db._q(
+            """INSERT INTO schedule_blocks
+               (opportunity_id, job_label, start_date, hours, hours_per_day, include_friday, employees, note, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+               RETURNING *""",
+            [body.opportunity_id, body.job_label.strip(), body.start_date[:10],
+             body.hours, body.hours_per_day or DEFAULT_HOURS_PER_DAY,
+             1 if body.include_friday else 0, json.dumps(body.employees or []),
+             (body.note or "").strip() or None],
+        )
+        return _shape_block(_row(rows[0]))
+    finally:
+        await db.close()
+
+
+class BlockPatch(BaseModel):
+    job_label:      Optional[str] = None
+    start_date:     Optional[str] = None
+    hours:          Optional[float] = None
+    hours_per_day:  Optional[float] = None
+    include_friday: Optional[bool] = None
+    employees:      Optional[list[str]] = None
+    note:           Optional[str] = None
+
+
+@router.put("/block/{block_id}")
+async def update_block(block_id: int, body: BlockPatch):
+    sets, params = ["updated_at = datetime('now')"], []
+    if body.job_label is not None:     sets.append("job_label = ?");     params.append(body.job_label.strip())
+    if body.start_date is not None:    sets.append("start_date = ?");    params.append(body.start_date[:10])
+    if body.hours is not None:         sets.append("hours = ?");         params.append(body.hours)
+    if body.hours_per_day is not None: sets.append("hours_per_day = ?"); params.append(body.hours_per_day or DEFAULT_HOURS_PER_DAY)
+    if body.include_friday is not None:sets.append("include_friday = ?");params.append(1 if body.include_friday else 0)
+    if body.employees is not None:     sets.append("employees = ?");     params.append(json.dumps(body.employees))
+    if body.note is not None:          sets.append("note = ?");          params.append((body.note or "").strip() or None)
+    params.append(block_id)
+    db = await _db()
+    try:
+        rows = await db._q(f"UPDATE schedule_blocks SET {', '.join(sets)} WHERE id = ? RETURNING *", params)
+        if not rows:
+            raise HTTPException(404, "Block not found")
+        return _shape_block(_row(rows[0]))
+    finally:
+        await db.close()
+
+
+@router.delete("/block/{block_id}")
+async def delete_block(block_id: int):
+    db = await _db()
+    try:
+        await db._x("DELETE FROM schedule_blocks WHERE id = ?", [block_id])
+        return {"ok": True, "id": block_id}
+    finally:
+        await db.close()
+
+
+# ── Free labels (Away / Shop / Vacation) ──────────────────────────────────────────
+
+class LabelBody(BaseModel):
+    work_date: str
+    lead_name: str
+    job_label: str
+    note:      Optional[str] = None
+
+
 @router.post("/assignment")
-async def create_assignment(body: AssignmentBody):
+async def create_label(body: LabelBody):
     if not body.work_date or not body.lead_name:
         raise HTTPException(400, "work_date and lead_name are required")
     db = await _db()
@@ -131,44 +275,17 @@ async def create_assignment(body: AssignmentBody):
         rows = await db._q(
             """INSERT INTO schedule_assignments
                (work_date, lead_name, opportunity_id, job_label, note, sort_order, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 0, datetime('now'), datetime('now'))
+               VALUES (?, ?, NULL, ?, ?, 0, datetime('now'), datetime('now'))
                RETURNING id""",
-            [body.work_date, body.lead_name, body.opportunity_id,
-             (body.job_label or "").strip(), (body.note or "").strip() or None],
+            [body.work_date[:10], body.lead_name, (body.job_label or "").strip(), (body.note or "").strip() or None],
         )
         return {"id": rows[0]["id"]}
     finally:
         await db.close()
 
 
-class AssignmentPatch(BaseModel):
-    work_date:      Optional[str] = None
-    lead_name:      Optional[str] = None
-    opportunity_id: Optional[int] = None
-    job_label:      Optional[str] = None
-    note:           Optional[str] = None
-    sort_order:     Optional[int] = None
-
-
-@router.put("/assignment/{assignment_id}")
-async def update_assignment(assignment_id: int, body: AssignmentPatch):
-    sets, params = ["updated_at = datetime('now')"], []
-    for col in ("work_date", "lead_name", "opportunity_id", "job_label", "note", "sort_order"):
-        val = getattr(body, col)
-        if val is not None:
-            sets.append(f"{col} = ?")
-            params.append(val.strip() if isinstance(val, str) else val)
-    params.append(assignment_id)
-    db = await _db()
-    try:
-        await db._x(f"UPDATE schedule_assignments SET {', '.join(sets)} WHERE id = ?", params)
-        return {"ok": True, "id": assignment_id}
-    finally:
-        await db.close()
-
-
 @router.delete("/assignment/{assignment_id}")
-async def delete_assignment(assignment_id: int):
+async def delete_label(assignment_id: int):
     db = await _db()
     try:
         await db._x("DELETE FROM schedule_assignments WHERE id = ?", [assignment_id])

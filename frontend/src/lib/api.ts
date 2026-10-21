@@ -1668,29 +1668,45 @@ export async function getPHAPrefill(oppId: number): Promise<PHAPrefill> {
 }
 
 // ── Construction Weekly Schedule board ────────────────────────────────────────
-export interface ScheduleLead { name: string; aspire_name: string; }
-export interface ScheduleAssignment {
-  id: number; work_date: string; lead_name: string;
-  opportunity_id: number | null; job_label: string | null; note: string | null; sort_order: number;
+export interface ScheduleCrew { name: string; aspire_name: string; }
+export interface ScheduleBlock {
+  id: number; opportunity_id: number | null; job_label: string; start_date: string;
+  hours: number | null; hours_per_day: number; include_friday: boolean;
+  employees: string[]; note: string | null;
+  dates: string[]; days_needed: number; end_date: string;
+}
+export interface ScheduleLabel {
+  id: number; work_date: string; lead_name: string; job_label: string | null; note: string | null;
 }
 export interface ScheduleBacklogJob {
   opportunity_id: number; label: string; opportunity_name: string | null;
   opp_number: number | null; hours_est: number | null; start_date: string | null;
 }
 export interface ScheduleWeek {
-  week_start: string; days: string[]; leads: ScheduleLead[];
-  assignments: ScheduleAssignment[]; backlog: ScheduleBacklogJob[];
+  week_start: string; days: string[]; crew: ScheduleCrew[];
+  blocks: ScheduleBlock[]; labels: ScheduleLabel[]; backlog: ScheduleBacklogJob[];
 }
 export async function getScheduleWeek(start?: string): Promise<ScheduleWeek> {
   return request('GET', `/construction/schedule/week${start ? `?start=${start}` : ''}`);
 }
-export async function createAssignment(body: { work_date: string; lead_name: string; opportunity_id?: number | null; job_label: string; note?: string }): Promise<{ id: number }> {
+export type BlockInput = {
+  opportunity_id?: number | null; job_label: string; start_date: string;
+  hours?: number | null; hours_per_day?: number; include_friday?: boolean;
+  employees?: string[]; note?: string;
+};
+export async function createBlock(body: BlockInput): Promise<ScheduleBlock> {
+  return request('POST', '/construction/schedule/block', body);
+}
+export async function updateBlock(id: number, body: Partial<BlockInput>): Promise<ScheduleBlock> {
+  return request('PUT', `/construction/schedule/block/${id}`, body);
+}
+export async function deleteBlock(id: number): Promise<{ ok: boolean }> {
+  return request('DELETE', `/construction/schedule/block/${id}`);
+}
+export async function createLabel(body: { work_date: string; lead_name: string; job_label: string; note?: string }): Promise<{ id: number }> {
   return request('POST', '/construction/schedule/assignment', body);
 }
-export async function updateAssignment(id: number, body: Partial<{ work_date: string; lead_name: string; opportunity_id: number | null; job_label: string; note: string; sort_order: number }>): Promise<{ ok: boolean }> {
-  return request('PUT', `/construction/schedule/assignment/${id}`, body);
-}
-export async function deleteAssignment(id: number): Promise<{ ok: boolean }> {
+export async function deleteLabel(id: number): Promise<{ ok: boolean }> {
   return request('DELETE', `/construction/schedule/assignment/${id}`);
 }
 

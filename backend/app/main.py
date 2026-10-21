@@ -310,6 +310,22 @@ async def lifespan(app: FastAPI):
                 updated_at     TEXT
             )
         """,
+        "schedule_blocks": """
+            CREATE TABLE IF NOT EXISTS schedule_blocks (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                opportunity_id INTEGER,
+                job_label      TEXT NOT NULL,
+                start_date     TEXT NOT NULL,
+                hours          REAL,
+                hours_per_day  REAL DEFAULT 10,
+                include_friday INTEGER DEFAULT 0,
+                employees      TEXT,
+                note           TEXT,
+                created_by     TEXT,
+                created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at     TEXT
+            )
+        """,
         "project_hazard_assessments": """
             CREATE TABLE IF NOT EXISTS project_hazard_assessments (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
