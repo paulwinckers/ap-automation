@@ -441,6 +441,9 @@ async def get_construction_dashboard(year: int = Query(default=2026)):
         return merged
 
     opps = merge_change_orders(opps)
+    # Drop cancelled jobs — Aspire keeps them as Won opportunities with
+    # JobStatusName "Canceled"; they shouldn't count in any bucket.
+    opps = [o for o in opps if "cancel" not in (o.get("JobStatusName") or "").lower()]
 
     completed     = [o for o in opps if complete_in_year(o, year)]
     in_production = [o for o in opps if is_in_production(o)]

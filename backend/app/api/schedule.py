@@ -337,7 +337,9 @@ async def _backlog() -> list[dict]:
         if (o.get("OpportunityStatusName") or "").lower() != "won":
             continue
         js = (o.get("JobStatusName") or "").lower()
-        if o.get("CompleteDate") or "complete" in js or float(o.get("PercentComplete") or 0) >= 1:
+        # Skip finished or cancelled jobs (Aspire keeps these as Won opportunities
+        # with JobStatusName "Complete" / "Canceled").
+        if o.get("CompleteDate") or "complete" in js or "cancel" in js or float(o.get("PercentComplete") or 0) >= 1:
             continue
         out.append({
             "opportunity_id": o.get("OpportunityID"),

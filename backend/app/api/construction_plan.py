@@ -285,7 +285,7 @@ async def _fetch_construction_universe(month: str) -> dict[int, dict]:
     branch = (settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction").lower()
     select = (
         "OpportunityID,OpportunityName,PropertyName,OpportunityNumber,DivisionName,"
-        "OpportunityType,SalesTypeName,OpportunityStatusName,"
+        "OpportunityType,SalesTypeName,OpportunityStatusName,JobStatusName,"
         "WonDollars,ActualEarnedRevenue,EstimatedDollars,"
         "EstimatedLaborHours,ActualLaborHours,PercentComplete,WonDate,StartDate,EndDate,CompleteDate"
     )
@@ -299,6 +299,9 @@ async def _fetch_construction_universe(month: str) -> dict[int, dict]:
         })
         for o in _aspire._extract_list(res):
             oid = o.get("OpportunityID")
+            # Skip cancelled jobs — Aspire keeps them as Won with JobStatusName "Canceled".
+            if "cancel" in (o.get("JobStatusName") or "").lower():
+                continue
             if oid and branch in (o.get("DivisionName") or "").lower():
                 out[oid] = o
     except Exception as e:
