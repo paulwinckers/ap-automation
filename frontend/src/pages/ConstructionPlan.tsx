@@ -827,20 +827,8 @@ export default function ConstructionPlan() {
 
   const effStage  = (j: PlanJob) => planningOverride[j.opportunity_id]?.stage ?? j.stage ?? 'New';
   const effQueued = (j: PlanJob) => planningOverride[j.opportunity_id]?.queued ?? j.queued ?? false;
-  // Which bucket a job is in — mirrors the backend _plan_bucket so a stage/park change
-  // re-buckets the row immediately (optimistic), before the next reload.
-  const effBucket = (j: PlanJob): 'active' | 'upcoming' | 'completed' | 'parked' => {
-    if (effQueued(j)) return 'parked';
-    if (COMPLETE_STAGES.has(effStage(j)) || (j.pct_complete_job ?? 0) >= 1) return 'completed';
-    const sm = (j.start_date || '').slice(0, 7);
-    if (sm && sm <= month) return 'active';
-    return 'upcoming';
-  };
-  const activeGroups    = groupJobs(jobs.filter(j => effBucket(j) === 'active'
-                            && (stageFilter === 'all' || effStage(j) === stageFilter)));
-  const upcomingGroups  = groupJobs(jobs.filter(j => effBucket(j) === 'upcoming'));
-  const completedGroups = groupJobs(jobs.filter(j => effBucket(j) === 'completed'));
-  const parkedGroups    = groupJobs(jobs.filter(j => effBucket(j) === 'parked'));
+  // Bucketing + grouping live just below lifeOf() so they reuse the Pipeline
+  // lifecycle — one source of truth for a job's stage across both views.
 
   // Render one job row (shared by the active table and the parked section).
   const renderJobRow = (j: PlanJob, opts: { isChild: boolean; parked: boolean }) => {
@@ -980,49 +968,25 @@ export default function ConstructionPlan() {
             )}
           </td>
 
-          {/* Stage */}
+          {/* Stage — read-only; mirrors the Pipeline lifecycle (one source of truth) */}
           <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
             {(() => {
-              const stage = effStage(j);
-              const c = STAGE_COLOR[stage] || STAGE_COLOR['New'];
+              const life = lifeOf(j);
+              const meta = LIFECYCLE.find(l => l.key === life);
+              const label = meta?.label ?? life;
+              const accent = meta?.accent ?? '#6b7280';
               return (
-                <select
-                  value={stage}
-                  onChange={e => updatePlanning(j.opportunity_id, { stage: e.target.value })}
-                  title="Job stage"
+                <span
+                  title="Stage — set automatically from the job's lifecycle (see the Pipeline view)"
                   style={{
-                    fontSize: 11, fontWeight: 700, padding: '4px 8px', borderRadius: 8,
-                    border: `1px solid ${c.text}33`, background: c.bg, color: c.text,
-                    cursor: 'pointer', fontFamily: 'inherit',
+                    display: 'inline-block', fontSize: 11, fontWeight: 700,
+                    padding: '4px 10px', borderRadius: 999,
+                    background: `${accent}1a`, color: accent, border: `1px solid ${accent}33`,
+                    whiteSpace: 'nowrap',
                   }}
                 >
-                  {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              );
-            })()}
-          </td>
-
-          {/* Prep checklist toggle */}
-          <td style={{ padding: '8px 10px', textAlign: 'center', verticalAlign: 'middle' }}>
-            {(() => {
-              const p = prepProgress[j.opportunity_id]
-                ?? { done: j.prep_done ?? 0, total: j.prep_total ?? 6 };
-              const ready = p.total > 0 && p.done === p.total;
-              const open  = prepFor === j.opportunity_id;
-              return (
-                <button
-                  onClick={() => setPrepFor(open ? null : j.opportunity_id)}
-                  title="Preparedness checklist"
-                  style={{
-                    padding: '3px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6,
-                    border: '1px solid ' + (ready ? '#86efac' : open ? '#2563eb' : '#e5e7eb'),
-                    background: ready ? '#dcfce7' : open ? '#eff6ff' : '#f8fafc',
-                    color: ready ? '#15803d' : open ? '#1d4ed8' : '#6b7280',
-                    cursor: 'pointer', whiteSpace: 'nowrap',
-                  }}
-                >
-                  {ready ? '✓ Ready' : `${p.done}/${p.total}`} {open ? '▲' : '▼'}
-                </button>
+                  {label}
+                </span>
               );
             })()}
           </td>
@@ -1055,37 +1019,11 @@ export default function ConstructionPlan() {
             )}
           </td>
         </tr>
-
-        {/* Preparedness checklist panel */}
-        {prepFor === j.opportunity_id && (
-          <tr>
-            <td colSpan={10} style={{ padding: '14px 16px', background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
-              <div style={{ maxWidth: 560 }}>
-                <JobPrepChecklist
-                  oppId={j.opportunity_id}
-                  onProgress={(done, total) =>
-                    setPrepProgress(prev => ({ ...prev, [j.opportunity_id]: { done, total } }))
-                  }
-                />
-                <a
-                  href={`/field/project/${j.opportunity_id}`}
-                  style={{
-                    display: 'inline-block', marginTop: 12, padding: '8px 14px',
-                    background: '#16a34a', color: '#fff', borderRadius: 8,
-                    fontSize: 13, fontWeight: 700, textDecoration: 'none',
-                  }}
-                >
-                  Open Construction Project →
-                </a>
-              </div>
-            </td>
-          </tr>
-        )}
       </React.Fragment>
     );
   };
 
-  const TABLE_HEADERS = ['Property / Job', 'Lead', 'Won', 'Start', '% This Month', 'Hours', 'Revenue', 'Stage', 'Prep', ''];
+  const TABLE_HEADERS = ['Property / Job', 'Lead', 'Won', 'Start', '% This Month', 'Hours', 'Revenue', 'Stage', ''];
 
   // Render a bucket's table (shared by Active / Upcoming / Completed / Parked sections).
   const renderBucketTable = (groups: JobGroup[], parked: boolean) => (
@@ -1150,6 +1088,22 @@ export default function ConstructionPlan() {
     if ((j.prep_done || 0) > 0 || (planningOverride[j.opportunity_id]?.lead_name ?? j.lead_name)) return 'planning';
     return j.source === 'manual' ? 'planning' : 'intake';
   };
+
+  // Which section a job sits in. Completion is read from the lifecycle (Aspire %,
+  // complete/paid signals) — not a manual stage — so Monthly and Pipeline agree.
+  const effBucket = (j: PlanJob): 'active' | 'upcoming' | 'completed' | 'parked' => {
+    if (effQueued(j)) return 'parked';
+    const life = lifeOf(j);
+    if (life === 'complete' || life === 'paid') return 'completed';
+    const sm = (j.start_date || '').slice(0, 7);
+    if (sm && sm <= month) return 'active';
+    return 'upcoming';
+  };
+  const activeGroups    = groupJobs(jobs.filter(j => effBucket(j) === 'active'
+                            && (stageFilter === 'all' || lifeOf(j) === stageFilter)));
+  const upcomingGroups  = groupJobs(jobs.filter(j => effBucket(j) === 'upcoming'));
+  const completedGroups = groupJobs(jobs.filter(j => effBucket(j) === 'completed'));
+  const parkedGroups    = groupJobs(jobs.filter(j => effBucket(j) === 'parked'));
 
   const windowText = (j: PlanJob): string => {
     const s = schedOf(j);
@@ -1528,7 +1482,7 @@ export default function ConstructionPlan() {
                 style={{ fontSize: 12, fontWeight: 600, padding: '5px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', color: '#1f2937', fontFamily: 'inherit', cursor: 'pointer' }}
               >
                 <option value="all">All stages</option>
-                {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                {LIFECYCLE.map(l => <option key={l.key} value={l.key}>{l.label}</option>)}
               </select>
               <span style={{ fontSize: 12, color: '#9ca3af' }}>
                 {activeGroups.length} active job{activeGroups.length !== 1 ? 's' : ''}
@@ -1551,7 +1505,7 @@ export default function ConstructionPlan() {
           </div>
         )}
 
-        {/* Completed / Out of Production — Stage is Complete / Ready to Invoice / Invoiced / Paid */}
+        {/* Completed / Out of Production — lifecycle is complete or paid (from Aspire) */}
         {completedGroups.length > 0 && (
           <div>
             {sectionHeader('\u2705', 'Completed / Out of Production', completedGroups.length, showCompleted, () => setShowCompleted(o => !o))}
