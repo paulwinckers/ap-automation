@@ -657,7 +657,6 @@ export default function ConstructionPlan() {
   const [showGoal,      setShowGoal]      = useState(false);
   const [showAdd,       setShowAdd]       = useState(false);
   const [showLeads,     setShowLeads]     = useState(false);
-  const [showCheckin,   setShowCheckin]   = useState(false);
   const [prepFor,       setPrepFor]       = useState<number | null>(null);
   // Live prep counts per opp (overrides server value as the user checks items)
   const [prepProgress,  setPrepProgress]  = useState<Record<number, { done: number; total: number }>>({});
@@ -1330,7 +1329,7 @@ export default function ConstructionPlan() {
                 </button>
               ))}
             </div>
-            <a href="/dashboards/construction/board" style={{ ...secondaryBtn, textDecoration: 'none', display: 'inline-block' }}>📅 Weekly Board</a>
+            <a href="/dashboards/construction/board" style={{ ...secondaryBtn, textDecoration: 'none', display: 'inline-block' }}>📅 Schedule</a>
             {(() => {
               const n = jobs.filter(j => (j.actions || []).some(a => a.target.startsWith('comms:'))).length;
               return (
@@ -1339,7 +1338,6 @@ export default function ConstructionPlan() {
                 </button>
               );
             })()}
-            <button onClick={() => setShowCheckin(true)} style={secondaryBtn}>📤 Check-ins</button>
             <button onClick={() => setShowCxSetup(true)} style={secondaryBtn}>✉️ Comms setup</button>
             <button onClick={() => setShowGoal(true)}    style={secondaryBtn}>⚙️ Goals</button>
           </div>
@@ -1536,7 +1534,6 @@ export default function ConstructionPlan() {
       {showGoal && plan && (
         <GoalEditor month={month} goal={goal} onSave={handleSaveGoal} onClose={() => setShowGoal(false)} />
       )}
-      {showCheckin && <CheckinStatusPanel month={month} onClose={() => setShowCheckin(false)} />}
       {showCxSetup && <CxSetupModal onClose={() => setShowCxSetup(false)} />}
       {showEmailCenter && (() => {
         const bases = groupJobs(jobs).map(g => g.base);
