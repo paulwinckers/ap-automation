@@ -647,6 +647,23 @@ function CheckinStatusPanel({ month, onClose }: { month: string; onClose: () => 
   );
 }
 
+// A lightweight SVG spinner (SMIL animation — no CSS keyframes needed).
+function Spinner({ label }: { label?: string }) {
+  return (
+    <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+      <svg width="30" height="30" viewBox="0 0 50 50" role="status" aria-label="Loading">
+        <circle cx="25" cy="25" r="20" fill="none" stroke="#e5e7eb" strokeWidth="5" />
+        <circle cx="25" cy="25" r="20" fill="none" stroke="#1d4ed8" strokeWidth="5"
+                strokeLinecap="round" strokeDasharray="90 150">
+          <animateTransform attributeName="transform" type="rotate"
+                            from="0 25 25" to="360 25 25" dur="0.9s" repeatCount="indefinite" />
+        </circle>
+      </svg>
+      {label && <span style={{ fontSize: 13, color: '#9ca3af' }}>{label}</span>}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ConstructionPlan() {
@@ -1279,7 +1296,11 @@ export default function ConstructionPlan() {
             </div>
           );
         })}
-        {groups.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No construction jobs in the plan.</div>}
+        {groups.length === 0 && (
+          <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>
+            {loading ? <Spinner label="Loading pipeline…" /> : 'No construction jobs in the plan.'}
+          </div>
+        )}
       </div>
     );
   };

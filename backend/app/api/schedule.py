@@ -127,6 +127,11 @@ def _shape_block(r: dict) -> dict:
         budget_hours = float(r.get("hours") or 0)
     except (TypeError, ValueError):
         budget_hours = 0.0
+    # Over budget = more hours blocked out than the estimate (the job genuinely
+    # needs more work). Catch-up = extended day(s) but the scheduled hours are
+    # still within budget — i.e. recovering time lost to per-day exceptions
+    # (rain, breakdowns, absences), which is a different situation.
+    over = bool(budget_hours) and scheduled_hours > budget_hours + 0.5
     return {
         "id": r["id"],
         "opportunity_id": r.get("opportunity_id"),
@@ -147,8 +152,12 @@ def _shape_block(r: dict) -> dict:
         "end_date": dates[-1] if dates else r.get("start_date"),
         "scheduled_hours": scheduled_hours,
         "budget_hours": budget_hours,
-        # Over the estimate when the span runs longer than budgeted days.
-        "over_budget": extra > 0,
+        "over_budget": over,
+        "catch_up": extra > 0 and not over,
+        # Actual labour hours / % complete are filled in by get_week from the
+        # Aspire opportunity (job-level), so the board shows real progress.
+        "actual_hours": None,
+        "pct_complete": None,
     }
 
 
@@ -313,7 +322,26 @@ async def get_week(start: Optional[str] = Query(None), weeks: int = Query(1)):
     finally:
         pass  # shared connection — do not close
 
-    raw = [j for j in await _backlog() if j.get("opportunity_id") not in scheduled_ids]
+    # One Aspire pull drives both the Unscheduled backlog and the per-job actual
+    # hours shown on each block (actual labour hours + % complete come free in the
+    # same opportunities payload — no extra Aspire call).
+    try:
+        opps = await _aspire.get_construction_opportunities(year=date.today().year)
+    except Exception as e:
+        logger.warning(f"schedule opps fetch failed: {e}")
+        opps = []
+    hours_map = {}
+    for o in opps:
+        oid = o.get("OpportunityID")
+        if oid is not None:
+            hours_map[oid] = {"actual": o.get("ActualLaborHours"), "pct": o.get("PercentComplete")}
+    for b in blocks:
+        m = hours_map.get(b.get("opportunity_id"))
+        if m:
+            b["actual_hours"] = m.get("actual")
+            b["pct_complete"] = m.get("pct")
+
+    raw = [j for j in await _backlog(opps) if j.get("opportunity_id") not in scheduled_ids]
     backlog  = [j for j in raw if j.get("opportunity_id") not in archived_ids]
     archived = [j for j in raw if j.get("opportunity_id") in archived_ids]
     return {"week_start": mon.isoformat(), "days": days, "crew": crew,
@@ -343,12 +371,13 @@ async def job_scope(opp_id: int):
     return {"opportunity_id": opp_id, "scope": scope or "", "cached": False}
 
 
-async def _backlog() -> list[dict]:
-    try:
-        opps = await _aspire.get_construction_opportunities(year=date.today().year)
-    except Exception as e:
-        logger.warning(f"schedule backlog fetch failed: {e}")
-        return []
+async def _backlog(opps: Optional[list[dict]] = None) -> list[dict]:
+    if opps is None:
+        try:
+            opps = await _aspire.get_construction_opportunities(year=date.today().year)
+        except Exception as e:
+            logger.warning(f"schedule backlog fetch failed: {e}")
+            return []
     out = []
     for o in opps:
         if (o.get("OpportunityStatusName") or "").lower() != "won":

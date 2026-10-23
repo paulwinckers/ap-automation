@@ -1688,6 +1688,11 @@ export interface ScheduleBlock {
   note: string | null; status: ScheduleStatus;
   dates: string[]; days_needed: number; budget_days: number; end_date: string;
   scheduled_hours: number; budget_hours: number; over_budget: boolean;
+  // catch_up = extended days but scheduled hours still within budget (recovering
+  // days lost to exceptions), as opposed to over_budget (more hours than estimated).
+  catch_up?: boolean;
+  // Actual labour hours logged in Aspire for this job, and % complete (0–1).
+  actual_hours?: number | null; pct_complete?: number | null;
 }
 export interface ScheduleLabel {
   id: number; work_date: string; lead_name: string; job_label: string | null; note: string | null;

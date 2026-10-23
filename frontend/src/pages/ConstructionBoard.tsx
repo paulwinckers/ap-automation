@@ -77,6 +77,8 @@ export default function ConstructionBoard() {
   const drag = useRef<ScheduleBacklogJob | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [ctx, setCtx] = useState<{ x: number; y: number; block: ScheduleBlock; row: string; day: string } | null>(null);
+  // When true, the block context menu shows the "add crew to this day" picker.
+  const [addDayPick, setAddDayPick] = useState(false);
   const [bctx, setBctx] = useState<{ x: number; y: number; job: ScheduleBacklogJob; archived: boolean } | null>(null);
   const [showCrew, setShowCrew] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -92,7 +94,7 @@ export default function ConstructionBoard() {
   }
   useEffect(() => { load(start, weeks); /* eslint-disable-next-line */ }, []);
   useEffect(() => {
-    const close = () => { setCtx(null); setBctx(null); };
+    const close = () => { setCtx(null); setBctx(null); setAddDayPick(false); };
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
   }, []);
@@ -237,6 +239,25 @@ export default function ConstructionBoard() {
     } catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); await reloadKeepBacklog(); }
   }
+  // Add a crew member to this block for a single day. If they're already on the
+  // job, just clear their exception for that day; if they're new to the job, add
+  // them but except every other day in the span so they only work this one day.
+  async function addToDay(b: ScheduleBlock, day: string, name: string) {
+    setCtx(null); setAddDayPick(false); setBusy(true);
+    try {
+      let employees = b.employees;
+      let ex = [...(b.exceptions || [])];
+      if (b.employees.includes(name)) {
+        ex = ex.filter(k => k !== `${name}|${day}`);
+      } else {
+        employees = [...b.employees, name];
+        for (const d of b.dates) if (d !== day) ex.push(`${name}|${d}`);
+      }
+      ex = Array.from(new Set(ex));
+      await updateBlock(b.id, { employees, exceptions: ex });
+      await reloadKeepBacklog();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
   async function removeFromDay(b: ScheduleBlock, row: string, day: string) {
     setCtx(null);
     const ex = Array.from(new Set([...(b.exceptions || []), `${row}|${day}`]));
@@ -302,11 +323,15 @@ export default function ConstructionBoard() {
                       const confirmed = b.status === 'confirmed';
                       return (
                         <div key={b.id}
-                          onContextMenu={e => { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, block: b, row, day }); }}
+                          onContextMenu={e => { e.preventDefault(); setAddDayPick(false); setCtx({ x: e.clientX, y: e.clientY, block: b, row, day }); }}
                           onClick={() => openEdit(b)}
-                          title={`${b.job_label}${b.hours ? ` · ${b.hours}h` : ''} · ${b.days_needed} day(s)${b.over_budget ? ` (budget ${b.budget_days})` : ''} · ${confirmed ? 'CONFIRMED (locked)' : 'tentative'} · right-click for options`}
+                          title={`${b.job_label} · ${b.days_needed} day(s)`
+                            + ` · scheduled ${b.scheduled_hours}h${b.budget_hours ? ` of ${b.budget_hours}h budget` : ''}`
+                            + (b.actual_hours != null ? ` · actual ${b.actual_hours}h${b.pct_complete != null ? ` (${Math.round(b.pct_complete * 100)}%)` : ''}` : '')
+                            + (b.over_budget ? ' · ⚠ OVER BUDGET' : b.catch_up ? ' · ⏱ catch-up (within budget)' : '')
+                            + ` · ${confirmed ? 'CONFIRMED (locked)' : 'tentative'} · right-click for options`}
                           style={{ background: c.bg, color: c.fg, border: confirmed ? `1.5px solid ${c.border}` : `1px dashed ${c.border}`, borderLeft: `3px solid ${c.border}`, borderRadius: 5, padding: '3px 6px', marginBottom: 4, fontSize: 12, fontWeight: 700, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {confirmed && '🔒 '}{b.over_budget && '⚠ '}{b.lead_name === row && <span title="Job lead" style={{ color: '#f59e0b' }}>★ </span>}{isStart ? b.job_label : <span style={{ opacity: 0.75 }}>↳ {b.job_label}</span>}
+                          {confirmed && '🔒 '}{b.over_budget ? '⚠ ' : b.catch_up ? '⏱ ' : ''}{b.lead_name === row && <span title="Job lead" style={{ color: '#f59e0b' }}>★ </span>}{isStart ? b.job_label : <span style={{ opacity: 0.75 }}>↳ {b.job_label}</span>}
                         </div>
                       );
                     })}
@@ -410,12 +435,29 @@ export default function ConstructionBoard() {
       )}
 
       {ctx && (
-        <div style={{ position: 'fixed', top: ctx.y, left: ctx.x, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 1200, minWidth: 200, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
-          {[
+        <div style={{ position: 'fixed', top: ctx.y, left: ctx.x, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 1200, minWidth: 210, maxHeight: '70vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+          {addDayPick ? (() => {
+            const b = ctx.block;
+            const working = (n: string) => b.employees.includes(n) && !(b.exceptions || []).includes(`${n}|${ctx.day}`);
+            const eligible = crewOptions.filter(n => !working(n));
+            return (
+              <>
+                <div style={{ padding: '9px 14px', fontSize: 12, fontWeight: 800, color: '#6b7280', background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>Add crew to {fmtDay(ctx.day)}</div>
+                {eligible.map((n, i) => (
+                  <button key={n} onClick={() => addToDay(b, ctx.day, n)}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: '#111827', borderTop: i ? '1px solid #f1f5f9' : 'none' }}>➕ {n}</button>
+                ))}
+                {eligible.length === 0 && <div style={{ padding: '9px 14px', fontSize: 13, color: '#9ca3af' }}>Everyone is already on this day.</div>}
+                <button onClick={() => setAddDayPick(false)}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: '#6b7280', borderTop: '1px solid #f1f5f9' }}>‹ Back</button>
+              </>
+            );
+          })() : [
             { label: '✏️ Edit job…', fn: () => openEdit(ctx.block) },
             ctx.block.status === 'confirmed'
               ? { label: '🔓 Unlock (set tentative)', fn: () => setStatus(ctx.block, 'tentative') }
               : { label: '✅ Confirm (lock)', fn: () => setStatus(ctx.block, 'confirmed') },
+            { label: `➕ Add crew to ${fmtDay(ctx.day)}…`, fn: () => setAddDayPick(true) },
             { label: `➖ Remove ${ctx.row} from ${fmtDay(ctx.day)}`, fn: () => removeFromDay(ctx.block, ctx.row, ctx.day) },
             { label: `👤 Remove ${ctx.row} from whole job`, fn: () => removeFromJob(ctx.block, ctx.row) },
             { label: '✚ Extend 1 day (past budget)', fn: () => extendDays(ctx.block, 1) },
@@ -587,7 +629,11 @@ function BlockModal({ draft, setDraft, crew, onSave, busy }: {
               : <>
                   <div><b>{dates.length} working day{dates.length === 1 ? '' : 's'}</b> · {fmtDay(dates[0])} → {fmtDay(dates[dates.length - 1])}</div>
                   <div style={{ color: '#9ca3af', marginTop: 2 }}>Scheduled {scheduledHours}h vs budget {budgetHours || '0'}h{draft.exceptions.length ? ` · ${draft.exceptions.length} day exception(s)` : ''}</div>
-                  {draft.extra_days > 0 && <div style={{ color: '#b45309', fontWeight: 700, marginTop: 4 }}>⚠ Scheduled {draft.extra_days} day{draft.extra_days === 1 ? '' : 's'} past the budgeted time.</div>}
+                  {draft.extra_days > 0 && (
+                    budgetHours > 0 && scheduledHours > budgetHours + 0.5
+                      ? <div style={{ color: '#b45309', fontWeight: 700, marginTop: 4 }}>⚠ Over budget — scheduled {scheduledHours}h exceeds the {budgetHours}h estimate ({draft.extra_days} extra day{draft.extra_days === 1 ? '' : 's'}).</div>
+                      : <div style={{ color: '#2563eb', fontWeight: 700, marginTop: 4 }}>⏱ Catch-up — {draft.extra_days} extra day{draft.extra_days === 1 ? '' : 's'} to recover time lost to exceptions; still within the {budgetHours || 0}h budget.</div>
+                  )}
                 </>}
           </div>
         </div>
