@@ -1747,9 +1747,12 @@ export async function getJobScope(oppId: number): Promise<{ opportunity_id: numb
 
 // ── Client Experience (comms) ─────────────────────────────────────────────────
 export interface CxSettings {
-  scheduler_name: string; scheduler_email: string; supervisor_name: string; supervisor_email: string;
-  designer_name: string; designer_email: string; sales_name: string; sales_email: string;
+  scheduler_name: string; scheduler_email: string; scheduler_title: string; scheduler_phone: string; scheduler_mobile: string;
+  supervisor_name: string; supervisor_email: string; supervisor_title: string; supervisor_phone: string; supervisor_mobile: string;
+  designer_name: string; designer_email: string; designer_title: string; designer_phone: string; designer_mobile: string;
+  sales_name: string; sales_email: string; sales_title: string; sales_phone: string; sales_mobile: string;
   company_phone: string; survey_link: string; review_link: string;
+  company_name: string; company_website: string; company_logo_url: string; brand_color: string; email_disclaimer: string;
 }
 export interface CxTemplate {
   id: number; key: string; title: string; subject: string; body?: string; from_role: string;

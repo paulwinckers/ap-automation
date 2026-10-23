@@ -102,7 +102,8 @@ export function ClientCommsModal({ oppId, jobName, initialTemplateKey, onClose }
                 <div><label style={lbl}>CC (optional)</label><input style={inp} value={compose.cc} onChange={e => setCompose({ ...compose, cc: e.target.value })} placeholder="name@darios.ca" /></div>
                 <div><label style={lbl}>Subject</label><input style={inp} value={compose.subject} onChange={e => setCompose({ ...compose, subject: e.target.value })} /></div>
                 <div><label style={lbl}>Message — review & fill any [bracketed] bits</label>
-                  <textarea style={{ ...inp, minHeight: 240, resize: 'vertical', lineHeight: 1.5 }} value={compose.body} onChange={e => setCompose({ ...compose, body: e.target.value })} /></div>
+                  <textarea style={{ ...inp, minHeight: 240, resize: 'vertical', lineHeight: 1.5 }} value={compose.body} onChange={e => setCompose({ ...compose, body: e.target.value })} />
+                  <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>✍️ {compose.from_name}'s signature card is added automatically on send.</div></div>
                 {err && <div style={{ fontSize: 13, color: '#b91c1c' }}>{err}</div>}
                 <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
                   <button onClick={() => setCompose(null)} style={{ padding: '9px 18px', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', color: '#374151', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>← Back</button>
@@ -145,12 +146,11 @@ export function CxSetupModal({ onClose }: { onClose: () => void }) {
     catch { setMsg('❌ Could not save template'); } finally { setSaving(false); }
   }
 
-  const STAFF: [keyof CxSettings, keyof CxSettings, string][] = [
-    ['scheduler_name', 'scheduler_email', 'Scheduler'],
-    ['supervisor_name', 'supervisor_email', 'Supervisor'],
-    ['designer_name', 'designer_email', 'Designer'],
-    ['sales_name', 'sales_email', 'Sales (default)'],
+  const ROLES: [string, string][] = [
+    ['scheduler', 'Scheduler'], ['supervisor', 'Supervisor'], ['designer', 'Designer'], ['sales', 'Sales (default)'],
   ];
+  const gv = (k: string) => (s ? ((s as unknown as Record<string, string>)[k] || '') : '');
+  const sv = (k: string, v: string) => setS(prev => prev ? ({ ...prev, [k]: v } as CxSettings) : prev);
 
   return (
     <div onClick={onClose} style={overlay}>
@@ -161,18 +161,33 @@ export function CxSetupModal({ onClose }: { onClose: () => void }) {
         </div>
         {loading || !s ? <div style={{ padding: 30, color: '#9ca3af' }}>Loading…</div> : (
           <div style={{ padding: 20 }}>
-            <div style={{ fontWeight: 800, fontSize: 14, color: '#111827', marginBottom: 10 }}>Who sends each email</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 8 }}>
-              {STAFF.map(([nk, ek, label]) => (
-                <div key={label} style={{ border: '1px solid #f1f5f9', borderRadius: 8, padding: 10 }}>
+            <div style={{ fontWeight: 800, fontSize: 14, color: '#111827', marginBottom: 10 }}>Who sends each email (name, title, email, phones — used in the signature)</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+              {ROLES.map(([role, label]) => (
+                <div key={role} style={{ border: '1px solid #f1f5f9', borderRadius: 8, padding: 10 }}>
                   <label style={lbl}>{label}</label>
-                  <input style={{ ...inp, marginBottom: 6 }} value={(s[nk] as string) || ''} placeholder="Name" onChange={e => setS({ ...s, [nk]: e.target.value })} />
-                  <input style={inp} value={(s[ek] as string) || ''} placeholder="email@darios.ca" onChange={e => setS({ ...s, [ek]: e.target.value })} />
+                  <input style={{ ...inp, marginBottom: 5 }} value={gv(`${role}_name`)} placeholder="Name" onChange={e => sv(`${role}_name`, e.target.value)} />
+                  <input style={{ ...inp, marginBottom: 5 }} value={gv(`${role}_title`)} placeholder="Title" onChange={e => sv(`${role}_title`, e.target.value)} />
+                  <input style={{ ...inp, marginBottom: 5 }} value={gv(`${role}_email`)} placeholder="email@darios.ca" onChange={e => sv(`${role}_email`, e.target.value)} />
+                  <div style={{ display: 'flex', gap: 5 }}>
+                    <input style={inp} value={gv(`${role}_phone`)} placeholder="Direct phone" onChange={e => sv(`${role}_phone`, e.target.value)} />
+                    <input style={inp} value={gv(`${role}_mobile`)} placeholder="Mobile" onChange={e => sv(`${role}_mobile`, e.target.value)} />
+                  </div>
                 </div>
               ))}
             </div>
+
+            <div style={{ fontWeight: 800, fontSize: 14, color: '#111827', margin: '4px 0 10px', borderTop: '1px solid #f1f5f9', paddingTop: 14 }}>Signature card</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 8 }}>
+              <div><label style={lbl}>Company name</label><input style={inp} value={s.company_name} onChange={e => setS({ ...s, company_name: e.target.value })} /></div>
+              <div><label style={lbl}>Website</label><input style={inp} value={s.company_website} onChange={e => setS({ ...s, company_website: e.target.value })} /></div>
+              <div><label style={lbl}>Logo URL (hosted, https)</label><input style={inp} value={s.company_logo_url} onChange={e => setS({ ...s, company_logo_url: e.target.value })} /></div>
+              <div><label style={lbl}>Brand colour</label><input style={inp} value={s.brand_color} onChange={e => setS({ ...s, brand_color: e.target.value })} placeholder="#2f6b3f" /></div>
+            </div>
+            <div style={{ marginBottom: 8 }}><label style={lbl}>Confidentiality disclaimer (one line each)</label>
+              <textarea style={{ ...inp, minHeight: 72, resize: 'vertical' }} value={s.email_disclaimer} onChange={e => setS({ ...s, email_disclaimer: e.target.value })} /></div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 12 }}>
-              <div><label style={lbl}>Company phone</label><input style={inp} value={s.company_phone} onChange={e => setS({ ...s, company_phone: e.target.value })} /></div>
+              <div><label style={lbl}>Fallback phone</label><input style={inp} value={s.company_phone} onChange={e => setS({ ...s, company_phone: e.target.value })} /></div>
               <div><label style={lbl}>Survey link</label><input style={inp} value={s.survey_link} onChange={e => setS({ ...s, survey_link: e.target.value })} /></div>
               <div><label style={lbl}>Google review link</label><input style={inp} value={s.review_link} onChange={e => setS({ ...s, review_link: e.target.value })} /></div>
             </div>

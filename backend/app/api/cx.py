@@ -51,11 +51,26 @@ def _row(r) -> dict:
 
 def _cfg_defaults() -> dict:
     return {
+        # Per-role sender identity + signature details
         "scheduler_name": "Keeland Kannan", "scheduler_email": "keeland@darios.ca",
+        "scheduler_title": "Construction Project Scheduler", "scheduler_phone": "", "scheduler_mobile": "",
         "supervisor_name": "Dustin Nikkel",  "supervisor_email": "dustin@darios.ca",
+        "supervisor_title": "Construction Supervisor", "supervisor_phone": "", "supervisor_mobile": "",
         "designer_name": "Jenna Hindley",     "designer_email": "jenna@darios.ca",
+        "designer_title": "Design", "designer_phone": "", "designer_mobile": "",
         "sales_name": "",                     "sales_email": "",
+        "sales_title": "", "sales_phone": "", "sales_mobile": "",
         "company_phone": "",
+        # Company-wide signature card
+        "company_name": "Dario's Landscape Services Ltd.",
+        "company_website": "http://darioslandscapeservices.ca/",
+        "company_logo_url": "https://darios-ap.pages.dev/darios-logo.png",
+        "brand_color": "#2f6b3f",
+        "email_disclaimer": (
+            "This email is intended for the addressee(s) only. It is privileged and may also be confidential.\n"
+            "Any review, retransmission or other use of this information by persons other than the addressee is prohibited.\n"
+            "If you are not the addressee and/or received this in error, please contact the sender and delete the material from all computers."
+        ),
         "survey_link": "https://docs.google.com/forms/d/e/1FAIpQLScrQMdZ6Z7wQgTAO1B6vmuc3zRxTMJVl0wuPtormDSGfUroDQ/viewform",
         "review_link": "",
     }
@@ -81,10 +96,16 @@ async def read_settings():
 
 class SettingsBody(BaseModel):
     scheduler_name: Optional[str] = None; scheduler_email: Optional[str] = None
+    scheduler_title: Optional[str] = None; scheduler_phone: Optional[str] = None; scheduler_mobile: Optional[str] = None
     supervisor_name: Optional[str] = None; supervisor_email: Optional[str] = None
+    supervisor_title: Optional[str] = None; supervisor_phone: Optional[str] = None; supervisor_mobile: Optional[str] = None
     designer_name: Optional[str] = None; designer_email: Optional[str] = None
+    designer_title: Optional[str] = None; designer_phone: Optional[str] = None; designer_mobile: Optional[str] = None
     sales_name: Optional[str] = None; sales_email: Optional[str] = None
+    sales_title: Optional[str] = None; sales_phone: Optional[str] = None; sales_mobile: Optional[str] = None
     company_phone: Optional[str] = None
+    company_name: Optional[str] = None; company_website: Optional[str] = None
+    company_logo_url: Optional[str] = None; brand_color: Optional[str] = None; email_disclaimer: Optional[str] = None
     survey_link: Optional[str] = None; review_link: Optional[str] = None
 
 
@@ -295,17 +316,61 @@ def _role_title(role: str) -> str:
             "designer": "Design — Dario's Landscape Services", "scheduler": "Construction Project Scheduler"}.get((role or "").lower(), "Dario's Landscape Services Ltd.")
 
 
-def _body_to_html(body_text: str, from_name: str, role: str, phone: str) -> str:
+def _signature_html(role: str, cfg: dict, name: str = "", email: str = "") -> str:
+    """Branded signature card (table-based, inline styles, hosted logo) rendered
+    for the sending role — plus the confidentiality disclaimer."""
+    e = _html.escape
+    r = (role or "scheduler").lower()
+    name = name or cfg.get(f"{r}_name") or ""
+    email = email or cfg.get(f"{r}_email") or ""
+    title = cfg.get(f"{r}_title") or _role_title(role)
+    phone = cfg.get(f"{r}_phone") or cfg.get("company_phone") or ""
+    mobile = cfg.get(f"{r}_mobile") or ""
+    green = cfg.get("brand_color") or "#2f6b3f"
+    company = cfg.get("company_name") or "Dario's Landscape Services Ltd."
+    website = cfg.get("company_website") or ""
+    logo = cfg.get("company_logo_url") or ""
+    web_disp = re.sub(r"^https?://", "", website).rstrip("/") if website else ""
+
+    phone_line = ""
+    if phone:
+        phone_line = f'<span style="color:#333">P:</span> {e(phone)}'
+        if mobile:
+            phone_line += f'&nbsp;&nbsp;<span style="font-size:11px;color:#333">M:</span> <span style="font-size:12px">{e(mobile)}</span>'
+    we = []
+    if website:
+        we.append(f'<span style="color:#333">W:</span> <a href="{e(website)}" style="color:{green};text-decoration:underline">{e(web_disp)}</a>')
+    if email:
+        we.append(f'<span style="color:#333">E:</span> <a href="mailto:{e(email)}" style="color:{green};text-decoration:underline">{e(email)}</a>')
+    we_line = "&nbsp;&nbsp;&nbsp;".join(we)
+
+    logo_cell = f'<td valign="top" style="padding-right:14px"><img src="{e(logo)}" alt="{e(company)}" width="120" style="display:block;border:0;width:120px;height:auto"></td>' if logo else ""
+
+    card = (
+        '<table cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;font-family:Arial,Helvetica,sans-serif"><tr>'
+        f'{logo_cell}'
+        f'<td valign="top" style="border-left:3px solid {green};padding-left:14px;font-size:13px;color:#333;line-height:1.45">'
+        f'<div style="font-weight:bold;font-size:16px;color:{green}">{e(name)}</div>'
+        f'<div style="color:#666">{e(title)}</div>'
+        f'<div style="font-weight:bold;color:#333">{e(company)}</div>'
+        f'{("<div>" + phone_line + "</div>") if phone_line else ""}'
+        f'{("<div>" + we_line + "</div>") if we_line else ""}'
+        '</td></tr></table>'
+    )
+    disc = cfg.get("email_disclaimer") or ""
+    disc_html = ""
+    if disc.strip():
+        lines = "<br>".join(e(l) for l in disc.split("\n") if l.strip())
+        disc_html = f'<div style="margin-top:18px;font-size:11px;color:#999;line-height:1.5;font-family:Arial,Helvetica,sans-serif">{lines}</div>'
+    return card + disc_html
+
+
+def _body_to_html(body_text: str, role: str, cfg: dict, name: str = "", email: str = "") -> str:
     esc = _html.escape(body_text)
     esc = re.sub(r"(https?://[^\s<]+)", r'<a href="\1">\1</a>', esc)
     para = esc.replace("\n", "<br>")
-    sig = f'<div style="margin-top:18px;color:#111">{_html.escape(from_name)}<br><span style="color:#6b7280">{_html.escape(_role_title(role))}</span>'
-    if phone:
-        sig += f'<br><span style="color:#6b7280">{_html.escape(phone)} · Darios.ca</span>'
-    else:
-        sig += '<br><span style="color:#6b7280">Darios.ca</span>'
-    sig += "</div>"
-    return f'<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;font-size:14px;line-height:1.5;color:#111;max-width:620px">{para}{sig}</div>'
+    sig = _signature_html(role, cfg, name, email)
+    return f'<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;font-size:14px;line-height:1.5;color:#111;max-width:640px">{para}{sig}</div>'
 
 
 # ── Project view (context + per-template status) ───────────────────────────────
@@ -411,7 +476,7 @@ async def send_email(opp_id: int, body: SendBody):
     if not to_list:
         raise HTTPException(400, "A recipient email is required")
     cfg = await get_cx_settings()
-    html = _body_to_html(body.body, body.from_name, body.from_role or "scheduler", cfg.get("company_phone") or "")
+    html = _body_to_html(body.body, body.from_role or "scheduler", cfg, body.from_name, body.from_email)
     cc_list = [e.strip() for e in (body.cc or "").replace(";", ",").split(",") if e.strip()]
     try:
         from app.services.email_intake import GraphClient
