@@ -405,7 +405,7 @@ def _parse_d(s: str):
 _SEV_RANK = {"overdue": 0, "due": 1, "soon": 2}
 
 
-def _job_actions(j: dict, sent: set, pha_ok: bool, complete_date: str | None = None) -> list[dict]:
+def _job_actions(j: dict, sent: set, pha_ok: bool, complete_date: str | None = None, skipped: set | None = None) -> list[dict]:
     """Business rules → the next actions due on a job. Each: key, label, severity
     (overdue|due|soon), and a target the UI routes to (comms:<tmpl> | board | pha).
 
@@ -452,6 +452,8 @@ def _job_actions(j: dict, sent: set, pha_ok: bool, complete_date: str | None = N
         if cd is not None and (today - cd).days <= EXIT_WINDOW:
             add("exit", "Send completion + survey", "due", "comms:exit")
 
+    if skipped:
+        acts = [a for a in acts if a["key"] not in skipped]
     acts.sort(key=lambda a: _SEV_RANK.get(a["severity"], 9))
     return acts
 
@@ -741,18 +743,27 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
     # Which client emails have been sent, and which jobs have a submitted PHA —
     # for the "next action" rules. Small tables; read whole, filter in memory.
     sent_map: dict[int, set] = {}
+    comms_sent: dict[int, dict] = {}   # opp -> {template_key: last_sent_at}
     pha_ok: set = set()
+    skip_map: dict[int, set] = {}
     if jobs:
         try:
-            for r in await db._q("SELECT DISTINCT opportunity_id, template_key FROM cx_sends", []):
+            for r in await db._q(
+                "SELECT opportunity_id, template_key, MAX(sent_at) AS last FROM cx_sends GROUP BY opportunity_id, template_key", []):
                 sent_map.setdefault(r["opportunity_id"], set()).add(r["template_key"])
+                comms_sent.setdefault(r["opportunity_id"], {})[r["template_key"]] = r.get("last")
         except Exception:
-            sent_map = {}
+            sent_map, comms_sent = {}, {}
         try:
             pha_ok = {r["opportunity_id"] for r in await db._q(
                 "SELECT DISTINCT opportunity_id FROM project_hazard_assessments WHERE status = 'submitted'", [])}
         except Exception:
             pha_ok = set()
+        try:
+            for r in await db._q("SELECT opportunity_id, action_key FROM cx_action_skips", []):
+                skip_map.setdefault(r["opportunity_id"], set()).add(r["action_key"])
+        except Exception:
+            skip_map = {}
 
     for oid, j in jobs.items():
         c = prep_counts.get(oid, {"done": 0, "na": 0})
@@ -783,7 +794,8 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         j["lifecycle"] = _lifecycle(
             sched_status, j["queued"], j.get("hrs_act"), is_complete, is_paid,
             c["done"], j["lead_name"], j.get("source"))
-        j["actions"] = _job_actions(j, sent_map.get(oid, set()), oid in pha_ok, complete_date)
+        j["comms_sent"] = comms_sent.get(oid, {})
+        j["actions"] = _job_actions(j, sent_map.get(oid, set()), oid in pha_ok, complete_date, skip_map.get(oid, set()))
 
     # A job drops off the plan in months AFTER it was paid. "Paid" is detected from Aspire
     # (job has a CompleteDate AND every invoice is fully collected — a deposit-only payment does

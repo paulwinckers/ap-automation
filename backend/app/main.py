@@ -326,6 +326,15 @@ async def lifespan(app: FastAPI):
                 updated_at  TEXT
             )
         """,
+        "cx_action_skips": """
+            CREATE TABLE IF NOT EXISTS cx_action_skips (
+                opportunity_id INTEGER NOT NULL,
+                action_key     TEXT NOT NULL,
+                skipped_by     TEXT,
+                skipped_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (opportunity_id, action_key)
+            )
+        """,
         "cx_sends": """
             CREATE TABLE IF NOT EXISTS cx_sends (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,

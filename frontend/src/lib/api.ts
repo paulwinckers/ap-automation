@@ -369,6 +369,7 @@ export interface PlanJob {
   sched_start?: string | null;   // earliest block start for this job
   window_week?: string | null;   // Monday of the tentative block ("Week of …")
   actions?: PlanAction[];        // computed "next actions" (business rules)
+  comms_sent?: Record<string, string>;  // template_key -> last sent_at ISO
 }
 export interface PlanAction {
   key: string; label: string; severity: 'overdue' | 'due' | 'soon'; target: string; // comms:<tmpl> | board | pha
@@ -1778,6 +1779,17 @@ export async function renderCxEmail(oppId: number, template_key: string, overrid
 }
 export async function sendCxEmail(oppId: number, p: { template_key: string; subject: string; body: string; to: string; cc?: string; from_email: string; from_name: string; from_role?: string; sent_by?: string }): Promise<{ ok: boolean }> {
   return request('POST', `/construction/cx/project/${oppId}/send`, p);
+}
+export async function skipCxAction(opportunity_id: number, action_key: string, skipped_by?: string): Promise<{ ok: boolean }> {
+  return request('POST', '/construction/cx/skip', { opportunity_id, action_key, skipped_by });
+}
+export async function unskipCxAction(opportunity_id: number, action_key: string): Promise<{ ok: boolean }> {
+  return request('DELETE', `/construction/cx/skip/${opportunity_id}/${action_key}`);
+}
+export interface CxSkip { opportunity_id: number; action_key: string; skipped_by: string | null; skipped_at: string }
+export async function listCxSkips(): Promise<CxSkip[]> {
+  const r = await request<{ skips: CxSkip[] }>('GET', '/construction/cx/skips');
+  return r.skips;
 }
 export async function archiveJob(opportunity_id: number): Promise<{ ok: boolean }> {
   return request('POST', '/construction/schedule/archive', { opportunity_id });

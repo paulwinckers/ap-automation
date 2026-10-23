@@ -10,7 +10,8 @@ import {
   listConstructionLeads, upsertConstructionLead, deleteConstructionLead,
   sendCheckins, getCheckinStatus, setJobPlanning, listPHA,
   getScheduleWeek, updateBlock,
-  MonthlyPlan, PlanJob, PlanSuggestion, ConstructionLead, CheckinStatus,
+  listCxTemplates, skipCxAction, unskipCxAction, listCxSkips, currentUser,
+  MonthlyPlan, PlanJob, PlanSuggestion, ConstructionLead, CheckinStatus, CxTemplate, CxSkip,
 } from '../lib/api';
 import JobPrepChecklist from './JobPrepChecklist';
 import ProjectHazardAssessment from '../components/ProjectHazardAssessment';
@@ -678,6 +679,11 @@ export default function ConstructionPlan() {
   const [commsJob,      setCommsJob]      = useState<PlanJob | null>(null);
   const [commsTmpl,     setCommsTmpl]     = useState<string | undefined>(undefined);
   const [showCxSetup,   setShowCxSetup]   = useState(false);
+  const [cxTemplates,   setCxTemplates]   = useState<CxTemplate[]>([]);
+  const [cxSkips,       setCxSkips]       = useState<CxSkip[]>([]);
+  const [showEmailCenter, setShowEmailCenter] = useState(false);
+  const [hoverComms,    setHoverComms]    = useState<number | null>(null);
+  const [emailFilter,   setEmailFilter]   = useState<'all' | 'due' | 'overdue'>('all');
   const activeMonthRef = useRef(month);
 
   const load = useCallback(async () => {
@@ -787,6 +793,36 @@ export default function ConstructionPlan() {
     } catch { /* non-fatal — windows fall back to the job's start date */ }
   }
   useEffect(() => { loadBlocks(); }, []);
+
+  // Comms templates (for the hover list + Email Action Center) + dismissed actions.
+  async function loadCxMeta() {
+    try { const [t, s] = await Promise.all([listCxTemplates(), listCxSkips()]); setCxTemplates(t); setCxSkips(s); }
+    catch { /* non-fatal */ }
+  }
+  useEffect(() => { loadCxMeta(); }, []);
+
+  // The comms journey for a job: ordered templates with sent date + whether due now.
+  const commsSummary = (j: PlanJob) => {
+    const sent = j.comms_sent || {};
+    const dueKeys = new Set((j.actions || []).filter(a => a.target.startsWith('comms:')).map(a => a.target.slice(6)));
+    return cxTemplates.map(t => ({ key: t.key, title: t.title, sentAt: sent[t.key] || null, due: dueKeys.has(t.key) }));
+  };
+  const lastComms = (j: PlanJob) => {
+    const sent = j.comms_sent || {};
+    let best: { key: string; at: string } | null = null;
+    for (const [k, at] of Object.entries(sent)) if (at && (!best || at > best.at)) best = { key: k, at };
+    if (!best) return null;
+    const t = cxTemplates.find(x => x.key === best!.key);
+    return { title: t?.title || best.key, at: best.at };
+  };
+  async function skipAction(j: PlanJob, actionKey: string) {
+    try { await skipCxAction(j.opportunity_id, actionKey, currentUser()?.name); await Promise.all([load(), loadCxMeta()]); }
+    catch { /* ignore */ }
+  }
+  async function unskipAction(oppId: number, actionKey: string) {
+    try { await unskipCxAction(oppId, actionKey); await Promise.all([load(), loadCxMeta()]); }
+    catch { /* ignore */ }
+  }
 
   const effStage  = (j: PlanJob) => planningOverride[j.opportunity_id]?.stage ?? j.stage ?? 'New';
   const effQueued = (j: PlanJob) => planningOverride[j.opportunity_id]?.queued ?? j.queued ?? false;
@@ -1173,8 +1209,6 @@ export default function ConstructionPlan() {
               {schedOf(j)?.lead ? <span style={{ color: '#b45309', fontWeight: 700 }}>{'  ·  ★ '}{schedOf(j)!.lead}</span> : ''}
             </span>
           </div>
-          {/* Next action */}
-          {j.actions && j.actions.length > 0 && <ActionChip j={j} a={j.actions[0]} />}
           {/* Window / date + confirm action */}
           {(() => {
             const s = schedOf(j);
@@ -1205,9 +1239,37 @@ export default function ConstructionPlan() {
           </button>
           {/* PHA */}
           <PHABadge info={phaMap.get(j.opportunity_id)} onClick={() => setPhaModalJob(j)} />
-          {/* Client comms */}
-          <button onClick={() => setCommsJob(j)} title="Client comms — send a touchpoint"
-            style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '2px 8px', fontSize: 12, cursor: 'pointer', color: '#6b7280' }}>✉️</button>
+          {/* Last action + client-comms (hover shows the full list) */}
+          {(() => {
+            const last = lastComms(j);
+            const dueCount = (j.actions || []).filter(a => a.target.startsWith('comms:')).length;
+            return (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, color: last ? '#6b7280' : '#cbd5e1', whiteSpace: 'nowrap' }}>
+                  {last ? `Last: ${last.title} · ${fmtDate(last.at)}` : 'No emails yet'}
+                </span>
+                <span style={{ position: 'relative', display: 'inline-flex' }}
+                  onMouseEnter={() => setHoverComms(j.opportunity_id)} onMouseLeave={() => setHoverComms(h => h === j.opportunity_id ? null : h)}>
+                  <button onClick={() => { setCommsTmpl(undefined); setCommsJob(j); }} title="Client comms"
+                    style={{ background: dueCount ? '#fffbeb' : 'none', border: '1px solid ' + (dueCount ? '#fcd34d' : '#e5e7eb'), borderRadius: 6, padding: '2px 8px', fontSize: 12, cursor: 'pointer', color: '#6b7280' }}>
+                    ✉️{dueCount ? <span style={{ color: '#b45309', fontWeight: 800 }}> {dueCount}</span> : ''}
+                  </button>
+                  {hoverComms === j.opportunity_id && (
+                    <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 50, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', padding: 8, width: 230 }}>
+                      {commsSummary(j).map(c => (
+                        <div key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 4px', fontSize: 12 }}>
+                          <span style={{ width: 14 }}>{c.sentAt ? '✅' : c.due ? '🟠' : '○'}</span>
+                          <span style={{ flex: 1, color: c.sentAt ? '#111827' : c.due ? '#92400e' : '#9ca3af' }}>{c.title}</span>
+                          <span style={{ color: '#9ca3af', fontSize: 10.5 }}>{c.sentAt ? fmtDate(c.sentAt) : c.due ? 'due' : ''}</span>
+                        </div>
+                      ))}
+                      {cxTemplates.length === 0 && <div style={{ fontSize: 12, color: '#9ca3af', padding: 4 }}>Loading…</div>}
+                    </div>
+                  )}
+                </span>
+              </div>
+            );
+          })()}
           {/* Revenue */}
           <div style={{ fontSize: 12, color: '#6b7280', minWidth: 80, textAlign: 'right' }}>{fmt$(j.revenue_est || j.revenue_est_month || 0)}</div>
         </div>
@@ -1225,23 +1287,9 @@ export default function ConstructionPlan() {
     const SEV = { overdue: 0, due: 1, soon: 2 } as Record<string, number>;
     const needs = groups.map(g => g.base).filter(b => (b.actions?.length || 0) > 0)
       .sort((a, b) => (SEV[a.actions![0].severity] ?? 9) - (SEV[b.actions![0].severity] ?? 9));
+    void needs;
     return (
       <div>
-        {needs.length > 0 && (
-          <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderTop: '3px solid #d97706', borderRadius: 12, marginBottom: 16, overflow: 'hidden' }}>
-            <div style={{ padding: '10px 14px', background: '#fffbeb', fontWeight: 800, fontSize: 14, color: '#92400e' }}>
-              ⏰ Needs attention <span style={{ color: '#b45309' }}>({needs.length})</span>
-            </div>
-            {needs.slice(0, 20).map(b => (
-              <div key={b.opportunity_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 14px', borderTop: '1px solid #f3f4f6', flexWrap: 'wrap' }}>
-                <a href={`/field/project/${b.opportunity_id}`} style={{ flex: 1, minWidth: 160, fontSize: 13, fontWeight: 700, color: '#111827', textDecoration: 'none' }}>
-                  {b.property_name || b.opportunity_name}
-                </a>
-                {b.actions!.map(a => <ActionChip key={a.key} j={b} a={a} />)}
-              </div>
-            ))}
-          </div>
-        )}
 
         {LIFECYCLE.map(stage => {
           const rows = groups.filter(g => lifeOf(g.base) === stage.key);
@@ -1308,8 +1356,16 @@ export default function ConstructionPlan() {
               ))}
             </div>
             <a href="/dashboards/construction/board" style={{ ...secondaryBtn, textDecoration: 'none', display: 'inline-block' }}>📅 Weekly Board</a>
+            {(() => {
+              const n = jobs.filter(j => (j.actions || []).some(a => a.target.startsWith('comms:'))).length;
+              return (
+                <button onClick={() => setShowEmailCenter(true)} style={{ ...secondaryBtn, borderColor: n ? '#fcd34d' : '#d1d5db', background: n ? '#fffbeb' : '#fff', color: n ? '#92400e' : '#374151' }}>
+                  📨 Email Action Center{n ? ` (${n})` : ''}
+                </button>
+              );
+            })()}
             <button onClick={() => setShowCheckin(true)} style={secondaryBtn}>📤 Check-ins</button>
-            <button onClick={() => setShowCxSetup(true)} style={secondaryBtn}>✉️ Comms</button>
+            <button onClick={() => setShowCxSetup(true)} style={secondaryBtn}>✉️ Comms setup</button>
             <button onClick={() => setShowGoal(true)}    style={secondaryBtn}>⚙️ Goals</button>
           </div>
         </div>
@@ -1507,6 +1563,65 @@ export default function ConstructionPlan() {
       )}
       {showCheckin && <CheckinStatusPanel month={month} onClose={() => setShowCheckin(false)} />}
       {showCxSetup && <CxSetupModal onClose={() => setShowCxSetup(false)} />}
+      {showEmailCenter && (() => {
+        const bases = groupJobs(jobs).map(g => g.base);
+        const byId = new Map(bases.map(b => [b.opportunity_id, b]));
+        const SEVR = { overdue: 0, due: 1, soon: 2 } as Record<string, number>;
+        let items = bases.flatMap(b => (b.actions || []).filter(a => a.target.startsWith('comms:')).map(a => ({ b, a })));
+        if (emailFilter === 'overdue') items = items.filter(x => x.a.severity === 'overdue');
+        else if (emailFilter === 'due') items = items.filter(x => x.a.severity === 'due');
+        items.sort((x, y) => (SEVR[x.a.severity] ?? 9) - (SEVR[y.a.severity] ?? 9));
+        const tmplTitle = (k: string) => cxTemplates.find(t => t.key === k)?.title || k;
+        return (
+          <div onClick={() => setShowEmailCenter(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', zIndex: 1250, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '24px 12px', overflowY: 'auto' }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: '100%', maxWidth: 720, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 800, fontSize: 15, color: '#0f172a' }}>📨 Email Action Center</span>
+                <div style={{ display: 'inline-flex', border: '1px solid #d1d5db', borderRadius: 8, overflow: 'hidden' }}>
+                  {(['all', 'overdue', 'due'] as const).map(f => (
+                    <button key={f} onClick={() => setEmailFilter(f)} style={{ padding: '5px 12px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: emailFilter === f ? '#1d4ed8' : '#fff', color: emailFilter === f ? '#fff' : '#374151' }}>
+                      {f === 'all' ? 'All' : f === 'overdue' ? 'Overdue' : 'Due'}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setShowEmailCenter(false)} style={{ marginLeft: 'auto', background: 'none', border: 'none', fontSize: 20, color: '#6b7280', cursor: 'pointer' }}>×</button>
+              </div>
+              <div style={{ padding: 16, maxHeight: '70vh', overflowY: 'auto' }}>
+                {items.length === 0 ? <div style={{ color: '#9ca3af', fontSize: 14, padding: 16, textAlign: 'center' }}>Nothing {emailFilter !== 'all' ? emailFilter : 'outstanding'} — all caught up. 🎉</div> : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <tbody>
+                      {items.map(({ b, a }) => {
+                        const c = ACTION_STYLE[a.severity] || ACTION_STYLE.due;
+                        return (
+                          <tr key={b.opportunity_id + a.key} style={{ borderTop: '1px solid #f3f4f6' }}>
+                            <td style={{ padding: '8px 6px', fontSize: 13, fontWeight: 700, color: '#111827' }}>{b.property_name || b.opportunity_name}</td>
+                            <td style={{ padding: '8px 6px' }}><span style={{ background: c.bg, color: c.fg, borderRadius: 999, padding: '2px 9px', fontSize: 11.5, fontWeight: 800, whiteSpace: 'nowrap' }}>{a.severity === 'overdue' ? '🔴' : '🟠'} {a.label}</span></td>
+                            <td style={{ padding: '8px 6px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                              <button onClick={() => { setShowEmailCenter(false); runAction(b, a.target); }} style={{ padding: '5px 12px', borderRadius: 7, border: 'none', background: '#1A5376', color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer', marginRight: 6 }}>Compose</button>
+                              <button onClick={() => skipAction(b, a.key)} title="Mark not necessary" style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid #d1d5db', background: '#fff', color: '#6b7280', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>Not necessary</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+                {cxSkips.length > 0 && (
+                  <div style={{ marginTop: 16, borderTop: '1px solid #f1f5f9', paddingTop: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#6b7280', marginBottom: 6 }}>Marked not necessary</div>
+                    {cxSkips.map(s => (
+                      <div key={s.opportunity_id + s.action_key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#9ca3af', padding: '3px 2px' }}>
+                        <span style={{ flex: 1 }}>{(byId.get(s.opportunity_id)?.property_name || byId.get(s.opportunity_id)?.opportunity_name || `#${s.opportunity_id}`)} — {tmplTitle(s.action_key === 'welcome' ? 'handoff' : s.action_key)}</span>
+                        <button onClick={() => unskipAction(s.opportunity_id, s.action_key)} style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>Undo</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {commsJob && <ClientCommsModal oppId={commsJob.opportunity_id} jobName={commsJob.property_name || commsJob.opportunity_name} initialTemplateKey={commsTmpl} onClose={() => { setCommsJob(null); setCommsTmpl(undefined); load(); }} />}
 
       {/* PHA modal — create / review a project hazard assessment for a job */}

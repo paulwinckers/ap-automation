@@ -334,6 +334,37 @@ async def project_cx(opp_id: int):
             "sends": [_row(s) for s in sends]}
 
 
+class SkipBody(BaseModel):
+    opportunity_id: int
+    action_key: str
+    skipped_by: Optional[str] = None
+
+
+@router.post("/skip")
+async def skip_action(body: SkipBody):
+    """Mark a next-action 'not necessary' for a job so it stops showing as due."""
+    db = await _db()
+    await db._x(
+        "INSERT OR IGNORE INTO cx_action_skips (opportunity_id, action_key, skipped_by) VALUES (?, ?, ?)",
+        [body.opportunity_id, body.action_key.strip(), (body.skipped_by or "").strip() or None],
+    )
+    return {"ok": True}
+
+
+@router.delete("/skip/{opp_id}/{action_key}")
+async def unskip_action(opp_id: int, action_key: str):
+    db = await _db()
+    await db._x("DELETE FROM cx_action_skips WHERE opportunity_id = ? AND action_key = ?", [opp_id, action_key])
+    return {"ok": True}
+
+
+@router.get("/skips")
+async def list_skips():
+    db = await _db()
+    rows = await db._q("SELECT opportunity_id, action_key, skipped_by, skipped_at FROM cx_action_skips", [])
+    return {"skips": [_row(r) for r in rows]}
+
+
 class RenderBody(BaseModel):
     template_key: str
     overrides: Optional[dict] = None
