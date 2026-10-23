@@ -405,9 +405,14 @@ def _parse_d(s: str):
 _SEV_RANK = {"overdue": 0, "due": 1, "soon": 2}
 
 
-def _job_actions(j: dict, sent: set, pha_ok: bool) -> list[dict]:
+def _job_actions(j: dict, sent: set, pha_ok: bool, complete_date: str | None = None) -> list[dict]:
     """Business rules → the next actions due on a job. Each: key, label, severity
-    (overdue|due|soon), and a target the UI routes to (comms:<tmpl> | board | pha)."""
+    (overdue|due|soon), and a target the UI routes to (comms:<tmpl> | board | pha).
+
+    Recency-scoped so the engine doesn't retroactively flag every historical job:
+    welcome only for recently-won deals, exit only for recent completions."""
+    WELCOME_WINDOW = 60   # days since Won — older active jobs were already handled
+    EXIT_WINDOW = 30      # days since completion — only recent finishes need the survey
     today = _date.today()
     life = j.get("lifecycle")
     ss = j.get("sched_status")
@@ -416,11 +421,12 @@ def _job_actions(j: dict, sent: set, pha_ok: bool) -> list[dict]:
         acts.append({"key": key, "label": label, "severity": sev, "target": target})
     active = life not in ("complete", "paid", "parked")
 
-    # 1. Welcome / handoff — within 2 days of the deal coming in (Won).
+    # 1. Welcome / handoff — within 2 days of a (recent) deal coming in (Won).
     if active and "handoff" not in sent:
         wd = _parse_d(j.get("won_date"))
-        overdue = wd is not None and (today - wd).days > 2
-        add("welcome", "Send welcome email", "overdue" if overdue else "due", "comms:handoff")
+        if wd is not None and (today - wd).days <= WELCOME_WINDOW:
+            overdue = (today - wd).days > 2
+            add("welcome", "Send welcome email", "overdue" if overdue else "due", "comms:handoff")
     # 2. Scheduling intro once a tentative window exists.
     if ss == "tentative" and "scheduling_intro" not in sent:
         add("scheduling_intro", "Send scheduling intro", "due", "comms:scheduling_intro")
@@ -440,9 +446,11 @@ def _job_actions(j: dict, sent: set, pha_ok: bool) -> list[dict]:
         sd = _parse_d(j.get("sched_start"))
         if sd is not None and (sd - today).days > 14:
             add("periodic_update", "Send a 2-week update", "soon", "comms:periodic_update")
-    # 7. Exit / completion email when the job is done.
+    # 7. Exit / completion email — only for recent completions.
     if life == "complete" and "exit" not in sent:
-        add("exit", "Send completion + survey", "due", "comms:exit")
+        cd = _parse_d(complete_date)
+        if cd is not None and (today - cd).days <= EXIT_WINDOW:
+            add("exit", "Send completion + survey", "due", "comms:exit")
 
     acts.sort(key=lambda a: _SEV_RANK.get(a["severity"], 9))
     return acts
@@ -775,7 +783,7 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         j["lifecycle"] = _lifecycle(
             sched_status, j["queued"], j.get("hrs_act"), is_complete, is_paid,
             c["done"], j["lead_name"], j.get("source"))
-        j["actions"] = _job_actions(j, sent_map.get(oid, set()), oid in pha_ok)
+        j["actions"] = _job_actions(j, sent_map.get(oid, set()), oid in pha_ok, complete_date)
 
     # A job drops off the plan in months AFTER it was paid. "Paid" is detected from Aspire
     # (job has a CompleteDate AND every invoice is fully collected — a deposit-only payment does
