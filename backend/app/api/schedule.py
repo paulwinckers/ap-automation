@@ -88,6 +88,23 @@ def _budget_days(hours, emp_count: int, hours_per_day) -> int:
     return max(1, math.ceil(h / (emp * hpd))) if h > 0 else 1
 
 
+def _active_cells(b: dict) -> int:
+    """Person-day cells a shaped block actually schedules: every (employee, date)
+    pair minus the per-day exceptions that match one. Stale exceptions (dates no
+    longer in the span, removed employees) don't count."""
+    emps = b.get("employees") or []
+    dates = b.get("dates") or []
+    cells = {f"{e}|{d}" for e in emps for d in dates}
+    return len(cells - set(b.get("exceptions") or []))
+
+
+def _is_effective(b: dict) -> bool:
+    """A block is effective when it schedules at least one person-day. An empty
+    block — no employees, or every day removed via exceptions — schedules no work,
+    so it must not keep its job out of the Unscheduled backlog."""
+    return bool(b.get("employees")) and _active_cells(b) > 0
+
+
 def _shape_block(r: dict) -> dict:
     try:
         employees = json.loads(r.get("employees") or "[]")
@@ -262,13 +279,20 @@ async def get_week(start: Optional[str] = Query(None), weeks: int = Query(1)):
             logger.warning(f"schedule: crew load failed: {e}")
             crew = []
 
-        block_rows = await db._q(
-            "SELECT * FROM schedule_blocks WHERE start_date >= ? AND start_date <= ? ORDER BY start_date, id",
-            [lower, upper],
-        )
+        # Load every block once so we can tell which jobs are genuinely scheduled.
+        # An *empty* block (no employees, or every person-day removed via per-day
+        # exceptions) schedules no work: it is not drawn on the grid and does NOT
+        # hold its job out of the Unscheduled backlog — deleting all of a job's
+        # days returns it to Unscheduled just like deleting the block.
+        all_rows = await db._q("SELECT * FROM schedule_blocks ORDER BY start_date, id", [])
         blocks = []
-        for r in block_rows:
+        scheduled_ids: set = set()
+        for r in all_rows:
             b = _shape_block(_row(r))
+            if not _is_effective(b):
+                continue
+            if b.get("opportunity_id") is not None:
+                scheduled_ids.add(b["opportunity_id"])
             if any(d in wk_set for d in b["dates"]):
                 blocks.append(b)
 
@@ -281,13 +305,6 @@ async def get_week(start: Optional[str] = Query(None), weeks: int = Query(1)):
             "job_label": r.get("job_label"), "note": r.get("note"),
         } for r in (_row(x) for x in asg_rows)]
 
-        # Any job that already has a block (anywhere, any week) is "scheduled" and
-        # drops out of the unscheduled backlog.
-        try:
-            sched = await db._q("SELECT DISTINCT opportunity_id FROM schedule_blocks WHERE opportunity_id IS NOT NULL", [])
-            scheduled_ids = {r["opportunity_id"] for r in sched}
-        except Exception:
-            scheduled_ids = set()
         try:
             arch = await db._q("SELECT opportunity_id FROM schedule_archived_jobs", [])
             archived_ids = {r["opportunity_id"] for r in arch}

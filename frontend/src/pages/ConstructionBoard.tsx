@@ -238,8 +238,20 @@ export default function ConstructionBoard() {
     finally { setBusy(false); await reloadKeepBacklog(); }
   }
   async function removeFromDay(b: ScheduleBlock, row: string, day: string) {
-    setCtx(null); setBusy(true);
+    setCtx(null);
     const ex = Array.from(new Set([...(b.exceptions || []), `${row}|${day}`]));
+    // How many person-days remain after removing this one? If none, the block
+    // schedules no work — unschedule the job rather than leave an invisible shell.
+    const cells = new Set<string>();
+    for (const e of (b.employees || [])) for (const d of (b.dates || [])) cells.add(`${e}|${d}`);
+    const remaining = [...cells].filter(c => !ex.includes(c)).length;
+    if (remaining <= 0) {
+      if (!window.confirm('That removes the last scheduled day for this job. Remove it from the schedule and return it to Unscheduled?')) return;
+      setBusy(true);
+      try { await deleteBlock(b.id); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+      return;
+    }
+    setBusy(true);
     try { await updateBlock(b.id, { exceptions: ex }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }
   async function removeFromJob(b: ScheduleBlock, row: string) {
