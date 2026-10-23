@@ -21,7 +21,7 @@ const lbl: React.CSSProperties = { display: 'block', fontSize: 11, fontWeight: 7
 const overlay: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', zIndex: 1250, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '24px 12px', overflowY: 'auto' };
 
 // ── Per-job comms ─────────────────────────────────────────────────────────────
-export function ClientCommsModal({ oppId, jobName, onClose }: { oppId: number; jobName: string; onClose: () => void }) {
+export function ClientCommsModal({ oppId, jobName, initialTemplateKey, onClose }: { oppId: number; jobName: string; initialTemplateKey?: string; onClose: () => void }) {
   const [data, setData] = useState<CxProject | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
@@ -31,7 +31,12 @@ export function ClientCommsModal({ oppId, jobName, onClose }: { oppId: number; j
 
   async function load() {
     setLoading(true);
-    try { setData(await getProjectCx(oppId)); } catch (e) { setErr((e as Error).message); } finally { setLoading(false); }
+    try {
+      const d = await getProjectCx(oppId); setData(d);
+      if (initialTemplateKey && !compose) {
+        try { setCompose(await renderCxEmail(oppId, initialTemplateKey)); } catch { /* ignore */ }
+      }
+    } catch (e) { setErr((e as Error).message); } finally { setLoading(false); }
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [oppId]);
 

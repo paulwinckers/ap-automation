@@ -676,6 +676,7 @@ export default function ConstructionPlan() {
   const [phaModalJob,   setPhaModalJob]   = useState<PlanJob | null>(null);
   const [view,          setView]          = useState<'pipeline' | 'monthly'>('pipeline');
   const [commsJob,      setCommsJob]      = useState<PlanJob | null>(null);
+  const [commsTmpl,     setCommsTmpl]     = useState<string | undefined>(undefined);
   const [showCxSetup,   setShowCxSetup]   = useState(false);
   const activeMonthRef = useRef(month);
 
@@ -1134,6 +1135,27 @@ export default function ConstructionPlan() {
     catch { /* ignore */ }
   }
 
+  const ACTION_STYLE: Record<string, { bg: string; fg: string }> = {
+    overdue: { bg: '#fee2e2', fg: '#b91c1c' },
+    due:     { bg: '#fef3c7', fg: '#92400e' },
+    soon:    { bg: '#dbeafe', fg: '#1d4ed8' },
+  };
+  function runAction(j: PlanJob, target: string) {
+    if (target.startsWith('comms:')) { setCommsTmpl(target.slice(6)); setCommsJob(j); }
+    else if (target === 'pha') { setPhaModalJob(j); }
+    else if (target === 'board') { window.open('/dashboards/construction/board', '_blank'); }
+  }
+  const ActionChip = ({ j, a }: { j: PlanJob; a: NonNullable<PlanJob['actions']>[number] }) => {
+    const c = ACTION_STYLE[a.severity] || ACTION_STYLE.due;
+    const icon = a.severity === 'overdue' ? '🔴' : a.severity === 'due' ? '🟠' : '🔵';
+    return (
+      <button onClick={() => runAction(j, a.target)} title={a.severity === 'overdue' ? 'Overdue' : a.severity === 'soon' ? 'Coming up' : 'Due now'}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: c.bg, color: c.fg, border: 'none', borderRadius: 999, padding: '3px 10px', fontSize: 11.5, fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+        {icon} {a.label}
+      </button>
+    );
+  };
+
   const renderPipelineRow = (j: PlanJob, children: PlanJob[]) => {
     const prep = prepProgress[j.opportunity_id] ?? { done: j.prep_done ?? 0, total: j.prep_total ?? 6 };
     const ready = prep.total > 0 && prep.done === prep.total;
@@ -1151,6 +1173,8 @@ export default function ConstructionPlan() {
               {schedOf(j)?.lead ? <span style={{ color: '#b45309', fontWeight: 700 }}>{'  ·  ★ '}{schedOf(j)!.lead}</span> : ''}
             </span>
           </div>
+          {/* Next action */}
+          {j.actions && j.actions.length > 0 && <ActionChip j={j} a={j.actions[0]} />}
           {/* Window / date + confirm action */}
           {(() => {
             const s = schedOf(j);
@@ -1198,8 +1222,27 @@ export default function ConstructionPlan() {
 
   const renderPipeline = () => {
     const groups = groupJobs(jobs);
+    const SEV = { overdue: 0, due: 1, soon: 2 } as Record<string, number>;
+    const needs = groups.map(g => g.base).filter(b => (b.actions?.length || 0) > 0)
+      .sort((a, b) => (SEV[a.actions![0].severity] ?? 9) - (SEV[b.actions![0].severity] ?? 9));
     return (
       <div>
+        {needs.length > 0 && (
+          <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderTop: '3px solid #d97706', borderRadius: 12, marginBottom: 16, overflow: 'hidden' }}>
+            <div style={{ padding: '10px 14px', background: '#fffbeb', fontWeight: 800, fontSize: 14, color: '#92400e' }}>
+              ⏰ Needs attention <span style={{ color: '#b45309' }}>({needs.length})</span>
+            </div>
+            {needs.slice(0, 20).map(b => (
+              <div key={b.opportunity_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 14px', borderTop: '1px solid #f3f4f6', flexWrap: 'wrap' }}>
+                <a href={`/field/project/${b.opportunity_id}`} style={{ flex: 1, minWidth: 160, fontSize: 13, fontWeight: 700, color: '#111827', textDecoration: 'none' }}>
+                  {b.property_name || b.opportunity_name}
+                </a>
+                {b.actions!.map(a => <ActionChip key={a.key} j={b} a={a} />)}
+              </div>
+            ))}
+          </div>
+        )}
+
         {LIFECYCLE.map(stage => {
           const rows = groups.filter(g => lifeOf(g.base) === stage.key);
           if (!rows.length) return null;
@@ -1464,7 +1507,7 @@ export default function ConstructionPlan() {
       )}
       {showCheckin && <CheckinStatusPanel month={month} onClose={() => setShowCheckin(false)} />}
       {showCxSetup && <CxSetupModal onClose={() => setShowCxSetup(false)} />}
-      {commsJob && <ClientCommsModal oppId={commsJob.opportunity_id} jobName={commsJob.property_name || commsJob.opportunity_name} onClose={() => setCommsJob(null)} />}
+      {commsJob && <ClientCommsModal oppId={commsJob.opportunity_id} jobName={commsJob.property_name || commsJob.opportunity_name} initialTemplateKey={commsTmpl} onClose={() => { setCommsJob(null); setCommsTmpl(undefined); load(); }} />}
 
       {/* PHA modal — create / review a project hazard assessment for a job */}
       {phaModalJob && (

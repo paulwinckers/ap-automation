@@ -368,6 +368,10 @@ export interface PlanJob {
   sched_status?: 'unscheduled' | 'tentative' | 'confirmed';
   sched_start?: string | null;   // earliest block start for this job
   window_week?: string | null;   // Monday of the tentative block ("Week of …")
+  actions?: PlanAction[];        // computed "next actions" (business rules)
+}
+export interface PlanAction {
+  key: string; label: string; severity: 'overdue' | 'due' | 'soon'; target: string; // comms:<tmpl> | board | pha
 }
 
 export type PrepStatus = '' | 'na' | 'complete' | 'uploaded';

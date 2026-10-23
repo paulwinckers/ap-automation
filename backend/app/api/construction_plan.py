@@ -395,6 +395,59 @@ def _lifecycle(sched_status: str | None, queued: bool, hrs_act: float | None,
     return "intake"
 
 
+def _parse_d(s: str):
+    try:
+        return _date.fromisoformat((s or "")[:10])
+    except Exception:
+        return None
+
+
+_SEV_RANK = {"overdue": 0, "due": 1, "soon": 2}
+
+
+def _job_actions(j: dict, sent: set, pha_ok: bool) -> list[dict]:
+    """Business rules → the next actions due on a job. Each: key, label, severity
+    (overdue|due|soon), and a target the UI routes to (comms:<tmpl> | board | pha)."""
+    today = _date.today()
+    life = j.get("lifecycle")
+    ss = j.get("sched_status")
+    acts: list[dict] = []
+    def add(key, label, sev, target):
+        acts.append({"key": key, "label": label, "severity": sev, "target": target})
+    active = life not in ("complete", "paid", "parked")
+
+    # 1. Welcome / handoff — within 2 days of the deal coming in (Won).
+    if active and "handoff" not in sent:
+        wd = _parse_d(j.get("won_date"))
+        overdue = wd is not None and (today - wd).days > 2
+        add("welcome", "Send welcome email", "overdue" if overdue else "due", "comms:handoff")
+    # 2. Scheduling intro once a tentative window exists.
+    if ss == "tentative" and "scheduling_intro" not in sent:
+        add("scheduling_intro", "Send scheduling intro", "due", "comms:scheduling_intro")
+    # 3. Confirm the start date on the board when within 2 weeks of start.
+    if ss == "tentative":
+        sd = _parse_d(j.get("sched_start"))
+        if sd is not None and 0 <= (sd - today).days <= 14:
+            add("confirm_date", "Confirm the start date", "due", "board")
+    # 4. Start-date confirmation email once confirmed.
+    if ss == "confirmed" and "start_confirm" not in sent:
+        add("start_confirm", "Send start-date confirmation", "due", "comms:start_confirm")
+    # 5. PHA before mobilization once scheduled.
+    if ss in ("tentative", "confirmed") and not pha_ok:
+        add("pha", "Complete the PHA", "due", "pha")
+    # 6. Periodic update when the start is still more than 2 weeks out.
+    if ss == "tentative" and "periodic_update" not in sent:
+        sd = _parse_d(j.get("sched_start"))
+        if sd is not None and (sd - today).days > 14:
+            add("periodic_update", "Send a 2-week update", "soon", "comms:periodic_update")
+    # 7. Exit / completion email when the job is done.
+    if life == "complete" and "exit" not in sent:
+        add("exit", "Send completion + survey", "due", "comms:exit")
+
+    acts.sort(key=lambda a: _SEV_RANK.get(a["severity"], 9))
+    return acts
+
+
 def _risk_flag(opp: dict, pct_month: float | None = None) -> str:
     """Return a risk label based on hours burn vs monthly ticket completion.
 
@@ -677,6 +730,22 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         except Exception:
             sched_map = {}
 
+    # Which client emails have been sent, and which jobs have a submitted PHA —
+    # for the "next action" rules. Small tables; read whole, filter in memory.
+    sent_map: dict[int, set] = {}
+    pha_ok: set = set()
+    if jobs:
+        try:
+            for r in await db._q("SELECT DISTINCT opportunity_id, template_key FROM cx_sends", []):
+                sent_map.setdefault(r["opportunity_id"], set()).add(r["template_key"])
+        except Exception:
+            sent_map = {}
+        try:
+            pha_ok = {r["opportunity_id"] for r in await db._q(
+                "SELECT DISTINCT opportunity_id FROM project_hazard_assessments WHERE status = 'submitted'", [])}
+        except Exception:
+            pha_ok = set()
+
     for oid, j in jobs.items():
         c = prep_counts.get(oid, {"done": 0, "na": 0})
         j["prep_done"]  = c["done"]
@@ -706,6 +775,7 @@ async def get_plan(month: str, db: Database = Depends(get_db)):
         j["lifecycle"] = _lifecycle(
             sched_status, j["queued"], j.get("hrs_act"), is_complete, is_paid,
             c["done"], j["lead_name"], j.get("source"))
+        j["actions"] = _job_actions(j, sent_map.get(oid, set()), oid in pha_ok)
 
     # A job drops off the plan in months AFTER it was paid. "Paid" is detected from Aspire
     # (job has a CompleteDate AND every invoice is fully collected — a deposit-only payment does
