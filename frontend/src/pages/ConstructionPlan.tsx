@@ -683,6 +683,7 @@ export default function ConstructionPlan() {
   const [cxSkips,       setCxSkips]       = useState<CxSkip[]>([]);
   const [showEmailCenter, setShowEmailCenter] = useState(false);
   const [hoverComms,    setHoverComms]    = useState<number | null>(null);
+  const [commsFor,      setCommsFor]      = useState<number | null>(null);
   const [emailFilter,   setEmailFilter]   = useState<'all' | 'due' | 'overdue'>('all');
   const activeMonthRef = useRef(month);
 
@@ -1196,6 +1197,7 @@ export default function ConstructionPlan() {
     const prep = prepProgress[j.opportunity_id] ?? { done: j.prep_done ?? 0, total: j.prep_total ?? 6 };
     const ready = prep.total > 0 && prep.done === prep.total;
     const open = prepFor === j.opportunity_id;
+    const commsOpen = commsFor === j.opportunity_id;
     return (
       <div key={j.opportunity_id} style={{ borderTop: '1px solid #f3f4f6', padding: '5px 10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1239,35 +1241,20 @@ export default function ConstructionPlan() {
           </button>
           {/* PHA */}
           <PHABadge info={phaMap.get(j.opportunity_id)} onClick={() => setPhaModalJob(j)} />
-          {/* Last action + client-comms (hover shows the full list) */}
+          {/* Client comms — styled like the prep dropdown */}
           {(() => {
-            const last = lastComms(j);
             const dueCount = (j.actions || []).filter(a => a.target.startsWith('comms:')).length;
+            const anySent = Object.keys(j.comms_sent || {}).length > 0;
+            const label = commsOpen ? '✉️ Comms' : dueCount ? `✉️ ${dueCount} due` : anySent ? '✉️ Sent' : '✉️ Comms';
             return (
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 11, color: last ? '#6b7280' : '#cbd5e1', whiteSpace: 'nowrap' }}>
-                  {last ? `Last: ${last.title} · ${fmtDate(last.at)}` : 'No emails yet'}
-                </span>
-                <span style={{ position: 'relative', display: 'inline-flex' }}
-                  onMouseEnter={() => setHoverComms(j.opportunity_id)} onMouseLeave={() => setHoverComms(h => h === j.opportunity_id ? null : h)}>
-                  <button onClick={() => { setCommsTmpl(undefined); setCommsJob(j); }} title="Client comms"
-                    style={{ background: dueCount ? '#fffbeb' : 'none', border: '1px solid ' + (dueCount ? '#fcd34d' : '#e5e7eb'), borderRadius: 6, padding: '2px 8px', fontSize: 12, cursor: 'pointer', color: '#6b7280' }}>
-                    ✉️{dueCount ? <span style={{ color: '#b45309', fontWeight: 800 }}> {dueCount}</span> : ''}
-                  </button>
-                  {hoverComms === j.opportunity_id && (
-                    <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 50, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', padding: 8, width: 230 }}>
-                      {commsSummary(j).map(c => (
-                        <div key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 4px', fontSize: 12 }}>
-                          <span style={{ width: 14 }}>{c.sentAt ? '✅' : c.due ? '🟠' : '○'}</span>
-                          <span style={{ flex: 1, color: c.sentAt ? '#111827' : c.due ? '#92400e' : '#9ca3af' }}>{c.title}</span>
-                          <span style={{ color: '#9ca3af', fontSize: 10.5 }}>{c.sentAt ? fmtDate(c.sentAt) : c.due ? 'due' : ''}</span>
-                        </div>
-                      ))}
-                      {cxTemplates.length === 0 && <div style={{ fontSize: 12, color: '#9ca3af', padding: 4 }}>Loading…</div>}
-                    </div>
-                  )}
-                </span>
-              </div>
+              <button onClick={() => setCommsFor(commsOpen ? null : j.opportunity_id)} title="Client comms"
+                style={{ padding: '3px 9px', fontSize: 11, fontWeight: 700, borderRadius: 6,
+                  border: '1px solid ' + (commsOpen ? '#2563eb' : dueCount ? '#fcd34d' : anySent ? '#86efac' : '#e5e7eb'),
+                  background: commsOpen ? '#eff6ff' : dueCount ? '#fffbeb' : anySent ? '#dcfce7' : '#f8fafc',
+                  color: commsOpen ? '#1d4ed8' : dueCount ? '#92400e' : anySent ? '#15803d' : '#6b7280',
+                  cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                {label}
+              </button>
             );
           })()}
           {/* Revenue */}
@@ -1278,6 +1265,40 @@ export default function ConstructionPlan() {
             <JobPrepChecklist oppId={j.opportunity_id} onProgress={(done, total) => setPrepProgress(prev => ({ ...prev, [j.opportunity_id]: { done, total } }))} />
           </div>
         )}
+        {commsOpen && (() => {
+          const skipSet = new Set(cxSkips.filter(s => s.opportunity_id === j.opportunity_id).map(s => s.action_key));
+          const dueSet = new Set((j.actions || []).filter(a => a.target.startsWith('comms:')).map(a => a.key));
+          const actKey = (tk: string) => (tk === 'handoff' ? 'welcome' : tk);
+          const sent = j.comms_sent || {};
+          return (
+            <div style={{ marginTop: 10, background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, maxWidth: 560 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>Client comms</div>
+              {cxTemplates.length === 0 ? <div style={{ fontSize: 12, color: '#9ca3af' }}>Loading…</div> :
+                cxTemplates.map(t => {
+                  const ak = actKey(t.key);
+                  const sentAt = sent[t.key] || null;
+                  const skipped = skipSet.has(ak);
+                  const due = dueSet.has(ak);
+                  const icon = sentAt ? '✅' : skipped ? '⊘' : due ? '🟠' : '○';
+                  const color = sentAt ? '#111827' : skipped ? '#9ca3af' : due ? '#92400e' : '#6b7280';
+                  return (
+                    <div key={t.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 2px', borderTop: '1px solid #eef2f7', fontSize: 12.5 }}>
+                      <span style={{ width: 16 }}>{icon}</span>
+                      <span style={{ flex: 1, color, textDecoration: skipped ? 'line-through' : 'none' }}>{t.title}</span>
+                      <span style={{ color: '#9ca3af', fontSize: 11, whiteSpace: 'nowrap' }}>{sentAt ? fmtDate(sentAt) : skipped ? 'N/A' : due ? 'due' : ''}</span>
+                      <button onClick={() => { setCommsTmpl(t.key); setCommsJob(j); }}
+                        style={{ padding: '3px 10px', borderRadius: 6, border: 'none', background: '#1A5376', color: '#fff', fontWeight: 700, fontSize: 11, cursor: 'pointer' }}>
+                        {sentAt ? 'Resend' : 'Send'}
+                      </button>
+                      {skipped
+                        ? <button onClick={() => unskipAction(j.opportunity_id, ak)} style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', color: '#2563eb', fontWeight: 700, fontSize: 11, cursor: 'pointer' }}>Undo N/A</button>
+                        : <button onClick={() => skipAction(j, ak)} title="Mark not necessary" style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', color: '#6b7280', fontWeight: 700, fontSize: 11, cursor: 'pointer' }}>N/A</button>}
+                    </div>
+                  );
+                })}
+            </div>
+          );
+        })()}
       </div>
     );
   };
