@@ -63,6 +63,7 @@ type Draft = {
   opportunity_id: number | null; job_label: string; start_date: string;
   hours: string; hours_per_day: string; include_friday: boolean; employees: Set<string>; note: string;
   status: ScheduleStatus; extra_days: number; exceptions: string[]; lead: string;
+  actual_hours?: number | null; pct_complete?: number | null;
 };
 
 export default function ConstructionBoard() {
@@ -149,7 +150,8 @@ export default function ConstructionBoard() {
     setDraft({ mode: 'edit', id: b.id, opportunity_id: b.opportunity_id, job_label: b.job_label, start_date: b.start_date,
       hours: b.hours != null ? String(b.hours) : '', hours_per_day: String(b.hours_per_day || 10),
       include_friday: b.include_friday, employees: new Set(b.employees), note: b.note || '', status: b.status,
-      extra_days: b.extra_days || 0, exceptions: b.exceptions || [], lead: b.lead_name || '' });
+      extra_days: b.extra_days || 0, exceptions: b.exceptions || [], lead: b.lead_name || '',
+      actual_hours: b.actual_hours ?? null, pct_complete: b.pct_complete ?? null });
   }
 
   async function saveDraft() {
@@ -628,12 +630,16 @@ function BlockModal({ draft, setDraft, crew, onSave, busy }: {
             {empCount === 0 ? 'Pick at least one employee to see the span.'
               : <>
                   <div><b>{dates.length} working day{dates.length === 1 ? '' : 's'}</b> · {fmtDay(dates[0])} → {fmtDay(dates[dates.length - 1])}</div>
-                  <div style={{ color: '#9ca3af', marginTop: 2 }}>Scheduled {scheduledHours}h vs budget {budgetHours || '0'}h{draft.exceptions.length ? ` · ${draft.exceptions.length} day exception(s)` : ''}</div>
-                  {draft.extra_days > 0 && (
-                    budgetHours > 0 && scheduledHours > budgetHours + 0.5
-                      ? <div style={{ color: '#b45309', fontWeight: 700, marginTop: 4 }}>⚠ Over budget — scheduled {scheduledHours}h exceeds the {budgetHours}h estimate ({draft.extra_days} extra day{draft.extra_days === 1 ? '' : 's'}).</div>
-                      : <div style={{ color: '#2563eb', fontWeight: 700, marginTop: 4 }}>⏱ Catch-up — {draft.extra_days} extra day{draft.extra_days === 1 ? '' : 's'} to recover time lost to exceptions; still within the {budgetHours || 0}h budget.</div>
-                  )}
+                  <div style={{ color: '#9ca3af', marginTop: 2 }}>
+                    Scheduled {scheduledHours}h vs budget {budgetHours || '0'}h
+                    {draft.actual_hours != null ? ` · actual ${draft.actual_hours}h${draft.pct_complete != null ? ` (${Math.round(draft.pct_complete * 100)}%)` : ''}` : ''}
+                    {draft.exceptions.length ? ` · ${draft.exceptions.length} day exception(s)` : ''}
+                  </div>
+                  {budgetHours > 0 && draft.actual_hours != null && draft.actual_hours > budgetHours + 0.5
+                    ? <div style={{ color: '#b45309', fontWeight: 700, marginTop: 4 }}>⚠ Over budget — actual {draft.actual_hours}h exceeds the {budgetHours}h estimate.</div>
+                    : draft.extra_days > 0
+                      ? <div style={{ color: '#2563eb', fontWeight: 700, marginTop: 4 }}>⏱ Catch-up — {draft.extra_days} extra day{draft.extra_days === 1 ? '' : 's'} to recover time lost to exceptions; actual hours still within the {budgetHours || 0}h budget.</div>
+                      : null}
                 </>}
           </div>
         </div>

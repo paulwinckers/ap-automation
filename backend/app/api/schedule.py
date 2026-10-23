@@ -127,11 +127,12 @@ def _shape_block(r: dict) -> dict:
         budget_hours = float(r.get("hours") or 0)
     except (TypeError, ValueError):
         budget_hours = 0.0
-    # Over budget = more hours blocked out than the estimate (the job genuinely
-    # needs more work). Catch-up = extended day(s) but the scheduled hours are
-    # still within budget — i.e. recovering time lost to per-day exceptions
-    # (rain, breakdowns, absences), which is a different situation.
-    over = bool(budget_hours) and scheduled_hours > budget_hours + 0.5
+    # over_budget / catch_up are finalised in get_week once the Aspire ACTUAL
+    # labour hours are attached: over budget means actual hours have passed the
+    # estimate (the job really cost more), whereas catch-up means we added day(s)
+    # to recover time lost to per-day exceptions while actuals are still within
+    # budget. Defaults here are placeholders for the create/update single-block
+    # responses, which the next full board reload replaces with the real values.
     return {
         "id": r["id"],
         "opportunity_id": r.get("opportunity_id"),
@@ -152,8 +153,8 @@ def _shape_block(r: dict) -> dict:
         "end_date": dates[-1] if dates else r.get("start_date"),
         "scheduled_hours": scheduled_hours,
         "budget_hours": budget_hours,
-        "over_budget": over,
-        "catch_up": extra > 0 and not over,
+        "over_budget": False,
+        "catch_up": extra > 0,
         # Actual labour hours / % complete are filled in by get_week from the
         # Aspire opportunity (job-level), so the board shows real progress.
         "actual_hours": None,
@@ -340,6 +341,13 @@ async def get_week(start: Optional[str] = Query(None), weeks: int = Query(1)):
         if m:
             b["actual_hours"] = m.get("actual")
             b["pct_complete"] = m.get("pct")
+        # Over budget is judged on ACTUAL hours vs the estimate (the job really
+        # cost more), NOT on how many hours we blocked out on the calendar.
+        bh = b.get("budget_hours") or 0
+        ah = b.get("actual_hours")
+        over = ah is not None and bh and ah > bh + 0.5
+        b["over_budget"] = bool(over)
+        b["catch_up"] = (b.get("extra_days") or 0) > 0 and not over
 
     raw = [j for j in await _backlog(opps) if j.get("opportunity_id") not in scheduled_ids]
     backlog  = [j for j in raw if j.get("opportunity_id") not in archived_ids]
