@@ -412,17 +412,42 @@ async def _search_customer_contacts(q: str) -> list[dict]:
 
 
 @router.get("/search", dependencies=[Depends(require_access)])
-async def search_customers(q: str = Query(..., min_length=2)):
-    """Search both Aspire Companies (commercial) and Contacts (residential — they
-    bill to a person). `customers` keeps the old company-only shape for the weekly
-    report; `results` is the unified list the Customer 360 picker uses."""
-    companies = await _search_companies(q)
-    contacts = await _search_customer_contacts(q)
-    results = (
-        [{"kind": "company", "id": c["company_id"], "name": c["company_name"], "sub": "Company"} for c in companies]
-        + [{"kind": "contact", "id": c["contact_id"], "name": c["name"],
-            "sub": c.get("company") or c.get("email") or "Contact"} for c in contacts]
-    )
+async def search_customers(q: str = Query(..., min_length=2), db: Database = Depends(get_db)):
+    """Customer search — served from the SPINE CACHE (companies + residential contacts,
+    one query, no live Aspire). Falls back to live Aspire only if the cache has no match
+    (e.g. a brand-new customer added since last night's refresh). `customers` keeps the
+    old company-only shape for the weekly report; `results` is the unified picker list."""
+    ql = q.lower().strip()
+    companies: list[dict] = []
+    results: list[dict] = []
+    try:
+        custs = await db._q("SELECT customer_key, kind, aspire_id, name FROM spine_customers", [])
+        jc: dict = {}
+        for r in await db._q(
+                "SELECT customer_key, COUNT(*) AS n FROM spine_jobs WHERE customer_key IS NOT NULL GROUP BY customer_key", []):
+            jc[r["customer_key"]] = r["n"]
+        hits = [c for c in custs if c.get("name") and ql in c["name"].lower()]
+        hits.sort(key=lambda c: c["name"].lower())
+        for c in hits[:25]:
+            n = jc.get(c["customer_key"], 0)
+            if c["kind"] == "company":
+                companies.append({"company_id": c["aspire_id"], "company_name": c["name"]})
+            results.append({
+                "kind": c["kind"], "id": c["aspire_id"], "name": c["name"],
+                "sub": f"{n} job{'' if n == 1 else 's'} · {'Company' if c['kind'] == 'company' else 'Contact'}",
+            })
+    except Exception as e:
+        logger.warning(f"spine search failed, falling back to live Aspire: {e}")
+        results = []
+    if not results:
+        # Cache miss (new customer, or cache not yet populated) → live Aspire.
+        companies = await _search_companies(q)
+        contacts = await _search_customer_contacts(q)
+        results = (
+            [{"kind": "company", "id": c["company_id"], "name": c["company_name"], "sub": "Company"} for c in companies]
+            + [{"kind": "contact", "id": c["contact_id"], "name": c["name"],
+                "sub": c.get("company") or c.get("email") or "Contact"} for c in contacts]
+        )
     return {"customers": companies, "results": results}
 
 
