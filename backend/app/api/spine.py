@@ -17,12 +17,14 @@ flaky $skip — but CreatedDateTime sorts cleanly).
 
 Read endpoints come in a later increment; this one just builds + verifies the cache.
 """
+import asyncio
 import json
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.config import settings
 from app.core.database import Database
@@ -202,3 +204,96 @@ async def spine_status(db: Database = Depends(get_db)):
     except Exception:
         out["meta"] = None
     return out
+
+
+# ── Read layer (served entirely from the cache — no live Aspire) ─────────────────
+
+@router.get("/customers", dependencies=[Depends(require_access)])
+async def list_customers(q: Optional[str] = None, kind: Optional[str] = None,
+                         limit: int = 50, db: Database = Depends(get_db)):
+    """Fast customer directory from the cache: companies AND residential contacts.
+    Optional `q` (name contains) and `kind` ('company'|'contact'). Each row carries a
+    job_count. Reads the small spine tables whole and filters in memory."""
+    custs = await db._q("SELECT customer_key, kind, aspire_id, name FROM spine_customers", [])
+    jc: dict = {}
+    for r in await db._q(
+            "SELECT customer_key, COUNT(*) AS n FROM spine_jobs WHERE customer_key IS NOT NULL GROUP BY customer_key", []):
+        jc[r["customer_key"]] = r["n"]
+    ql = (q or "").lower().strip()
+    out = []
+    for c in custs:
+        if kind and c.get("kind") != kind:
+            continue
+        if ql and ql not in (c.get("name") or "").lower():
+            continue
+        out.append({**c, "job_count": jc.get(c["customer_key"], 0)})
+    out.sort(key=lambda x: (x.get("name") or "").lower())
+    return {"count": len(out), "customers": out[:max(1, min(500, limit))]}
+
+
+@router.get("/customer/{customer_key}", dependencies=[Depends(require_access)])
+async def get_customer(customer_key: str, db: Database = Depends(get_db)):
+    """One customer's full picture from the cache (no Aspire call): the customer, their
+    properties, and every cached job (full payload). `customer_key` = 'company:{id}' or
+    'contact:{id}'."""
+    cust = await db._q(
+        "SELECT customer_key, kind, aspire_id, name FROM spine_customers WHERE customer_key = ?", [customer_key])
+    if not cust:
+        raise HTTPException(status_code=404, detail="Customer not found in the spine cache")
+    job_rows = await db._q(
+        "SELECT payload FROM spine_jobs WHERE customer_key = ? ORDER BY won_date DESC", [customer_key])
+    jobs = []
+    for r in job_rows:
+        try:
+            jobs.append(json.loads(r["payload"]))
+        except Exception:
+            pass
+    prop_names = {p["property_id"]: p.get("name") for p in await db._q("SELECT property_id, name FROM spine_properties", [])}
+    pids = sorted({j.get("property_id") for j in jobs if j.get("property_id")})
+    properties = [{"property_id": pid, "name": prop_names.get(pid)} for pid in pids]
+    return {"customer": cust[0], "properties": properties, "jobs": jobs,
+            "job_count": len(jobs), "source": "spine-cache"}
+
+
+# ── Nightly refresh (gentle: one run/day, off-hours, never on boot) ──────────────
+
+_sched_db = Database()
+_spine_task = None
+_REFRESH_HOUR = 1  # 1 AM company time (before the 2 AM backup, so it captures the fresh cache)
+
+
+async def _spine_scheduler_loop():
+    import zoneinfo as _zi
+    from datetime import datetime as _dt
+    tz = _zi.ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    last_run_date = ""
+    WINDOW_MINS = 30
+    while True:
+        await asyncio.sleep(5 * 60)
+        now = _dt.now(tz)
+        today = now.strftime("%Y-%m-%d")
+        if not (now.hour == _REFRESH_HOUR and now.minute < WINDOW_MINS):
+            continue
+        if last_run_date == today:
+            continue
+        last_run_date = today
+        try:
+            if _sched_db._db is None:
+                await _sched_db.connect()
+            result = await _run_sync(_sched_db)
+            logger.info("Spine nightly refresh: %s", result)
+        except Exception as e:
+            logger.error("Spine nightly refresh failed: %s", e)
+
+
+def start_spine_scheduler():
+    global _spine_task
+    _spine_task = asyncio.ensure_future(_spine_scheduler_loop())
+    logger.info("Spine scheduler started (nightly cache refresh @ %02d:00)", _REFRESH_HOUR)
+
+
+def stop_spine_scheduler():
+    global _spine_task
+    if _spine_task:
+        _spine_task.cancel()
+        _spine_task = None
