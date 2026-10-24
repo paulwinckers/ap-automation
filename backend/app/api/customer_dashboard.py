@@ -707,6 +707,59 @@ async def customer_360_contact(contact_id: int, db: Database = Depends(get_db)):
     }
 
 
+async def _fetch_opp_tickets(opp_id: int) -> list[dict]:
+    """All work tickets (site visits) for one opportunity, with hours/cost/status/dates."""
+    try:
+        return _aspire._extract_list(await _aspire._get("WorkTickets", {
+            "$filter": f"OpportunityID eq {opp_id}",
+            "$select": ("WorkTicketID,WorkTicketNumber,OpportunityID,OpportunityServiceID,WorkTicketTitle,"
+                        "WorkTicketStatusName,WorkTicketType,ScheduledStartDate,CompleteDate,CrewLeaderName,"
+                        "EstimatedLaborHours,ActualLaborHours,BudgetedCost,ActualCost,Notes"),
+            "$orderby": "ScheduledStartDate asc",
+            "$top": "300",
+        }))
+    except Exception as e:
+        logger.warning(f"opp tickets fetch failed for {opp_id}: {e}")
+        return []
+
+
+@router.get("/opportunity/{opp_id}/tickets", dependencies=[Depends(require_access)])
+async def opportunity_tickets(opp_id: int):
+    """Work tickets (site visits) for one job: status, scheduled/complete dates, crew lead,
+    estimated vs actual hours and cost, and visit notes, plus roll-up totals. Powers the agent's
+    work-ticket queries ('what's the status / how many hours on job X')."""
+    rows = await _fetch_opp_tickets(opp_id)
+    svc = await _fetch_service_names([opp_id]) if rows else {}
+    tids = [r.get("WorkTicketID") for r in rows if r.get("WorkTicketID")]
+    notes = await _fetch_visit_notes_bulk(tids, public_only=False) if tids else {}
+
+    def _num(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    tickets, tot = [], {"est_hours": 0.0, "act_hours": 0.0, "est_cost": 0.0, "act_cost": 0.0}
+    for r in rows:
+        eh, ah = _num(r.get("EstimatedLaborHours")), _num(r.get("ActualLaborHours"))
+        ec, ac = _num(r.get("BudgetedCost")), _num(r.get("ActualCost"))
+        tot["est_hours"] += eh or 0; tot["act_hours"] += ah or 0
+        tot["est_cost"]  += ec or 0; tot["act_cost"]  += ac or 0
+        tickets.append({
+            "work_ticket_id": r.get("WorkTicketID"),
+            "number": r.get("WorkTicketNumber"),
+            "service": svc.get(r.get("OpportunityServiceID")) or r.get("WorkTicketTitle") or r.get("WorkTicketType"),
+            "status": r.get("WorkTicketStatusName"),
+            "scheduled_date": (r.get("ScheduledStartDate") or "")[:10] or None,
+            "complete_date": (r.get("CompleteDate") or "")[:10] or None,
+            "crew_leader": r.get("CrewLeaderName"),
+            "est_hours": eh, "act_hours": ah, "est_cost": ec, "act_cost": ac,
+            "notes": (r.get("Notes") or None),
+            "visit_notes": notes.get(r.get("WorkTicketID"), []),
+        })
+    return {"opportunity_id": opp_id, "ticket_count": len(tickets), "totals": tot, "tickets": tickets}
+
+
 @router.get("/{company_id}/report")
 async def customer_report(company_id: int, week_start: str | None = None, db: Database = Depends(get_db)):
     return await get_customer_report(company_id, week_start, db)

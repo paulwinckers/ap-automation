@@ -76,6 +76,16 @@ async def get_customer_360(kind: str, id: int) -> dict:
     return await _get(path)
 
 
+@mcp.tool()
+async def get_work_tickets(opportunity_id: int) -> dict:
+    """Work tickets (site visits) for one job, from Aspire: each ticket's status,
+    scheduled/complete dates, crew leader, estimated vs actual hours and cost, and visit
+    notes — plus roll-up totals. Use the opportunity_id from list_due_actions or a
+    customer's jobs (get_customer_360) to answer questions like 'what's the status of job
+    X', 'how many hours have we logged', or 'what did the crew note on the last visit'."""
+    return await _get(f"/customer/opportunity/{opportunity_id}/tickets")
+
+
 # ── Draft (no side effects) ──────────────────────────────────────────────────────
 
 @mcp.tool()
