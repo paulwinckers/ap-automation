@@ -381,10 +381,48 @@ async def get_customer_report(company_id: int, week_start: str | None, db: Datab
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+async def _search_customer_contacts(q: str) -> list[dict]:
+    """Search Aspire Contacts by name — for residential customers that bill to a
+    person, not a company. Name filter server-side (single OR predicate, safe);
+    exclude Employees in memory to avoid the combined-filter OData quirk."""
+    q_safe = (q or "").replace("'", "''")
+    try:
+        rows = _aspire._extract_list(await _aspire._get("Contacts", {
+            "$filter": f"contains(FirstName,'{q_safe}') or contains(LastName,'{q_safe}')",
+            "$select": "ContactID,FirstName,LastName,Email,CompanyName,ContactTypeName,Active",
+            "$orderby": "LastName asc",
+            "$top": "40",
+        }))
+    except Exception as e:
+        logger.warning(f"Contact search failed: {e}")
+        return []
+    out = []
+    for r in rows:
+        if r.get("Active") is False:
+            continue
+        if (r.get("ContactTypeName") or "").lower() in ("employee", "vendor"):
+            continue
+        name = " ".join(filter(None, [r.get("FirstName"), r.get("LastName")])).strip()
+        if not r.get("ContactID") or not name:
+            continue
+        out.append({"contact_id": r.get("ContactID"), "name": name,
+                    "email": r.get("Email"), "company": r.get("CompanyName")})
+    return out[:25]
+
+
 @router.get("/search")
 async def search_customers(q: str = Query(..., min_length=2)):
-    """Search Aspire Companies (commercial customers) by name for the picker."""
-    return {"customers": await _search_companies(q)}
+    """Search both Aspire Companies (commercial) and Contacts (residential — they
+    bill to a person). `customers` keeps the old company-only shape for the weekly
+    report; `results` is the unified list the Customer 360 picker uses."""
+    companies = await _search_companies(q)
+    contacts = await _search_customer_contacts(q)
+    results = (
+        [{"kind": "company", "id": c["company_id"], "name": c["company_name"], "sub": "Company"} for c in companies]
+        + [{"kind": "contact", "id": c["contact_id"], "name": c["name"],
+            "sub": c.get("company") or c.get("email") or "Contact"} for c in contacts]
+    )
+    return {"customers": companies, "results": results}
 
 
 async def _fetch_property_contacts(property_ids: list[int]) -> list[dict]:
@@ -438,34 +476,57 @@ async def _fetch_property_contacts(property_ids: list[int]) -> list[dict]:
     return out
 
 
-@router.get("/{company_id}/360")
-async def customer_360(company_id: int, db: Database = Depends(get_db)):
-    """Unified customer view (Phase 0, read-only). Aspire identity + jobs joined LIVE
-    (by OpportunityID) with all portal/D1 activity — comms, stage, prep, schedule, safety.
-    No schema changes. This payload is also the context object the CX agent will consume."""
-    opps = await _fetch_customer_opps(company_id)
-    company_name = next((o.get("BillingCompanyName") for o in opps if o.get("BillingCompanyName")), None)
-    if not opps:
+async def _fetch_contact_opps(contact_id: int) -> list[dict]:
+    """All opportunities at the properties where this contact is the PRIMARY contact.
+    We build the residential customer on the primary contact (not the billing contact),
+    so this returns their whole footprint — every job on their property, across divisions."""
+    # 1. Properties where this contact is primary (single-predicate filter; primary flag in memory).
+    try:
+        pcs = _aspire._extract_list(await _aspire._get("PropertyContacts", {
+            "$filter": f"ContactID eq {contact_id}",
+            "$select": "PropertyID,PrimaryContact",
+            "$top": "200"}))
+    except Exception as e:
+        logger.warning(f"PropertyContacts for contact {contact_id} failed: {e}")
+        return []
+    pids = sorted({p.get("PropertyID") for p in pcs if p.get("PrimaryContact") and p.get("PropertyID")})
+    if not pids:
+        return []
+    # 2. Opportunities on those properties (chunked OR to dodge $filter length limits).
+    opps: list[dict] = []
+    for i in range(0, len(pids), 15):
+        or_f = " or ".join(f"PropertyID eq {x}" for x in pids[i:i + 15])
         try:
-            co = _aspire._extract_list(await _aspire._get("Companies", {
-                "$filter": f"CompanyID eq {company_id}", "$select": "CompanyID,CompanyName", "$top": "1"}))
-            company_name = co[0].get("CompanyName") if co else None
-        except Exception:
-            company_name = None
-        if not company_name:
-            raise HTTPException(status_code=404, detail="Customer (company) not found")
+            opps += _aspire._extract_list(await _aspire._get("Opportunities", {
+                "$filter": f"({or_f})",
+                "$select": (
+                    "OpportunityID,OpportunityName,OpportunityNumber,BillingCompanyName,BillingContactName,"
+                    "DivisionName,PropertyID,PropertyName,OpportunityType,SalesTypeName,"
+                    "OpportunityStatusName,StartDate,EndDate,CompleteDate,WonDate,"
+                    "PercentComplete,WonDollars,ActualEarnedRevenue"),
+                "$top": "500"}))
+        except Exception as e:
+            logger.warning(f"Opp fetch for properties {pids[i:i + 15]} failed: {e}")
+    return opps
 
+
+async def _fetch_contact(contact_id: int) -> dict:
+    """One contact's detail (name/email/phone/title)."""
+    try:
+        rows = _aspire._extract_list(await _aspire._get("Contacts", {
+            "$filter": f"ContactID eq {contact_id}",
+            "$select": "ContactID,FirstName,LastName,Email,MobilePhone,OfficePhone,Title,CompanyName",
+            "$top": "1"}))
+        return rows[0] if rows else {}
+    except Exception:
+        return {}
+
+
+async def _portal_activity_and_jobs(opps: list[dict], db: Database) -> tuple[list[dict], list[dict], int]:
+    """Join the portal's D1 activity (comms, stage/lead, prep, schedule, PHA) onto the
+    given Aspire opportunities by OpportunityID. Returns (jobs, timeline, comms_total).
+    Reads whole small tables and filters in memory (D1 caps a query at 100 bound params)."""
     opp_ids = {o.get("OpportunityID") for o in opps if o.get("OpportunityID") is not None}
-
-    properties: dict[int, dict] = {}
-    for o in opps:
-        pid = o.get("PropertyID")
-        if pid and pid not in properties:
-            properties[pid] = {"property_id": pid, "name": o.get("PropertyName")}
-    contacts = await _fetch_property_contacts(sorted(properties.keys()))
-
-    # ── Portal activity (D1): read whole small tables, filter in memory by opp_ids
-    # (D1 caps a query at 100 bound params, so no `WHERE id IN (…)`).
     comms: dict[int, list] = defaultdict(list)
     planning: dict[int, dict] = {}
     prep: dict[int, dict] = {}
@@ -580,17 +641,68 @@ async def customer_360(company_id: int, db: Database = Depends(get_db)):
                              "opportunity_id": oid})
     timeline = [t for t in timeline if t.get("when")]
     timeline.sort(key=lambda t: t["when"], reverse=True)
+    return jobs, timeline, sum(len(v) for v in comms.values())
 
+
+@router.get("/{company_id}/360")
+async def customer_360(company_id: int, db: Database = Depends(get_db)):
+    """Customer 360 for a commercial customer (Aspire Company, BillingCompanyID).
+    Read-only; this payload is also the context object the CX agent will consume."""
+    opps = await _fetch_customer_opps(company_id)
+    company_name = next((o.get("BillingCompanyName") for o in opps if o.get("BillingCompanyName")), None)
+    if not opps:
+        try:
+            co = _aspire._extract_list(await _aspire._get("Companies", {
+                "$filter": f"CompanyID eq {company_id}", "$select": "CompanyID,CompanyName", "$top": "1"}))
+            company_name = co[0].get("CompanyName") if co else None
+        except Exception:
+            company_name = None
+        if not company_name:
+            raise HTTPException(status_code=404, detail="Customer (company) not found")
+    properties: dict[int, dict] = {}
+    for o in opps:
+        pid = o.get("PropertyID")
+        if pid and pid not in properties:
+            properties[pid] = {"property_id": pid, "name": o.get("PropertyName")}
+    contacts = await _fetch_property_contacts(sorted(properties.keys()))
+    jobs, timeline, comms_total = await _portal_activity_and_jobs(opps, db)
     return {
-        "customer": {
-            "company_id": company_id, "name": company_name,
-            "contacts": contacts,
-            "properties": sorted(properties.values(), key=lambda p: (p.get("name") or "").lower()),
-        },
-        "jobs": jobs,
-        "activity_timeline": timeline,
-        "counts": {"jobs": len(jobs), "properties": len(properties), "contacts": len(contacts),
-                   "comms": sum(len(v) for v in comms.values())},
+        "customer": {"kind": "company", "company_id": company_id, "name": company_name,
+                     "contacts": contacts,
+                     "properties": sorted(properties.values(), key=lambda p: (p.get("name") or "").lower())},
+        "jobs": jobs, "activity_timeline": timeline,
+        "counts": {"jobs": len(jobs), "properties": len(properties), "contacts": len(contacts), "comms": comms_total},
+    }
+
+
+@router.get("/contact/{contact_id}/360")
+async def customer_360_contact(contact_id: int, db: Database = Depends(get_db)):
+    """Customer 360 for a residential customer that bills to a person (BillingContactID)."""
+    opps = await _fetch_contact_opps(contact_id)
+    c = await _fetch_contact(contact_id)
+    name = " ".join(filter(None, [c.get("FirstName"), c.get("LastName")])).strip() or c.get("CompanyName")
+    if not opps and not name:
+        raise HTTPException(status_code=404, detail="Customer (contact) not found")
+    properties: dict[int, dict] = {}
+    for o in opps:
+        pid = o.get("PropertyID")
+        if pid and pid not in properties:
+            properties[pid] = {"property_id": pid, "name": o.get("PropertyName")}
+    contacts: list[dict] = []
+    if c:
+        contacts.append({"contact_id": contact_id, "name": name, "email": c.get("Email"),
+                         "phone": c.get("MobilePhone") or c.get("OfficePhone"), "title": c.get("Title"),
+                         "primary": True, "billing": True})
+    for pc in await _fetch_property_contacts(sorted(properties.keys())):
+        if pc.get("contact_id") != contact_id:
+            contacts.append(pc)
+    jobs, timeline, comms_total = await _portal_activity_and_jobs(opps, db)
+    return {
+        "customer": {"kind": "contact", "contact_id": contact_id, "name": name,
+                     "contacts": contacts,
+                     "properties": sorted(properties.values(), key=lambda p: (p.get("name") or "").lower())},
+        "jobs": jobs, "activity_timeline": timeline,
+        "counts": {"jobs": len(jobs), "properties": len(properties), "contacts": len(contacts), "comms": comms_total},
     }
 
 

@@ -659,13 +659,22 @@ export interface C360Job {
 }
 export interface C360TimelineEvent { when: string; type: string; summary: string; opportunity_id: number; }
 export interface Customer360 {
-  customer: { company_id: number; name: string | null; contacts: C360Contact[]; properties: C360Property[] };
+  customer: { kind?: string; company_id?: number; contact_id?: number; name: string | null; contacts: C360Contact[]; properties: C360Property[] };
   jobs: C360Job[];
   activity_timeline: C360TimelineEvent[];
   counts: { jobs: number; properties: number; contacts: number; comms: number };
 }
+// Unified customer search — companies (commercial) + contacts (residential bill to a person).
+export interface CustomerEntity { kind: 'company' | 'contact'; id: number; name: string; sub: string; }
+export async function searchCustomerEntities(q: string): Promise<CustomerEntity[]> {
+  const r = await request<{ results: CustomerEntity[] }>('GET', `/customer/search?q=${encodeURIComponent(q)}`);
+  return r.results || [];
+}
 export async function getCustomer360(companyId: number): Promise<Customer360> {
   return request('GET', `/customer/${companyId}/360`);
+}
+export async function getCustomer360ByContact(contactId: number): Promise<Customer360> {
+  return request('GET', `/customer/contact/${contactId}/360`);
 }
 
 // ── Aspire Field Operations ───────────────────────────────────────────────────

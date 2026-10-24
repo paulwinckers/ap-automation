@@ -7,8 +7,8 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import {
-  searchCustomers, getCustomer360,
-  type CustomerSearchResult, type Customer360, type C360Job,
+  searchCustomerEntities, getCustomer360, getCustomer360ByContact,
+  type CustomerEntity, type Customer360, type C360Job,
 } from '../lib/api';
 
 const NAVY = '#1e3a5f';
@@ -88,7 +88,7 @@ const TL_ICON: Record<string, string> = { comms: '✉️', schedule: '📅', pha
 
 export default function Customer360Page() {
   const [q, setQ] = useState('');
-  const [results, setResults] = useState<CustomerSearchResult[]>([]);
+  const [results, setResults] = useState<CustomerEntity[]>([]);
   const [searching, setSearching] = useState(false);
   const [data, setData] = useState<Customer360 | null>(null);
   const [loading, setLoading] = useState(false);
@@ -101,15 +101,15 @@ export default function Customer360Page() {
     if (tmr.current) clearTimeout(tmr.current);
     tmr.current = setTimeout(async () => {
       setSearching(true);
-      try { setResults(await searchCustomers(q.trim())); } catch { setResults([]); } finally { setSearching(false); }
+      try { setResults(await searchCustomerEntities(q.trim())); } catch { setResults([]); } finally { setSearching(false); }
     }, 300);
     return () => { if (tmr.current) clearTimeout(tmr.current); };
   }, [q]);
 
-  async function pick(c: CustomerSearchResult) {
-    setResults([]); setQ(c.company_name); setLoading(true); setErr(''); setData(null);
-    try { setData(await getCustomer360(c.company_id)); }
-    catch (e) { setErr((e as Error).message); }
+  async function pick(e: CustomerEntity) {
+    setResults([]); setQ(e.name); setLoading(true); setErr(''); setData(null);
+    try { setData(e.kind === 'contact' ? await getCustomer360ByContact(e.id) : await getCustomer360(e.id)); }
+    catch (err) { setErr((err as Error).message); }
     finally { setLoading(false); }
   }
 
@@ -136,12 +136,17 @@ export default function Customer360Page() {
           {(results.length > 0 || searching) && (
             <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, marginTop: 4, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', zIndex: 20, maxHeight: 280, overflowY: 'auto' }}>
               {searching && <div style={{ padding: '10px 12px', color: '#9ca3af', fontSize: 13 }}>Searching…</div>}
-              {results.map(c => (
-                <button key={c.company_id} onClick={() => pick(c)}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 12px', border: 'none', borderTop: '1px solid #f1f5f9', background: 'none', cursor: 'pointer', fontSize: 13.5, color: '#111827' }}>
-                  {c.company_name}
+              {results.map(e => (
+                <button key={`${e.kind}-${e.id}`} onClick={() => pick(e)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '9px 12px', border: 'none', borderTop: '1px solid #f1f5f9', background: 'none', cursor: 'pointer', fontSize: 13.5, color: '#111827' }}>
+                  <span style={pill(e.kind === 'company' ? '#eef2ff' : '#ecfccb', e.kind === 'company' ? '#3730a3' : '#3f6212')}>
+                    {e.kind === 'company' ? '🏢 Company' : '👤 Contact'}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+                  {e.sub && <span style={{ fontSize: 11, color: '#9ca3af', flexShrink: 0 }}>{e.sub}</span>}
                 </button>
               ))}
+              {!searching && results.length === 0 && <div style={{ padding: '10px 12px', color: '#9ca3af', fontSize: 13 }}>No matches.</div>}
             </div>
           )}
         </div>
