@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # Auth
     SECRET_KEY:          str = "change-me-in-production"  # set via Railway env var
     TOKEN_EXPIRE_HOURS:  int = 24
+    # Shared secret for server-to-server callers (the MCP connector / automation).
+    # When set (via Railway env), protected endpoints accept it as the X-API-Key
+    # header in lieu of a user login. Empty = service-key access disabled.
+    SERVICE_API_KEY:     str = ""
 
     # App
     DEBUG:               bool = False

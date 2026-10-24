@@ -11,11 +11,12 @@ POST /auth/users/{id}/reset-password  — set new password (admin only)
 """
 import logging
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt as _bcrypt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from pydantic import BaseModel
@@ -81,6 +82,32 @@ async def _require_admin(user: dict = Depends(_get_current_user)) -> dict:
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
+
+
+async def require_access(
+    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Database = Depends(get_db),
+) -> dict:
+    """Gate for protected endpoints. Passes if the request carries EITHER a valid
+    service API key (X-API-Key — for server-to-server callers like the MCP connector)
+    OR a valid user JWT (the office frontend already sends this). Anonymous callers
+    get 401. Field (no-login) pages simply don't use this dependency, so they're
+    unaffected."""
+    svc = settings.SERVICE_API_KEY
+    if svc and x_api_key and secrets.compare_digest(x_api_key, svc):
+        return {"id": 0, "email": "service", "role": "service"}
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = int(payload["sub"])
+    except (JWTError, KeyError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    rows = await db._q("SELECT * FROM users WHERE id = ? AND active = 1", [user_id])
+    if not rows:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    return rows[0]
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────

@@ -21,15 +21,18 @@ import re
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.database import Database
 from app.services.aspire import AspireClient
 from app.services.d1_settings import get_setting, set_setting
+from app.api.auth import require_access
 
-router = APIRouter(prefix="/construction/cx", tags=["client-experience"])
+# All CX endpoints (incl. send) require a logged-in user or the service API key.
+router = APIRouter(prefix="/construction/cx", tags=["client-experience"],
+                   dependencies=[Depends(require_access)])
 logger = logging.getLogger(__name__)
 
 _aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)

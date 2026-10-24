@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.core.database import Database
 from app.api.construction_plan import _aspire, get_db
+from app.api.auth import require_access
 from app.api.daily_schedule import _DIV_ORDER
 from app.services import r2
 
@@ -410,7 +411,7 @@ async def _search_customer_contacts(q: str) -> list[dict]:
     return out[:25]
 
 
-@router.get("/search")
+@router.get("/search", dependencies=[Depends(require_access)])
 async def search_customers(q: str = Query(..., min_length=2)):
     """Search both Aspire Companies (commercial) and Contacts (residential — they
     bill to a person). `customers` keeps the old company-only shape for the weekly
@@ -644,7 +645,7 @@ async def _portal_activity_and_jobs(opps: list[dict], db: Database) -> tuple[lis
     return jobs, timeline, sum(len(v) for v in comms.values())
 
 
-@router.get("/{company_id}/360")
+@router.get("/{company_id}/360", dependencies=[Depends(require_access)])
 async def customer_360(company_id: int, db: Database = Depends(get_db)):
     """Customer 360 for a commercial customer (Aspire Company, BillingCompanyID).
     Read-only; this payload is also the context object the CX agent will consume."""
@@ -675,7 +676,7 @@ async def customer_360(company_id: int, db: Database = Depends(get_db)):
     }
 
 
-@router.get("/contact/{contact_id}/360")
+@router.get("/contact/{contact_id}/360", dependencies=[Depends(require_access)])
 async def customer_360_contact(contact_id: int, db: Database = Depends(get_db)):
     """Customer 360 for a residential customer that bills to a person (BillingContactID)."""
     opps = await _fetch_contact_opps(contact_id)
