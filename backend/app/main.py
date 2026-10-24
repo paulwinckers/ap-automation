@@ -42,6 +42,7 @@ from app.api.vehicle_inspections import router as vehicle_inspections_router
 from app.api.safety_pha import router as safety_pha_router
 from app.api.schedule import router as schedule_router
 from app.api.cx import router as cx_router
+from app.api.spine import router as spine_router
 from app.api.backup import router as backup_router, start_backup_scheduler, stop_backup_scheduler
 from app.api.property_hazards import router as property_hazards_router
 from app.api.project_checkin import (
@@ -401,6 +402,50 @@ async def lifespan(app: FastAPI):
                 updated_at     TEXT
             )
         """,
+        # ── Canonical spine cache (synced from Aspire; see app/api/spine.py) ──
+        "spine_customers": """
+            CREATE TABLE IF NOT EXISTS spine_customers (
+                customer_key TEXT PRIMARY KEY,   -- 'company:{id}' | 'contact:{id}'
+                kind         TEXT NOT NULL,       -- 'company' | 'contact'
+                aspire_id    INTEGER,
+                name         TEXT,
+                synced_at    TEXT
+            )
+        """,
+        "spine_properties": """
+            CREATE TABLE IF NOT EXISTS spine_properties (
+                property_id INTEGER PRIMARY KEY,
+                name        TEXT,
+                synced_at   TEXT
+            )
+        """,
+        "spine_jobs": """
+            CREATE TABLE IF NOT EXISTS spine_jobs (
+                opportunity_id     INTEGER PRIMARY KEY,
+                customer_key       TEXT,
+                billing_company_id INTEGER,
+                billing_contact_id INTEGER,
+                property_id        INTEGER,
+                division           TEXT,
+                status             TEXT,
+                won_date           TEXT,
+                complete_date      TEXT,
+                created_at         TEXT,
+                payload            TEXT,
+                synced_at          TEXT
+            )
+        """,
+        "spine_sync_meta": """
+            CREATE TABLE IF NOT EXISTS spine_sync_meta (
+                id           INTEGER PRIMARY KEY CHECK (id = 1),
+                last_sync_at TEXT,
+                companies    INTEGER,
+                properties   INTEGER,
+                jobs         INTEGER,
+                customers    INTEGER,
+                detail       TEXT
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:
@@ -591,6 +636,7 @@ app.include_router(vehicle_inspections_router)
 app.include_router(safety_pha_router)
 app.include_router(schedule_router)
 app.include_router(cx_router)
+app.include_router(spine_router)
 app.include_router(backup_router)
 app.include_router(property_hazards_router)
 app.include_router(checkin_router)
