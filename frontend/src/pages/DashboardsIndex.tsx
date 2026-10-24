@@ -31,6 +31,12 @@ const DASHBOARDS = [
     sub:   'Weekly service report for a commercial customer',
   },
   {
+    to:    '/dashboards/customer/360',
+    icon:  '👤',
+    label: 'Customer 360',
+    sub:   'One unified view — all jobs + portal activity for a customer',
+  },
+  {
     to:    '/dashboards/schedule/week',
     icon:  '📆',
     label: 'Weekly Schedule',

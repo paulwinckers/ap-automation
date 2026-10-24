@@ -642,6 +642,32 @@ export async function emailWeekSchedule(start?: string): Promise<{ ok: boolean; 
   return request('POST', `/schedule/week/email${start ? `?start=${start}` : ''}`, {});
 }
 
+// ── Customer 360 (unified view: Aspire identity + jobs + portal activity) ───────
+export interface C360Contact { contact_id: number; name: string | null; email: string | null; phone: string | null; title: string | null; primary: boolean; billing: boolean; }
+export interface C360Property { property_id: number; name: string | null; }
+export interface C360Comm { template: string | null; subject: string | null; to: string | null; from: string | null; sent_at: string | null; }
+export interface C360Job {
+  opportunity_id: number; number: number | null; name: string | null; property: string | null; property_id: number | null;
+  division: string | null; status: string | null;
+  start_date: string | null; end_date: string | null; won_date: string | null; complete_date: string | null;
+  pct_complete: number | null; won_dollars: number | null; earned_revenue: number | null;
+  stage: string | null; lead: string | null; schedule_confirmed: boolean;
+  prep: { done: number; total: number } | null;
+  schedule: { status: string; start: string } | null;
+  pha: { status: string | null; number: string | null; date: string | null } | null;
+  comms: C360Comm[];
+}
+export interface C360TimelineEvent { when: string; type: string; summary: string; opportunity_id: number; }
+export interface Customer360 {
+  customer: { company_id: number; name: string | null; contacts: C360Contact[]; properties: C360Property[] };
+  jobs: C360Job[];
+  activity_timeline: C360TimelineEvent[];
+  counts: { jobs: number; properties: number; contacts: number; comms: number };
+}
+export async function getCustomer360(companyId: number): Promise<Customer360> {
+  return request('GET', `/customer/${companyId}/360`);
+}
+
 // ── Aspire Field Operations ───────────────────────────────────────────────────
 
 export interface FieldOpportunity {
