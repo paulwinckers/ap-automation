@@ -387,6 +387,213 @@ async def search_customers(q: str = Query(..., min_length=2)):
     return {"customers": await _search_companies(q)}
 
 
+async def _fetch_property_contacts(property_ids: list[int]) -> list[dict]:
+    """Contacts attached to the given properties (name/email/phone/role). Best-effort —
+    returns [] on any failure so the 360 view still renders. Two reads: PropertyContacts
+    (property↔contact links + roles) then Contacts (email/phone), chunked to dodge $filter limits."""
+    if not property_ids:
+        return []
+    links: list[dict] = []
+    for i in range(0, len(property_ids), 15):
+        or_f = " or ".join(f"PropertyID eq {x}" for x in property_ids[i:i + 15])
+        try:
+            links += _aspire._extract_list(await _aspire._get("PropertyContacts", {
+                "$filter": f"({or_f})",
+                "$select": "PropertyID,ContactID,ContactName,PrimaryContact,BillingContact,EmailNotificationsContact",
+                "$top": "300",
+            }))
+        except Exception as e:
+            logger.warning(f"PropertyContacts fetch failed for chunk: {e}")
+    contact_ids = sorted({l.get("ContactID") for l in links if l.get("ContactID")})
+    details: dict[int, dict] = {}
+    for i in range(0, len(contact_ids), 15):
+        or_f = " or ".join(f"ContactID eq {x}" for x in contact_ids[i:i + 15])
+        try:
+            for c in _aspire._extract_list(await _aspire._get("Contacts", {
+                "$filter": f"({or_f})",
+                "$select": "ContactID,FirstName,LastName,Email,MobilePhone,OfficePhone,Title",
+                "$top": "300",
+            })):
+                details[c.get("ContactID")] = c
+        except Exception as e:
+            logger.warning(f"Contacts fetch failed for chunk: {e}")
+    out, seen = [], set()
+    for l in links:
+        cid = l.get("ContactID")
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        c = details.get(cid, {})
+        name = (l.get("ContactName") or " ".join(filter(None, [c.get("FirstName"), c.get("LastName")]))).strip()
+        out.append({
+            "contact_id": cid,
+            "name": name or None,
+            "email": c.get("Email"),
+            "phone": c.get("MobilePhone") or c.get("OfficePhone"),
+            "title": c.get("Title"),
+            "primary": bool(l.get("PrimaryContact")),
+            "billing": bool(l.get("BillingContact")),
+        })
+    out.sort(key=lambda x: (not x["primary"], (x["name"] or "").lower()))
+    return out
+
+
+@router.get("/{company_id}/360")
+async def customer_360(company_id: int, db: Database = Depends(get_db)):
+    """Unified customer view (Phase 0, read-only). Aspire identity + jobs joined LIVE
+    (by OpportunityID) with all portal/D1 activity — comms, stage, prep, schedule, safety.
+    No schema changes. This payload is also the context object the CX agent will consume."""
+    opps = await _fetch_customer_opps(company_id)
+    company_name = next((o.get("BillingCompanyName") for o in opps if o.get("BillingCompanyName")), None)
+    if not opps:
+        try:
+            co = _aspire._extract_list(await _aspire._get("Companies", {
+                "$filter": f"CompanyID eq {company_id}", "$select": "CompanyID,CompanyName", "$top": "1"}))
+            company_name = co[0].get("CompanyName") if co else None
+        except Exception:
+            company_name = None
+        if not company_name:
+            raise HTTPException(status_code=404, detail="Customer (company) not found")
+
+    opp_ids = {o.get("OpportunityID") for o in opps if o.get("OpportunityID") is not None}
+
+    properties: dict[int, dict] = {}
+    for o in opps:
+        pid = o.get("PropertyID")
+        if pid and pid not in properties:
+            properties[pid] = {"property_id": pid, "name": o.get("PropertyName")}
+    contacts = await _fetch_property_contacts(sorted(properties.keys()))
+
+    # ── Portal activity (D1): read whole small tables, filter in memory by opp_ids
+    # (D1 caps a query at 100 bound params, so no `WHERE id IN (…)`).
+    comms: dict[int, list] = defaultdict(list)
+    planning: dict[int, dict] = {}
+    prep: dict[int, dict] = {}
+    sched: dict[int, dict] = {}
+    pha: dict[int, dict] = {}
+    try:
+        for r in await db._q("SELECT opportunity_id, template_key, subject, to_addresses, from_name, sent_at FROM cx_sends ORDER BY sent_at", []):
+            if r["opportunity_id"] in opp_ids:
+                comms[r["opportunity_id"]].append({
+                    "template": r.get("template_key"), "subject": r.get("subject"),
+                    "to": r.get("to_addresses"), "from": r.get("from_name"), "sent_at": r.get("sent_at")})
+    except Exception:
+        pass
+    try:
+        for r in await db._q("SELECT opportunity_id, lead_name, schedule_confirmed, stage FROM job_planning", []):
+            if r["opportunity_id"] in opp_ids:
+                planning[r["opportunity_id"]] = {"stage": r.get("stage"), "lead": r.get("lead_name"),
+                                                 "schedule_confirmed": bool(r.get("schedule_confirmed"))}
+    except Exception:
+        pass
+    try:
+        for r in await db._q("SELECT opportunity_id, item_key, checked, status FROM job_prep_checklist", []):
+            if r["opportunity_id"] not in opp_ids:
+                continue
+            st = (r.get("status") or "").lower()
+            if st == "na":
+                continue  # N/A items don't count toward prep progress
+            c = prep.setdefault(r["opportunity_id"], {"done": 0, "total": 0})
+            c["total"] += 1
+            if r.get("checked") or st in ("complete", "uploaded"):
+                c["done"] += 1
+    except Exception:
+        pass
+    try:
+        for r in await db._q("SELECT opportunity_id, start_date, status FROM schedule_blocks WHERE opportunity_id IS NOT NULL", []):
+            oid = r["opportunity_id"]
+            if oid not in opp_ids:
+                continue
+            st = r.get("status") or "tentative"
+            sd = (r.get("start_date") or "")[:10]
+            cur = sched.get(oid)
+            if not cur:
+                sched[oid] = {"status": st, "start": sd}
+            elif st == "confirmed" and cur["status"] != "confirmed":
+                sched[oid] = {"status": "confirmed", "start": sd}
+            elif st == cur["status"] and sd and (not cur["start"] or sd < cur["start"]):
+                cur["start"] = sd
+    except Exception:
+        pass
+    try:
+        for r in await db._q("SELECT opportunity_id, pha_number, status, submitted_at, created_at FROM project_hazard_assessments WHERE opportunity_id IS NOT NULL ORDER BY id", []):
+            if r["opportunity_id"] in opp_ids:
+                pha[r["opportunity_id"]] = {"status": r.get("status"), "number": r.get("pha_number"),
+                                            "date": (r.get("submitted_at") or r.get("created_at") or "")[:10] or None}
+    except Exception:
+        pass
+
+    def _num(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    jobs = []
+    for o in opps:
+        oid = o.get("OpportunityID")
+        p = planning.get(oid, {})
+        jobs.append({
+            "opportunity_id": oid,
+            "number": o.get("OpportunityNumber"),
+            "name": o.get("OpportunityName"),
+            "property": o.get("PropertyName"),
+            "property_id": o.get("PropertyID"),
+            "division": o.get("DivisionName"),
+            "status": o.get("OpportunityStatusName"),
+            "start_date": (o.get("StartDate") or "")[:10] or None,
+            "end_date": (o.get("EndDate") or "")[:10] or None,
+            "won_date": (o.get("WonDate") or "")[:10] or None,
+            "complete_date": (o.get("CompleteDate") or "")[:10] or None,
+            "pct_complete": _num(o.get("PercentComplete")),
+            "won_dollars": _num(o.get("WonDollars")),
+            "earned_revenue": _num(o.get("ActualEarnedRevenue")),
+            "stage": p.get("stage"),
+            "lead": p.get("lead"),
+            "schedule_confirmed": p.get("schedule_confirmed", False),
+            "prep": prep.get(oid),
+            "schedule": sched.get(oid),
+            "pha": pha.get(oid),
+            "comms": comms.get(oid, []),
+        })
+    jobs.sort(key=lambda j: (j["start_date"] or j["won_date"] or ""), reverse=True)
+
+    # ── Unified activity timeline (merge everything datable, newest first)
+    timeline = []
+    for o in opps:
+        oid = o.get("OpportunityID")
+        label = o.get("PropertyName") or o.get("OpportunityName") or f"Opp {oid}"
+        for ev in comms.get(oid, []):
+            if ev.get("sent_at"):
+                timeline.append({"when": (ev["sent_at"] or "")[:10], "type": "comms",
+                                 "summary": f"Email '{ev.get('template') or ev.get('subject') or 'message'}' sent — {label}",
+                                 "opportunity_id": oid})
+        s = sched.get(oid)
+        if s and s.get("start"):
+            timeline.append({"when": s["start"], "type": "schedule",
+                             "summary": f"{'Confirmed' if s['status'] == 'confirmed' else 'Tentative'} start {s['start']} — {label}",
+                             "opportunity_id": oid})
+        ph = pha.get(oid)
+        if ph and ph.get("date"):
+            timeline.append({"when": ph["date"], "type": "pha",
+                             "summary": f"PHA {ph.get('status') or ''}{(' ' + ph['number']) if ph.get('number') else ''} — {label}".strip(),
+                             "opportunity_id": oid})
+    timeline = [t for t in timeline if t.get("when")]
+    timeline.sort(key=lambda t: t["when"], reverse=True)
+
+    return {
+        "customer": {
+            "company_id": company_id, "name": company_name,
+            "contacts": contacts,
+            "properties": sorted(properties.values(), key=lambda p: (p.get("name") or "").lower()),
+        },
+        "jobs": jobs,
+        "activity_timeline": timeline,
+        "counts": {"jobs": len(jobs), "properties": len(properties), "contacts": len(contacts),
+                   "comms": sum(len(v) for v in comms.values())},
+    }
+
+
 @router.get("/{company_id}/report")
 async def customer_report(company_id: int, week_start: str | None = None, db: Database = Depends(get_db)):
     return await get_customer_report(company_id, week_start, db)
