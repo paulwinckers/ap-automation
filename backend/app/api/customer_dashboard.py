@@ -761,6 +761,60 @@ async def opportunity_tickets(opp_id: int):
     return {"opportunity_id": opp_id, "ticket_count": len(tickets), "totals": tot, "tickets": tickets}
 
 
+async def _fetch_opp_invoices(opp_id: int) -> list[dict]:
+    """All (non-void handled by caller) invoices that bill this opportunity. Uses the
+    nested-opportunity filter so it catches every invoice regardless of date window.
+    No $select — we need the InvoiceOpportunities sub-objects for this job's line amount."""
+    try:
+        return _aspire._extract_list(await _aspire._get("Invoices", {
+            "$filter": f"InvoiceOpportunities/any(o: o/OpportunityID eq {opp_id})",
+            "$orderby": "InvoiceDate asc",
+            "$top": "500",
+        }))
+    except Exception as e:
+        logger.warning(f"opp invoices fetch failed for {opp_id}: {e}")
+        return []
+
+
+@router.get("/opportunity/{opp_id}/invoices", dependencies=[Depends(require_access)])
+async def opportunity_invoices(opp_id: int):
+    """Invoices billed to one job (from Aspire): each invoice's number, date, this job's
+    line amount, and paid/open balance, plus totals. `amount` is this opportunity's share
+    of the invoice (incl. tax); `balance` is the invoice-level outstanding (so on a rare
+    multi-job invoice the balance may span more than this job). Powers the agent's billing
+    queries alongside the work-ticket actual-vs-budget view."""
+    def _num(v):
+        try:
+            return float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+    invoices, tot_inv, tot_out, paid = [], 0.0, 0.0, 0
+    for i in await _fetch_opp_invoices(opp_id):
+        if str(i.get("InvoiceVoid")).upper() == "Y":
+            continue
+        line = next((o for o in (i.get("InvoiceOpportunities") or []) if o.get("OpportunityID") == opp_id), {})
+        amt = _num(line.get("TotalAmount") or line.get("Amount"))
+        bal = _num(i.get("AmountRemaining"))
+        is_paid = bal < 0.005
+        tot_inv += amt; tot_out += bal; paid += 1 if is_paid else 0
+        invoices.append({
+            "invoice_number": i.get("InvoiceNumber"),
+            "date": (i.get("InvoiceDate") or "")[:10] or None,
+            "amount": round(amt, 2),
+            "balance": round(bal, 2),
+            "paid": is_paid,
+            "description": line.get("Description") or None,
+        })
+    invoices.sort(key=lambda x: x.get("date") or "")
+    return {
+        "opportunity_id": opp_id,
+        "invoice_count": len(invoices),
+        "totals": {"invoiced": round(tot_inv, 2), "collected": round(tot_inv - tot_out, 2),
+                   "outstanding": round(tot_out, 2), "paid_count": paid},
+        "invoices": invoices,
+    }
+
+
 @router.get("/{company_id}/report")
 async def customer_report(company_id: int, week_start: str | None = None, db: Database = Depends(get_db)):
     return await get_customer_report(company_id, week_start, db)

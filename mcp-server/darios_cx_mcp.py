@@ -86,6 +86,15 @@ async def get_work_tickets(opportunity_id: int) -> dict:
     return await _get(f"/customer/opportunity/{opportunity_id}/tickets")
 
 
+@mcp.tool()
+async def get_invoices(opportunity_id: int) -> dict:
+    """Invoices billed to one job, from Aspire: each invoice's number, date, this job's
+    amount, and paid/open balance — plus totals (invoiced, collected, outstanding,
+    paid_count). Pair with get_work_tickets for a full 'actual vs budget vs billed'
+    picture of a job."""
+    return await _get(f"/customer/opportunity/{opportunity_id}/invoices")
+
+
 # ── Draft (no side effects) ──────────────────────────────────────────────────────
 
 @mcp.tool()
