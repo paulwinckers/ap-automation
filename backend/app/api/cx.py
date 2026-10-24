@@ -430,6 +430,55 @@ async def list_skips():
     return {"skips": [_row(r) for r in rows]}
 
 
+@router.get("/action-review")
+async def action_review():
+    """The CX agent's worklist: every next-action due across active construction jobs,
+    prioritised (overdue → due → soon). Reuses the plan's rules engine (_job_actions) so
+    it stays in lock-step with the pipeline. Each item carries the job, the suggested
+    template, and when that template was last sent — enough for the agent to render a
+    draft (POST project/{opp}/render) and send on approval (POST project/{opp}/send).
+    Read-only; sends nothing."""
+    from datetime import date
+    from collections import Counter
+    from app.api.construction_plan import get_plan  # local import avoids any cycle
+
+    db = await _db()
+    month = date.today().strftime("%Y-%m")
+    try:
+        plan = await get_plan(month, db)
+    except Exception as e:
+        logger.warning(f"action-review: get_plan failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not load the construction plan")
+
+    items: list[dict] = []
+    for j in plan.get("jobs", []):
+        for a in (j.get("actions") or []):
+            target = a.get("target") or ""
+            tmpl = target.split("comms:", 1)[1] if target.startswith("comms:") else None
+            items.append({
+                "opportunity_id":   j.get("opportunity_id"),
+                "opportunity_name": j.get("opportunity_name"),
+                "property_name":    j.get("property_name"),
+                "opp_number":       j.get("opp_number"),
+                "lifecycle":        j.get("lifecycle"),
+                "action_key":       a.get("key"),
+                "label":            a.get("label"),
+                "severity":         a.get("severity"),
+                "kind":             "comms" if tmpl else (target or "other"),
+                "template_key":     tmpl,
+                "last_sent":        (j.get("comms_sent") or {}).get(tmpl) if tmpl else None,
+            })
+    rank = {"overdue": 0, "due": 1, "soon": 2}
+    items.sort(key=lambda x: (rank.get(x["severity"], 9), x.get("opportunity_name") or ""))
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "month": month,
+        "count": len(items),
+        "by_severity": dict(Counter(x["severity"] for x in items)),
+        "actions": items,
+    }
+
+
 class RenderBody(BaseModel):
     template_key: str
     overrides: Optional[dict] = None
