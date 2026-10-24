@@ -712,9 +712,9 @@ async def _fetch_opp_tickets(opp_id: int) -> list[dict]:
     try:
         return _aspire._extract_list(await _aspire._get("WorkTickets", {
             "$filter": f"OpportunityID eq {opp_id}",
-            "$select": ("WorkTicketID,WorkTicketNumber,OpportunityID,OpportunityServiceID,WorkTicketTitle,"
-                        "WorkTicketStatusName,WorkTicketType,ScheduledStartDate,CompleteDate,CrewLeaderName,"
-                        "EstimatedLaborHours,ActualLaborHours,BudgetedCost,ActualCost,Notes"),
+            "$select": ("WorkTicketID,WorkTicketNumber,OpportunityID,OpportunityServiceID,"
+                        "WorkTicketStatusName,ScheduledStartDate,CompleteDate,CrewLeaderName,"
+                        "HoursEst,HoursAct,TotalCostAct,EarnedRevenue,PercentComplete,Notes"),
             "$orderby": "ScheduledStartDate asc",
             "$top": "300",
         }))
@@ -739,21 +739,22 @@ async def opportunity_tickets(opp_id: int):
         except (TypeError, ValueError):
             return None
 
-    tickets, tot = [], {"est_hours": 0.0, "act_hours": 0.0, "est_cost": 0.0, "act_cost": 0.0}
+    tickets, tot = [], {"est_hours": 0.0, "act_hours": 0.0, "act_cost": 0.0, "revenue": 0.0}
     for r in rows:
-        eh, ah = _num(r.get("EstimatedLaborHours")), _num(r.get("ActualLaborHours"))
-        ec, ac = _num(r.get("BudgetedCost")), _num(r.get("ActualCost"))
+        eh, ah = _num(r.get("HoursEst")), _num(r.get("HoursAct"))
+        ac, rev = _num(r.get("TotalCostAct")), _num(r.get("EarnedRevenue"))
         tot["est_hours"] += eh or 0; tot["act_hours"] += ah or 0
-        tot["est_cost"]  += ec or 0; tot["act_cost"]  += ac or 0
+        tot["act_cost"]  += ac or 0; tot["revenue"]   += rev or 0
         tickets.append({
             "work_ticket_id": r.get("WorkTicketID"),
             "number": r.get("WorkTicketNumber"),
-            "service": svc.get(r.get("OpportunityServiceID")) or r.get("WorkTicketTitle") or r.get("WorkTicketType"),
+            "service": svc.get(r.get("OpportunityServiceID")),
             "status": r.get("WorkTicketStatusName"),
             "scheduled_date": (r.get("ScheduledStartDate") or "")[:10] or None,
             "complete_date": (r.get("CompleteDate") or "")[:10] or None,
             "crew_leader": r.get("CrewLeaderName"),
-            "est_hours": eh, "act_hours": ah, "est_cost": ec, "act_cost": ac,
+            "est_hours": eh, "act_hours": ah, "act_cost": ac, "revenue": rev,
+            "pct_complete": _num(r.get("PercentComplete")),
             "notes": (r.get("Notes") or None),
             "visit_notes": notes.get(r.get("WorkTicketID"), []),
         })
