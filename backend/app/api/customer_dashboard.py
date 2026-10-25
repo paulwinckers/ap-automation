@@ -20,6 +20,7 @@ This module is self-contained and does NOT touch the invoice-routing core.
 """
 
 import html as _html
+import json
 import logging
 import re
 from collections import defaultdict
@@ -548,6 +549,33 @@ async def _fetch_contact(contact_id: int) -> dict:
         return {}
 
 
+async def _spine_jobs_for(db: Database, customer_key: str) -> list[dict]:
+    """A customer's jobs from the spine cache, reshaped to look like Aspire opportunities
+    so the existing 360 assembly can consume them unchanged. [] if the cache has none
+    (caller then falls back to live Aspire)."""
+    try:
+        rows = await db._q("SELECT payload FROM spine_jobs WHERE customer_key = ?", [customer_key])
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        try:
+            p = json.loads(r["payload"])
+        except Exception:
+            continue
+        out.append({
+            "OpportunityID": p.get("opportunity_id"), "OpportunityNumber": p.get("opp_number"),
+            "OpportunityName": p.get("name"), "PropertyName": p.get("property_name"),
+            "PropertyID": p.get("property_id"), "DivisionName": p.get("division"),
+            "OpportunityStatusName": p.get("status"), "StartDate": p.get("start_date"),
+            "EndDate": p.get("end_date"), "WonDate": p.get("won_date"),
+            "CompleteDate": p.get("complete_date"), "PercentComplete": p.get("pct_complete"),
+            "WonDollars": p.get("won_dollars"), "ActualEarnedRevenue": p.get("earned_revenue"),
+            "BillingCompanyName": p.get("billing_company_name"), "BillingContactName": p.get("billing_contact_name"),
+        })
+    return out
+
+
 async def _portal_activity_and_jobs(opps: list[dict], db: Database) -> tuple[list[dict], list[dict], int]:
     """Join the portal's D1 activity (comms, stage/lead, prep, schedule, PHA) onto the
     given Aspire opportunities by OpportunityID. Returns (jobs, timeline, comms_total).
@@ -674,7 +702,10 @@ async def _portal_activity_and_jobs(opps: list[dict], db: Database) -> tuple[lis
 async def customer_360(company_id: int, db: Database = Depends(get_db)):
     """Customer 360 for a commercial customer (Aspire Company, BillingCompanyID).
     Read-only; this payload is also the context object the CX agent will consume."""
-    opps = await _fetch_customer_opps(company_id)
+    opps = await _spine_jobs_for(db, f"company:{company_id}")
+    from_cache = bool(opps)
+    if not opps:  # cache miss (new company, or cache not populated) → live Aspire
+        opps = await _fetch_customer_opps(company_id)
     company_name = next((o.get("BillingCompanyName") for o in opps if o.get("BillingCompanyName")), None)
     if not opps:
         try:
@@ -694,7 +725,7 @@ async def customer_360(company_id: int, db: Database = Depends(get_db)):
     jobs, timeline, comms_total = await _portal_activity_and_jobs(opps, db)
     return {
         "customer": {"kind": "company", "company_id": company_id, "name": company_name,
-                     "contacts": contacts,
+                     "contacts": contacts, "jobs_source": "spine-cache" if from_cache else "aspire-live",
                      "properties": sorted(properties.values(), key=lambda p: (p.get("name") or "").lower())},
         "jobs": jobs, "activity_timeline": timeline,
         "counts": {"jobs": len(jobs), "properties": len(properties), "contacts": len(contacts), "comms": comms_total},
@@ -704,7 +735,10 @@ async def customer_360(company_id: int, db: Database = Depends(get_db)):
 @router.get("/contact/{contact_id}/360", dependencies=[Depends(require_access)])
 async def customer_360_contact(contact_id: int, db: Database = Depends(get_db)):
     """Customer 360 for a residential customer that bills to a person (BillingContactID)."""
-    opps = await _fetch_contact_opps(contact_id)
+    opps = await _spine_jobs_for(db, f"contact:{contact_id}")
+    from_cache = bool(opps)
+    if not opps:  # cache miss → live (primary-contact → properties → opps)
+        opps = await _fetch_contact_opps(contact_id)
     c = await _fetch_contact(contact_id)
     name = " ".join(filter(None, [c.get("FirstName"), c.get("LastName")])).strip() or c.get("CompanyName")
     if not opps and not name:
@@ -725,7 +759,7 @@ async def customer_360_contact(contact_id: int, db: Database = Depends(get_db)):
     jobs, timeline, comms_total = await _portal_activity_and_jobs(opps, db)
     return {
         "customer": {"kind": "contact", "contact_id": contact_id, "name": name,
-                     "contacts": contacts,
+                     "contacts": contacts, "jobs_source": "spine-cache" if from_cache else "aspire-live",
                      "properties": sorted(properties.values(), key=lambda p: (p.get("name") or "").lower())},
         "jobs": jobs, "activity_timeline": timeline,
         "counts": {"jobs": len(jobs), "properties": len(properties), "contacts": len(contacts), "comms": comms_total},
