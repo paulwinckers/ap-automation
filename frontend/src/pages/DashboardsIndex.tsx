@@ -37,6 +37,12 @@ const DASHBOARDS = [
     sub:   'One unified view — all jobs + portal activity for a customer',
   },
   {
+    to:    '/sales/log',
+    icon:  '📍',
+    label: 'Log Sales Visit',
+    sub:   'Field capture — notes, photos, followups, coworker tasks',
+  },
+  {
     to:    '/dashboards/schedule/week',
     icon:  '📆',
     label: 'Weekly Schedule',

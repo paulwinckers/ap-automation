@@ -677,6 +677,35 @@ export async function getCustomer360ByContact(contactId: number): Promise<Custom
   return request('GET', `/customer/contact/${contactId}/360`);
 }
 
+// ── Sales activity (notes / calls / site visits + tasks + attachments) ──────────
+export interface SalesActivity {
+  id: number; customer_key: string | null; opportunity_id: number | null; type: string;
+  subject: string | null; body: string | null; next_action_date: string | null;
+  next_action_note: string | null; next_action_done: number; created_by: string | null; created_at: string;
+}
+export interface SalesTask { id: number; title: string; assignee: string | null; due_date: string | null; status: string; }
+
+export async function createSalesActivity(payload: {
+  customer_key?: string; type?: string; subject?: string; body?: string; opportunity_id?: number;
+  next_action_date?: string; next_action_note?: string; created_by?: string;
+}): Promise<{ ok: boolean; activity: SalesActivity }> {
+  return request('POST', '/sales/activity', payload);
+}
+export async function uploadSalesAttachment(
+  parentType: 'activity' | 'task', parentId: number, file: File, caption?: string,
+): Promise<{ ok: boolean; attachment: { id: number; kind: string; url: string } }> {
+  const fd = new FormData();
+  fd.append('file', file);
+  if (caption) fd.append('caption', caption);
+  return request('POST', `/sales/${parentType}/${parentId}/attachment`, fd, true);
+}
+export async function createSalesTask(payload: {
+  title: string; customer_key?: string; assignee?: string; due_date?: string; detail?: string;
+  activity_id?: number; opportunity_id?: number; created_by?: string;
+}): Promise<{ ok: boolean; task: SalesTask }> {
+  return request('POST', '/sales/task', payload);
+}
+
 // ── Aspire Field Operations ───────────────────────────────────────────────────
 
 export interface FieldOpportunity {
