@@ -262,6 +262,74 @@ async def get_customer(customer_key: str, db: Database = Depends(get_db)):
     }
 
 
+@router.get("/month-financials", dependencies=[Depends(require_access)])
+async def month_financials(month: Optional[str] = None, db: Database = Depends(get_db)):
+    """All-divisions revenue for a month, from Aspire work tickets (keyset-paginated past
+    the 1000-row cap). `month` = YYYY-MM (default current). Expected = budgeted Revenue on
+    the month's scheduled tickets; earned = EarnedRevenue to date (partial mid-month).
+    Broken down by division via the spine's opportunity→division map (opps outside the
+    spine's ~3yr window show as 'Unknown', but the totals are complete)."""
+    from collections import defaultdict as _dd
+    from datetime import date as _date
+    if not month or len(month) != 7 or month[4] != "-":
+        month = _date.today().strftime("%Y-%m")
+    y, m = int(month[:4]), int(month[5:7])
+    start = f"{y:04d}-{m:02d}-01T00:00:00Z"
+    ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+    end = f"{ny:04d}-{nm:02d}-01T00:00:00Z"
+
+    sel = "WorkTicketID,OpportunityID,WorkTicketStatusName,Revenue,EarnedRevenue"
+    cur, tickets = 0, []
+    for _ in range(20):
+        page = _aspire._extract_list(await _aspire._get("WorkTickets", {
+            "$filter": f"ScheduledStartDate ge {start} and ScheduledStartDate lt {end} and WorkTicketID gt {cur}",
+            "$orderby": "WorkTicketID asc", "$top": "1000", "$select": sel,
+        }))
+        if not page:
+            break
+        tickets += page
+        cur = page[-1].get("WorkTicketID") or cur
+        if len(page) < 1000:
+            break
+
+    div_by_opp = {}
+    try:
+        for r in await db._q("SELECT opportunity_id, division FROM spine_jobs", []):
+            div_by_opp[r["opportunity_id"]] = r.get("division")
+    except Exception:
+        pass
+
+    def _n(v):
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    by_div = _dd(lambda: {"expected": 0.0, "earned": 0.0, "tickets": 0})
+    exp = earned = 0.0
+    active = 0
+    for t in tickets:
+        if "cancel" in (t.get("WorkTicketStatusName") or "").lower():
+            continue
+        active += 1
+        e, a = _n(t.get("Revenue")), _n(t.get("EarnedRevenue"))
+        exp += e; earned += a
+        d = div_by_opp.get(t.get("OpportunityID")) or "Unknown"
+        by_div[d]["expected"] += e; by_div[d]["earned"] += a; by_div[d]["tickets"] += 1
+
+    divisions = [{"division": k, "expected": round(v["expected"], 2), "earned": round(v["earned"], 2),
+                  "tickets": v["tickets"]}
+                 for k, v in sorted(by_div.items(), key=lambda kv: -kv[1]["expected"])]
+    return {
+        "month": month,
+        "expected_revenue": round(exp, 2),
+        "earned_revenue": round(earned, 2),
+        "ticket_count": len(tickets), "active_tickets": active,
+        "by_division": divisions,
+        "note": "Expected = budgeted Revenue on this month's scheduled tickets; earned = EarnedRevenue to date (rises as the month completes). 'Unknown' division = opportunity outside the spine's ~3yr window; totals are still complete.",
+    }
+
+
 # ── Nightly refresh (gentle: one run/day, off-hours, never on boot) ──────────────
 
 _sched_db = Database()

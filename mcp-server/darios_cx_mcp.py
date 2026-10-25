@@ -84,6 +84,16 @@ async def get_customer_360(kind: str, id: int) -> dict:
 
 
 @mcp.tool()
+async def get_month_financials(month: Optional[str] = None) -> dict:
+    """All-divisions revenue for a month: expected (budgeted) vs earned-to-date, total AND
+    by division (maintenance / construction / snow / irrigation). `month` = 'YYYY-MM'
+    (default current month). Rolls up every work ticket, so it answers 'what's our expected
+    earned revenue this month' and 'how is maintenance vs construction tracking'. Earned is
+    partial mid-month (rises as tickets complete)."""
+    return await _get("/spine/month-financials" + (f"?month={month}" if month else ""))
+
+
+@mcp.tool()
 async def get_work_tickets(opportunity_id: int) -> dict:
     """Work tickets (site visits) for one job, from Aspire: each ticket's status,
     scheduled/complete dates, crew leader, estimated vs actual hours and cost, and visit
