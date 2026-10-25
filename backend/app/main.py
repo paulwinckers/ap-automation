@@ -14,7 +14,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
     force=True,
 )
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -25,7 +25,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.aspire_field import router as aspire_field_router
 from app.api.crew_schedule import router as crew_schedule_router
 from app.api.time_tracking import router as time_tracking_router
-from app.api.auth import router as auth_router
+from app.api.auth import router as auth_router, require_access
 from app.api.keys import router as keys_router
 from app.api.safety_talks import router as safety_talks_router
 from app.api.construction_report import router as construction_report_router, start_scheduler as start_construction_scheduler, stop_scheduler as stop_construction_scheduler
@@ -685,15 +685,15 @@ app.include_router(vendor_import_router, prefix="/vendors", tags=["vendors"])
 app.include_router(reconcile_router)
 app.include_router(dashboard_router)
 app.include_router(aspire_field_router)
-app.include_router(crew_schedule_router)
+app.include_router(crew_schedule_router, dependencies=[Depends(require_access)])
 app.include_router(time_tracking_router)
 app.include_router(auth_router)
 app.include_router(qbo_auth_router)
 app.include_router(keys_router)
 app.include_router(safety_talks_router)
 app.include_router(construction_report_router)
-app.include_router(construction_plan_router)
-app.include_router(daily_schedule_router)
+app.include_router(construction_plan_router, dependencies=[Depends(require_access)])
+app.include_router(daily_schedule_router, dependencies=[Depends(require_access)])
 app.include_router(customer_dashboard_router)
 app.include_router(documents_router)
 app.include_router(push_router)
@@ -702,7 +702,7 @@ app.include_router(safety_incidents_router)
 app.include_router(email_settings_router)
 app.include_router(vehicle_inspections_router)
 app.include_router(safety_pha_router)
-app.include_router(schedule_router)
+app.include_router(schedule_router, dependencies=[Depends(require_access)])
 app.include_router(cx_router)
 app.include_router(spine_router)
 app.include_router(sales_router)
