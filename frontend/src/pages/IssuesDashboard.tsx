@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { authFetch } from '../lib/api';
 
 const API = import.meta.env.VITE_API_URL ?? '';
 
@@ -165,7 +166,7 @@ function ConversationCard({
     setExpanded(true);
     setLoadingMsgs(true);
     try {
-      const r = await fetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}`);
+      const r = await authFetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}`);
       const d = await r.json();
       setMessages(d.messages || []);
       setWatchers(d.watchers || []);
@@ -183,7 +184,7 @@ function ConversationCard({
       form.append('user_id', String(user.id));
       form.append('name', user.name);
       form.append('whatsapp', user.phone);
-      const r = await fetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}/watchers`, { method: 'POST', body: form });
+      const r = await authFetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}/watchers`, { method: 'POST', body: form });
       const d = await r.json();
       setWatchers(prev => [...prev, d]);
       setSelectedUser('');
@@ -192,7 +193,7 @@ function ConversationCard({
   }
 
   async function removeWatcher(watcherId: number) {
-    await fetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}/watchers/${watcherId}`, { method: 'DELETE' });
+    await authFetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}/watchers/${watcherId}`, { method: 'DELETE' });
     setWatchers(prev => prev.filter(w => w.id !== watcherId));
   }
 
@@ -204,7 +205,7 @@ function ConversationCard({
       form.append('content', replyText.trim());
       form.append('sender_role', 'manager');
       form.append('manager_name', managerName || 'Manager');
-      const res = await fetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}/messages`, {
+      const res = await authFetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}/messages`, {
         method: 'POST', body: form,
       });
       if (!res.ok) throw new Error('Failed');
@@ -227,7 +228,7 @@ function ConversationCard({
     setResolving(true);
     const endpoint = isOpen ? 'resolve' : 'reopen';
     try {
-      await fetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}/${endpoint}`, { method: 'PATCH' });
+      await authFetch(`${API}/field/conversations/${conv.opp_id}/${conv.id}/${endpoint}`, { method: 'PATCH' });
       const next = isOpen ? 'resolved' : 'open';
       setLocalStatus(next);
       if (next === 'resolved') onResolved(conv.id);
@@ -447,7 +448,7 @@ export default function IssuesDashboard() {
   useEffect(() => {
     const token = localStorage.getItem('ap_token') || localStorage.getItem('auth_token');
     if (!token) return;
-    fetch(`${API}/auth/users`, { headers: { Authorization: `Bearer ${token}` } })
+    authFetch(`${API}/auth/users`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(d => setAvailableUsers(
         (d.users || []).filter((u: { active: number | boolean; phone: string | null }) => u.active && u.phone)
@@ -458,7 +459,7 @@ export default function IssuesDashboard() {
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams({ status, context_type: ctxType, tag });
-    fetch(`${API}/field/conversations/all/dashboard?${params}`)
+    authFetch(`${API}/field/conversations/all/dashboard?${params}`)
       .then(r => r.json())
       .then(d => setConversations(d.conversations || []))
       .catch(() => {})

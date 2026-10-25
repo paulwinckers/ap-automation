@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { authFetch } from '../lib/api';
 
 const API = import.meta.env.VITE_API_URL ?? 'https://ap-automation-production.up.railway.app';
 
@@ -158,7 +159,7 @@ export default function Reconcile() {
   }, [activePeriod]);
 
   async function loadPeriods() {
-    const res = await fetch(`${API}/reconcile/periods`);
+    const res = await authFetch(`${API}/reconcile/periods`);
     const data = await res.json();
     setPeriods(data.periods || []);
   }
@@ -170,8 +171,8 @@ export default function Reconcile() {
     setDiffsError(null);
     try {
       // Ensure period exists
-      await fetch(`${API}/reconcile/periods/${period}`, { method: 'POST' });
-      const res = await fetch(`${API}/reconcile/periods/${period}/statements`);
+      await authFetch(`${API}/reconcile/periods/${period}`, { method: 'POST' });
+      const res = await authFetch(`${API}/reconcile/periods/${period}/statements`);
       const data = await res.json();
       // Guard against stale responses — if the user switched periods while this
       // request was in-flight, discard the result to prevent overwriting newer data
@@ -201,7 +202,7 @@ export default function Reconcile() {
     setLoadingDiffs(true);
     setDiffsError(null);
     try {
-      const res = await fetch(`${API}/reconcile/periods/${period}/diffs`);
+      const res = await authFetch(`${API}/reconcile/periods/${period}/diffs`);
       if (!res.ok) {
         const errText = await res.text().catch(() => res.statusText);
         let detail = errText;
@@ -224,7 +225,7 @@ export default function Reconcile() {
   async function loadLinks(stmts: Statement[]) {
     const entries = await Promise.all(
       stmts.map(async s => {
-        const res = await fetch(`${API}/reconcile/vendor-links/${encodeURIComponent(s.vendor_name)}`);
+        const res = await authFetch(`${API}/reconcile/vendor-links/${encodeURIComponent(s.vendor_name)}`);
         const data = await res.json();
         return [s.vendor_name, data?.qbo_vendor_id ? data : null] as [string, QboLink | null];
       })
@@ -237,7 +238,7 @@ export default function Reconcile() {
     if (q.length < 2) { setVendorResults([]); return; }
     setSearchingVendors(true);
     try {
-      const res = await fetch(`${API}/reconcile/qbo-vendors/search?q=${encodeURIComponent(q)}`);
+      const res = await authFetch(`${API}/reconcile/qbo-vendors/search?q=${encodeURIComponent(q)}`);
       const data = await res.json();
       setVendorResults(data.vendors || []);
     } finally {
@@ -248,7 +249,7 @@ export default function Reconcile() {
   async function saveLink(statementName: string, vendor: {id: string; name: string}) {
     // Use POST body endpoint — PUT path breaks for vendor names containing '/' or other
     // URL-special characters (e.g. "Westbank Nursery Ltd/dba Dogwood Nursery").
-    await fetch(`${API}/reconcile/vendor-links`, {
+    await authFetch(`${API}/reconcile/vendor-links`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ statement_name: statementName, qbo_vendor_id: vendor.id, qbo_vendor_name: vendor.name }),
@@ -263,7 +264,7 @@ export default function Reconcile() {
   }
 
   async function removeLink(statementName: string) {
-    await fetch(`${API}/reconcile/vendor-links/${encodeURIComponent(statementName)}`, { method: 'DELETE' });
+    await authFetch(`${API}/reconcile/vendor-links/${encodeURIComponent(statementName)}`, { method: 'DELETE' });
     setLinks(prev => ({ ...prev, [statementName]: null }));
   }
 
@@ -273,7 +274,7 @@ export default function Reconcile() {
       const url = force
         ? `${API}/reconcile/statements/${statementId}/diff?force=true`
         : `${API}/reconcile/statements/${statementId}/diff`;
-      const res = await fetch(url);
+      const res = await authFetch(url);
       const data = await res.json();
       setDiffs(prev => {
         const next = { ...prev, [statementId]: data };
@@ -294,7 +295,7 @@ export default function Reconcile() {
       const form = new FormData();
       form.append('period', activePeriod);
       form.append('file', file);
-      const res = await fetch(`${API}/reconcile/upload`, { method: 'POST', body: form });
+      const res = await authFetch(`${API}/reconcile/upload`, { method: 'POST', body: form });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         alert(`Upload failed: ${err.detail || res.statusText}`);
@@ -315,7 +316,7 @@ export default function Reconcile() {
 
   /** Refresh one statement row in-place without reloading the whole list or re-fetching all diffs. */
   async function refreshStatement(statementId: number) {
-    const res = await fetch(`${API}/reconcile/statements/${statementId}`);
+    const res = await authFetch(`${API}/reconcile/statements/${statementId}`);
     if (!res.ok) return;
     const data = await res.json();
     setStatements(prev => prev.map(s => s.id === statementId ? { ...s, ...data } : s));
@@ -326,13 +327,13 @@ export default function Reconcile() {
     setReconcilingId(stmt.id);
     try {
       if (isReconciled) {
-        await fetch(`${API}/reconcile/statements/${stmt.id}/reconcile`, { method: 'DELETE' });
+        await authFetch(`${API}/reconcile/statements/${stmt.id}/reconcile`, { method: 'DELETE' });
         // Unreconciled — refresh statement row then force-reload its diff from QBO
         await refreshStatement(stmt.id);
         await loadDiff(stmt.id, true);
       } else {
         const note = prompt(`Optional note for reconciling ${stmt.vendor_name}:`) ?? undefined;
-        await fetch(`${API}/reconcile/statements/${stmt.id}/reconcile`, {
+        await authFetch(`${API}/reconcile/statements/${stmt.id}/reconcile`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ note: note || null }),
@@ -348,7 +349,7 @@ export default function Reconcile() {
 
   async function handleDelete(statementId: number, vendorName: string) {
     if (!confirm(`Delete ${vendorName} statement?`)) return;
-    await fetch(`${API}/reconcile/statements/${statementId}`, { method: 'DELETE' });
+    await authFetch(`${API}/reconcile/statements/${statementId}`, { method: 'DELETE' });
     // Remove from local state — no full reload needed
     setStatements(prev => prev.filter(s => s.id !== statementId));
     setDiffs(prev => { const n = { ...prev }; delete n[statementId]; return n; });
@@ -359,7 +360,7 @@ export default function Reconcile() {
     try {
       const form = new FormData();
       form.append('file', file);
-      const res = await fetch(`${API}/reconcile/statements/${statementId}/pdf`, { method: 'POST', body: form });
+      const res = await authFetch(`${API}/reconcile/statements/${statementId}/pdf`, { method: 'POST', body: form });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         alert(`PDF upload failed: ${err.detail || res.statusText}`);
@@ -687,7 +688,7 @@ export default function Reconcile() {
                       {/* View PDF */}
                       {stmt.pdf_r2_key && (
                         <button onClick={async () => {
-                          const res = await fetch(`${API}/reconcile/statements/${stmt.id}/pdf`);
+                          const res = await authFetch(`${API}/reconcile/statements/${stmt.id}/pdf`);
                           if (!res.ok) { alert('No PDF stored'); return; }
                           const { url } = await res.json();
                           window.open(url, '_blank');
@@ -721,7 +722,7 @@ export default function Reconcile() {
                       <button onClick={async () => {
                         const prev = prevPeriod(activePeriod);
                         if (!confirm(`Move ${stmt.vendor_name} to ${prev}?`)) return;
-                        await fetch(`${API}/reconcile/statements/${stmt.id}/move`, {
+                        await authFetch(`${API}/reconcile/statements/${stmt.id}/move`, {
                           method: 'POST', headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ period: prev }),
                         });

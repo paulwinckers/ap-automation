@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { authFetch } from '../lib/api';
 import { useSearchParams } from 'react-router-dom';
 
 const API = import.meta.env.VITE_API_URL ?? 'https://ap-automation-production.up.railway.app';
@@ -190,7 +191,7 @@ function ContractsList({ onSelect }: { onSelect: (c: Contract) => void }) {
   const [error,     setError]     = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${API}/invoice-summary/contracts`)
+    authFetch(`${API}/invoice-summary/contracts`)
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(d => setContracts(d.contracts || []))
       .catch(e => setError(String(e)))
@@ -303,7 +304,7 @@ function ReportView({ contract, onBack }: { contract: Contract; onBack: () => vo
     setLoading(true); setError(null); setReport(null);
     try {
       const url = `${API}/invoice-summary/report?opp_id=${contract.OpportunityID}&date_from=${dateFrom}&date_to=${dateTo}`;
-      const res = await fetch(url);
+      const res = await authFetch(url);
       if (!res.ok) {
         const body = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(body.detail || res.statusText);

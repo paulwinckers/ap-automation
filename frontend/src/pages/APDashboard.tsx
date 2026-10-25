@@ -5,6 +5,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { authFetch } from '../lib/api';
 
 const API = import.meta.env.VITE_API_URL ?? 'https://ap-automation-production.up.railway.app';
 
@@ -192,8 +193,8 @@ export default function APDashboard() {
       }
 
       const [feedRes, countRes] = await Promise.all([
-        fetch(feedUrl),
-        fetch(`${API}/invoices/counts`),
+        authFetch(feedUrl),
+        authFetch(`${API}/invoices/counts`),
       ]);
       if (!feedRes.ok || !countRes.ok) throw new Error('API error');
       const feedData  = await feedRes.json();
@@ -216,7 +217,7 @@ export default function APDashboard() {
     if (!po) return;
     setPoSaving(id);
     try {
-      const res = await fetch(`${API}/invoices/${id}/override`, {
+      const res = await authFetch(`${API}/invoices/${id}/override`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ po_number: po, reviewed_by: 'dashboard' }),
@@ -238,7 +239,7 @@ export default function APDashboard() {
   async function retryInvoice(id: number) {
     setRetrying(id);
     try {
-      await fetch(`${API}/invoices/${id}/retry`, { method: 'POST' });
+      await authFetch(`${API}/invoices/${id}/retry`, { method: 'POST' });
       await refresh();
     } catch (e) {
       alert('Retry failed — check Railway logs');
@@ -251,7 +252,7 @@ export default function APDashboard() {
     const label = method === 'mastercard' ? 'MasterCard (2240)' : 'Debit card (1000)';
     setCardSaving(id);
     try {
-      const post = (gl?: string) => fetch(`${API}/invoices/${id}/card-purchase`, {
+      const post = (gl?: string) => authFetch(`${API}/invoices/${id}/card-purchase`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(gl ? { method, gl_account: gl } : { method }),
@@ -279,7 +280,7 @@ export default function APDashboard() {
   async function archiveInvoice(id: number) {
     setArchiving(id);
     try {
-      await fetch(`${API}/invoices/${id}/archive`, { method: 'POST' });
+      await authFetch(`${API}/invoices/${id}/archive`, { method: 'POST' });
       await refresh();
     } catch (e) {
       alert('Archive failed — check Railway logs');
@@ -294,7 +295,7 @@ export default function APDashboard() {
     // Load all vendor rules once
     if (vendorOptions.length === 0) {
       try {
-        const res = await fetch(`${API}/vendors/`);
+        const res = await authFetch(`${API}/vendors/`);
         const data = await res.json();
         setVendorOptions((data.vendors || data || []).map((v: any) => ({ id: v.id, name: v.vendor_name })));
       } catch { /* non-fatal */ }
@@ -304,7 +305,7 @@ export default function APDashboard() {
   async function saveVendor(invoiceId: number, vendorName: string) {
     setVendorSaving(invoiceId);
     try {
-      const res = await fetch(`${API}/invoices/${invoiceId}/vendor`, {
+      const res = await authFetch(`${API}/invoices/${invoiceId}/vendor`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vendor_name: vendorName }),
@@ -313,7 +314,7 @@ export default function APDashboard() {
       setEditingVendor(null);
       setVendorSearch('');
       // Retry immediately
-      await fetch(`${API}/invoices/${invoiceId}/retry`, { method: 'POST' });
+      await authFetch(`${API}/invoices/${invoiceId}/retry`, { method: 'POST' });
       await refresh();
     } catch { alert('Save failed'); }
     finally { setVendorSaving(null); }
@@ -324,7 +325,7 @@ export default function APDashboard() {
     if (!d) return;
     setDateSaving(invoiceId);
     try {
-      const res = await fetch(`${API}/invoices/${invoiceId}/date`, {
+      const res = await authFetch(`${API}/invoices/${invoiceId}/date`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ invoice_date: d }),
@@ -333,7 +334,7 @@ export default function APDashboard() {
       setEditingDate(null);
       setDateInput('');
       // Retry immediately
-      await fetch(`${API}/invoices/${invoiceId}/retry`, { method: 'POST' });
+      await authFetch(`${API}/invoices/${invoiceId}/retry`, { method: 'POST' });
       await refresh();
     } catch { alert('Save failed'); }
     finally { setDateSaving(null); }
@@ -341,7 +342,7 @@ export default function APDashboard() {
 
   async function openPdf(id: number) {
     try {
-      const res = await fetch(`${API}/invoices/${id}/pdf`);
+      const res = await authFetch(`${API}/invoices/${id}/pdf`);
       if (!res.ok) { alert('PDF not available for this invoice'); return; }
       const { url } = await res.json();
       window.open(url, '_blank');
@@ -352,7 +353,7 @@ export default function APDashboard() {
 
   async function backfillQboAmounts() {
     try {
-      const res = await fetch(`${API}/invoices/backfill-qbo-amounts`, { method: 'POST' });
+      const res = await authFetch(`${API}/invoices/backfill-qbo-amounts`, { method: 'POST' });
       const data = await res.json();
       await refresh();
       if (data.updated === 0) {
@@ -368,7 +369,7 @@ export default function APDashboard() {
   async function archiveUnknowns() {
     if (!confirm('Archive all entries with no vendor name?')) return;
     try {
-      const res = await fetch(`${API}/invoices/archive-unknown`, { method: 'POST' });
+      const res = await authFetch(`${API}/invoices/archive-unknown`, { method: 'POST' });
       const data = await res.json();
       await refresh();
       alert(`Archived ${data.archived} unknown entries.`);
@@ -380,7 +381,7 @@ export default function APDashboard() {
   async function syncQboAmount(id: number) {
     setSyncingQbo(id);
     try {
-      const res = await fetch(`${API}/invoices/${id}/sync-qbo-amount`, { method: 'POST' });
+      const res = await authFetch(`${API}/invoices/${id}/sync-qbo-amount`, { method: 'POST' });
       if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
       const data = await res.json();
       // Update just this entry inline so the row clears immediately
@@ -395,7 +396,7 @@ export default function APDashboard() {
   async function unarchiveInvoice(id: number) {
     setArchiving(id);
     try {
-      await fetch(`${API}/invoices/${id}/unarchive`, { method: 'POST' });
+      await authFetch(`${API}/invoices/${id}/unarchive`, { method: 'POST' });
       await refresh();
     } catch (e) {
       alert('Unarchive failed — check Railway logs');

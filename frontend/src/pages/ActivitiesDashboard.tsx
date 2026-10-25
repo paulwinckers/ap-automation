@@ -5,6 +5,7 @@
  */
 
 import React, { useEffect, useState, useRef } from 'react';
+import { authFetch } from '../lib/api';
 import { getActivitiesDashboard, Activity, ActivitiesDashboardData } from '../lib/api';
 
 // ── Notes popup ───────────────────────────────────────────────────────────────
@@ -73,7 +74,7 @@ function SendDigestButton() {
     setState('loading');
     setResult('');
     try {
-      const res = await fetch(`${BASE}/dashboard/activities/send-issues-digest`);
+      const res = await authFetch(`${BASE}/dashboard/activities/send-issues-digest`);
       const data = await res.json();
       if (!res.ok) {
         setState('error');

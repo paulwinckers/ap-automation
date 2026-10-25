@@ -35,6 +35,18 @@ async function request<T>(
   return res.json();
 }
 
+/**
+ * Drop-in replacement for `fetch` that attaches the logged-in user's auth token.
+ * Use for pages that call the API with raw fetch (so the backend can require auth).
+ * Identical to fetch otherwise — preserves method, body, and any headers passed.
+ */
+export function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const token = localStorage.getItem('ap_token');
+  const headers = new Headers(init.headers || {});
+  if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+  return fetch(input, { ...init, headers });
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export interface AuthUser { id: number; email: string; name: string; role: string; phone?: string | null; }
