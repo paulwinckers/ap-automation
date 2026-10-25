@@ -43,6 +43,7 @@ from app.api.safety_pha import router as safety_pha_router
 from app.api.schedule import router as schedule_router
 from app.api.cx import router as cx_router
 from app.api.spine import router as spine_router, start_spine_scheduler, stop_spine_scheduler
+from app.api.sales import router as sales_router
 from app.api.backup import router as backup_router, start_backup_scheduler, stop_backup_scheduler
 from app.api.property_hazards import router as property_hazards_router
 from app.api.project_checkin import (
@@ -446,6 +447,67 @@ async def lifespan(app: FastAPI):
                 detail       TEXT
             )
         """,
+        # ── Sales activity layer (own CRUD; anchored on spine customer_key) ──
+        "sales_activities": """
+            CREATE TABLE IF NOT EXISTS sales_activities (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_key     TEXT,                -- 'company:{id}' | 'contact:{id}' (works pre-opportunity)
+                opportunity_id   INTEGER,             -- optional: tied to a specific job
+                property_id      INTEGER,             -- optional
+                type             TEXT NOT NULL DEFAULT 'note',  -- note|call|meeting|email|site_visit
+                subject          TEXT,
+                body             TEXT,
+                direction        TEXT,                -- for emails: 'in' | 'out'
+                occurred_at      TEXT,                -- when it happened (date/datetime)
+                next_action_date TEXT,                -- followup due (null = no followup)
+                next_action_note TEXT,
+                next_action_done INTEGER NOT NULL DEFAULT 0,
+                created_by       TEXT,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at       TEXT
+            )
+        """,
+        "sales_tasks": """
+            CREATE TABLE IF NOT EXISTS sales_tasks (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_key   TEXT,
+                opportunity_id INTEGER,
+                activity_id    INTEGER,               -- the site visit / note that spawned it
+                title          TEXT NOT NULL,
+                detail         TEXT,
+                assignee       TEXT,                  -- coworker (name/user)
+                due_date       TEXT,
+                priority       TEXT,
+                status         TEXT NOT NULL DEFAULT 'open',  -- open|done|cancelled
+                created_by     TEXT,
+                created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                done_at        TEXT,
+                updated_at     TEXT
+            )
+        """,
+        "sales_task_updates": """
+            CREATE TABLE IF NOT EXISTS sales_task_updates (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id    INTEGER NOT NULL,          -- append log / progress thread on a task
+                author     TEXT,
+                body       TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
+        "sales_attachments": """
+            CREATE TABLE IF NOT EXISTS sales_attachments (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_type  TEXT NOT NULL,           -- 'activity' | 'task'
+                parent_id    INTEGER NOT NULL,
+                r2_key       TEXT NOT NULL,
+                file_name    TEXT,
+                content_type TEXT,
+                kind         TEXT,                    -- photo | video | file
+                caption      TEXT,
+                uploaded_by  TEXT,
+                uploaded_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:
@@ -643,6 +705,7 @@ app.include_router(safety_pha_router)
 app.include_router(schedule_router)
 app.include_router(cx_router)
 app.include_router(spine_router)
+app.include_router(sales_router)
 app.include_router(backup_router)
 app.include_router(property_hazards_router)
 app.include_router(checkin_router)
