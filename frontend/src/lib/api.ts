@@ -678,12 +678,19 @@ export async function getCustomer360ByContact(contactId: number): Promise<Custom
 }
 
 // ── Sales activity (notes / calls / site visits + tasks + attachments) ──────────
+export interface SalesAttachment { id: number; kind: string; url: string | null; caption: string | null; file_name: string | null; }
 export interface SalesActivity {
   id: number; customer_key: string | null; opportunity_id: number | null; type: string;
   subject: string | null; body: string | null; next_action_date: string | null;
   next_action_note: string | null; next_action_done: number; created_by: string | null; created_at: string;
+  occurred_at?: string | null; attachments?: SalesAttachment[];
 }
-export interface SalesTask { id: number; title: string; assignee: string | null; due_date: string | null; status: string; }
+export interface SalesTask {
+  id: number; title: string; detail?: string | null; assignee: string | null; due_date: string | null;
+  status: string; created_by?: string | null;
+  updates?: { id: number; author: string | null; body: string; created_at: string }[];
+  attachments?: SalesAttachment[];
+}
 
 export async function createSalesActivity(payload: {
   customer_key?: string; type?: string; subject?: string; body?: string; opportunity_id?: number;
@@ -704,6 +711,22 @@ export async function createSalesTask(payload: {
   activity_id?: number; opportunity_id?: number; created_by?: string;
 }): Promise<{ ok: boolean; task: SalesTask }> {
   return request('POST', '/sales/task', payload);
+}
+export async function listSalesActivities(customerKey: string): Promise<{ count: number; activities: SalesActivity[] }> {
+  return request('GET', `/sales/activities?customer_key=${encodeURIComponent(customerKey)}`);
+}
+export async function listSalesTasks(customerKey: string): Promise<{ count: number; tasks: SalesTask[] }> {
+  return request('GET', `/sales/tasks?customer_key=${encodeURIComponent(customerKey)}`);
+}
+export async function patchSalesActivity(id: number, patch: {
+  next_action_done?: boolean; body?: string; next_action_date?: string; next_action_note?: string;
+}): Promise<{ ok: boolean; activity: SalesActivity }> {
+  return request('PATCH', `/sales/activity/${id}`, patch);
+}
+export async function patchSalesTask(id: number, patch: {
+  status?: string; assignee?: string; due_date?: string; title?: string; detail?: string;
+}): Promise<{ ok: boolean; task: SalesTask }> {
+  return request('PATCH', `/sales/task/${id}`, patch);
 }
 
 // ── Aspire Field Operations ───────────────────────────────────────────────────

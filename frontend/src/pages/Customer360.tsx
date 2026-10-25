@@ -8,8 +8,11 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   searchCustomerEntities, getCustomer360, getCustomer360ByContact,
-  type CustomerEntity, type Customer360, type C360Job,
+  listSalesActivities, listSalesTasks, createSalesActivity, patchSalesActivity, patchSalesTask,
+  type CustomerEntity, type Customer360, type C360Job, type SalesActivity, type SalesTask,
 } from '../lib/api';
+
+const sinp: React.CSSProperties = { padding: '9px 11px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' };
 
 const NAVY = '#1e3a5f';
 const DIV_ICON: Record<string, string> = {
@@ -94,6 +97,12 @@ export default function Customer360Page() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [showHistory, setShowHistory] = useState(false);
+  const [salesActs, setSalesActs] = useState<SalesActivity[]>([]);
+  const [salesTasks, setSalesTasks] = useState<SalesTask[]>([]);
+  const [nType, setNType] = useState('note');
+  const [nBody, setNBody] = useState('');
+  const [nDate, setNDate] = useState('');
+  const [salesBusy, setSalesBusy] = useState(false);
   const tmr = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -112,6 +121,39 @@ export default function Customer360Page() {
     catch (err) { setErr((err as Error).message); }
     finally { setLoading(false); }
   }
+
+  const customerKey = data
+    ? (data.customer.kind === 'contact' ? `contact:${data.customer.contact_id}` : `company:${data.customer.company_id}`)
+    : null;
+
+  async function loadSales(key: string) {
+    try {
+      const [a, t] = await Promise.all([listSalesActivities(key), listSalesTasks(key)]);
+      setSalesActs(a.activities || []); setSalesTasks(t.tasks || []);
+    } catch { setSalesActs([]); setSalesTasks([]); }
+  }
+  useEffect(() => {
+    if (customerKey) loadSales(customerKey);
+    else { setSalesActs([]); setSalesTasks([]); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerKey]);
+
+  async function addNote() {
+    if (!customerKey || !nBody.trim()) return;
+    setSalesBusy(true);
+    try {
+      await createSalesActivity({ customer_key: customerKey, type: nType, body: nBody.trim(), next_action_date: nDate || undefined });
+      setNBody(''); setNDate('');
+      await loadSales(customerKey);
+    } catch (e) { setErr((e as Error).message); } finally { setSalesBusy(false); }
+  }
+  async function doFollowupDone(id: number) {
+    try { await patchSalesActivity(id, { next_action_done: true }); if (customerKey) await loadSales(customerKey); } catch { /* ignore */ }
+  }
+  async function doTaskDone(id: number) {
+    try { await patchSalesTask(id, { status: 'done' }); if (customerKey) await loadSales(customerKey); } catch { /* ignore */ }
+  }
+  const openTasks = salesTasks.filter(t => t.status === 'open');
 
   const jobs = data?.jobs ?? [];
   const active = jobs.filter(j => !isHistory(j));
@@ -180,6 +222,71 @@ export default function Customer360Page() {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Sales notes & tasks */}
+            <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 14, padding: 16, marginBottom: 16 }}>
+              <div style={{ fontWeight: 800, fontSize: 14, color: '#0f172a', marginBottom: 10 }}>📝 Sales notes & tasks</div>
+              {/* composer */}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                <select value={nType} onChange={e => setNType(e.target.value)} style={{ ...sinp, width: 130 }}>
+                  <option value="note">Note</option><option value="call">Call</option>
+                  <option value="meeting">Meeting</option><option value="site_visit">Site visit</option>
+                  <option value="email">Email</option>
+                </select>
+                <textarea value={nBody} onChange={e => setNBody(e.target.value)} rows={2} placeholder="Add a sales note…"
+                  style={{ ...sinp, flex: 1, minWidth: 220, resize: 'vertical' }} />
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: '#6b7280' }}>Followup</span>
+                <input type="date" value={nDate} onChange={e => setNDate(e.target.value)} style={{ ...sinp, width: 160 }} />
+                <button onClick={addNote} disabled={salesBusy || !nBody.trim()}
+                  style={{ marginLeft: 'auto', padding: '9px 18px', borderRadius: 9, border: 'none', background: (salesBusy || !nBody.trim()) ? '#94a3b8' : NAVY, color: '#fff', fontWeight: 800, fontSize: 14, cursor: (salesBusy || !nBody.trim()) ? 'default' : 'pointer' }}>
+                  {salesBusy ? 'Saving…' : 'Add note'}
+                </button>
+              </div>
+
+              {openTasks.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#6b7280', marginBottom: 4 }}>Open tasks</div>
+                  {openTasks.map(t => (
+                    <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px solid #f1f5f9' }}>
+                      <span style={{ flex: 1, fontSize: 13, color: '#111827' }}>
+                        {t.title}{t.assignee ? ` · ${t.assignee}` : ''}{t.due_date ? ` · due ${pretty(t.due_date)}` : ''}
+                      </span>
+                      <button onClick={() => doTaskDone(t.id)} style={{ ...pill('#dcfce7', '#15803d'), border: 'none', cursor: 'pointer' }}>✓ Done</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ marginTop: 14 }}>
+                {salesActs.length === 0 && <div style={{ color: '#9ca3af', fontSize: 13 }}>No sales notes yet — add the first above.</div>}
+                {salesActs.map(a => (
+                  <div key={a.id} style={{ padding: '8px 0', borderTop: '1px solid #f1f5f9' }}>
+                    <div style={{ fontSize: 13, color: '#111827', whiteSpace: 'pre-wrap' }}>
+                      <span style={{ ...pill('#eef2ff', '#3730a3'), marginRight: 6 }}>{a.type}</span>{a.body}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 3 }}>
+                      {pretty((a.occurred_at || a.created_at || '').slice(0, 10))}{a.created_by ? ` · ${a.created_by}` : ''}
+                      {a.next_action_date && !a.next_action_done && (
+                        <span style={{ ...pill('#fef3c7', '#92400e'), marginLeft: 6 }}>
+                          followup {pretty(a.next_action_date)}{' '}
+                          <button onClick={() => doFollowupDone(a.id)} style={{ background: 'none', border: 'none', color: '#92400e', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 11 }}>done</button>
+                        </span>
+                      )}
+                    </div>
+                    {a.attachments && a.attachments.length > 0 && (
+                      <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                        {a.attachments.map(att => att.url ? (att.kind === 'photo'
+                          ? <a key={att.id} href={att.url} target="_blank" rel="noreferrer"><img src={att.url} alt="" style={{ width: 54, height: 54, objectFit: 'cover', borderRadius: 6, border: '1px solid #e5e7eb' }} /></a>
+                          : <a key={att.id} href={att.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: NAVY }}>{att.kind === 'video' ? '🎥' : '📎'} {att.file_name || 'file'}</a>
+                        ) : null)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
