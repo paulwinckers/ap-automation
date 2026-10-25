@@ -18,6 +18,8 @@ from app.core.database import Database
 from app.models.vendor import VendorType
 
 logger = logging.getLogger(__name__)
+from app.api.auth import require_access
+
 router = APIRouter()
 
 _db = Database()
@@ -57,7 +59,7 @@ class VendorUpdateRequest(BaseModel):
     aspire_post:         Optional[bool] = None   # enable direct Aspire receipt creation for this vendor
 
 
-@router.post("/reset-aspire-post")
+@router.post("/reset-aspire-post", dependencies=[Depends(require_access)])
 async def reset_all_aspire_post(db: Database = Depends(get_db)):
     """Set aspire_post = false for every vendor. One-shot admin action."""
     await db._x("UPDATE vendor_rules SET aspire_post = 0")
@@ -74,7 +76,7 @@ class SwapForwardEmail(BaseModel):
     new_email: str
 
 
-@router.post("/swap-forward-email")
+@router.post("/swap-forward-email", dependencies=[Depends(require_access)])
 async def swap_forward_email(body: SwapForwardEmail, db: Database = Depends(get_db)):
     """Bulk-swap a forwarding email across all vendor rules (case-insensitive).
     Updates both forward_to and job_cost_forward_to. Handy when a person leaves."""
@@ -127,7 +129,7 @@ async def gl_lookup(vendor_name: str, db: Database = Depends(get_db)):
     }
 
 
-@router.get("/")
+@router.get("/", dependencies=[Depends(require_access)])
 async def list_vendors(db: Database = Depends(get_db)):
     vendors = await db.get_all_vendor_rules()
     return {
@@ -136,7 +138,7 @@ async def list_vendors(db: Database = Depends(get_db)):
     }
 
 
-@router.post("/")
+@router.post("/", dependencies=[Depends(require_access)])
 async def create_vendor(body: VendorCreateRequest, db: Database = Depends(get_db)):
     # Check for duplicate
     existing = await db.get_vendor_rule_by_name(body.vendor_name)
@@ -180,7 +182,7 @@ async def gl_name_lookup(account: str = Query(...)):
         return {"found": False, "gl_name": None}
 
 
-@router.get("/{vendor_id}")
+@router.get("/{vendor_id}", dependencies=[Depends(require_access)])
 async def get_vendor(vendor_id: int, db: Database = Depends(get_db)):
     vendors = await db.get_all_vendor_rules()
     vendor = next((v for v in vendors if v.id == vendor_id), None)
@@ -189,7 +191,7 @@ async def get_vendor(vendor_id: int, db: Database = Depends(get_db)):
     return vendor.model_dump()
 
 
-@router.put("/{vendor_id}")
+@router.put("/{vendor_id}", dependencies=[Depends(require_access)])
 async def update_vendor(
     vendor_id: int,
     body:      VendorUpdateRequest,
@@ -209,7 +211,7 @@ async def update_vendor(
     return {"id": vendor_id, "message": "Vendor rule updated"}
 
 
-@router.delete("/{vendor_id}")
+@router.delete("/{vendor_id}", dependencies=[Depends(require_access)])
 async def deactivate_vendor(vendor_id: int, db: Database = Depends(get_db)):
     """Soft delete — sets active=0 rather than removing the record."""
     await db.update_vendor_rule(vendor_id, {"active": 0})

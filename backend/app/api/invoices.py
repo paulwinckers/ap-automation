@@ -30,6 +30,8 @@ from app.services.r2 import upload_invoice_pdf, get_file_bytes
 from app.services.routing import RoutingOutcome, route_invoice, _route_to_qbo_purchase
 
 logger = logging.getLogger(__name__)
+from app.api.auth import require_access
+
 router = APIRouter()
 
 # ── Shared service instances ──────────────────────────────────────────────────
@@ -323,12 +325,12 @@ async def validate_po_endpoint(
     }
 
 
-@router.get("/counts")
+@router.get("/counts", dependencies=[Depends(require_access)])
 async def get_counts(db: Database = Depends(get_db)):
     return await db.get_queue_counts()
 
 
-@router.get("/debug-receipt")
+@router.get("/debug-receipt", dependencies=[Depends(require_access)])
 async def debug_receipt(po_number: str = Query(...)):
     """
     Debug endpoint — returns raw Aspire Receipt data for a PO number.
@@ -372,7 +374,7 @@ async def debug_receipt(po_number: str = Query(...)):
     return results
 
 
-@router.get("/debug-receipt-post")
+@router.get("/debug-receipt-post", dependencies=[Depends(require_access)])
 async def debug_receipt_post(po_number: str = Query(...)):
     """
     Debug endpoint — shows the exact POST body that would be sent to Aspire
@@ -422,7 +424,7 @@ async def debug_receipt_post(po_number: str = Query(...)):
     return {"receipt_found": receipt, "post_body": body}
 
 
-@router.post("/debug-aspire-post")
+@router.post("/debug-aspire-post", dependencies=[Depends(require_access)])
 async def debug_aspire_post(po_number: str = Query(...)):
     """
     Debug endpoint — actually fires the POST/PUT to Aspire and returns
@@ -600,7 +602,7 @@ async def debug_aspire_post(po_number: str = Query(...)):
     return {"receipt_id": receipt["ReceiptID"], "post_body_sent": body, "results": results}
 
 
-@router.get("/debug-attachment")
+@router.get("/debug-attachment", dependencies=[Depends(require_access)])
 async def debug_attachment(ticket_id: int = Query(...), type_id: int = Query(1), object_code: str = Query("WorkTicket")):
     """
     Debug endpoint — tries to upload a tiny test attachment to a WorkTicket.
@@ -646,7 +648,7 @@ async def debug_attachment(ticket_id: int = Query(...), type_id: int = Query(1),
         return {"success": False, "error": str(e)}
 
 
-@router.get("/debug-issue")
+@router.get("/debug-issue", dependencies=[Depends(require_access)])
 async def debug_issue(ticket_id: int = Query(...)):
     """
     Debug endpoint — tries to POST an Issue to a WorkTicket and returns the raw Aspire response.
@@ -688,7 +690,7 @@ async def debug_issue(ticket_id: int = Query(...)):
         return {"success": False, "error": str(e), "sample_issues": sample}
 
 
-@router.get("/feed")
+@router.get("/feed", dependencies=[Depends(require_access)])
 async def get_invoice_feed(
     limit: int           = Query(500, le=5000),
     since: Optional[str] = Query(None, description="ISO date lower bound, e.g. 2026-05-01"),
@@ -704,7 +706,7 @@ async def get_invoice_feed(
     return {"entries": entries}
 
 
-@router.get("/archived")
+@router.get("/archived", dependencies=[Depends(require_access)])
 async def get_archived_feed(
     limit: int           = Query(500, le=5000),
     since: Optional[str] = Query(None),
@@ -716,7 +718,7 @@ async def get_archived_feed(
     return {"entries": entries}
 
 
-@router.get("/audit")
+@router.get("/audit", dependencies=[Depends(require_access)])
 async def get_audit_log(
     limit: int      = Query(100, le=500),
     db:    Database = Depends(get_db),
@@ -725,7 +727,7 @@ async def get_audit_log(
     return {"entries": entries}
 
 
-@router.get("/")
+@router.get("/", dependencies=[Depends(require_access)])
 async def list_invoices(
     status:      Optional[str] = Query(None),
     destination: Optional[str] = Query(None),
@@ -742,7 +744,7 @@ async def list_invoices(
     return {"invoices": invoices, "count": len(invoices)}
 
 
-@router.get("/{invoice_id}")
+@router.get("/{invoice_id}", dependencies=[Depends(require_access)])
 async def get_invoice(invoice_id: int, db: Database = Depends(get_db)):
     invoice = await db.get_invoice(invoice_id)
     if not invoice:
@@ -750,7 +752,7 @@ async def get_invoice(invoice_id: int, db: Database = Depends(get_db)):
     return invoice
 
 
-@router.get("/{invoice_id}/pdf")
+@router.get("/{invoice_id}/pdf", dependencies=[Depends(require_access)])
 async def get_invoice_pdf_url(invoice_id: int, db: Database = Depends(get_db)):
     """Return a short-lived URL for the invoice PDF.
     Tries R2 first; falls back to QBO's TempDownloadUri if no R2 key stored."""
@@ -778,7 +780,7 @@ async def get_invoice_pdf_url(invoice_id: int, db: Database = Depends(get_db)):
     raise HTTPException(status_code=404, detail="No PDF available for this invoice")
 
 
-@router.post("/{invoice_id}/override")
+@router.post("/{invoice_id}/override", dependencies=[Depends(require_access)])
 async def apply_po_override(
     invoice_id: int,
     body:       POOverrideRequest,
@@ -830,7 +832,7 @@ async def apply_po_override(
     return {"invoice_id": invoice_id, "po_number": body.po_number, "outcome": outcome, "message": _outcome_message(outcome)}
 
 
-@router.post("/{invoice_id}/overhead")
+@router.post("/{invoice_id}/overhead", dependencies=[Depends(require_access)])
 async def mark_as_overhead(
     invoice_id: int,
     body:       OverheadRequest,
@@ -913,7 +915,7 @@ async def mark_as_overhead(
         raise HTTPException(status_code=500, detail=f"QBO posting failed: {e}")
 
 
-@router.post("/{invoice_id}/card-purchase")
+@router.post("/{invoice_id}/card-purchase", dependencies=[Depends(require_access)])
 async def mark_as_card_purchase(
     invoice_id: int,
     body:       CardPurchaseRequest,
@@ -1005,14 +1007,14 @@ async def mark_as_card_purchase(
     raise HTTPException(status_code=500, detail=f"QBO posting failed: {fresh.get('error_message') or 'unknown error'}")
 
 
-@router.post("/archive-unknown")
+@router.post("/archive-unknown", dependencies=[Depends(require_access)])
 async def archive_unknown_invoices(db: Database = Depends(get_db)):
     """Bulk archive all invoices with no vendor name (junk records)."""
     count = await db.archive_unknown_invoices()
     return {"archived": count}
 
 
-@router.post("/{invoice_id}/archive")
+@router.post("/{invoice_id}/archive", dependencies=[Depends(require_access)])
 async def archive_invoice(invoice_id: int, db: Database = Depends(get_db)):
     """Archive an invoice — hides it from the main feed."""
     row = await db.get_invoice(invoice_id)
@@ -1023,7 +1025,7 @@ async def archive_invoice(invoice_id: int, db: Database = Depends(get_db)):
     return {"invoice_id": invoice_id, "archived": True}
 
 
-@router.post("/{invoice_id}/unarchive")
+@router.post("/{invoice_id}/unarchive", dependencies=[Depends(require_access)])
 async def unarchive_invoice(invoice_id: int, db: Database = Depends(get_db)):
     """Restore an archived invoice to the main feed."""
     row = await db.get_invoice(invoice_id)
@@ -1034,7 +1036,7 @@ async def unarchive_invoice(invoice_id: int, db: Database = Depends(get_db)):
     return {"invoice_id": invoice_id, "archived": False}
 
 
-@router.post("/backfill-qbo-amounts")
+@router.post("/backfill-qbo-amounts", dependencies=[Depends(require_access)])
 async def backfill_qbo_amounts(db: Database = Depends(get_db)):
     """
     Fetch TotalAmt from QBO for every invoice missing qbo_amount:
@@ -1085,7 +1087,7 @@ async def backfill_qbo_amounts(db: Database = Depends(get_db)):
     return {"updated": results["updated"], "failed": results["failed"], "total": len(rows)}
 
 
-@router.post("/{invoice_id}/sync-qbo-amount")
+@router.post("/{invoice_id}/sync-qbo-amount", dependencies=[Depends(require_access)])
 async def sync_qbo_amount(invoice_id: int, db: Database = Depends(get_db)):
     """
     Re-fetch TotalAmt from QBO for a single invoice.
@@ -1117,7 +1119,7 @@ async def sync_qbo_amount(invoice_id: int, db: Database = Depends(get_db)):
     raise HTTPException(status_code=400, detail="Invoice has no QBO bill ID and no invoice number to search by")
 
 
-@router.delete("/{invoice_id}")
+@router.delete("/{invoice_id}", dependencies=[Depends(require_access)])
 async def delete_invoice(invoice_id: int, db: Database = Depends(get_db)):
     """Delete an invoice and its audit log entries."""
     deleted = await db.delete_invoice(invoice_id)
@@ -1134,7 +1136,7 @@ class VendorCorrection(BaseModel):
 class DateCorrection(BaseModel):
     invoice_date: str  # YYYY-MM-DD
 
-@router.patch("/{invoice_id}/vendor")
+@router.patch("/{invoice_id}/vendor", dependencies=[Depends(require_access)])
 async def correct_vendor(invoice_id: int, body: VendorCorrection, db: Database = Depends(get_db)):
     """Correct the vendor name on a queued/error invoice and re-queue for retry."""
     row = await db.get_invoice(invoice_id)
@@ -1152,7 +1154,7 @@ async def correct_vendor(invoice_id: int, body: VendorCorrection, db: Database =
     await db.audit(invoice_id, "corrected", "dashboard", {"field": "vendor_name", "new_value": vendor_name})
     return {"invoice_id": invoice_id, "vendor_name": vendor_name}
 
-@router.patch("/{invoice_id}/date")
+@router.patch("/{invoice_id}/date", dependencies=[Depends(require_access)])
 async def correct_date(invoice_id: int, body: DateCorrection, db: Database = Depends(get_db)):
     """Correct the invoice date on a queued/error invoice and re-queue for retry."""
     row = await db.get_invoice(invoice_id)
@@ -1171,7 +1173,7 @@ async def correct_date(invoice_id: int, body: DateCorrection, db: Database = Dep
     return {"invoice_id": invoice_id, "invoice_date": invoice_date}
 
 
-@router.post("/{invoice_id}/retry")
+@router.post("/{invoice_id}/retry", dependencies=[Depends(require_access)])
 async def retry_invoice(invoice_id: int, db: Database = Depends(get_db)):
     """Retry a failed invoice."""
     row = await db.get_invoice(invoice_id)
