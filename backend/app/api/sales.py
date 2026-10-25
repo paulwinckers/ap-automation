@@ -22,13 +22,16 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
+from app.core.config import settings
 from app.core.database import Database
 from app.services import r2
+from app.services.aspire import AspireClient
 from app.api.auth import require_access
 from app.api.construction_plan import get_db
 
 router = APIRouter(prefix="/sales", tags=["sales"])
 logger = logging.getLogger(__name__)
+_aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)
 
 _TABLES = ("sales_activities", "sales_tasks", "sales_task_updates", "sales_attachments")
 _ACTIVITY_TYPES = ("note", "call", "meeting", "email", "site_visit")
@@ -294,3 +297,93 @@ async def upload_attachment(parent_type: str, parent_id: int, file: UploadFile =
     att = rows[0] if rows else {}
     att["url"] = url
     return {"ok": True, "attachment": att}
+
+
+# ── Deletes (for corrections / cleanup) ──────────────────────────────────────────
+
+@router.delete("/activity/{activity_id}", dependencies=[Depends(require_access)])
+async def delete_activity(activity_id: int, db: Database = Depends(get_db)):
+    await db._x("DELETE FROM sales_attachments WHERE parent_type = 'activity' AND parent_id = ?", [activity_id])
+    await db._x("DELETE FROM sales_activities WHERE id = ?", [activity_id])
+    return {"ok": True, "deleted": activity_id}
+
+
+@router.delete("/task/{task_id}", dependencies=[Depends(require_access)])
+async def delete_task(task_id: int, db: Database = Depends(get_db)):
+    await db._x("DELETE FROM sales_task_updates WHERE task_id = ?", [task_id])
+    await db._x("DELETE FROM sales_attachments WHERE parent_type = 'task' AND parent_id = ?", [task_id])
+    await db._x("DELETE FROM sales_tasks WHERE id = ?", [task_id])
+    return {"ok": True, "deleted": task_id}
+
+
+# ── Unified "due" worklist (open tasks + pending followups) ──────────────────────
+
+@router.get("/due", dependencies=[Depends(require_access)])
+async def due_items(assignee: Optional[str] = None, due_before: Optional[str] = None,
+                    db: Database = Depends(get_db)):
+    """What needs doing: open tasks + activities with an un-done followup, merged and sorted
+    by date. `assignee` matches a task's assignee or an activity's owner (created_by);
+    `due_before` (YYYY-MM-DD) limits to items due on/before that date. This is what the agent
+    prompts from (and it pairs with the CX action-review for a single morning worklist)."""
+    a_l = assignee.lower() if assignee else None
+    items = []
+    for t in await db._q("SELECT * FROM sales_tasks WHERE status = 'open'", []):
+        if a_l and (t.get("assignee") or "").lower() != a_l:
+            continue
+        if due_before and (t.get("due_date") or "9999-99-99") > due_before:
+            continue
+        items.append({"kind": "task", "id": t["id"], "title": t.get("title"),
+                      "customer_key": t.get("customer_key"), "who": t.get("assignee"),
+                      "due_date": t.get("due_date"), "opportunity_id": t.get("opportunity_id")})
+    for a in await db._q(
+            "SELECT * FROM sales_activities WHERE next_action_done = 0 AND next_action_date IS NOT NULL", []):
+        if a_l and (a.get("created_by") or "").lower() != a_l:
+            continue
+        if due_before and (a.get("next_action_date") or "9999-99-99") > due_before:
+            continue
+        items.append({"kind": "followup", "id": a["id"],
+                      "title": a.get("next_action_note") or (a.get("body") or "")[:60],
+                      "customer_key": a.get("customer_key"), "who": a.get("created_by"),
+                      "due_date": a.get("next_action_date"), "activity_type": a.get("type")})
+    items.sort(key=lambda x: (x.get("due_date") or "9999-99-99"))
+    return {"count": len(items), "items": items}
+
+
+# ── Fan-out: create an Aspire opportunity from a site visit (GATED — prod write) ──
+
+class OppIn(BaseModel):
+    opportunity_name: str
+    opportunity_type: str               # Aspire-required (e.g. 'Project'); confirm valid values on first use
+    property_id:   Optional[int] = None
+    division_id:   Optional[int] = None
+    sales_rep_id:  Optional[int] = None
+    start_date:    Optional[str] = None
+    activity_id:   Optional[int] = None  # link the created opp back to the site-visit activity
+    confirmed:     bool = False
+    extra:         Optional[dict] = None  # passthrough for other Aspire Opportunity fields
+
+
+@router.post("/opportunity")
+async def create_opportunity(body: OppIn, user: dict = Depends(require_access), db: Database = Depends(get_db)):
+    """Create a real Aspire Opportunity (header) from a site visit. IRREVERSIBLE — Aspire has
+    no opportunity delete via API — so it only runs with confirmed=true (set after the user
+    approves the details). Estimate lines stay read-only; the visit's notes/photos are the
+    estimator's brief. Links the new opportunity_id back onto the activity."""
+    if not body.confirmed:
+        return {"ok": False, "error": "Not created. This makes a permanent Aspire opportunity — set confirmed=true only after the user approves name/type/property/division."}
+    payload = {"OpportunityName": body.opportunity_name, "OpportunityType": body.opportunity_type}
+    if body.property_id:  payload["PropertyID"] = body.property_id
+    if body.division_id:  payload["DivisionID"] = body.division_id
+    if body.sales_rep_id: payload["SalesRepID"] = body.sales_rep_id
+    if body.start_date:   payload["StartDate"] = body.start_date
+    if body.extra:        payload.update(body.extra)
+    try:
+        res = await _aspire.create_opportunity(payload)
+    except Exception as e:
+        logger.error(f"Aspire opportunity create failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Aspire opportunity create failed: {e}")
+    opp_id = res.get("OpportunityID") if isinstance(res, dict) else None
+    if body.activity_id and opp_id:
+        await db._x("UPDATE sales_activities SET opportunity_id = ?, updated_at = datetime('now') WHERE id = ?",
+                    [opp_id, body.activity_id])
+    return {"ok": True, "opportunity_id": opp_id, "aspire_response": res}

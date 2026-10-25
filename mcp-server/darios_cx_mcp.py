@@ -48,6 +48,13 @@ async def _post(path: str, body: dict):
         return r.json()
 
 
+async def _patch(path: str, body: dict):
+    async with httpx.AsyncClient(timeout=TIMEOUT) as c:
+        r = await c.patch(f"{API}{path}", json=body, headers=_headers())
+        r.raise_for_status()
+        return r.json()
+
+
 # ── Read tools (safe) ──────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -93,6 +100,98 @@ async def get_invoices(opportunity_id: int) -> dict:
     paid_count). Pair with get_work_tickets for a full 'actual vs budget vs billed'
     picture of a job."""
     return await _get(f"/customer/opportunity/{opportunity_id}/invoices")
+
+
+# ── Sales activity tools ─────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def log_sales_activity(customer_key: str, body: str, type: str = "note",
+                             subject: Optional[str] = None, opportunity_id: Optional[int] = None,
+                             next_action_date: Optional[str] = None, next_action_note: Optional[str] = None,
+                             created_by: Optional[str] = None) -> dict:
+    """Log a sales activity for a customer — a conversation note, call, meeting, email, or
+    SITE VISIT. `customer_key` is 'company:{id}' | 'contact:{id}' (from search_customers;
+    works for a brand-new lead too). `type`: note|call|meeting|email|site_visit. Set
+    next_action_date (YYYY-MM-DD) + next_action_note to schedule a followup. `created_by` =
+    the salesperson's name. Returns the created activity (note its id to attach photos or
+    spawn tasks). Photos/videos are added from the field app, not here."""
+    return await _post("/sales/activity", {
+        "customer_key": customer_key, "type": type, "subject": subject, "body": body,
+        "opportunity_id": opportunity_id, "next_action_date": next_action_date,
+        "next_action_note": next_action_note, "created_by": created_by})
+
+
+@mcp.tool()
+async def list_sales_activities(customer_key: str) -> dict:
+    """A customer's sales timeline (notes/calls/visits/emails), newest first, with attachments."""
+    return await _get(f"/sales/activities?customer_key={customer_key}")
+
+
+@mcp.tool()
+async def create_sales_task(title: str, customer_key: Optional[str] = None, assignee: Optional[str] = None,
+                            due_date: Optional[str] = None, detail: Optional[str] = None,
+                            activity_id: Optional[int] = None, opportunity_id: Optional[int] = None,
+                            created_by: Optional[str] = None) -> dict:
+    """Create a task for a coworker (e.g. from a site visit: 'have Dustin verify the grade').
+    `assignee` = who does it, `due_date` YYYY-MM-DD, `activity_id` links it to the visit that
+    spawned it. Tasks are living records — append progress with add_task_update and attach
+    photos from the app. Returns the task (note its id)."""
+    return await _post("/sales/task", {
+        "title": title, "customer_key": customer_key, "assignee": assignee, "due_date": due_date,
+        "detail": detail, "activity_id": activity_id, "opportunity_id": opportunity_id, "created_by": created_by})
+
+
+@mcp.tool()
+async def add_task_update(task_id: int, body: str, author: Optional[str] = None) -> dict:
+    """Append a progress note to a task's thread (the living log)."""
+    return await _post(f"/sales/task/{task_id}/update", {"body": body, "author": author})
+
+
+@mcp.tool()
+async def update_task(task_id: int, status: Optional[str] = None, assignee: Optional[str] = None,
+                      due_date: Optional[str] = None, title: Optional[str] = None,
+                      detail: Optional[str] = None) -> dict:
+    """Edit a task — reassign, change the due date, or set status to 'done' (or 'cancelled').
+    Marking done stamps done_at and drops it off the due worklist."""
+    patch = {k: v for k, v in {"status": status, "assignee": assignee, "due_date": due_date,
+                               "title": title, "detail": detail}.items() if v is not None}
+    return await _patch(f"/sales/task/{task_id}", patch)
+
+
+@mcp.tool()
+async def complete_followup(activity_id: int) -> dict:
+    """Mark an activity's followup done so it drops off the due list."""
+    return await _patch(f"/sales/activity/{activity_id}", {"next_action_done": True})
+
+
+@mcp.tool()
+async def list_due_items(assignee: Optional[str] = None, due_before: Optional[str] = None) -> dict:
+    """What's due on the sales side: open tasks + pending followups, merged and sorted by
+    date. Filter by `assignee` (a coworker, or a rep's own followups) and `due_before`
+    (YYYY-MM-DD, e.g. today for 'due now'). Use this to prompt 'here's what's due'."""
+    qs = []
+    if assignee:
+        qs.append(f"assignee={assignee}")
+    if due_before:
+        qs.append(f"due_before={due_before}")
+    return await _get("/sales/due" + ("?" + "&".join(qs) if qs else ""))
+
+
+@mcp.tool()
+async def create_sales_opportunity(opportunity_name: str, opportunity_type: str, confirmed: bool,
+                                   property_id: Optional[int] = None, division_id: Optional[int] = None,
+                                   sales_rep_id: Optional[int] = None, start_date: Optional[str] = None,
+                                   activity_id: Optional[int] = None) -> dict:
+    """Create a real Aspire Opportunity from a site visit (the sales → construction handoff).
+    IRREVERSIBLE — Aspire can't delete opportunities via API — so only call with confirmed=true
+    AFTER the user approves the name, type, property and division. `opportunity_type` is an
+    Aspire value (confirm the valid options with the user on first use). `activity_id` links
+    the new opportunity back to the visit. Estimate lines are built in Aspire by the estimator;
+    this creates the opportunity header only."""
+    return await _post("/sales/opportunity", {
+        "opportunity_name": opportunity_name, "opportunity_type": opportunity_type, "confirmed": confirmed,
+        "property_id": property_id, "division_id": division_id, "sales_rep_id": sales_rep_id,
+        "start_date": start_date, "activity_id": activity_id})
 
 
 # ── Draft (no side effects) ──────────────────────────────────────────────────────
