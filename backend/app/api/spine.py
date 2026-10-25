@@ -233,26 +233,33 @@ async def list_customers(q: Optional[str] = None, kind: Optional[str] = None,
 
 @router.get("/customer/{customer_key}", dependencies=[Depends(require_access)])
 async def get_customer(customer_key: str, db: Database = Depends(get_db)):
-    """One customer's full picture from the cache (no Aspire call): the customer, their
-    properties, and every cached job (full payload). `customer_key` = 'company:{id}' or
-    'contact:{id}'."""
+    """One customer's full picture, keyed by customer_key and served from local data:
+    the customer, their properties, every cached job, and ALL their portal activity
+    (comms, stage/lead, prep, schedule, PHA) rolled up across every one of their jobs,
+    plus a merged activity timeline. This is how the opportunity-keyed D1 activity rolls
+    up to the CUSTOMER — via the spine's opportunity_id → customer_key mapping, no schema
+    change. `customer_key` = 'company:{id}' | 'contact:{id}'."""
+    # Reuse the 360's cache job-reshape + D1 activity join (opportunity-keyed tables → jobs).
+    from app.api.customer_dashboard import _spine_jobs_for, _portal_activity_and_jobs
+
     cust = await db._q(
         "SELECT customer_key, kind, aspire_id, name FROM spine_customers WHERE customer_key = ?", [customer_key])
     if not cust:
         raise HTTPException(status_code=404, detail="Customer not found in the spine cache")
-    job_rows = await db._q(
-        "SELECT payload FROM spine_jobs WHERE customer_key = ? ORDER BY won_date DESC", [customer_key])
-    jobs = []
-    for r in job_rows:
-        try:
-            jobs.append(json.loads(r["payload"]))
-        except Exception:
-            pass
-    prop_names = {p["property_id"]: p.get("name") for p in await db._q("SELECT property_id, name FROM spine_properties", [])}
+    opps = await _spine_jobs_for(db, customer_key)                 # cached jobs, Aspire-opp shape
+    jobs, timeline, comms_total = await _portal_activity_and_jobs(opps, db)  # roll activity up by customer
+    prop_names = {p["property_id"]: p.get("name")
+                  for p in await db._q("SELECT property_id, name FROM spine_properties", [])}
     pids = sorted({j.get("property_id") for j in jobs if j.get("property_id")})
     properties = [{"property_id": pid, "name": prop_names.get(pid)} for pid in pids]
-    return {"customer": cust[0], "properties": properties, "jobs": jobs,
-            "job_count": len(jobs), "source": "spine-cache"}
+    return {
+        "customer": cust[0],
+        "properties": properties,
+        "jobs": jobs,
+        "activity_timeline": timeline,
+        "counts": {"jobs": len(jobs), "properties": len(properties), "comms": comms_total},
+        "source": "spine-cache",
+    }
 
 
 # ── Nightly refresh (gentle: one run/day, off-hours, never on boot) ──────────────
