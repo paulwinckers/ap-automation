@@ -548,6 +548,18 @@ async def probe_opportunity_service_fields(opportunity_id: Optional[int] = Query
     return {"fields": sorted(records[0].keys()), "division_fields": div_fields, "sample": records[0]}
 
 
+@router.get("/work-ticket-times/probe")
+async def probe_wtt_fields():
+    """Return all fields present on a sample WorkTicketTime (to see if division rides on the entry)."""
+    _check_credentials()
+    res = await _aspire._get("WorkTicketTimes", {"$top": "3", "$orderby": "WorkTicketTimeID desc"})
+    records = _aspire._extract_list(res)
+    if not records:
+        return {"error": "no records"}
+    div_fields = {k: v for k, v in records[0].items() if "div" in k.lower() or "route" in k.lower() or "service" in k.lower()}
+    return {"fields": sorted(records[0].keys()), "division_route_service_fields": div_fields, "sample": records[0]}
+
+
 @router.get("/debug-property")
 async def debug_property(property_id: int = Query(...)):
     """Debug: fetch a single Property record to see available address fields."""
