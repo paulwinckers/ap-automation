@@ -566,17 +566,20 @@ async def save_drive_ticket(body: DriveTicketBody, db: Database = Depends(get_db
     return {"ok": True}
 
 
-# ── Billable-hours-by-department rollup (approved Aspire labor) ───────────────
+# ── Billable-hours-by-department rollup (Aspire labor by route division) ──────
 def _last_week_range() -> tuple[str, str]:
-    """Previous Mon–Sun (date-only; fine for a weekly rollup)."""
+    """Previous Sun–Sat (date-only; matches how Aspire groups the work week)."""
     today = datetime.now(timezone.utc).date()
-    last_monday = today - timedelta(days=today.weekday() + 7)
-    return last_monday.isoformat(), (last_monday + timedelta(days=6)).isoformat()
+    # weekday(): Mon=0 .. Sun=6. Days since the most recent Sunday = (weekday+1) % 7.
+    days_since_sunday = (today.weekday() + 1) % 7
+    this_sunday = today - timedelta(days=days_since_sunday)
+    last_sunday = this_sunday - timedelta(days=7)
+    return last_sunday.isoformat(), (last_sunday + timedelta(days=6)).isoformat()
 
 
-async def _fetch_approved_wtt(start: str, end: str, approved_only: bool = True) -> list[dict]:
-    """All WorkTicketTimes dated in [start,end] (approved only by default), keyset-paginated by
-    WorkTicketTimeID past Aspire's 1000-row cap."""
+async def _fetch_wtt(start: str, end: str, approved_only: bool = False) -> list[dict]:
+    """All WorkTicketTimes dated in [start,end], keyset-paginated past Aspire's 1000-row cap.
+    Division is derived from the entry's RouteID (not the opportunity), so RouteID is selected here."""
     base = (f"WorkTicketTimeDate ge {start}T00:00:00Z and WorkTicketTimeDate le {end}T23:59:59Z"
             + (" and ApprovedDateTime ne null" if approved_only else ""))
     out: list[dict] = []
@@ -585,7 +588,7 @@ async def _fetch_approved_wtt(start: str, end: str, approved_only: bool = True) 
         res = await _aspire._get("WorkTicketTimes", {
             "$filter": base + f" and WorkTicketTimeID gt {last_id}",
             "$orderby": "WorkTicketTimeID asc", "$top": "1000",
-            "$select": "WorkTicketTimeID,WorkTicketID,Hours,OTHours,WorkTicketTimeDate",
+            "$select": "WorkTicketTimeID,WorkTicketID,RouteID,Hours,OTHours,WorkTicketTimeDate,ApprovedDateTime",
         })
         rows = _aspire._extract_list(res)
         if not rows:
@@ -597,88 +600,67 @@ async def _fetch_approved_wtt(start: str, end: str, approved_only: bool = True) 
     return out
 
 
-async def _wt_division_map(db: Database, wt_ids: set[int]) -> dict[int, Optional[str]]:
-    """WorkTicketID → division. WT→OpportunityID via Aspire WorkTickets (chunked OR), then
-    OpportunityID→division via the spine cache, with an Aspire Opportunities fallback for misses.
-    Tickets whose opportunity has no division (drive / overhead) resolve to None → 'Indirect'."""
-    wt_list = [w for w in wt_ids if w]
-    wt_opp: dict[int, int] = {}
-    for i in range(0, len(wt_list), 20):
-        chunk = wt_list[i:i + 20]
-        flt = " or ".join(f"WorkTicketID eq {w}" for w in chunk)
-        try:
-            res = await _aspire._get("WorkTickets", {"$filter": flt, "$select": "WorkTicketID,OpportunityID", "$top": "1000"})
-            for r in _aspire._extract_list(res):
-                wt_opp[r.get("WorkTicketID")] = r.get("OpportunityID")
-        except Exception as e:
-            logger.warning(f"efficiency: WT→opp chunk failed: {e}")
+async def _route_division_map() -> dict[int, str]:
+    """RouteID → DivisionName. This is how Aspire's own time-entry grid assigns a division to each
+    time entry (the entry carries a RouteID; the route carries the division — e.g. an irrigation
+    route rolls up to Irrigation/Lighting even on a maintenance property)."""
+    out: dict[int, str] = {}
+    res = await _aspire._get("Routes", {"$select": "RouteID,RouteName,DivisionName", "$top": "1000"})
+    for r in _aspire._extract_list(res):
+        rid = r.get("RouteID")
+        if rid is not None:
+            out[rid] = (r.get("DivisionName") or "").strip()
+    return out
 
-    opp_ids = {o for o in wt_opp.values() if o}
-    opp_div: dict[int, Optional[str]] = {}
-    opp_list = list(opp_ids)
-    for i in range(0, len(opp_list), 90):
-        chunk = opp_list[i:i + 90]
-        ph = ",".join("?" for _ in chunk)
-        try:
-            for r in await db._q(f"SELECT opportunity_id, division FROM spine_jobs WHERE opportunity_id IN ({ph})", chunk):
-                if r.get("division"):
-                    opp_div[r["opportunity_id"]] = r["division"]
-        except Exception:
-            pass
-    missing = [o for o in opp_ids if o not in opp_div]
-    for i in range(0, len(missing), 20):
-        chunk = missing[i:i + 20]
-        flt = " or ".join(f"OpportunityID eq {o}" for o in chunk)
-        try:
-            res = await _aspire._get("Opportunities", {"$filter": flt, "$select": "OpportunityID,Division", "$top": "1000"})
-            for r in _aspire._extract_list(res):
-                opp_div[r.get("OpportunityID")] = r.get("Division") or None
-        except Exception as e:
-            logger.warning(f"efficiency: opp→division chunk failed: {e}")
 
-    return {wt: opp_div.get(opp) for wt, opp in wt_opp.items()}
+def _is_indirect_div(div: Optional[str]) -> bool:
+    """No division, or an overhead division (Aspire's is named 'Indirect/Overhead') → non-billable."""
+    if not div:
+        return True
+    d = div.lower()
+    return "indirect" in d or "overhead" in d
 
 
 @router.get("/efficiency", dependencies=[Depends(require_access)])
 async def time_efficiency(
-    start: Optional[str] = Query(None, description="YYYY-MM-DD inclusive; default = last week (Mon–Sun)"),
-    end:   Optional[str] = Query(None, description="YYYY-MM-DD inclusive"),
+    start:    Optional[str] = Query(None, description="YYYY-MM-DD inclusive; default = last week (Sun–Sat)"),
+    end:      Optional[str] = Query(None, description="YYYY-MM-DD inclusive"),
+    approved: bool          = Query(False, description="If true, count only approved entries"),
+    debug:    bool          = Query(False, description="Include per-route diagnostic breakdown"),
     db: Database = Depends(get_db),
 ):
-    """Billable hours by department from APPROVED Aspire crew labor (WorkTicketTimes with an
-    ApprovedDateTime) in the period. Each entry's hours roll up to its job's DIVISION (billable /
-    direct); time on tickets with no job division — drive / overhead — rolls up to 'Indirect'.
-    Returns by_department, direct vs indirect hours and a billable %. (Lunch/breaks follow Aspire's
-    own BreakTime handling; they are not separate line items here.)"""
+    """Labor hours by department from Aspire WorkTicketTimes in the period. Each entry's hours roll
+    up to its ROUTE's division (billable / direct); routes with no division or an overhead division
+    (drive / overhead) roll up to 'Indirect'. By default counts ALL entries (matching Aspire's
+    time-entry grid); pass approved=true to count only approved time."""
     if not start or not end:
         start, end = _last_week_range()
 
     try:
-        entries = await _fetch_approved_wtt(start, end, approved_only=True)
+        entries = await _fetch_wtt(start, end, approved_only=approved)
+        route_div = await _route_division_map()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire time fetch failed: {e}")
 
-    wt_div = await _wt_division_map(db, {e.get("WorkTicketID") for e in entries})
-
-    def _is_indirect(div: Optional[str]) -> bool:
-        # No job division, or an overhead division (Aspire's is named "Indirect/Overhead") → non-billable.
-        if not div:
-            return True
-        d = div.lower()
-        return "indirect" in d or "overhead" in d
-
     dept_hours: dict = defaultdict(float)
-    direct = indirect = ot = 0.0
+    direct = indirect = ot = approved_hrs = 0.0
+    route_breakdown: dict = defaultdict(lambda: {"hours": 0.0, "route_name_seen": None})
     for e in entries:
         h = e.get("Hours") or 0.0
         ot += e.get("OTHours") or 0.0
-        div = wt_div.get(e.get("WorkTicketID"))
-        if _is_indirect(div):
+        if e.get("ApprovedDateTime"):
+            approved_hrs += h
+        rid = e.get("RouteID")
+        div = route_div.get(rid)
+        if _is_indirect_div(div):
             dept_hours["Indirect"] += h
             indirect += h
         else:
             dept_hours[div] += h
             direct += h
+        if debug:
+            rb = route_breakdown[rid]
+            rb["hours"] += h
 
     total = direct + indirect
     rnd = lambda x: round(x, 1)
@@ -686,20 +668,27 @@ async def time_efficiency(
         [{"department": d, "hours": rnd(h), "billable": d != "Indirect"}
          for d, h in dept_hours.items()],
         key=lambda x: (not x["billable"], -x["hours"]))
-    return {
+    result = {
         "period": {"start": start, "end": end},
-        "source": "aspire-approved",
-        "approved_entries": len(entries),
+        "source": "aspire-all" if not approved else "aspire-approved",
+        "entries": len(entries),
         "total_hours": rnd(total),
         "direct_hours": rnd(direct),
         "indirect_hours": rnd(indirect),
         "ot_hours": rnd(ot),
+        "approved_hours": rnd(approved_hrs),
         "billable_pct": round(100 * direct / total, 1) if total else None,
         "by_department": by_department,
-        "note": ("Approved crew labor from Aspire WorkTicketTimes. Direct = hours on job tickets by "
-                 "division; Indirect = drive/overhead tickets with no job division. "
-                 "Unapproved time is excluded."),
+        "note": ("Crew labor from Aspire WorkTicketTimes, department = the time entry's route division. "
+                 "Direct = billable route divisions; Indirect = drive/overhead routes. "
+                 + ("All time entries counted." if not approved else "Approved entries only.")),
     }
+    if debug:
+        result["route_breakdown"] = sorted(
+            [{"route_id": rid, "division": route_div.get(rid), "hours": rnd(v["hours"])}
+             for rid, v in route_breakdown.items()],
+            key=lambda x: -x["hours"])
+    return result
 
 
 @router.post("/submit/{session_id}")
