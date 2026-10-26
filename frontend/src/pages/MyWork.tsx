@@ -138,7 +138,8 @@ export default function MyWork() {
     padding: '6px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' };
 
   return (
-    <div style={{ maxWidth: 780, margin: '0 auto', padding: '24px 16px' }}>
+    <div style={{ maxWidth: 780, margin: '0 auto', padding: '24px 16px',
+      paddingBottom: selectedItems.length > 0 ? 96 : 24 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
         <h1 style={{ fontSize: 22, fontWeight: 800, color: '#0f172a', margin: 0 }}>My Action Items</h1>
         <button onClick={load} style={{ ...btn, color: '#475569' }}>↻ Refresh</button>
@@ -209,9 +210,10 @@ export default function MyWork() {
 
       {/* Sticky bulk action bar */}
       {selectedItems.length > 0 && (
-        <div style={{ position: 'sticky', bottom: 0, marginTop: 16, padding: '12px 14px', background: '#0f172a',
+        <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 200,
+          width: 'min(720px, calc(100% - 32px))', padding: '12px 14px', background: '#0f172a',
           borderRadius: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-          boxShadow: '0 6px 24px rgba(0,0,0,0.18)' }}>
+          boxShadow: '0 6px 24px rgba(0,0,0,0.28)' }}>
           <span style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{selectedItems.length} selected</span>
           <div style={{ flex: 1 }} />
           {selCx.length > 0 && (
