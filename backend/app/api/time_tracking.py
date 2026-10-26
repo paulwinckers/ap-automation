@@ -735,6 +735,7 @@ async def efficiency_debug(
         for r in _aspire._extract_list(res):
             opp_div[r.get("OpportunityID")] = r.get("DivisionName")
 
+    stage_errors: dict = {}
     # OpportunityServiceID → (ServiceID, service display name)
     os_ids = list({s for s in wt_svcid.values() if s})
     os_serviceid: dict = {}
@@ -742,11 +743,14 @@ async def efficiency_debug(
     for i in range(0, len(os_ids), 20):
         chunk = os_ids[i:i + 20]
         flt = " or ".join(f"OpportunityServiceID eq {s}" for s in chunk)
-        res = await _aspire._get("OpportunityServices", {"$filter": flt, "$select": "OpportunityServiceID,ServiceID,ServiceNameAbr,DisplayName,ServiceName", "$top": "1000"})
-        for r in _aspire._extract_list(res):
-            sid = r.get("OpportunityServiceID")
-            os_serviceid[sid] = r.get("ServiceID")
-            os_name[sid] = r.get("ServiceNameAbr") or r.get("DisplayName") or r.get("ServiceName")
+        try:
+            res = await _aspire._get("OpportunityServices", {"$filter": flt, "$select": "OpportunityServiceID,ServiceID,ServiceNameAbr,DisplayName,ServiceName", "$top": "1000"})
+            for r in _aspire._extract_list(res):
+                sid = r.get("OpportunityServiceID")
+                os_serviceid[sid] = r.get("ServiceID")
+                os_name[sid] = r.get("ServiceNameAbr") or r.get("DisplayName") or r.get("ServiceName")
+        except Exception as ex:
+            stage_errors["opportunity_services"] = str(ex)[:300]
 
     # ServiceID → ServiceTypeName
     svc_ids = list({s for s in os_serviceid.values() if s})
@@ -754,11 +758,18 @@ async def efficiency_debug(
     for i in range(0, len(svc_ids), 20):
         chunk = svc_ids[i:i + 20]
         flt = " or ".join(f"ServiceID eq {s}" for s in chunk)
-        res = await _aspire._get("Services", {"$filter": flt, "$select": "ServiceID,ServiceTypeName,ServiceName", "$top": "1000"})
-        for r in _aspire._extract_list(res):
-            svc_type[r.get("ServiceID")] = r.get("ServiceTypeName")
+        try:
+            res = await _aspire._get("Services", {"$filter": flt, "$select": "ServiceID,ServiceTypeName,ServiceName", "$top": "1000"})
+            for r in _aspire._extract_list(res):
+                svc_type[r.get("ServiceID")] = r.get("ServiceTypeName")
+        except Exception as ex:
+            stage_errors["services"] = str(ex)[:300]
 
-    route_div = await _route_division_map()
+    try:
+        route_div = await _route_division_map()
+    except Exception as ex:
+        route_div = {}
+        stage_errors["routes"] = str(ex)[:300]
 
     by_opp_div: dict = defaultdict(float)
     by_svc_type: dict = defaultdict(float)
@@ -780,6 +791,7 @@ async def efficiency_debug(
         "total_hours": rnd(sum(wt_hours.values())),
         "by_opportunity_division": {k: rnd(v) for k, v in sorted(by_opp_div.items(), key=lambda x: -x[1])},
         "by_service_type": {k: rnd(v) for k, v in sorted(by_svc_type.items(), key=lambda x: -x[1])},
+        "stage_errors": stage_errors,
         "rows": sorted(rows, key=lambda x: -x["hours"]),
     }
 
