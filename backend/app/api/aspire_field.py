@@ -548,6 +548,18 @@ async def probe_opportunity_service_fields(opportunity_id: Optional[int] = Query
     return {"fields": sorted(records[0].keys()), "division_fields": div_fields, "sample": records[0]}
 
 
+@router.get("/services/probe")
+async def probe_services_fields():
+    """Return all fields on sample Services (catalog) records + their division fields."""
+    _check_credentials()
+    res = await _aspire._get("Services", {"$top": "5"})
+    records = _aspire._extract_list(res)
+    if not records:
+        return {"error": "no records"}
+    div = [{k: v for k, v in r.items() if "div" in k.lower()} for r in records]
+    return {"fields": sorted(records[0].keys()), "division_fields_per_record": div, "sample": records[0]}
+
+
 @router.get("/work-ticket-times/probe")
 async def probe_wtt_fields():
     """Return all fields present on a sample WorkTicketTime (to see if division rides on the entry)."""
