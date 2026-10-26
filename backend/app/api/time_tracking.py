@@ -573,36 +573,35 @@ async def _aspire_time_probe(start: Optional[str] = Query(None), end: Optional[s
     if not start or not end:
         start, end = _last_week_range()
     out: dict = {"range": [start, end]}
-    # WorkTicketTimes — try a date-filtered GET, fall back to unfiltered
-    for label, params in (
-        ("wtt_by_date", {"$filter": f"StartTime ge {start}T00:00:00Z and StartTime le {end}T23:59:59Z", "$top": "5"}),
-        ("wtt_plain", {"$top": "5"}),
-    ):
+    dfilter = f"WorkTicketTimeDate ge {start}T00:00:00Z and WorkTicketTimeDate le {end}T23:59:59Z"
+    # 1) approved-only filter syntax?
+    try:
+        res = await _aspire._get("WorkTicketTimes", {"$filter": dfilter + " and ApprovedDateTime ne null", "$top": "1000"})
+        rows = _aspire._extract_list(res)
+        appr_hours = round(sum((r.get("Hours") or 0) for r in rows), 1)
+        out["approved_week"] = {"ok": True, "count": len(rows), "total_hours": appr_hours}
+    except Exception as e:
+        out["approved_week"] = {"ok": False, "err": str(e)[:300]}
+    # 2) $expand the work ticket's opportunity in one call?
+    for label, exp in (("expand_wt", "WorkTicket($select=OpportunityID,OpportunityNumber)"),
+                       ("expand_wt_opp", "WorkTicket($expand=Opportunity($select=OpportunityID,Division,DivisionName))")):
         try:
-            res = await _aspire._get("WorkTicketTimes", params)
+            res = await _aspire._get("WorkTicketTimes", {"$filter": dfilter, "$top": "2", "$expand": exp})
             rows = _aspire._extract_list(res)
-            out[label] = {"ok": True, "count": len(rows), "keys": sorted(rows[0].keys()) if rows else [], "sample": rows[0] if rows else None}
+            out[label] = {"ok": True, "sample": rows[0] if rows else None}
             break
         except Exception as e:
-            out[label] = {"ok": False, "err": str(e)[:200]}
-    # ClockTimes GET?
+            out[label] = {"ok": False, "err": str(e)[:300]}
+    # 3) distinct work tickets in the week → how many opp lookups we'd need
     try:
-        res = await _aspire._get("ClockTimes", {"$top": "3"})
+        res = await _aspire._get("WorkTicketTimes", {"$filter": dfilter, "$top": "1000", "$select": "WorkTicketID,Hours,ApprovedDateTime"})
         rows = _aspire._extract_list(res)
-        out["clocktimes"] = {"ok": True, "count": len(rows), "keys": sorted(rows[0].keys()) if rows else []}
+        wt_ids = {r.get("WorkTicketID") for r in rows}
+        out["week_volume"] = {"entries": len(rows), "distinct_tickets": len(wt_ids),
+                              "approved": sum(1 for r in rows if r.get("ApprovedDateTime")),
+                              "unapproved": sum(1 for r in rows if not r.get("ApprovedDateTime"))}
     except Exception as e:
-        out["clocktimes"] = {"ok": False, "err": str(e)[:200]}
-    # WorkTicket — which fields carry division?
-    try:
-        res = await _aspire._get("WorkTickets", {"$top": "1"})
-        rows = _aspire._extract_list(res)
-        out["workticket_keys"] = sorted(rows[0].keys()) if rows else []
-    except Exception as e:
-        out["workticket_keys"] = f"ERR {str(e)[:200]}"
-    try:
-        out["drive_ticket_id"] = await _db.get_setting("drive_ticket_id")
-    except Exception as e:
-        out["drive_ticket_id"] = f"ERR {e}"
+        out["week_volume"] = {"err": str(e)[:300]}
     return out
 
 
