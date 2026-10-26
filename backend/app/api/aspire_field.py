@@ -533,45 +533,6 @@ async def probe_work_ticket_fields():
     return await _aspire.probe_work_ticket_fields()
 
 
-@router.get("/opportunity-services/probe")
-async def probe_opportunity_service_fields(opportunity_id: Optional[int] = Query(None)):
-    """Return all fields present on a sample OpportunityService (to locate the division field)."""
-    _check_credentials()
-    params = {"$top": "3"}
-    if opportunity_id:
-        params["$filter"] = f"OpportunityID eq {opportunity_id}"
-    res = await _aspire._get("OpportunityServices", params)
-    records = _aspire._extract_list(res)
-    if not records:
-        return {"error": "no records"}
-    div_fields = {k: v for k, v in records[0].items() if "div" in k.lower()}
-    return {"fields": sorted(records[0].keys()), "division_fields": div_fields, "sample": records[0]}
-
-
-@router.get("/services/probe")
-async def probe_services_fields():
-    """Return all fields on sample Services (catalog) records + their division fields."""
-    _check_credentials()
-    res = await _aspire._get("Services", {"$top": "5"})
-    records = _aspire._extract_list(res)
-    if not records:
-        return {"error": "no records"}
-    div = [{k: v for k, v in r.items() if "div" in k.lower()} for r in records]
-    return {"fields": sorted(records[0].keys()), "division_fields_per_record": div, "sample": records[0]}
-
-
-@router.get("/work-ticket-times/probe")
-async def probe_wtt_fields():
-    """Return all fields present on a sample WorkTicketTime (to see if division rides on the entry)."""
-    _check_credentials()
-    res = await _aspire._get("WorkTicketTimes", {"$top": "3", "$orderby": "WorkTicketTimeID desc"})
-    records = _aspire._extract_list(res)
-    if not records:
-        return {"error": "no records"}
-    div_fields = {k: v for k, v in records[0].items() if "div" in k.lower() or "route" in k.lower() or "service" in k.lower()}
-    return {"fields": sorted(records[0].keys()), "division_route_service_fields": div_fields, "sample": records[0]}
-
-
 @router.get("/debug-property")
 async def debug_property(property_id: int = Query(...)):
     """Debug: fetch a single Property record to see available address fields."""

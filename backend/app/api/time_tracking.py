@@ -600,24 +600,51 @@ async def _fetch_wtt(start: str, end: str, approved_only: bool = False) -> list[
     return out
 
 
-async def _route_division_map() -> dict[int, str]:
-    """RouteID → DivisionName. This is how Aspire's own time-entry grid assigns a division to each
-    time entry (the entry carries a RouteID; the route carries the division — e.g. an irrigation
-    route rolls up to Irrigation/Lighting even on a maintenance property)."""
-    out: dict[int, str] = {}
-    res = await _aspire._get("Routes", {"$select": "RouteID,RouteName,DivisionName", "$top": "1000"})
-    for r in _aspire._extract_list(res):
-        rid = r.get("RouteID")
-        if rid is not None:
-            out[rid] = (r.get("DivisionName") or "").strip()
-    return out
+async def _wt_servicetype_map(wt_ids: set[int]) -> dict[int, Optional[str]]:
+    """WorkTicketID → department (Aspire ServiceTypeName). This is the division Aspire's own
+    time-entry grid shows per line: it follows the SERVICE, not the opportunity or the route — so an
+    irrigation-blowout ticket on a commercial property counts as Irrigation & Lighting, and the
+    monthly drive/overhead ticket counts as Indirect/Overhead. Chain:
+    WorkTicketID → OpportunityServiceID → ServiceID → Services.ServiceTypeName."""
+    wt_list = [w for w in wt_ids if w]
+
+    # WT → OpportunityServiceID
+    wt_osid: dict[int, Optional[int]] = {}
+    for i in range(0, len(wt_list), 20):
+        chunk = wt_list[i:i + 20]
+        flt = "(" + " or ".join(f"WorkTicketID eq {w}" for w in chunk) + ")"
+        res = await _aspire._get("WorkTickets", {"$filter": flt, "$select": "WorkTicketID,OpportunityServiceID", "$top": "1000"})
+        for r in _aspire._extract_list(res):
+            wt_osid[r.get("WorkTicketID")] = r.get("OpportunityServiceID")
+
+    # OpportunityServiceID → ServiceID
+    os_ids = list({s for s in wt_osid.values() if s})
+    os_serviceid: dict[int, Optional[int]] = {}
+    for i in range(0, len(os_ids), 20):
+        chunk = os_ids[i:i + 20]
+        flt = "(" + " or ".join(f"OpportunityServiceID eq {s}" for s in chunk) + ")"
+        res = await _aspire._get("OpportunityServices", {"$filter": flt, "$select": "OpportunityServiceID,ServiceID", "$top": "1000"})
+        for r in _aspire._extract_list(res):
+            os_serviceid[r.get("OpportunityServiceID")] = r.get("ServiceID")
+
+    # ServiceID → ServiceTypeName
+    svc_ids = list({s for s in os_serviceid.values() if s})
+    svc_type: dict[int, Optional[str]] = {}
+    for i in range(0, len(svc_ids), 20):
+        chunk = svc_ids[i:i + 20]
+        flt = "(" + " or ".join(f"ServiceID eq {s}" for s in chunk) + ")"
+        res = await _aspire._get("Services", {"$filter": flt, "$select": "ServiceID,ServiceTypeName", "$top": "1000"})
+        for r in _aspire._extract_list(res):
+            svc_type[r.get("ServiceID")] = r.get("ServiceTypeName")
+
+    return {wt: svc_type.get(os_serviceid.get(wt_osid.get(wt))) for wt in wt_list}
 
 
-def _is_indirect_div(div: Optional[str]) -> bool:
-    """No division, or an overhead division (Aspire's is named 'Indirect/Overhead') → non-billable."""
-    if not div:
+def _is_indirect_dept(dept: Optional[str]) -> bool:
+    """No service type, or an overhead one (Aspire's is 'Indirect/Overhead') → non-billable."""
+    if not dept:
         return True
-    d = div.lower()
+    d = dept.lower()
     return "indirect" in d or "overhead" in d
 
 
@@ -626,49 +653,44 @@ async def time_efficiency(
     start:    Optional[str] = Query(None, description="YYYY-MM-DD inclusive; default = last week (Sun–Sat)"),
     end:      Optional[str] = Query(None, description="YYYY-MM-DD inclusive"),
     approved: bool          = Query(False, description="If true, count only approved entries"),
-    debug:    bool          = Query(False, description="Include per-route diagnostic breakdown"),
     db: Database = Depends(get_db),
 ):
-    """Labor hours by department from Aspire WorkTicketTimes in the period. Each entry's hours roll
-    up to its ROUTE's division (billable / direct); routes with no division or an overhead division
-    (drive / overhead) roll up to 'Indirect'. By default counts ALL entries (matching Aspire's
-    time-entry grid); pass approved=true to count only approved time."""
+    """Labor hours by department from Aspire WorkTicketTimes in the period. Department = the time
+    entry's SERVICE TYPE (the same division Aspire's time-entry grid shows per line) — it follows the
+    service, so irrigation on a maintenance property lands in Irrigation & Lighting and the monthly
+    drive/overhead ticket lands in Indirect/Overhead (non-billable). By default counts ALL entries
+    (matching Aspire's grid export); pass approved=true to count only approved time."""
     if not start or not end:
         start, end = _last_week_range()
 
     try:
         entries = await _fetch_wtt(start, end, approved_only=approved)
-        route_div = await _route_division_map()
+        wt_type = await _wt_servicetype_map({e.get("WorkTicketID") for e in entries})
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Aspire time fetch failed: {e}")
 
     dept_hours: dict = defaultdict(float)
     direct = indirect = ot = approved_hrs = 0.0
-    route_breakdown: dict = defaultdict(lambda: {"hours": 0.0, "route_name_seen": None})
     for e in entries:
         h = e.get("Hours") or 0.0
         ot += e.get("OTHours") or 0.0
         if e.get("ApprovedDateTime"):
             approved_hrs += h
-        rid = e.get("RouteID")
-        div = route_div.get(rid)
-        if _is_indirect_div(div):
-            dept_hours["Indirect"] += h
+        dept = wt_type.get(e.get("WorkTicketID"))
+        if _is_indirect_dept(dept):
+            dept_hours["Indirect/Overhead"] += h
             indirect += h
         else:
-            dept_hours[div] += h
+            dept_hours[dept] += h
             direct += h
-        if debug:
-            rb = route_breakdown[rid]
-            rb["hours"] += h
 
     total = direct + indirect
     rnd = lambda x: round(x, 1)
     by_department = sorted(
-        [{"department": d, "hours": rnd(h), "billable": d != "Indirect"}
+        [{"department": d, "hours": rnd(h), "billable": not _is_indirect_dept(d)}
          for d, h in dept_hours.items()],
         key=lambda x: (not x["billable"], -x["hours"]))
-    result = {
+    return {
         "period": {"start": start, "end": end},
         "source": "aspire-all" if not approved else "aspire-approved",
         "entries": len(entries),
@@ -679,121 +701,12 @@ async def time_efficiency(
         "approved_hours": rnd(approved_hrs),
         "billable_pct": round(100 * direct / total, 1) if total else None,
         "by_department": by_department,
-        "note": ("Crew labor from Aspire WorkTicketTimes, department = the time entry's route division. "
-                 "Direct = billable route divisions; Indirect = drive/overhead routes. "
+        "note": ("Crew labor from Aspire WorkTicketTimes; department = the entry's service type "
+                 "(same basis as Aspire's time-entry grid). Direct = billable service lines; "
+                 "Indirect/Overhead = drive & overhead (non-billable). "
                  + ("All time entries counted." if not approved else "Approved entries only.")),
     }
-    if debug:
-        result["route_breakdown"] = sorted(
-            [{"route_id": rid, "division": route_div.get(rid), "hours": rnd(v["hours"])}
-             for rid, v in route_breakdown.items()],
-            key=lambda x: -x["hours"])
-    return result
 
-
-@router.get("/efficiency-debug", dependencies=[Depends(require_access)])
-async def efficiency_debug(
-    start: str = Query(...),
-    end:   str = Query(...),
-):
-    """TEMP diagnostic: for each WorkTicket worked in the range, return hours and the division as
-    seen three ways (opportunity DivisionName, route division) so we can reconcile against the
-    Aspire grid export. Also returns aggregates by each method."""
-    entries = await _fetch_wtt(start, end, approved_only=False)
-    # hours per WorkTicketID (+ carry WorkTicketNumber, RouteID)
-    wt_hours: dict = defaultdict(float)
-    wt_num: dict = {}
-    wt_route: dict = {}
-    for e in entries:
-        wid = e.get("WorkTicketID")
-        wt_hours[wid] += e.get("Hours") or 0.0
-        wt_num[wid] = e.get("WorkTicketNumber")
-        wt_route[wid] = e.get("RouteID")
-
-    wt_ids = [w for w in wt_hours if w]
-    # WT → OpportunityID, OpportunityServiceID, WorkTicketNumber
-    wt_opp: dict = {}
-    wt_svcid: dict = {}
-    for i in range(0, len(wt_ids), 20):
-        chunk = wt_ids[i:i + 20]
-        flt = " or ".join(f"WorkTicketID eq {w}" for w in chunk)
-        res = await _aspire._get("WorkTickets", {"$filter": flt, "$select": "WorkTicketID,OpportunityID,OpportunityServiceID,WorkTicketNumber", "$top": "1000"})
-        for r in _aspire._extract_list(res):
-            wid = r.get("WorkTicketID")
-            wt_opp[wid] = r.get("OpportunityID")
-            wt_svcid[wid] = r.get("OpportunityServiceID")
-            if r.get("WorkTicketNumber") is not None:
-                wt_num[wid] = r.get("WorkTicketNumber")
-
-    # Opportunity → DivisionName
-    opp_ids = list({o for o in wt_opp.values() if o})
-    opp_div: dict = {}
-    for i in range(0, len(opp_ids), 20):
-        chunk = opp_ids[i:i + 20]
-        flt = " or ".join(f"OpportunityID eq {o}" for o in chunk)
-        res = await _aspire._get("Opportunities", {"$filter": flt, "$select": "OpportunityID,DivisionName", "$top": "1000"})
-        for r in _aspire._extract_list(res):
-            opp_div[r.get("OpportunityID")] = r.get("DivisionName")
-
-    stage_errors: dict = {}
-    # OpportunityServiceID → (ServiceID, service display name)
-    os_ids = list({s for s in wt_svcid.values() if s})
-    os_serviceid: dict = {}
-    os_name: dict = {}
-    for i in range(0, len(os_ids), 20):
-        chunk = os_ids[i:i + 20]
-        flt = "(" + " or ".join(f"OpportunityServiceID eq {s}" for s in chunk) + ")"
-        try:
-            res = await _aspire._get("OpportunityServices", {"$filter": flt, "$select": "OpportunityServiceID,ServiceID,DisplayName", "$top": "1000"})
-            for r in _aspire._extract_list(res):
-                sid = r.get("OpportunityServiceID")
-                os_serviceid[sid] = r.get("ServiceID")
-                os_name[sid] = r.get("DisplayName")
-        except Exception as ex:
-            stage_errors["opportunity_services"] = str(ex)[:300]
-
-    # ServiceID → ServiceTypeName
-    svc_ids = list({s for s in os_serviceid.values() if s})
-    svc_type: dict = {}
-    for i in range(0, len(svc_ids), 20):
-        chunk = svc_ids[i:i + 20]
-        flt = " or ".join(f"ServiceID eq {s}" for s in chunk)
-        try:
-            res = await _aspire._get("Services", {"$filter": flt, "$select": "ServiceID,ServiceTypeName,ServiceName", "$top": "1000"})
-            for r in _aspire._extract_list(res):
-                svc_type[r.get("ServiceID")] = r.get("ServiceTypeName")
-        except Exception as ex:
-            stage_errors["services"] = str(ex)[:300]
-
-    try:
-        route_div = await _route_division_map()
-    except Exception as ex:
-        route_div = {}
-        stage_errors["routes"] = str(ex)[:300]
-
-    by_opp_div: dict = defaultdict(float)
-    by_svc_type: dict = defaultdict(float)
-    rows = []
-    for wid, h in wt_hours.items():
-        od = opp_div.get(wt_opp.get(wid)) or "(none)"
-        rd = route_div.get(wt_route.get(wid)) or "(none)"
-        osid = wt_svcid.get(wid)
-        st = svc_type.get(os_serviceid.get(osid)) or "(none)"
-        sname = os_name.get(osid) or "(none)"
-        by_opp_div[od] += h
-        by_svc_type[st] += h
-        rows.append({"wt": wid, "wt_num": wt_num.get(wid), "hours": round(h, 2),
-                     "opp_division": od, "route_division": rd,
-                     "service_type": st, "service_name": sname})
-    rnd = lambda x: round(x, 1)
-    return {
-        "period": {"start": start, "end": end},
-        "total_hours": rnd(sum(wt_hours.values())),
-        "by_opportunity_division": {k: rnd(v) for k, v in sorted(by_opp_div.items(), key=lambda x: -x[1])},
-        "by_service_type": {k: rnd(v) for k, v in sorted(by_svc_type.items(), key=lambda x: -x[1])},
-        "stage_errors": stage_errors,
-        "rows": sorted(rows, key=lambda x: -x["hours"]),
-    }
 
 
 @router.post("/submit/{session_id}")
