@@ -94,16 +94,20 @@ async def get_month_financials(month: Optional[str] = None) -> dict:
 
 
 @mcp.tool()
-async def get_time_efficiency(start: Optional[str] = None, end: Optional[str] = None) -> dict:
-    """Billable hours by department from APPROVED Aspire crew labor (WorkTicketTimes that have been
-    approved). Each entry's hours roll up to its job's DIVISION (billable/direct); drive & overhead
-    tickets with no job division roll up to 'Indirect'. `start`/`end` are 'YYYY-MM-DD' inclusive; omit
-    both for last week (Mon–Sun). Returns by_department, direct vs indirect hours, OT, and billable_pct
-    (direct ÷ total). Answers 'what were our billable hours by department last week'. Unapproved time is
-    excluded."""
+async def get_time_efficiency(start: Optional[str] = None, end: Optional[str] = None,
+                              approved: bool = False) -> dict:
+    """Billable hours by department from Aspire crew labor (WorkTicketTimes). Department = each
+    entry's SERVICE TYPE — the same division Aspire's own time-entry grid shows per line (it follows
+    the service, so irrigation on a maintenance property lands in Irrigation & Lighting, and the
+    monthly drive/overhead ticket lands in 'Indirect/Overhead', which is non-billable). `start`/`end`
+    are 'YYYY-MM-DD' inclusive; omit both for last week (Sun–Sat, matching Aspire's week). Counts ALL
+    time entries by default (matching an Aspire grid export); pass approved=True for approved-only.
+    Returns by_department, direct vs indirect hours, OT, approved_hours, and billable_pct (direct ÷
+    total). Answers 'what were our billable hours by department last week'."""
     params = {}
     if start: params["start"] = start
     if end:   params["end"] = end
+    if approved: params["approved"] = "true"
     return await _get("/time/efficiency", params or None)
 
 
