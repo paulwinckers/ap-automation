@@ -57,6 +57,7 @@ import FieldMaintenanceLookup from './pages/FieldMaintenanceLookup';
 import IssuesDashboard        from './pages/IssuesDashboard';
 import EmergencyReset         from './pages/EmergencyReset';
 import InvoiceSummaryReport   from './pages/InvoiceSummaryReport';
+import MyWork                 from './pages/MyWork';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -120,6 +121,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/users"     element={<RequireAuth><Office><UserAdmin /></Office></RequireAuth>} />
         <Route path="/settings/email" element={<RequireAuth><Office><EmailSettings /></Office></RequireAuth>} />
         <Route path="/ops/backups"     element={<RequireAuth><Office><BackupsAdmin /></Office></RequireAuth>} />
+
+        {/* Personal worklist */}
+        <Route path="/my-work" element={<RequireAuth><Office><MyWork /></Office></RequireAuth>} />
 
         {/* Dashboards */}
         <Route path="/dashboards"              element={<RequireAuth><Office><DashboardsIndex /></Office></RequireAuth>} />

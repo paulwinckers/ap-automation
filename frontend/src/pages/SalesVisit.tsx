@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   searchCustomerEntities, createSalesActivity, uploadSalesAttachment, createSalesTask, patchSalesActivity,
-  type CustomerEntity,
+  listSalesAssignees, type CustomerEntity, type Assignee,
 } from '../lib/api';
 
 const NAVY = '#1e3a5f';
@@ -45,13 +45,19 @@ export default function SalesVisit() {
   const [followNote, setFollowNote] = useState('');
   const [addTask, setAddTask] = useState(false);
   const [taskTitle, setTaskTitle] = useState('');
-  const [taskAssignee, setTaskAssignee] = useState('');
+  const [taskAssigneeId, setTaskAssigneeId] = useState('');   // user id as string ('' = unassigned)
   const [taskDue, setTaskDue] = useState('');
+  const [assignees, setAssignees] = useState<Assignee[]>([]);
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [done, setDone] = useState<{ photos: number; task?: number } | null>(null);
   const tmr = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Load the coworker directory once (for the "assign to" picker — real users, identity-linked).
+  useEffect(() => {
+    listSalesAssignees().then(r => setAssignees(r.assignees || [])).catch(() => {});
+  }, []);
 
   const customerKey = picked ? `${picked.kind}:${picked.id}` : null;
 
@@ -67,7 +73,7 @@ export default function SalesVisit() {
   function resetAll() {
     setPicked(null); setQ(''); setType('site_visit'); setOpeningNote('');
     setActivityId(null); setPhoto(null); setCaption(''); setAdded([]);
-    setFollowDate(''); setFollowNote(''); setAddTask(false); setTaskTitle(''); setTaskAssignee(''); setTaskDue('');
+    setFollowDate(''); setFollowNote(''); setAddTask(false); setTaskTitle(''); setTaskAssigneeId(''); setTaskDue('');
     setDone(null); setErr('');
   }
 
@@ -101,7 +107,8 @@ export default function SalesVisit() {
       let taskId: number | undefined;
       if (addTask && taskTitle.trim()) {
         const t = await createSalesTask({
-          title: taskTitle.trim(), customer_key: customerKey!, assignee: taskAssignee.trim() || undefined,
+          title: taskTitle.trim(), customer_key: customerKey!,
+          assignee_user_id: taskAssigneeId ? Number(taskAssigneeId) : undefined,
           due_date: taskDue || undefined, activity_id: activityId,
         });
         taskId = t.task?.id;
@@ -228,7 +235,10 @@ export default function SalesVisit() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <input value={taskTitle} onChange={e => setTaskTitle(e.target.value)} placeholder="Task" style={inp} />
         <div style={{ display: 'flex', gap: 8 }}>
-          <input value={taskAssignee} onChange={e => setTaskAssignee(e.target.value)} placeholder="Assign to" style={inp} />
+          <select value={taskAssigneeId} onChange={e => setTaskAssigneeId(e.target.value)} style={inp}>
+            <option value="">Assign to…</option>
+            {assignees.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
           <input type="date" value={taskDue} onChange={e => setTaskDue(e.target.value)} style={{ ...inp, width: 160 }} />
         </div>
       </div>

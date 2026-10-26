@@ -26,7 +26,7 @@ from app.core.config import settings
 from app.core.database import Database
 from app.services import r2
 from app.services.aspire import AspireClient
-from app.api.auth import require_access
+from app.api.auth import require_access, _get_current_user
 from app.api.construction_plan import get_db
 
 router = APIRouter(prefix="/sales", tags=["sales"])
@@ -49,6 +49,33 @@ def _actor(user: dict, provided: Optional[str]) -> Optional[str]:
     if user and user.get("email") and user.get("email") != "service":
         return user.get("name") or user.get("email")
     return None
+
+
+def _actor_id(user: dict, provided_id: Optional[int]) -> Optional[int]:
+    """The real user id to stamp on a write (directory identity): an explicit id wins (the
+    agent/app can name the coworker); else the logged-in user's id; else None (service key)."""
+    if provided_id:
+        return provided_id
+    if user and user.get("id") and user.get("id") != 0 and user.get("email") != "service":
+        return user.get("id")
+    return None
+
+
+async def _user_name(db: Database, user_id: Optional[int]) -> Optional[str]:
+    """Resolve a user id → display name (for stamping assignee text alongside the id)."""
+    if not user_id:
+        return None
+    rows = await db._q("SELECT name, email FROM users WHERE id = ?", [user_id])
+    if not rows:
+        return None
+    return rows[0].get("name") or rows[0].get("email")
+
+
+@router.get("/assignees", dependencies=[Depends(require_access)])
+async def list_assignees(db: Database = Depends(get_db)):
+    """Active users for the assignee / 'due from' picker (any logged-in user can read)."""
+    rows = await db._q("SELECT id, name, email FROM users WHERE active = 1 ORDER BY name", [])
+    return {"assignees": rows or []}
 
 
 async def _attach_media(db: Database, parent_type: str, rows: list[dict]) -> None:
@@ -98,6 +125,7 @@ class ActivityIn(BaseModel):
     next_action_date: Optional[str] = None
     next_action_note: Optional[str] = None
     created_by:       Optional[str] = None
+    created_by_user_id: Optional[int] = None   # directory identity (whose followup this is)
 
 
 class ActivityPatch(BaseModel):
@@ -112,14 +140,15 @@ class ActivityPatch(BaseModel):
 async def create_activity(body: ActivityIn, user: dict = Depends(require_access), db: Database = Depends(get_db)):
     """Log a sales activity (note/call/meeting/email/site_visit) against a customer."""
     atype = body.type if body.type in _ACTIVITY_TYPES else "note"
+    owner_id = _actor_id(user, body.created_by_user_id)
     rows = await db._q(
         """INSERT INTO sales_activities
            (customer_key, opportunity_id, property_id, type, subject, body, direction, occurred_at,
-            next_action_date, next_action_note, created_by, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) RETURNING *""",
+            next_action_date, next_action_note, created_by, created_by_user_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) RETURNING *""",
         [body.customer_key, body.opportunity_id, body.property_id, atype, body.subject, body.body,
          body.direction, body.occurred_at or _now(), body.next_action_date, body.next_action_note,
-         _actor(user, body.created_by)])
+         _actor(user, body.created_by), owner_id])
     return {"ok": True, "activity": rows[0] if rows else None}
 
 
@@ -167,6 +196,7 @@ class TaskIn(BaseModel):
     title:          str
     detail:         Optional[str] = None
     assignee:       Optional[str] = None
+    assignee_user_id: Optional[int] = None   # directory identity (who it's due from)
     due_date:       Optional[str] = None
     priority:       Optional[str] = None
     created_by:     Optional[str] = None
@@ -176,6 +206,7 @@ class TaskPatch(BaseModel):
     title:    Optional[str] = None
     detail:   Optional[str] = None
     assignee: Optional[str] = None
+    assignee_user_id: Optional[int] = None
     due_date: Optional[str] = None
     priority: Optional[str] = None
     status:   Optional[str] = None   # open | done | cancelled
@@ -191,13 +222,18 @@ async def create_task(body: TaskIn, user: dict = Depends(require_access), db: Da
     """Create a task (standalone or spawned from an activity)."""
     if not (body.title or "").strip():
         raise HTTPException(status_code=400, detail="title is required")
+    # Resolve the assignee: if a real user id is given, stamp both the id and (for display) the name.
+    assignee_name = body.assignee
+    if body.assignee_user_id and not (assignee_name or "").strip():
+        assignee_name = await _user_name(db, body.assignee_user_id)
     rows = await db._q(
         """INSERT INTO sales_tasks
-           (customer_key, opportunity_id, activity_id, title, detail, assignee, due_date, priority,
-            status, created_by, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, datetime('now')) RETURNING *""",
+           (customer_key, opportunity_id, activity_id, title, detail, assignee, assignee_user_id,
+            due_date, priority, status, created_by, created_by_user_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now')) RETURNING *""",
         [body.customer_key, body.opportunity_id, body.activity_id, body.title.strip(), body.detail,
-         body.assignee, body.due_date, body.priority, _actor(user, body.created_by)])
+         assignee_name, body.assignee_user_id, body.due_date, body.priority,
+         _actor(user, body.created_by), _actor_id(user, None)])
     return {"ok": True, "task": rows[0] if rows else None}
 
 
@@ -222,7 +258,12 @@ async def patch_task(task_id: int, body: TaskPatch, db: Database = Depends(get_d
     sets, params = ["updated_at = datetime('now')"], []
     if body.title is not None:    sets.append("title = ?");    params.append(body.title)
     if body.detail is not None:   sets.append("detail = ?");   params.append(body.detail)
-    if body.assignee is not None: sets.append("assignee = ?"); params.append(body.assignee)
+    if body.assignee_user_id is not None:
+        # Reassign by directory identity — stamp the id and refresh the display name to match.
+        sets.append("assignee_user_id = ?"); params.append(body.assignee_user_id or None)
+        sets.append("assignee = ?");         params.append(await _user_name(db, body.assignee_user_id) or body.assignee)
+    elif body.assignee is not None:
+        sets.append("assignee = ?"); params.append(body.assignee)
     if body.due_date is not None: sets.append("due_date = ?"); params.append(body.due_date or None)
     if body.priority is not None: sets.append("priority = ?"); params.append(body.priority)
     if body.status is not None and body.status in ("open", "done", "cancelled"):
@@ -318,35 +359,96 @@ async def delete_task(task_id: int, db: Database = Depends(get_db)):
 
 # ── Unified "due" worklist (open tasks + pending followups) ──────────────────────
 
-@router.get("/due", dependencies=[Depends(require_access)])
-async def due_items(assignee: Optional[str] = None, due_before: Optional[str] = None,
-                    db: Database = Depends(get_db)):
-    """What needs doing: open tasks + activities with an un-done followup, merged and sorted
-    by date. `assignee` matches a task's assignee or an activity's owner (created_by);
-    `due_before` (YYYY-MM-DD) limits to items due on/before that date. This is what the agent
-    prompts from (and it pairs with the CX action-review for a single morning worklist)."""
-    a_l = assignee.lower() if assignee else None
-    items = []
+def _due_bucket(due_date: Optional[str], today: str) -> str:
+    """Classify an item's due date relative to today (YYYY-MM-DD strings sort lexically)."""
+    if not due_date:
+        return "someday"
+    d = due_date[:10]
+    if d < today:
+        return "overdue"
+    if d == today:
+        return "today"
+    # within the next 7 days → 'week', else 'later'
+    try:
+        from datetime import date, timedelta
+        t = date.fromisoformat(today)
+        if date.fromisoformat(d) <= t + timedelta(days=7):
+            return "week"
+    except ValueError:
+        pass
+    return "later"
+
+
+async def _collect_due(db: Database, *, assignee_user_id: Optional[int] = None,
+                       name: Optional[str] = None, due_before: Optional[str] = None) -> list[dict]:
+    """Build the merged worklist (open tasks + un-done followups). Matching:
+      - by assignee_user_id (directory identity) when given, OR
+      - by name (legacy rows where assignee / created_by is just a name), OR
+      - everything when neither is given.
+    When both an id and a name are given, a row matches if EITHER matches (so legacy
+    name-only rows still surface for the right person)."""
+    n_l = name.lower() if name else None
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    def person_match(row_id, row_name) -> bool:
+        if assignee_user_id is None and n_l is None:
+            return True
+        if assignee_user_id is not None and row_id == assignee_user_id:
+            return True
+        if n_l is not None and (row_name or "").lower() == n_l:
+            return True
+        return False
+
+    items: list[dict] = []
     for t in await db._q("SELECT * FROM sales_tasks WHERE status = 'open'", []):
-        if a_l and (t.get("assignee") or "").lower() != a_l:
+        if not person_match(t.get("assignee_user_id"), t.get("assignee")):
             continue
         if due_before and (t.get("due_date") or "9999-99-99") > due_before:
             continue
         items.append({"kind": "task", "id": t["id"], "title": t.get("title"),
-                      "customer_key": t.get("customer_key"), "who": t.get("assignee"),
-                      "due_date": t.get("due_date"), "opportunity_id": t.get("opportunity_id")})
+                      "detail": t.get("detail"), "customer_key": t.get("customer_key"),
+                      "who": t.get("assignee"), "who_user_id": t.get("assignee_user_id"),
+                      "due_date": t.get("due_date"), "opportunity_id": t.get("opportunity_id"),
+                      "bucket": _due_bucket(t.get("due_date"), today)})
     for a in await db._q(
             "SELECT * FROM sales_activities WHERE next_action_done = 0 AND next_action_date IS NOT NULL", []):
-        if a_l and (a.get("created_by") or "").lower() != a_l:
+        if not person_match(a.get("created_by_user_id"), a.get("created_by")):
             continue
         if due_before and (a.get("next_action_date") or "9999-99-99") > due_before:
             continue
         items.append({"kind": "followup", "id": a["id"],
                       "title": a.get("next_action_note") or (a.get("body") or "")[:60],
                       "customer_key": a.get("customer_key"), "who": a.get("created_by"),
-                      "due_date": a.get("next_action_date"), "activity_type": a.get("type")})
+                      "who_user_id": a.get("created_by_user_id"),
+                      "due_date": a.get("next_action_date"), "activity_type": a.get("type"),
+                      "bucket": _due_bucket(a.get("next_action_date"), today)})
     items.sort(key=lambda x: (x.get("due_date") or "9999-99-99"))
+    return items
+
+
+@router.get("/due", dependencies=[Depends(require_access)])
+async def due_items(assignee: Optional[str] = None, assignee_user_id: Optional[int] = None,
+                    due_before: Optional[str] = None, db: Database = Depends(get_db)):
+    """What needs doing: open tasks + activities with an un-done followup, merged and sorted
+    by date. Filter by `assignee_user_id` (directory identity — preferred) or `assignee`
+    (legacy name), and `due_before` (YYYY-MM-DD). This is what the agent prompts from and what
+    pairs with the CX action-review for a single morning worklist (e.g. "what's due for Dave")."""
+    items = await _collect_due(db, assignee_user_id=assignee_user_id, name=assignee, due_before=due_before)
     return {"count": len(items), "items": items}
+
+
+@router.get("/due/mine")
+async def my_due_items(user: dict = Depends(_get_current_user), db: Database = Depends(get_db)):
+    """The logged-in user's personal worklist — their open tasks + pending followups, matched by
+    their user id AND their name (so legacy name-only rows still appear). Items carry a `bucket`
+    (overdue/today/week/later/someday) for grouping. This is the 'My Action Items' surface."""
+    items = await _collect_due(db, assignee_user_id=user.get("id"),
+                               name=user.get("name") or user.get("email"))
+    counts: dict = {}
+    for it in items:
+        counts[it["bucket"]] = counts.get(it["bucket"], 0) + 1
+    return {"user": {"id": user.get("id"), "name": user.get("name"), "email": user.get("email")},
+            "count": len(items), "counts": counts, "items": items}
 
 
 # ── Fan-out: create an Aspire opportunity from a site visit (GATED — prod write) ──

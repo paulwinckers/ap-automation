@@ -532,6 +532,10 @@ async def lifespan(app: FastAPI):
         ("vendor_rules", "job_cost_forward_to", "ALTER TABLE vendor_rules ADD COLUMN job_cost_forward_to TEXT"),
         # field_conversations.created_by_user_id — link a conversation to a real user (directory identity)
         ("field_conversations", "created_by_user_id", "ALTER TABLE field_conversations ADD COLUMN created_by_user_id INTEGER"),
+        # sales — directory identity: link a task to the real user it's due from, and a note/followup to its owner
+        ("sales_tasks", "assignee_user_id",   "ALTER TABLE sales_tasks ADD COLUMN assignee_user_id INTEGER"),
+        ("sales_tasks", "created_by_user_id", "ALTER TABLE sales_tasks ADD COLUMN created_by_user_id INTEGER"),
+        ("sales_activities", "created_by_user_id", "ALTER TABLE sales_activities ADD COLUMN created_by_user_id INTEGER"),
         # job_prep_checklist — N/A/Complete/Upload-Doc status + linked attachment
         ("job_prep_checklist", "status",        "ALTER TABLE job_prep_checklist ADD COLUMN status TEXT"),
         ("job_prep_checklist", "attachment_id", "ALTER TABLE job_prep_checklist ADD COLUMN attachment_id INTEGER"),

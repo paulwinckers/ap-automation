@@ -699,9 +699,28 @@ export interface SalesActivity {
 }
 export interface SalesTask {
   id: number; title: string; detail?: string | null; assignee: string | null; due_date: string | null;
+  assignee_user_id?: number | null;
   status: string; created_by?: string | null;
   updates?: { id: number; author: string | null; body: string; created_at: string }[];
   attachments?: SalesAttachment[];
+}
+
+export interface Assignee { id: number; name: string; email: string; }
+export async function listSalesAssignees(): Promise<{ assignees: Assignee[] }> {
+  return request('GET', '/sales/assignees');
+}
+
+export interface DueItem {
+  kind: 'task' | 'followup'; id: number; title: string; detail?: string | null;
+  customer_key?: string | null; who?: string | null; who_user_id?: number | null;
+  due_date: string | null; opportunity_id?: number | null; activity_type?: string | null;
+  bucket: 'overdue' | 'today' | 'week' | 'later' | 'someday';
+}
+export async function listMyDueItems(): Promise<{
+  user: { id: number; name: string; email: string };
+  count: number; counts: Record<string, number>; items: DueItem[];
+}> {
+  return request('GET', '/sales/due/mine');
 }
 
 export async function createSalesActivity(payload: {
@@ -719,8 +738,8 @@ export async function uploadSalesAttachment(
   return request('POST', `/sales/${parentType}/${parentId}/attachment`, fd, true);
 }
 export async function createSalesTask(payload: {
-  title: string; customer_key?: string; assignee?: string; due_date?: string; detail?: string;
-  activity_id?: number; opportunity_id?: number; created_by?: string;
+  title: string; customer_key?: string; assignee?: string; assignee_user_id?: number;
+  due_date?: string; detail?: string; activity_id?: number; opportunity_id?: number; created_by?: string;
 }): Promise<{ ok: boolean; task: SalesTask }> {
   return request('POST', '/sales/task', payload);
 }
@@ -736,7 +755,8 @@ export async function patchSalesActivity(id: number, patch: {
   return request('PATCH', `/sales/activity/${id}`, patch);
 }
 export async function patchSalesTask(id: number, patch: {
-  status?: string; assignee?: string; due_date?: string; title?: string; detail?: string;
+  status?: string; assignee?: string; assignee_user_id?: number; due_date?: string;
+  title?: string; detail?: string;
 }): Promise<{ ok: boolean; task: SalesTask }> {
   return request('PATCH', `/sales/task/${id}`, patch);
 }

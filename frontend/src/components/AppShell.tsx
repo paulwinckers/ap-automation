@@ -13,6 +13,12 @@ const SIDEBAR_MINI  = 56;
 // Kept in sync with the Landing main menu (src/pages/Landing.tsx).
 const NAV = [
   {
+    section: 'My Work',
+    items: [
+      { label: 'My Action Items', path: '/my-work', icon: '🎯' },
+    ],
+  },
+  {
     section: 'Field Staff',
     items: [
       { label: 'Submit Receipt',        path: '/field',                icon: '🧾' },
