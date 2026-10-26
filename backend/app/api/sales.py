@@ -444,11 +444,77 @@ async def my_due_items(user: dict = Depends(_get_current_user), db: Database = D
     (overdue/today/week/later/someday) for grouping. This is the 'My Action Items' surface."""
     items = await _collect_due(db, assignee_user_id=user.get("id"),
                                name=user.get("name") or user.get("email"))
+    for it in items:
+        it["source"] = it["kind"] == "task" and "sales_task" or "sales_followup"
     counts: dict = {}
     for it in items:
         counts[it["bucket"]] = counts.get(it["bucket"], 0) + 1
     return {"user": {"id": user.get("id"), "name": user.get("name"), "email": user.get("email")},
             "count": len(items), "counts": counts, "items": items}
+
+
+_SEV_BUCKET = {"overdue": "overdue", "due": "today", "soon": "week"}
+_BUCKET_ORDER = {"overdue": 0, "today": 1, "week": 2, "later": 3, "someday": 4}
+
+
+@router.get("/worklist/mine")
+async def my_worklist(user: dict = Depends(_get_current_user), db: Database = Depends(get_db)):
+    """ONE morning worklist for the logged-in user: their sales tasks + pending followups
+    (source sales_task / sales_followup) PLUS the CX client-comms due that they OWN — scoped by
+    the comms template's role→person map in CX settings (scheduler→Keeland, supervisor→Dustin,
+    designer→Jenna, …). Comms for a role with no configured person, and non-comms actions, are
+    'unassigned' and surface to admins so nothing falls through. Everything is bucketed
+    (overdue/today/week/later/someday) and merged into a single sorted list."""
+    me_email = (user.get("email") or "").strip().lower()
+    me_name  = (user.get("name") or "").strip().lower()
+    is_admin = (user.get("role") == "admin")
+
+    # 1) Sales side (reuse the identity-linked collector)
+    items = await _collect_due(db, assignee_user_id=user.get("id"),
+                               name=user.get("name") or user.get("email"))
+    for it in items:
+        it["source"] = "sales_task" if it["kind"] == "task" else "sales_followup"
+
+    # 2) CX comms side — only the actions this user owns (by role), admins also get unassigned
+    try:
+        from app.api.cx import enriched_due_actions
+        from app.api.cx import _db as _cx_db
+        cx_actions = await enriched_due_actions(await _cx_db())
+    except Exception as e:
+        logger.warning(f"worklist: CX actions unavailable: {e}")
+        cx_actions = []
+
+    for a in cx_actions:
+        owner_email = (a.get("owner_email") or "").strip().lower()
+        owner_name  = (a.get("owner_name") or "").strip().lower()
+        mine = (me_email and owner_email == me_email) or (me_name and owner_name == me_name)
+        unassigned = not owner_email and not owner_name
+        if not (mine or (unassigned and is_admin)):
+            continue
+        items.append({
+            "kind": "cx", "source": "cx_comms",
+            "id": f"{a.get('opportunity_id')}:{a.get('action_key')}",
+            "opportunity_id": a.get("opportunity_id"),
+            "action_key": a.get("action_key"),
+            "template_key": a.get("template_key"),
+            "title": a.get("label"),
+            "job": a.get("property_name") or a.get("opportunity_name"),
+            "customer_key": None, "due_date": None,
+            "severity": a.get("severity"),
+            "bucket": _SEV_BUCKET.get(a.get("severity"), "week"),
+            "who": a.get("owner_name"), "last_sent": a.get("last_sent"),
+            "unassigned": unassigned,
+        })
+
+    items.sort(key=lambda x: (_BUCKET_ORDER.get(x.get("bucket"), 9), x.get("due_date") or "9999-99-99"))
+    counts: dict = {}
+    sources: dict = {}
+    for it in items:
+        counts[it["bucket"]] = counts.get(it["bucket"], 0) + 1
+        sources[it["source"]] = sources.get(it["source"], 0) + 1
+    return {"user": {"id": user.get("id"), "name": user.get("name"), "email": user.get("email"),
+                     "is_admin": is_admin},
+            "count": len(items), "counts": counts, "sources": sources, "items": items}
 
 
 # ── Fan-out: create an Aspire opportunity from a site visit (GATED — prod write) ──

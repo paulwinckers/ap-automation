@@ -287,7 +287,10 @@ function AddJobPanel({ month, onAdded, onClose }: {
 }) {
   const [suggestions,    setSuggestions]    = useState<PlanSuggestion[]>([]);
   const [scheduledCount, setScheduledCount] = useState(0);
-  const [q, setQ]         = useState('');
+  // Seed the job filter from ?q= (deep-link from My Action Items → a specific CX comm's job)
+  const [q, setQ]         = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('q') || ''; } catch { return ''; }
+  });
   const [loading, setLoading] = useState(true);
   const [adding, setAdding]   = useState<number | null>(null);
 

@@ -433,6 +433,57 @@ async def list_skips():
     return {"skips": [_row(r) for r in rows]}
 
 
+async def enriched_due_actions(db: Database) -> list[dict]:
+    """Every next-action due across active construction jobs, each enriched with its OWNER —
+    the template's from_role resolved to a real person via CX settings (scheduler→Keeland,
+    supervisor→Dustin, designer→Jenna, …). Shared by the action-review endpoint and the
+    unified personal worklist (so a person sees only the comms they're responsible for)."""
+    from datetime import date
+    from app.api.construction_plan import get_plan  # local import avoids any cycle
+
+    month = date.today().strftime("%Y-%m")
+    plan = await get_plan(month, db)
+    cfg = await get_cx_settings()
+    try:
+        trows = await db._q("SELECT key, from_role FROM cx_templates", [])
+    except Exception:
+        trows = []
+    role_by_key = {r["key"]: (r.get("from_role") or "scheduler") for r in trows}
+
+    def owner_for(role: Optional[str]) -> tuple[str, str]:
+        r = (role or "").lower()
+        if not r:
+            return "", ""
+        return (cfg.get(f"{r}_email") or "").strip(), (cfg.get(f"{r}_name") or "").strip()
+
+    items: list[dict] = []
+    for j in plan.get("jobs", []):
+        for a in (j.get("actions") or []):
+            target = a.get("target") or ""
+            tmpl = target.split("comms:", 1)[1] if target.startswith("comms:") else None
+            role = role_by_key.get(tmpl) if tmpl else None
+            owner_email, owner_name = owner_for(role)
+            items.append({
+                "opportunity_id":   j.get("opportunity_id"),
+                "opportunity_name": j.get("opportunity_name"),
+                "property_name":    j.get("property_name"),
+                "opp_number":       j.get("opp_number"),
+                "lifecycle":        j.get("lifecycle"),
+                "action_key":       a.get("key"),
+                "label":            a.get("label"),
+                "severity":         a.get("severity"),
+                "kind":             "comms" if tmpl else (target or "other"),
+                "template_key":     tmpl,
+                "from_role":        role,
+                "owner_email":      owner_email,
+                "owner_name":       owner_name,
+                "last_sent":        (j.get("comms_sent") or {}).get(tmpl) if tmpl else None,
+            })
+    rank = {"overdue": 0, "due": 1, "soon": 2}
+    items.sort(key=lambda x: (rank.get(x["severity"], 9), x.get("opportunity_name") or ""))
+    return items
+
+
 @router.get("/action-review")
 async def action_review():
     """The CX agent's worklist: every next-action due across active construction jobs,

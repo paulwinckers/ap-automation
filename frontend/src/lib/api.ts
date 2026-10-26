@@ -723,6 +723,31 @@ export async function listMyDueItems(): Promise<{
   return request('GET', '/sales/due/mine');
 }
 
+// Unified morning worklist: sales tasks + followups + CX comms the user owns (by role).
+export interface WorklistItem {
+  source: 'sales_task' | 'sales_followup' | 'cx_comms';
+  kind: 'task' | 'followup' | 'cx';
+  id: number | string;
+  title: string;
+  customer_key?: string | null;
+  opportunity_id?: number | null;
+  job?: string | null;
+  due_date: string | null;
+  bucket: 'overdue' | 'today' | 'week' | 'later' | 'someday';
+  severity?: string | null;
+  who?: string | null;
+  template_key?: string | null;
+  action_key?: string | null;
+  last_sent?: string | null;
+  unassigned?: boolean;
+}
+export async function listMyWorklist(): Promise<{
+  user: { id: number; name: string; email: string; is_admin: boolean };
+  count: number; counts: Record<string, number>; sources: Record<string, number>; items: WorklistItem[];
+}> {
+  return request('GET', '/sales/worklist/mine');
+}
+
 export async function createSalesActivity(payload: {
   customer_key?: string; type?: string; subject?: string; body?: string; opportunity_id?: number;
   next_action_date?: string; next_action_note?: string; created_by?: string;
