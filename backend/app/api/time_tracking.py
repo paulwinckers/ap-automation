@@ -15,7 +15,8 @@ POST /time/submit/{session_id}
 
 import logging
 import time
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,6 +25,7 @@ from pydantic import BaseModel
 from app.core.database import Database
 from app.core.config import settings
 from app.services.aspire import AspireClient
+from app.api.auth import require_access
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/time", tags=["time-tracking"])
@@ -562,6 +564,119 @@ async def save_drive_ticket(body: DriveTicketBody, db: Database = Depends(get_db
     await db.set_setting("drive_ticket_name",  body.ticket_name)
     await db.set_setting("drive_ticket_month", body.month)
     return {"ok": True}
+
+
+# ── Billable-hours-by-department rollup (approved time) ───────────────────────
+_LUNCH_UNPAID_FROM = "2027-01-01"  # lunch is PAID (→ Indirect) before this date; UNPAID (excluded) on/after
+
+
+def _last_week_range() -> tuple[str, str]:
+    """Previous Mon–Sun (date-only; fine for a weekly rollup)."""
+    today = datetime.now(timezone.utc).date()
+    last_monday = today - timedelta(days=today.weekday() + 7)
+    return last_monday.isoformat(), (last_monday + timedelta(days=6)).isoformat()
+
+
+@router.get("/efficiency", dependencies=[Depends(require_access)])
+async def time_efficiency(
+    start: Optional[str] = Query(None, description="YYYY-MM-DD inclusive; default = last week (Mon–Sun)"),
+    end:   Optional[str] = Query(None, description="YYYY-MM-DD inclusive"),
+    db: Database = Depends(get_db),
+):
+    """Billable hours by department for APPROVED (submitted) time in the period.
+    onsite → the job's division (billable/direct); drive → 'Indirect'; lunch → 'Indirect' while paid
+    (work_date before the unpaid cutover), excluded on/after. Also reports segment coverage so we can
+    tell whether the numbers are real or a crew-logging gap."""
+    if not start or not end:
+        start, end = _last_week_range()
+
+    try:
+        sessions = await db._q(
+            "SELECT id, employee_id, employee_name, work_date, clock_in, clock_out, status "
+            "FROM time_sessions WHERE status = 'submitted' AND work_date >= ? AND work_date <= ?",
+            [start, end])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"time query failed: {e}")
+
+    sess_by_id = {s["id"]: s for s in sessions}
+    session_ids = list(sess_by_id.keys())
+
+    # Pull their segments (chunked IN under D1's bound-param cap).
+    segments: list[dict] = []
+    for i in range(0, len(session_ids), 90):
+        chunk = session_ids[i:i + 90]
+        ph = ",".join("?" for _ in chunk)
+        try:
+            segments += await db._q(
+                f"SELECT session_id, segment_type, opportunity_id, duration_minutes "
+                f"FROM time_segments WHERE session_id IN ({ph})", chunk)
+        except Exception:
+            pass
+
+    # Division for each onsite segment's job, from the spine cache.
+    opp_ids = list({s["opportunity_id"] for s in segments
+                    if (s.get("segment_type") or "").lower() == "onsite" and s.get("opportunity_id")})
+    div_by_opp: dict = {}
+    for i in range(0, len(opp_ids), 90):
+        chunk = opp_ids[i:i + 90]
+        ph = ",".join("?" for _ in chunk)
+        try:
+            for r in await db._q(f"SELECT opportunity_id, division FROM spine_jobs WHERE opportunity_id IN ({ph})", chunk):
+                div_by_opp[r["opportunity_id"]] = r.get("division")
+        except Exception:
+            pass
+
+    dept_minutes: dict = defaultdict(float)
+    direct_min = indirect_min = 0.0
+    with_segments = set()
+    for s in segments:
+        mins = s.get("duration_minutes")
+        if not mins:
+            continue
+        with_segments.add(s["session_id"])
+        stype = (s.get("segment_type") or "").lower()
+        if stype == "onsite":
+            dept = div_by_opp.get(s.get("opportunity_id")) or "Unknown"
+            dept_minutes[dept] += mins
+            direct_min += mins
+        elif stype == "drive":
+            dept_minutes["Indirect"] += mins
+            indirect_min += mins
+        elif stype == "lunch":
+            wd = (sess_by_id.get(s["session_id"], {}).get("work_date") or "")[:10]
+            if wd and wd < _LUNCH_UNPAID_FROM:        # paid lunch → Indirect
+                dept_minutes["Indirect"] += mins
+                indirect_min += mins
+            # on/after cutover: unpaid → excluded entirely
+
+    # Coverage: clocked vs attributed, to surface unlogged gaps / adoption.
+    clocked_min = 0.0
+    for s in sessions:
+        if s.get("clock_in") and s.get("clock_out"):
+            clocked_min += max(0, _duration_minutes(s["clock_in"], s["clock_out"]))
+    attributed_min = direct_min + indirect_min
+
+    hrs = lambda m: round(m / 60.0, 2)
+    by_department = sorted(
+        [{"department": d, "hours": hrs(m), "billable": d not in ("Indirect", "Unknown")}
+         for d, m in dept_minutes.items()],
+        key=lambda x: (not x["billable"], -x["hours"]))
+    total = direct_min + indirect_min
+    return {
+        "period": {"start": start, "end": end},
+        "approved_sessions": len(sessions),
+        "sessions_with_segments": len(with_segments),
+        "coverage": {
+            "clocked_hours": hrs(clocked_min),
+            "attributed_hours": hrs(attributed_min),
+            "coverage_pct": round(100 * attributed_min / clocked_min, 1) if clocked_min else None,
+        },
+        "direct_hours": hrs(direct_min),
+        "indirect_hours": hrs(indirect_min),
+        "billable_pct": round(100 * direct_min / total, 1) if total else None,
+        "lunch_rule": f"paid→Indirect before {_LUNCH_UNPAID_FROM}, excluded on/after",
+        "by_department": by_department,
+    }
 
 
 @router.post("/submit/{session_id}")
