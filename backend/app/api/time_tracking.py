@@ -744,11 +744,11 @@ async def efficiency_debug(
         chunk = os_ids[i:i + 20]
         flt = " or ".join(f"OpportunityServiceID eq {s}" for s in chunk)
         try:
-            res = await _aspire._get("OpportunityServices", {"$filter": flt, "$select": "OpportunityServiceID,ServiceID,ServiceNameAbr,DisplayName,ServiceName", "$top": "1000"})
+            res = await _aspire._get("OpportunityServices", {"$filter": flt, "$select": "OpportunityServiceID,ServiceID,ServiceTypeID,DisplayName", "$top": "1000"})
             for r in _aspire._extract_list(res):
                 sid = r.get("OpportunityServiceID")
                 os_serviceid[sid] = r.get("ServiceID")
-                os_name[sid] = r.get("ServiceNameAbr") or r.get("DisplayName") or r.get("ServiceName")
+                os_name[sid] = r.get("DisplayName")
         except Exception as ex:
             stage_errors["opportunity_services"] = str(ex)[:300]
 
