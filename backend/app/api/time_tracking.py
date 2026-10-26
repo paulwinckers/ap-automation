@@ -660,22 +660,30 @@ async def time_efficiency(
 
     wt_div = await _wt_division_map(db, {e.get("WorkTicketID") for e in entries})
 
+    def _is_indirect(div: Optional[str]) -> bool:
+        # No job division, or an overhead division (Aspire's is named "Indirect/Overhead") → non-billable.
+        if not div:
+            return True
+        d = div.lower()
+        return "indirect" in d or "overhead" in d
+
     dept_hours: dict = defaultdict(float)
     direct = indirect = ot = 0.0
     for e in entries:
         h = e.get("Hours") or 0.0
         ot += e.get("OTHours") or 0.0
-        dept = wt_div.get(e.get("WorkTicketID")) or "Indirect"
-        dept_hours[dept] += h
-        if dept in ("Indirect", "Unknown"):
+        div = wt_div.get(e.get("WorkTicketID"))
+        if _is_indirect(div):
+            dept_hours["Indirect"] += h
             indirect += h
         else:
+            dept_hours[div] += h
             direct += h
 
     total = direct + indirect
     rnd = lambda x: round(x, 1)
     by_department = sorted(
-        [{"department": d, "hours": rnd(h), "billable": d not in ("Indirect", "Unknown")}
+        [{"department": d, "hours": rnd(h), "billable": d != "Indirect"}
          for d, h in dept_hours.items()],
         key=lambda x: (not x["billable"], -x["hours"]))
     return {
