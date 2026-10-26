@@ -711,16 +711,21 @@ async def efficiency_debug(
         wt_route[wid] = e.get("RouteID")
 
     wt_ids = [w for w in wt_hours if w]
-    # WT → OpportunityID
+    # WT → OpportunityID, OpportunityServiceID, WorkTicketNumber
     wt_opp: dict = {}
+    wt_svcid: dict = {}
     for i in range(0, len(wt_ids), 20):
         chunk = wt_ids[i:i + 20]
         flt = " or ".join(f"WorkTicketID eq {w}" for w in chunk)
-        res = await _aspire._get("WorkTickets", {"$filter": flt, "$select": "WorkTicketID,OpportunityID", "$top": "1000"})
+        res = await _aspire._get("WorkTickets", {"$filter": flt, "$select": "WorkTicketID,OpportunityID,OpportunityServiceID,WorkTicketNumber", "$top": "1000"})
         for r in _aspire._extract_list(res):
-            wt_opp[r.get("WorkTicketID")] = r.get("OpportunityID")
+            wid = r.get("WorkTicketID")
+            wt_opp[wid] = r.get("OpportunityID")
+            wt_svcid[wid] = r.get("OpportunityServiceID")
+            if r.get("WorkTicketNumber") is not None:
+                wt_num[wid] = r.get("WorkTicketNumber")
 
-    # Opportunity → DivisionName (correct field)
+    # Opportunity → DivisionName
     opp_ids = list({o for o in wt_opp.values() if o})
     opp_div: dict = {}
     for i in range(0, len(opp_ids), 20):
@@ -730,24 +735,51 @@ async def efficiency_debug(
         for r in _aspire._extract_list(res):
             opp_div[r.get("OpportunityID")] = r.get("DivisionName")
 
+    # OpportunityServiceID → (ServiceID, service display name)
+    os_ids = list({s for s in wt_svcid.values() if s})
+    os_serviceid: dict = {}
+    os_name: dict = {}
+    for i in range(0, len(os_ids), 20):
+        chunk = os_ids[i:i + 20]
+        flt = " or ".join(f"OpportunityServiceID eq {s}" for s in chunk)
+        res = await _aspire._get("OpportunityServices", {"$filter": flt, "$select": "OpportunityServiceID,ServiceID,ServiceNameAbr,DisplayName,ServiceName", "$top": "1000"})
+        for r in _aspire._extract_list(res):
+            sid = r.get("OpportunityServiceID")
+            os_serviceid[sid] = r.get("ServiceID")
+            os_name[sid] = r.get("ServiceNameAbr") or r.get("DisplayName") or r.get("ServiceName")
+
+    # ServiceID → ServiceTypeName
+    svc_ids = list({s for s in os_serviceid.values() if s})
+    svc_type: dict = {}
+    for i in range(0, len(svc_ids), 20):
+        chunk = svc_ids[i:i + 20]
+        flt = " or ".join(f"ServiceID eq {s}" for s in chunk)
+        res = await _aspire._get("Services", {"$filter": flt, "$select": "ServiceID,ServiceTypeName,ServiceName", "$top": "1000"})
+        for r in _aspire._extract_list(res):
+            svc_type[r.get("ServiceID")] = r.get("ServiceTypeName")
+
     route_div = await _route_division_map()
 
     by_opp_div: dict = defaultdict(float)
-    by_route_div: dict = defaultdict(float)
+    by_svc_type: dict = defaultdict(float)
     rows = []
     for wid, h in wt_hours.items():
         od = opp_div.get(wt_opp.get(wid)) or "(none)"
         rd = route_div.get(wt_route.get(wid)) or "(none)"
+        osid = wt_svcid.get(wid)
+        st = svc_type.get(os_serviceid.get(osid)) or "(none)"
+        sname = os_name.get(osid) or "(none)"
         by_opp_div[od] += h
-        by_route_div[rd] += h
+        by_svc_type[st] += h
         rows.append({"wt": wid, "wt_num": wt_num.get(wid), "hours": round(h, 2),
-                     "opp_division": od, "route_division": rd})
+                     "opp_division": od, "route_division": rd,
+                     "service_type": st, "service_name": sname})
     rnd = lambda x: round(x, 1)
     return {
         "period": {"start": start, "end": end},
         "total_hours": rnd(sum(wt_hours.values())),
         "by_opportunity_division": {k: rnd(v) for k, v in sorted(by_opp_div.items(), key=lambda x: -x[1])},
-        "by_route_division": {k: rnd(v) for k, v in sorted(by_route_div.items(), key=lambda x: -x[1])},
+        "by_service_type": {k: rnd(v) for k, v in sorted(by_svc_type.items(), key=lambda x: -x[1])},
         "rows": sorted(rows, key=lambda x: -x["hours"]),
     }
 
