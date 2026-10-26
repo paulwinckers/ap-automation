@@ -1171,6 +1171,7 @@ export default function ConstructionPlan() {
     const ready = prep.total > 0 && prep.done === prep.total;
     const open = prepFor === j.opportunity_id;
     const commsOpen = commsFor === j.opportunity_id;
+    const isCO = isChangeOrder(j.opportunity_name);  // change orders nest under the main job — no prep/comms of their own
     return (
       <div key={j.opportunity_id} style={{ borderTop: '1px solid #f3f4f6', padding: '5px 10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1207,15 +1208,17 @@ export default function ConstructionPlan() {
               </div>
             );
           })()}
-          {/* Readiness */}
+          {/* Readiness — change orders nest under the main job, so no prep of their own */}
+          {!isCO && (
           <button onClick={() => setPrepFor(open ? null : j.opportunity_id)} title="Preparedness checklist"
             style={{ padding: '3px 9px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: '1px solid ' + (ready ? '#86efac' : open ? '#2563eb' : '#e5e7eb'), background: ready ? '#dcfce7' : open ? '#eff6ff' : '#f8fafc', color: ready ? '#15803d' : open ? '#1d4ed8' : '#6b7280', cursor: 'pointer', whiteSpace: 'nowrap' }}>
             {ready ? '✓ Ready' : `Prep ${prep.done}/${prep.total}`}
           </button>
+          )}
           {/* PHA */}
           <PHABadge info={phaMap.get(j.opportunity_id)} onClick={() => setPhaModalJob(j)} />
-          {/* Client comms — styled like the prep dropdown */}
-          {(() => {
+          {/* Client comms — styled like the prep dropdown; omitted for change orders */}
+          {!isCO && (() => {
             const dueCount = (j.actions || []).filter(a => a.target.startsWith('comms:')).length;
             const anySent = Object.keys(j.comms_sent || {}).length > 0;
             const label = commsOpen ? '✉️ Comms' : dueCount ? `✉️ ${dueCount} due` : anySent ? '✉️ Sent' : '✉️ Comms';
@@ -1233,12 +1236,12 @@ export default function ConstructionPlan() {
           {/* Revenue */}
           <div style={{ fontSize: 12, color: '#6b7280', minWidth: 80, textAlign: 'right' }}>{fmt$(j.revenue_est || j.revenue_est_month || 0)}</div>
         </div>
-        {open && (
+        {!isCO && open && (
           <div style={{ marginTop: 10, background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, maxWidth: 560 }}>
             <JobPrepChecklist oppId={j.opportunity_id} onProgress={(done, total) => setPrepProgress(prev => ({ ...prev, [j.opportunity_id]: { done, total } }))} />
           </div>
         )}
-        {commsOpen && (() => {
+        {!isCO && commsOpen && (() => {
           const skipSet = new Set(cxSkips.filter(s => s.opportunity_id === j.opportunity_id).map(s => s.action_key));
           const dueSet = new Set((j.actions || []).filter(a => a.target.startsWith('comms:')).map(a => a.key));
           const actKey = (tk: string) => (tk === 'handoff' ? 'welcome' : tk);
