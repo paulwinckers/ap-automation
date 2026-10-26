@@ -14,6 +14,7 @@ Scope (locked plan, see memory project-sales-activity-tracking):
 Step 2 = the capture API (create/append/attach/complete). The fan-out (create Aspire
 opportunity / task / followup), the Claude tools, and the field form build on these.
 """
+import json
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -504,6 +505,57 @@ async def my_worklist(user: dict = Depends(_get_current_user), db: Database = De
             "bucket": _SEV_BUCKET.get(a.get("severity"), "week"),
             "who": a.get("owner_name"), "last_sent": a.get("last_sent"),
             "unassigned": unassigned,
+        })
+
+    # 3) Prep checklist items assigned to this user (open only) — individually assignable prep tasks
+    today = datetime.now(timezone.utc).date().isoformat()
+    try:
+        from app.api.construction_plan import PREP_ITEMS
+        prep_label = {it["key"]: it["label"] for it in PREP_ITEMS}
+        prep_rows = await db._q(
+            "SELECT opportunity_id, item_key, checked, status, due_date, assignee_user_id, assignee "
+            "FROM job_prep_checklist", [])
+    except Exception as e:
+        logger.warning(f"worklist: prep items unavailable: {e}")
+        prep_rows, prep_label = [], {}
+
+    mine_prep = []
+    for r in prep_rows:
+        status = (r.get("status") or "").lower()
+        if not status and r.get("checked"):
+            status = "complete"
+        if status in ("complete", "uploaded", "na"):
+            continue
+        aid = r.get("assignee_user_id"); aname = (r.get("assignee") or "").strip().lower()
+        if (aid and aid == user.get("id")) or (me_name and aname == me_name):
+            mine_prep.append(r)
+
+    # Resolve job names for the assigned items from the spine cache (small IN query, chunked).
+    name_by_opp: dict = {}
+    opp_ids = list({r["opportunity_id"] for r in mine_prep})
+    for i in range(0, len(opp_ids), 90):
+        chunk = opp_ids[i:i + 90]
+        ph = ",".join("?" for _ in chunk)
+        try:
+            for jr in await db._q(f"SELECT opportunity_id, payload FROM spine_jobs WHERE opportunity_id IN ({ph})", chunk):
+                try:
+                    p = json.loads(jr.get("payload") or "{}")
+                    name_by_opp[jr["opportunity_id"]] = p.get("property_name") or p.get("opportunity_name")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    for r in mine_prep:
+        opp = r["opportunity_id"]
+        items.append({
+            "kind": "prep", "source": "prep",
+            "id": f"{opp}:{r['item_key']}", "opportunity_id": opp, "item_key": r["item_key"],
+            "title": prep_label.get(r["item_key"], r["item_key"]),
+            "job": name_by_opp.get(opp) or f"Job #{opp}",
+            "customer_key": None, "due_date": r.get("due_date"),
+            "bucket": _due_bucket(r.get("due_date"), today),
+            "who": r.get("assignee"),
         })
 
     items.sort(key=lambda x: (_BUCKET_ORDER.get(x.get("bucket"), 9), x.get("due_date") or "9999-99-99"))

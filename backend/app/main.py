@@ -558,6 +558,9 @@ async def lifespan(app: FastAPI):
         # job_prep_checklist — per-item due & completed dates
         ("job_prep_checklist", "due_date",       "ALTER TABLE job_prep_checklist ADD COLUMN due_date TEXT"),
         ("job_prep_checklist", "completed_date", "ALTER TABLE job_prep_checklist ADD COLUMN completed_date TEXT"),
+        # job_prep_checklist — assign an item to a real user (directory identity) so it lands on their worklist
+        ("job_prep_checklist", "assignee_user_id", "ALTER TABLE job_prep_checklist ADD COLUMN assignee_user_id INTEGER"),
+        ("job_prep_checklist", "assignee",         "ALTER TABLE job_prep_checklist ADD COLUMN assignee TEXT"),
         # company_documents.folder — optional folder/category for grouping (legacy text)
         ("company_documents", "folder", "ALTER TABLE company_documents ADD COLUMN folder TEXT"),
         # company_documents.folder_id — FK into document_folders (nested folder tree)

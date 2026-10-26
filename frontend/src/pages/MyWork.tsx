@@ -10,7 +10,8 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  listMyWorklist, patchSalesTask, patchSalesActivity, skipCxAction, currentUser, WorklistItem,
+  listMyWorklist, patchSalesTask, patchSalesActivity, skipCxAction, setChecklistStatus,
+  currentUser, WorklistItem,
 } from '../lib/api';
 import { ClientCommsModal } from '../components/ClientComms';
 
@@ -38,6 +39,7 @@ const SOURCE_META: Record<WorklistItem['source'], { icon: string; tag: string; t
   sales_task:     { icon: '✅', tag: 'Task',         tagBg: '#ecfccb', tagColor: '#3f6212' },
   sales_followup: { icon: '🔔', tag: 'Follow-up',    tagBg: '#fef9c3', tagColor: '#854d0e' },
   cx_comms:       { icon: '✉️', tag: 'Client email', tagBg: '#e0e7ff', tagColor: '#3730a3' },
+  prep:           { icon: '🧰', tag: 'Job prep',     tagBg: '#fef3c7', tagColor: '#92400e' },
 };
 
 export default function MyWork() {
@@ -113,11 +115,15 @@ export default function MyWork() {
     else if (it.source === 'sales_followup') await patchSalesActivity(Number(it.id), { next_action_done: true });
     else if (it.source === 'cx_comms' && it.opportunity_id && it.action_key)
       await skipCxAction(it.opportunity_id, it.action_key, me?.name || undefined);
+    else if (it.source === 'prep' && it.opportunity_id && it.item_key)
+      await setChecklistStatus(it.opportunity_id, it.item_key, 'na', null, me?.name || undefined);
   }, 'marked N/A');
 
   const markDone = (targets: WorklistItem[]) => bulk(targets.filter(t => t.source !== 'cx_comms'), async (it) => {
     if (it.source === 'sales_task') await patchSalesTask(Number(it.id), { status: 'done' });
     else if (it.source === 'sales_followup') await patchSalesActivity(Number(it.id), { next_action_done: true });
+    else if (it.source === 'prep' && it.opportunity_id && it.item_key)
+      await setChecklistStatus(it.opportunity_id, it.item_key, 'complete', null, me?.name || undefined);
   }, 'marked done');
 
   // Guided send queue: open each selected CX email in the preview/approve modal, one at a time.
@@ -181,6 +187,8 @@ export default function MyWork() {
               const k = keyOf(it);
               const context = it.source === 'cx_comms'
                 ? [it.job, it.last_sent ? `last sent ${pretty(it.last_sent)}` : 'not sent yet'].filter(Boolean).join(' · ')
+                : it.source === 'prep'
+                ? [it.job, it.due_date ? `due ${pretty(it.due_date)}` : ''].filter(Boolean).join(' · ')
                 : [customerLabel(it.customer_key), it.due_date ? `due ${pretty(it.due_date)}` : ''].filter(Boolean).join(' · ');
               return (
                 <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',

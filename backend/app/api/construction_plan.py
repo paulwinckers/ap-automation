@@ -60,6 +60,11 @@ class PrepDateIn(BaseModel):
     due_date:       Optional[str] = None   # 'YYYY-MM-DD' or '' to clear
     completed_date: Optional[str] = None   # 'YYYY-MM-DD' or '' to clear
 
+class PrepAssignIn(BaseModel):
+    item_key:         str
+    assignee_user_id: Optional[int] = None   # a user id; 0 or null clears the assignment
+    due_date:         Optional[str] = None   # optional: set the due date in the same call
+
 class PlanningIn(BaseModel):
     lead_name:          Optional[str]  = None   # assign a construction lead (None = leave unchanged)
     schedule_confirmed: Optional[bool] = None   # customer-confirmed schedule (None = leave unchanged)
@@ -919,7 +924,7 @@ async def get_checklist(opportunity_id: int, db: Database = Depends(get_db)):
     try:
         rows = await db._q(
             "SELECT item_key, checked, status, attachment_id, checked_by, checked_at, "
-            "due_date, completed_date "
+            "due_date, completed_date, assignee_user_id, assignee "
             "FROM job_prep_checklist WHERE opportunity_id = ?",
             [opportunity_id],
         )
@@ -958,6 +963,8 @@ async def get_checklist(opportunity_id: int, db: Database = Depends(get_db)):
             "checked_at":      r.get("checked_at"),
             "due_date":        r.get("due_date"),
             "completed_date":  r.get("completed_date"),
+            "assignee_user_id": r.get("assignee_user_id"),
+            "assignee":        r.get("assignee"),
         })
     # total excludes N/A items
     return {"opportunity_id": opportunity_id, "items": items, "done": done, "total": applicable}
@@ -1017,6 +1024,33 @@ async def set_checklist_date(opportunity_id: int, body: PrepDateIn, db: Database
         "ok": True, "opportunity_id": opportunity_id, "item_key": body.item_key,
         "due_date": body.due_date, "completed_date": body.completed_date,
     }
+
+
+@router.post("/jobs/{opportunity_id}/checklist/assign")
+async def assign_checklist_item(opportunity_id: int, body: PrepAssignIn, db: Database = Depends(get_db)):
+    """Assign a prep item to a real user (and optionally set its due date) so it appears on that
+    person's My Action Items. assignee_user_id 0/null clears the assignment."""
+    if body.item_key not in {it["key"] for it in PREP_ITEMS}:
+        raise HTTPException(status_code=400, detail=f"Unknown checklist item: {body.item_key}")
+    uid = body.assignee_user_id or None
+    name = None
+    if uid:
+        urows = await db._q("SELECT name, email FROM users WHERE id = ?", [uid])
+        name = (urows[0].get("name") or urows[0].get("email")) if urows else None
+    await db._x(
+        "INSERT OR IGNORE INTO job_prep_checklist (opportunity_id, item_key, checked) VALUES (?, ?, 0)",
+        [opportunity_id, body.item_key],
+    )
+    sets, params = ["assignee_user_id = ?", "assignee = ?"], [uid, name]
+    if body.due_date is not None:
+        sets.append("due_date = ?"); params.append(body.due_date or None)
+    params += [opportunity_id, body.item_key]
+    await db._x(
+        f"UPDATE job_prep_checklist SET {', '.join(sets)} WHERE opportunity_id = ? AND item_key = ?",
+        params,
+    )
+    return {"ok": True, "opportunity_id": opportunity_id, "item_key": body.item_key,
+            "assignee_user_id": uid, "assignee": name, "due_date": body.due_date}
 
 
 @router.put("/jobs/{opportunity_id}/planning")

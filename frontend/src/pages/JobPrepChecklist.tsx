@@ -8,8 +8,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
-  getJobChecklist, setChecklistStatus, setChecklistDate, uploadJobAttachment, API_BASE,
-  type PrepItem, type PrepStatus,
+  getJobChecklist, setChecklistStatus, setChecklistDate, assignChecklistItem, listSalesAssignees,
+  uploadJobAttachment, API_BASE, type PrepItem, type PrepStatus, type Assignee,
 } from '../lib/api';
 
 function currentUserName(): string {
@@ -28,8 +28,11 @@ export default function JobPrepChecklist({ oppId, onProgress }: Props) {
   const [items,   setItems]   = useState<PrepItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy,    setBusy]    = useState<string | null>(null);
+  const [assignees, setAssignees] = useState<Assignee[]>([]);
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const pendingUploadKey = useRef<string | null>(null);
+
+  useEffect(() => { listSalesAssignees().then(r => setAssignees(r.assignees || [])).catch(() => {}); }, []);
 
   function report(next: PrepItem[]) {
     const done  = next.filter(i => i.status === 'complete' || i.status === 'uploaded').length;
@@ -104,6 +107,15 @@ export default function JobPrepChecklist({ oppId, onProgress }: Props) {
   const done  = items.filter(i => i.status === 'complete' || i.status === 'uploaded').length;
   const total = items.filter(i => i.status !== 'na').length;
   const ready = total > 0 && done === total;
+
+  async function saveAssignee(item: PrepItem, userId: number | null) {
+    const a = assignees.find(x => x.id === userId);
+    applyLocal(item.key, { assignee_user_id: userId, assignee: a ? a.name : null } as Partial<PrepItem>);
+    setBusy(item.key);
+    try { await assignChecklistItem(oppId, item.key, userId, item.due_date || undefined); }
+    catch { /* ignore */ }
+    finally { setBusy(null); }
+  }
 
   const selectVal = (s: PrepStatus) => (s === 'uploaded' ? 'upload' : s);
 
@@ -185,6 +197,19 @@ export default function JobPrepChecklist({ oppId, onProgress }: Props) {
                     <input type="date" value={it.completed_date ?? ''} disabled={busy === it.key}
                       onChange={e => saveDate(it, 'completed_date', e.target.value)}
                       style={{ fontSize: 11, padding: '2px 6px', borderRadius: 6, border: '1px solid #d1d5db', fontFamily: 'inherit', color: '#374151' }} />
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#64748b', marginLeft: 'auto' }}>
+                    Assign
+                    <select value={it.assignee_user_id ?? ''} disabled={busy === it.key}
+                      onChange={e => saveAssignee(it, e.target.value ? Number(e.target.value) : null)}
+                      title={it.assignee ? `Assigned to ${it.assignee}` : 'Assign this item to a coworker'}
+                      style={{ fontSize: 11, padding: '2px 6px', borderRadius: 6, fontFamily: 'inherit',
+                        border: '1px solid ' + (it.assignee_user_id ? '#c7d2fe' : '#d1d5db'),
+                        background: it.assignee_user_id ? '#eef2ff' : '#fff',
+                        color: it.assignee_user_id ? '#3730a3' : '#9ca3af', maxWidth: 130 }}>
+                      <option value="">Unassigned</option>
+                      {assignees.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
                   </label>
                 </div>
               </div>

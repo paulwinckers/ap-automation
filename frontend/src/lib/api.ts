@@ -399,6 +399,8 @@ export interface PrepItem {
   checked_at: string | null;
   due_date: string | null;
   completed_date: string | null;
+  assignee_user_id: number | null;
+  assignee: string | null;
 }
 export interface JobChecklist {
   opportunity_id: number;
@@ -433,6 +435,13 @@ export async function setJobPlanning(
   return request('PUT', `/construction/plan/jobs/${oppId}/planning`, patch);
 }
 
+/** Assign a prep item to a user (0/undefined clears); optionally set its due date in one call. */
+export async function assignChecklistItem(
+  oppId: number, item_key: string, assignee_user_id: number | null, due_date?: string,
+): Promise<{ ok: boolean; assignee: string | null }> {
+  return request('POST', `/construction/plan/jobs/${oppId}/checklist/assign`,
+    { item_key, assignee_user_id: assignee_user_id ?? 0, due_date });
+}
 /** Set a checklist item's due and/or completed date ('' clears). */
 export async function setChecklistDate(
   oppId: number, item_key: string, dates: { due_date?: string; completed_date?: string },
@@ -725,12 +734,13 @@ export async function listMyDueItems(): Promise<{
 
 // Unified morning worklist: sales tasks + followups + CX comms the user owns (by role).
 export interface WorklistItem {
-  source: 'sales_task' | 'sales_followup' | 'cx_comms';
-  kind: 'task' | 'followup' | 'cx';
+  source: 'sales_task' | 'sales_followup' | 'cx_comms' | 'prep';
+  kind: 'task' | 'followup' | 'cx' | 'prep';
   id: number | string;
   title: string;
   customer_key?: string | null;
   opportunity_id?: number | null;
+  item_key?: string | null;
   job?: string | null;
   due_date: string | null;
   bucket: 'overdue' | 'today' | 'week' | 'later' | 'someday';
