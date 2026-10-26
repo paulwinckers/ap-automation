@@ -742,9 +742,9 @@ async def efficiency_debug(
     os_name: dict = {}
     for i in range(0, len(os_ids), 20):
         chunk = os_ids[i:i + 20]
-        flt = " or ".join(f"OpportunityServiceID eq {s}" for s in chunk)
+        flt = "(" + " or ".join(f"OpportunityServiceID eq {s}" for s in chunk) + ")"
         try:
-            res = await _aspire._get("OpportunityServices", {"$filter": flt, "$select": "OpportunityServiceID,ServiceID,ServiceTypeID,DisplayName", "$top": "1000"})
+            res = await _aspire._get("OpportunityServices", {"$filter": flt, "$select": "OpportunityServiceID,ServiceID,DisplayName", "$top": "1000"})
             for r in _aspire._extract_list(res):
                 sid = r.get("OpportunityServiceID")
                 os_serviceid[sid] = r.get("ServiceID")
