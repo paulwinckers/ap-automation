@@ -566,6 +566,46 @@ async def save_drive_ticket(body: DriveTicketBody, db: Database = Depends(get_db
     return {"ok": True}
 
 
+@router.get("/_aspire-probe", dependencies=[Depends(require_access)])
+async def _aspire_time_probe(start: Optional[str] = Query(None), end: Optional[str] = Query(None)):
+    """TEMP diagnostic: learn Aspire's time schema. Tries to GET WorkTicketTimes / ClockTimes
+    (may be write-only) and a WorkTicket, returns sample keys so we can build the real rollup."""
+    if not start or not end:
+        start, end = _last_week_range()
+    out: dict = {"range": [start, end]}
+    # WorkTicketTimes — try a date-filtered GET, fall back to unfiltered
+    for label, params in (
+        ("wtt_by_date", {"$filter": f"StartTime ge {start}T00:00:00Z and StartTime le {end}T23:59:59Z", "$top": "5"}),
+        ("wtt_plain", {"$top": "5"}),
+    ):
+        try:
+            res = await _aspire._get("WorkTicketTimes", params)
+            rows = _aspire._extract_list(res)
+            out[label] = {"ok": True, "count": len(rows), "keys": sorted(rows[0].keys()) if rows else [], "sample": rows[0] if rows else None}
+            break
+        except Exception as e:
+            out[label] = {"ok": False, "err": str(e)[:200]}
+    # ClockTimes GET?
+    try:
+        res = await _aspire._get("ClockTimes", {"$top": "3"})
+        rows = _aspire._extract_list(res)
+        out["clocktimes"] = {"ok": True, "count": len(rows), "keys": sorted(rows[0].keys()) if rows else []}
+    except Exception as e:
+        out["clocktimes"] = {"ok": False, "err": str(e)[:200]}
+    # WorkTicket — which fields carry division?
+    try:
+        res = await _aspire._get("WorkTickets", {"$top": "1"})
+        rows = _aspire._extract_list(res)
+        out["workticket_keys"] = sorted(rows[0].keys()) if rows else []
+    except Exception as e:
+        out["workticket_keys"] = f"ERR {str(e)[:200]}"
+    try:
+        out["drive_ticket_id"] = await _db.get_setting("drive_ticket_id")
+    except Exception as e:
+        out["drive_ticket_id"] = f"ERR {e}"
+    return out
+
+
 # ── Billable-hours-by-department rollup (approved time) ───────────────────────
 _LUNCH_UNPAID_FROM = "2027-01-01"  # lunch is PAID (→ Indirect) before this date; UNPAID (excluded) on/after
 
