@@ -95,12 +95,12 @@ async def get_month_financials(month: Optional[str] = None) -> dict:
 
 @mcp.tool()
 async def get_time_efficiency(start: Optional[str] = None, end: Optional[str] = None) -> dict:
-    """Billable hours by department for APPROVED (submitted) crew time. onsite hours → the job's
-    division (billable/direct); drive → 'Indirect'; lunch → 'Indirect' while it's paid, excluded once
-    unpaid (2027). `start`/`end` are 'YYYY-MM-DD' inclusive; omit both for last week (Mon–Sun). Returns
-    by_department, direct vs indirect hours, billable_pct, and a coverage block (clocked vs attributed
-    hours) that signals whether crews are logging segments or just clocking in/out. Answers
-    'what were our billable hours by department last week'."""
+    """Billable hours by department from APPROVED Aspire crew labor (WorkTicketTimes that have been
+    approved). Each entry's hours roll up to its job's DIVISION (billable/direct); drive & overhead
+    tickets with no job division roll up to 'Indirect'. `start`/`end` are 'YYYY-MM-DD' inclusive; omit
+    both for last week (Mon–Sun). Returns by_department, direct vs indirect hours, OT, and billable_pct
+    (direct ÷ total). Answers 'what were our billable hours by department last week'. Unapproved time is
+    excluded."""
     params = {}
     if start: params["start"] = start
     if end:   params["end"] = end

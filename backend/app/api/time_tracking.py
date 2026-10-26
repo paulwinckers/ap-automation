@@ -566,54 +566,77 @@ async def save_drive_ticket(body: DriveTicketBody, db: Database = Depends(get_db
     return {"ok": True}
 
 
-@router.get("/_aspire-probe", dependencies=[Depends(require_access)])
-async def _aspire_time_probe(start: Optional[str] = Query(None), end: Optional[str] = Query(None)):
-    """TEMP diagnostic: learn Aspire's time schema. Tries to GET WorkTicketTimes / ClockTimes
-    (may be write-only) and a WorkTicket, returns sample keys so we can build the real rollup."""
-    if not start or not end:
-        start, end = _last_week_range()
-    out: dict = {"range": [start, end]}
-    dfilter = f"WorkTicketTimeDate ge {start}T00:00:00Z and WorkTicketTimeDate le {end}T23:59:59Z"
-    # 1) approved-only filter syntax?
-    try:
-        res = await _aspire._get("WorkTicketTimes", {"$filter": dfilter + " and ApprovedDateTime ne null", "$top": "1000"})
-        rows = _aspire._extract_list(res)
-        appr_hours = round(sum((r.get("Hours") or 0) for r in rows), 1)
-        out["approved_week"] = {"ok": True, "count": len(rows), "total_hours": appr_hours}
-    except Exception as e:
-        out["approved_week"] = {"ok": False, "err": str(e)[:300]}
-    # 2) $expand the work ticket's opportunity in one call?
-    for label, exp in (("expand_wt", "WorkTicket($select=OpportunityID,OpportunityNumber)"),
-                       ("expand_wt_opp", "WorkTicket($expand=Opportunity($select=OpportunityID,Division,DivisionName))")):
-        try:
-            res = await _aspire._get("WorkTicketTimes", {"$filter": dfilter, "$top": "2", "$expand": exp})
-            rows = _aspire._extract_list(res)
-            out[label] = {"ok": True, "sample": rows[0] if rows else None}
-            break
-        except Exception as e:
-            out[label] = {"ok": False, "err": str(e)[:300]}
-    # 3) distinct work tickets in the week → how many opp lookups we'd need
-    try:
-        res = await _aspire._get("WorkTicketTimes", {"$filter": dfilter, "$top": "1000", "$select": "WorkTicketID,Hours,ApprovedDateTime"})
-        rows = _aspire._extract_list(res)
-        wt_ids = {r.get("WorkTicketID") for r in rows}
-        out["week_volume"] = {"entries": len(rows), "distinct_tickets": len(wt_ids),
-                              "approved": sum(1 for r in rows if r.get("ApprovedDateTime")),
-                              "unapproved": sum(1 for r in rows if not r.get("ApprovedDateTime"))}
-    except Exception as e:
-        out["week_volume"] = {"err": str(e)[:300]}
-    return out
-
-
-# ── Billable-hours-by-department rollup (approved time) ───────────────────────
-_LUNCH_UNPAID_FROM = "2027-01-01"  # lunch is PAID (→ Indirect) before this date; UNPAID (excluded) on/after
-
-
+# ── Billable-hours-by-department rollup (approved Aspire labor) ───────────────
 def _last_week_range() -> tuple[str, str]:
     """Previous Mon–Sun (date-only; fine for a weekly rollup)."""
     today = datetime.now(timezone.utc).date()
     last_monday = today - timedelta(days=today.weekday() + 7)
     return last_monday.isoformat(), (last_monday + timedelta(days=6)).isoformat()
+
+
+async def _fetch_approved_wtt(start: str, end: str, approved_only: bool = True) -> list[dict]:
+    """All WorkTicketTimes dated in [start,end] (approved only by default), keyset-paginated by
+    WorkTicketTimeID past Aspire's 1000-row cap."""
+    base = (f"WorkTicketTimeDate ge {start}T00:00:00Z and WorkTicketTimeDate le {end}T23:59:59Z"
+            + (" and ApprovedDateTime ne null" if approved_only else ""))
+    out: list[dict] = []
+    last_id = 0
+    for _ in range(50):  # safety cap (50k rows)
+        res = await _aspire._get("WorkTicketTimes", {
+            "$filter": base + f" and WorkTicketTimeID gt {last_id}",
+            "$orderby": "WorkTicketTimeID asc", "$top": "1000",
+            "$select": "WorkTicketTimeID,WorkTicketID,Hours,OTHours,WorkTicketTimeDate",
+        })
+        rows = _aspire._extract_list(res)
+        if not rows:
+            break
+        out.extend(rows)
+        last_id = rows[-1].get("WorkTicketTimeID") or (last_id + 1)
+        if len(rows) < 1000:
+            break
+    return out
+
+
+async def _wt_division_map(db: Database, wt_ids: set[int]) -> dict[int, Optional[str]]:
+    """WorkTicketID → division. WT→OpportunityID via Aspire WorkTickets (chunked OR), then
+    OpportunityID→division via the spine cache, with an Aspire Opportunities fallback for misses.
+    Tickets whose opportunity has no division (drive / overhead) resolve to None → 'Indirect'."""
+    wt_list = [w for w in wt_ids if w]
+    wt_opp: dict[int, int] = {}
+    for i in range(0, len(wt_list), 20):
+        chunk = wt_list[i:i + 20]
+        flt = " or ".join(f"WorkTicketID eq {w}" for w in chunk)
+        try:
+            res = await _aspire._get("WorkTickets", {"$filter": flt, "$select": "WorkTicketID,OpportunityID", "$top": "1000"})
+            for r in _aspire._extract_list(res):
+                wt_opp[r.get("WorkTicketID")] = r.get("OpportunityID")
+        except Exception as e:
+            logger.warning(f"efficiency: WT→opp chunk failed: {e}")
+
+    opp_ids = {o for o in wt_opp.values() if o}
+    opp_div: dict[int, Optional[str]] = {}
+    opp_list = list(opp_ids)
+    for i in range(0, len(opp_list), 90):
+        chunk = opp_list[i:i + 90]
+        ph = ",".join("?" for _ in chunk)
+        try:
+            for r in await db._q(f"SELECT opportunity_id, division FROM spine_jobs WHERE opportunity_id IN ({ph})", chunk):
+                if r.get("division"):
+                    opp_div[r["opportunity_id"]] = r["division"]
+        except Exception:
+            pass
+    missing = [o for o in opp_ids if o not in opp_div]
+    for i in range(0, len(missing), 20):
+        chunk = missing[i:i + 20]
+        flt = " or ".join(f"OpportunityID eq {o}" for o in chunk)
+        try:
+            res = await _aspire._get("Opportunities", {"$filter": flt, "$select": "OpportunityID,Division", "$top": "1000"})
+            for r in _aspire._extract_list(res):
+                opp_div[r.get("OpportunityID")] = r.get("Division") or None
+        except Exception as e:
+            logger.warning(f"efficiency: opp→division chunk failed: {e}")
+
+    return {wt: opp_div.get(opp) for wt, opp in wt_opp.items()}
 
 
 @router.get("/efficiency", dependencies=[Depends(require_access)])
@@ -622,99 +645,52 @@ async def time_efficiency(
     end:   Optional[str] = Query(None, description="YYYY-MM-DD inclusive"),
     db: Database = Depends(get_db),
 ):
-    """Billable hours by department for APPROVED (submitted) time in the period.
-    onsite → the job's division (billable/direct); drive → 'Indirect'; lunch → 'Indirect' while paid
-    (work_date before the unpaid cutover), excluded on/after. Also reports segment coverage so we can
-    tell whether the numbers are real or a crew-logging gap."""
+    """Billable hours by department from APPROVED Aspire crew labor (WorkTicketTimes with an
+    ApprovedDateTime) in the period. Each entry's hours roll up to its job's DIVISION (billable /
+    direct); time on tickets with no job division — drive / overhead — rolls up to 'Indirect'.
+    Returns by_department, direct vs indirect hours and a billable %. (Lunch/breaks follow Aspire's
+    own BreakTime handling; they are not separate line items here.)"""
     if not start or not end:
         start, end = _last_week_range()
 
     try:
-        sessions = await db._q(
-            "SELECT id, employee_id, employee_name, work_date, clock_in, clock_out, status "
-            "FROM time_sessions WHERE status = 'submitted' AND work_date >= ? AND work_date <= ?",
-            [start, end])
+        entries = await _fetch_approved_wtt(start, end, approved_only=True)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"time query failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Aspire time fetch failed: {e}")
 
-    sess_by_id = {s["id"]: s for s in sessions}
-    session_ids = list(sess_by_id.keys())
+    wt_div = await _wt_division_map(db, {e.get("WorkTicketID") for e in entries})
 
-    # Pull their segments (chunked IN under D1's bound-param cap).
-    segments: list[dict] = []
-    for i in range(0, len(session_ids), 90):
-        chunk = session_ids[i:i + 90]
-        ph = ",".join("?" for _ in chunk)
-        try:
-            segments += await db._q(
-                f"SELECT session_id, segment_type, opportunity_id, duration_minutes "
-                f"FROM time_segments WHERE session_id IN ({ph})", chunk)
-        except Exception:
-            pass
+    dept_hours: dict = defaultdict(float)
+    direct = indirect = ot = 0.0
+    for e in entries:
+        h = e.get("Hours") or 0.0
+        ot += e.get("OTHours") or 0.0
+        dept = wt_div.get(e.get("WorkTicketID")) or "Indirect"
+        dept_hours[dept] += h
+        if dept in ("Indirect", "Unknown"):
+            indirect += h
+        else:
+            direct += h
 
-    # Division for each onsite segment's job, from the spine cache.
-    opp_ids = list({s["opportunity_id"] for s in segments
-                    if (s.get("segment_type") or "").lower() == "onsite" and s.get("opportunity_id")})
-    div_by_opp: dict = {}
-    for i in range(0, len(opp_ids), 90):
-        chunk = opp_ids[i:i + 90]
-        ph = ",".join("?" for _ in chunk)
-        try:
-            for r in await db._q(f"SELECT opportunity_id, division FROM spine_jobs WHERE opportunity_id IN ({ph})", chunk):
-                div_by_opp[r["opportunity_id"]] = r.get("division")
-        except Exception:
-            pass
-
-    dept_minutes: dict = defaultdict(float)
-    direct_min = indirect_min = 0.0
-    with_segments = set()
-    for s in segments:
-        mins = s.get("duration_minutes")
-        if not mins:
-            continue
-        with_segments.add(s["session_id"])
-        stype = (s.get("segment_type") or "").lower()
-        if stype == "onsite":
-            dept = div_by_opp.get(s.get("opportunity_id")) or "Unknown"
-            dept_minutes[dept] += mins
-            direct_min += mins
-        elif stype == "drive":
-            dept_minutes["Indirect"] += mins
-            indirect_min += mins
-        elif stype == "lunch":
-            wd = (sess_by_id.get(s["session_id"], {}).get("work_date") or "")[:10]
-            if wd and wd < _LUNCH_UNPAID_FROM:        # paid lunch → Indirect
-                dept_minutes["Indirect"] += mins
-                indirect_min += mins
-            # on/after cutover: unpaid → excluded entirely
-
-    # Coverage: clocked vs attributed, to surface unlogged gaps / adoption.
-    clocked_min = 0.0
-    for s in sessions:
-        if s.get("clock_in") and s.get("clock_out"):
-            clocked_min += max(0, _duration_minutes(s["clock_in"], s["clock_out"]))
-    attributed_min = direct_min + indirect_min
-
-    hrs = lambda m: round(m / 60.0, 2)
+    total = direct + indirect
+    rnd = lambda x: round(x, 1)
     by_department = sorted(
-        [{"department": d, "hours": hrs(m), "billable": d not in ("Indirect", "Unknown")}
-         for d, m in dept_minutes.items()],
+        [{"department": d, "hours": rnd(h), "billable": d not in ("Indirect", "Unknown")}
+         for d, h in dept_hours.items()],
         key=lambda x: (not x["billable"], -x["hours"]))
-    total = direct_min + indirect_min
     return {
         "period": {"start": start, "end": end},
-        "approved_sessions": len(sessions),
-        "sessions_with_segments": len(with_segments),
-        "coverage": {
-            "clocked_hours": hrs(clocked_min),
-            "attributed_hours": hrs(attributed_min),
-            "coverage_pct": round(100 * attributed_min / clocked_min, 1) if clocked_min else None,
-        },
-        "direct_hours": hrs(direct_min),
-        "indirect_hours": hrs(indirect_min),
-        "billable_pct": round(100 * direct_min / total, 1) if total else None,
-        "lunch_rule": f"paid→Indirect before {_LUNCH_UNPAID_FROM}, excluded on/after",
+        "source": "aspire-approved",
+        "approved_entries": len(entries),
+        "total_hours": rnd(total),
+        "direct_hours": rnd(direct),
+        "indirect_hours": rnd(indirect),
+        "ot_hours": rnd(ot),
+        "billable_pct": round(100 * direct / total, 1) if total else None,
         "by_department": by_department,
+        "note": ("Approved crew labor from Aspire WorkTicketTimes. Direct = hours on job tickets by "
+                 "division; Indirect = drive/overhead tickets with no job division. "
+                 "Unapproved time is excluded."),
     }
 
 
