@@ -691,6 +691,67 @@ async def time_efficiency(
     return result
 
 
+@router.get("/efficiency-debug", dependencies=[Depends(require_access)])
+async def efficiency_debug(
+    start: str = Query(...),
+    end:   str = Query(...),
+):
+    """TEMP diagnostic: for each WorkTicket worked in the range, return hours and the division as
+    seen three ways (opportunity DivisionName, route division) so we can reconcile against the
+    Aspire grid export. Also returns aggregates by each method."""
+    entries = await _fetch_wtt(start, end, approved_only=False)
+    # hours per WorkTicketID (+ carry WorkTicketNumber, RouteID)
+    wt_hours: dict = defaultdict(float)
+    wt_num: dict = {}
+    wt_route: dict = {}
+    for e in entries:
+        wid = e.get("WorkTicketID")
+        wt_hours[wid] += e.get("Hours") or 0.0
+        wt_num[wid] = e.get("WorkTicketNumber")
+        wt_route[wid] = e.get("RouteID")
+
+    wt_ids = [w for w in wt_hours if w]
+    # WT → OpportunityID
+    wt_opp: dict = {}
+    for i in range(0, len(wt_ids), 20):
+        chunk = wt_ids[i:i + 20]
+        flt = " or ".join(f"WorkTicketID eq {w}" for w in chunk)
+        res = await _aspire._get("WorkTickets", {"$filter": flt, "$select": "WorkTicketID,OpportunityID", "$top": "1000"})
+        for r in _aspire._extract_list(res):
+            wt_opp[r.get("WorkTicketID")] = r.get("OpportunityID")
+
+    # Opportunity → DivisionName (correct field)
+    opp_ids = list({o for o in wt_opp.values() if o})
+    opp_div: dict = {}
+    for i in range(0, len(opp_ids), 20):
+        chunk = opp_ids[i:i + 20]
+        flt = " or ".join(f"OpportunityID eq {o}" for o in chunk)
+        res = await _aspire._get("Opportunities", {"$filter": flt, "$select": "OpportunityID,DivisionName", "$top": "1000"})
+        for r in _aspire._extract_list(res):
+            opp_div[r.get("OpportunityID")] = r.get("DivisionName")
+
+    route_div = await _route_division_map()
+
+    by_opp_div: dict = defaultdict(float)
+    by_route_div: dict = defaultdict(float)
+    rows = []
+    for wid, h in wt_hours.items():
+        od = opp_div.get(wt_opp.get(wid)) or "(none)"
+        rd = route_div.get(wt_route.get(wid)) or "(none)"
+        by_opp_div[od] += h
+        by_route_div[rd] += h
+        rows.append({"wt": wid, "wt_num": wt_num.get(wid), "hours": round(h, 2),
+                     "opp_division": od, "route_division": rd})
+    rnd = lambda x: round(x, 1)
+    return {
+        "period": {"start": start, "end": end},
+        "total_hours": rnd(sum(wt_hours.values())),
+        "by_opportunity_division": {k: rnd(v) for k, v in sorted(by_opp_div.items(), key=lambda x: -x[1])},
+        "by_route_division": {k: rnd(v) for k, v in sorted(by_route_div.items(), key=lambda x: -x[1])},
+        "rows": sorted(rows, key=lambda x: -x["hours"]),
+    }
+
+
 @router.post("/submit/{session_id}")
 async def submit_session(session_id: int, db: Database = Depends(get_db)):
     """
