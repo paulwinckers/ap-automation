@@ -702,7 +702,7 @@ export async function getCustomer360ByContact(contactId: number): Promise<Custom
 export interface SalesAttachment { id: number; kind: string; url: string | null; caption: string | null; file_name: string | null; }
 export interface SalesActivity {
   id: number; customer_key: string | null; opportunity_id: number | null; type: string;
-  subject: string | null; body: string | null; next_action_date: string | null;
+  subject: string | null; body: string | null; direction?: string | null; next_action_date: string | null;
   next_action_note: string | null; next_action_done: number; created_by: string | null; created_at: string;
   occurred_at?: string | null; attachments?: SalesAttachment[];
 }
@@ -794,6 +794,18 @@ export async function patchSalesTask(id: number, patch: {
   title?: string; detail?: string;
 }): Promise<{ ok: boolean; task: SalesTask }> {
   return request('PATCH', `/sales/task/${id}`, patch);
+}
+export async function deleteSalesActivity(id: number): Promise<{ ok: boolean; deleted: number }> {
+  return request('DELETE', `/sales/activity/${id}`);
+}
+export async function deleteSalesTask(id: number): Promise<{ ok: boolean; deleted: number }> {
+  return request('DELETE', `/sales/task/${id}`);
+}
+export async function sendSalesEmail(payload: {
+  to: string[]; subject: string; body: string; cc?: string[];
+  customer_key?: string; opportunity_id?: number; from_email?: string;
+}): Promise<{ ok: boolean; sent_from: string; sent_to: string[]; activity: SalesActivity }> {
+  return request('POST', '/sales/email', payload);
 }
 
 // ── Aspire Field Operations ───────────────────────────────────────────────────

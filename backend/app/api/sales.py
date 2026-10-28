@@ -153,6 +153,56 @@ async def create_activity(body: ActivityIn, user: dict = Depends(require_access)
     return {"ok": True, "activity": rows[0] if rows else None}
 
 
+class EmailIn(BaseModel):
+    to:             list[str]
+    subject:        str
+    body:           str                       # plain text; wrapped to simple HTML on send
+    cc:             Optional[list[str]] = None
+    customer_key:   Optional[str] = None
+    opportunity_id: Optional[int]  = None
+    from_email:     Optional[str]  = None      # sender mailbox; defaults to the acting rep
+
+
+@router.post("/email")
+async def send_sales_email(body: EmailIn, user: dict = Depends(require_access), db: Database = Depends(get_db)):
+    """Send an email to a customer contact via MS Graph, then log it as an 'email' activity
+    (direction out) on the customer so it shows in their timeline. Sends from the acting rep's
+    address by default."""
+    import html as _html
+    from app.services.email_intake import GraphClient
+
+    to_list = [a.strip() for a in (body.to or []) if a and a.strip()]
+    if not to_list:
+        raise HTTPException(status_code=422, detail="At least one recipient is required")
+    if not body.subject.strip():
+        raise HTTPException(status_code=422, detail="Subject is required")
+
+    sender = (body.from_email or user.get("email") or "").strip()
+    if not sender or sender == "service":
+        sender = settings.ms_send_from
+    cc_list = [c.strip() for c in (body.cc or []) if c and c.strip()] or None
+
+    body_html = ('<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111">'
+                 + _html.escape(body.body).replace("\n", "<br>") + "</div>")
+    try:
+        await GraphClient().send_email(mailbox=sender, to_addresses=to_list, subject=body.subject,
+                                       body_html=body_html, cc_addresses=cc_list)
+    except Exception as e:
+        logger.error(f"sales email send failed (from {sender} to {to_list}): {e}")
+        raise HTTPException(status_code=502, detail=f"Email send failed: {e}")
+
+    summary = (f"To: {', '.join(to_list)}" + (f"  Cc: {', '.join(cc_list)}" if cc_list else "")
+               + f"\nSubject: {body.subject}\n\n{body.body}")
+    rows = await db._q(
+        """INSERT INTO sales_activities
+           (customer_key, opportunity_id, type, subject, body, direction, occurred_at,
+            created_by, created_by_user_id, created_at)
+           VALUES (?, ?, 'email', ?, ?, 'out', ?, ?, ?, datetime('now')) RETURNING *""",
+        [body.customer_key, body.opportunity_id, body.subject, summary, _now(),
+         _actor(user, None), _actor_id(user, None)])
+    return {"ok": True, "sent_from": sender, "sent_to": to_list, "activity": rows[0] if rows else None}
+
+
 @router.get("/activities", dependencies=[Depends(require_access)])
 async def list_activities(customer_key: Optional[str] = None, opportunity_id: Optional[int] = None,
                           limit: int = 100, db: Database = Depends(get_db)):

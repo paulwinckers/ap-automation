@@ -9,7 +9,8 @@ import { useEffect, useRef, useState } from 'react';
 import {
   searchCustomerEntities, getCustomer360, getCustomer360ByContact,
   listSalesActivities, listSalesTasks, createSalesActivity, patchSalesActivity, patchSalesTask,
-  type CustomerEntity, type Customer360, type C360Job, type SalesActivity, type SalesTask,
+  createSalesTask, deleteSalesActivity, deleteSalesTask, sendSalesEmail, listSalesAssignees,
+  type CustomerEntity, type Customer360, type C360Job, type SalesActivity, type SalesTask, type Assignee,
 } from '../lib/api';
 
 const sinp: React.CSSProperties = { padding: '9px 11px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' };
@@ -89,6 +90,18 @@ function JobCard({ j }: { j: C360Job }) {
 
 const TL_ICON: Record<string, string> = { comms: '✉️', schedule: '📅', pha: '🦺' };
 
+// Colour + label per activity type, so the timeline reads at a glance.
+const TYPE_STYLE: Record<string, { bg: string; fg: string; label: string }> = {
+  note:       { bg: '#eef2ff', fg: '#3730a3', label: 'Note' },
+  call:       { bg: '#fef9c3', fg: '#854d0e', label: 'Call' },
+  meeting:    { bg: '#e0e7ff', fg: '#3730a3', label: 'Meeting' },
+  site_visit: { bg: '#dcfce7', fg: '#166534', label: 'Site visit' },
+  email:      { bg: '#e0f2fe', fg: '#075985', label: 'Email' },
+};
+const NOTE_TYPES = ['note', 'call', 'meeting', 'site_visit'] as const;
+function typeStyle(t: string) { return TYPE_STYLE[t] || { bg: '#f1f5f9', fg: '#475569', label: t }; }
+const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: '0 2px' };
+
 export default function Customer360Page() {
   const [q, setQ] = useState('');
   const [results, setResults] = useState<CustomerEntity[]>([]);
@@ -103,7 +116,25 @@ export default function Customer360Page() {
   const [nBody, setNBody] = useState('');
   const [nDate, setNDate] = useState('');
   const [salesBusy, setSalesBusy] = useState(false);
+  // composer mode + task fields + list filtering
+  const [mode, setMode] = useState<'note' | 'task'>('note');
+  const [assignees, setAssignees] = useState<Assignee[]>([]);
+  const [tTitle, setTTitle] = useState('');
+  const [tAssigneeId, setTAssigneeId] = useState<number | ''>('');
+  const [tDue, setTDue] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [find, setFind] = useState('');
+  // email composer
+  const [eOpen, setEOpen] = useState(false);
+  const [eTo, setETo] = useState('');
+  const [eCc, setECc] = useState('');
+  const [eSubj, setESubj] = useState('');
+  const [eBody, setEBody] = useState('');
+  const [eBusy, setEBusy] = useState(false);
+  const [eMsg, setEMsg] = useState('');
   const tmr = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => { listSalesAssignees().then(r => setAssignees(r.assignees || [])).catch(() => {}); }, []);
 
   useEffect(() => {
     if (q.trim().length < 2) { setResults([]); return; }
@@ -153,7 +184,50 @@ export default function Customer360Page() {
   async function doTaskDone(id: number) {
     try { await patchSalesTask(id, { status: 'done' }); if (customerKey) await loadSales(customerKey); } catch { /* ignore */ }
   }
+  async function addTask() {
+    if (!customerKey || !tTitle.trim()) return;
+    setSalesBusy(true);
+    try {
+      const a = assignees.find(x => x.id === tAssigneeId);
+      await createSalesTask({
+        customer_key: customerKey, title: tTitle.trim(),
+        assignee_user_id: typeof tAssigneeId === 'number' ? tAssigneeId : undefined,
+        assignee: a?.name, due_date: tDue || undefined,
+      });
+      setTTitle(''); setTAssigneeId(''); setTDue('');
+      await loadSales(customerKey);
+    } catch (e) { setErr((e as Error).message); } finally { setSalesBusy(false); }
+  }
+  async function delActivity(id: number) {
+    if (!window.confirm('Delete this note?')) return;
+    try { await deleteSalesActivity(id); if (customerKey) await loadSales(customerKey); } catch (e) { setErr((e as Error).message); }
+  }
+  async function delTask(id: number) {
+    if (!window.confirm('Delete this task?')) return;
+    try { await deleteSalesTask(id); if (customerKey) await loadSales(customerKey); } catch (e) { setErr((e as Error).message); }
+  }
+  function openEmail() {
+    const c = data?.customer.contacts.find(x => x.primary && x.email) || data?.customer.contacts.find(x => x.email);
+    setETo(c?.email || ''); setECc(''); setESubj(''); setEBody(''); setEMsg(''); setEOpen(true);
+  }
+  async function doSendEmail() {
+    if (!eTo.trim() || !eSubj.trim()) { setEMsg('Recipient and subject are required.'); return; }
+    setEBusy(true); setEMsg('');
+    try {
+      await sendSalesEmail({
+        to: eTo.split(/[,;]/).map(s => s.trim()).filter(Boolean),
+        cc: eCc.split(/[,;]/).map(s => s.trim()).filter(Boolean),
+        subject: eSubj.trim(), body: eBody, customer_key: customerKey || undefined,
+      });
+      setEOpen(false);
+      if (customerKey) await loadSales(customerKey);
+    } catch (e) { setEMsg((e as Error).message); } finally { setEBusy(false); }
+  }
   const openTasks = salesTasks.filter(t => t.status === 'open');
+  const findL = find.trim().toLowerCase();
+  const shownActs = salesActs.filter(a =>
+    (filter === 'all' || a.type === filter) &&
+    (!findL || `${a.type} ${a.subject || ''} ${a.body || ''}`.toLowerCase().includes(findL)));
 
   const jobs = data?.jobs ?? [];
   const active = jobs.filter(j => !isHistory(j));
@@ -226,66 +300,131 @@ export default function Customer360Page() {
 
             {/* Sales notes & tasks */}
             <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 14, padding: 16, marginBottom: 16 }}>
-              <div style={{ fontWeight: 800, fontSize: 14, color: '#0f172a', marginBottom: 10 }}>📝 Sales notes & tasks</div>
-              {/* composer */}
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                <select value={nType} onChange={e => setNType(e.target.value)} style={{ ...sinp, width: 130 }}>
-                  <option value="note">Note</option><option value="call">Call</option>
-                  <option value="meeting">Meeting</option><option value="site_visit">Site visit</option>
-                  <option value="email">Email</option>
-                </select>
-                <textarea value={nBody} onChange={e => setNBody(e.target.value)} rows={2} placeholder="Add a sales note…"
-                  style={{ ...sinp, flex: 1, minWidth: 220, resize: 'vertical' }} />
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 12, color: '#6b7280' }}>Followup</span>
-                <input type="date" value={nDate} onChange={e => setNDate(e.target.value)} style={{ ...sinp, width: 160 }} />
-                <button onClick={addNote} disabled={salesBusy || !nBody.trim()}
-                  style={{ marginLeft: 'auto', padding: '9px 18px', borderRadius: 9, border: 'none', background: (salesBusy || !nBody.trim()) ? '#94a3b8' : NAVY, color: '#fff', fontWeight: 800, fontSize: 14, cursor: (salesBusy || !nBody.trim()) ? 'default' : 'pointer' }}>
-                  {salesBusy ? 'Saving…' : 'Add note'}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                <div style={{ fontWeight: 800, fontSize: 14, color: '#0f172a' }}>📝 Sales notes &amp; tasks</div>
+                <button onClick={openEmail}
+                  style={{ marginLeft: 'auto', padding: '7px 14px', borderRadius: 9, border: '1px solid ' + NAVY, background: '#fff', color: NAVY, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+                  ✉ Send email
                 </button>
               </div>
 
+              {/* composer: Note vs Task */}
+              <div style={{ display: 'inline-flex', gap: 2, background: '#f1f5f9', borderRadius: 9, padding: 3, marginBottom: 10 }}>
+                {(['note', 'task'] as const).map(m => (
+                  <button key={m} onClick={() => setMode(m)}
+                    style={{ padding: '6px 16px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700,
+                      background: mode === m ? '#fff' : 'transparent', color: mode === m ? NAVY : '#64748b', boxShadow: mode === m ? '0 1px 2px rgba(0,0,0,0.08)' : 'none' }}>
+                    {m === 'note' ? 'Note' : 'Task'}
+                  </button>
+                ))}
+              </div>
+
+              {mode === 'note' ? (
+                <>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                    <select value={nType} onChange={e => setNType(e.target.value)} style={{ ...sinp, width: 130 }}>
+                      <option value="note">Note</option><option value="call">Call</option>
+                      <option value="meeting">Meeting</option><option value="site_visit">Site visit</option>
+                    </select>
+                    <textarea value={nBody} onChange={e => setNBody(e.target.value)} rows={2} placeholder="Add a sales note…"
+                      style={{ ...sinp, flex: 1, minWidth: 220, resize: 'vertical' }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, color: '#6b7280' }}>Followup</span>
+                    <input type="date" value={nDate} onChange={e => setNDate(e.target.value)} style={{ ...sinp, width: 160 }} />
+                    <button onClick={addNote} disabled={salesBusy || !nBody.trim()}
+                      style={{ marginLeft: 'auto', padding: '9px 18px', borderRadius: 9, border: 'none', background: (salesBusy || !nBody.trim()) ? '#94a3b8' : NAVY, color: '#fff', fontWeight: 800, fontSize: 14, cursor: (salesBusy || !nBody.trim()) ? 'default' : 'pointer' }}>
+                      {salesBusy ? 'Saving…' : 'Add note'}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <input value={tTitle} onChange={e => setTTitle(e.target.value)} placeholder="Task — what needs doing?"
+                    style={{ ...sinp, flex: 1, minWidth: 220 }} />
+                  <select value={tAssigneeId} onChange={e => setTAssigneeId(e.target.value ? Number(e.target.value) : '')} style={{ ...sinp, width: 160 }}>
+                    <option value="">Assign to…</option>
+                    {assignees.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                  <input type="date" value={tDue} onChange={e => setTDue(e.target.value)} style={{ ...sinp, width: 160 }} />
+                  <button onClick={addTask} disabled={salesBusy || !tTitle.trim()}
+                    style={{ marginLeft: 'auto', padding: '9px 18px', borderRadius: 9, border: 'none', background: (salesBusy || !tTitle.trim()) ? '#94a3b8' : NAVY, color: '#fff', fontWeight: 800, fontSize: 14, cursor: (salesBusy || !tTitle.trim()) ? 'default' : 'pointer' }}>
+                    {salesBusy ? 'Saving…' : 'Assign task'}
+                  </button>
+                </div>
+              )}
+
               {openTasks.length > 0 && (
-                <div style={{ marginTop: 14 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: '#6b7280', marginBottom: 4 }}>Open tasks</div>
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#6b7280', marginBottom: 4 }}>Open tasks ({openTasks.length})</div>
                   {openTasks.map(t => (
                     <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px solid #f1f5f9' }}>
-                      <span style={{ flex: 1, fontSize: 13, color: '#111827' }}>
+                      <span style={{ ...pill('#fef3c7', '#92400e'), flexShrink: 0 }}>Task</span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: '#111827' }}>
                         {t.title}{t.assignee ? ` · ${t.assignee}` : ''}{t.due_date ? ` · due ${pretty(t.due_date)}` : ''}
                       </span>
                       <button onClick={() => doTaskDone(t.id)} style={{ ...pill('#dcfce7', '#15803d'), border: 'none', cursor: 'pointer' }}>✓ Done</button>
+                      <button onClick={() => delTask(t.id)} title="Delete task" style={iconBtn}>🗑</button>
                     </div>
                   ))}
                 </div>
               )}
 
-              <div style={{ marginTop: 14 }}>
-                {salesActs.length === 0 && <div style={{ color: '#9ca3af', fontSize: 13 }}>No sales notes yet — add the first above.</div>}
-                {salesActs.map(a => (
-                  <div key={a.id} style={{ padding: '8px 0', borderTop: '1px solid #f1f5f9' }}>
-                    <div style={{ fontSize: 13, color: '#111827', whiteSpace: 'pre-wrap' }}>
-                      <span style={{ ...pill('#eef2ff', '#3730a3'), marginRight: 6 }}>{a.type}</span>{a.body}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 3 }}>
-                      {pretty((a.occurred_at || a.created_at || '').slice(0, 10))}{a.created_by ? ` · ${a.created_by}` : ''}
-                      {a.next_action_date && !a.next_action_done && (
-                        <span style={{ ...pill('#fef3c7', '#92400e'), marginLeft: 6 }}>
-                          followup {pretty(a.next_action_date)}{' '}
-                          <button onClick={() => doFollowupDone(a.id)} style={{ background: 'none', border: 'none', color: '#92400e', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 11 }}>done</button>
-                        </span>
+              {/* filter + search toolbar */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 16, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {['all', ...NOTE_TYPES, 'email'].map(f => {
+                    const n = f === 'all' ? salesActs.length : salesActs.filter(a => a.type === f).length;
+                    const act = filter === f;
+                    const lbl = f === 'all' ? 'All' : typeStyle(f).label;
+                    return (
+                      <button key={f} onClick={() => setFilter(f)}
+                        style={{ padding: '4px 10px', borderRadius: 999, border: '1px solid ' + (act ? NAVY : '#e5e7eb'), background: act ? NAVY : '#fff', color: act ? '#fff' : '#475569', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                        {lbl}{n ? ` ${n}` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+                <input value={find} onChange={e => setFind(e.target.value)} placeholder="Search notes…"
+                  style={{ ...sinp, marginLeft: 'auto', width: 180, padding: '6px 10px' }} />
+              </div>
+
+              {/* scrollable timeline */}
+              <div style={{ marginTop: 10, maxHeight: 360, overflowY: 'auto', paddingRight: 4 }}>
+                {salesActs.length === 0 && <div style={{ color: '#9ca3af', fontSize: 13, padding: '6px 0' }}>No sales notes yet — add the first above.</div>}
+                {salesActs.length > 0 && shownActs.length === 0 && <div style={{ color: '#9ca3af', fontSize: 13, padding: '6px 0' }}>Nothing matches this filter.</div>}
+                {shownActs.map(a => {
+                  const ts = typeStyle(a.type);
+                  return (
+                    <div key={a.id} style={{ padding: '8px 0', borderTop: '1px solid #f1f5f9' }}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                        <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: '#111827', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          <span style={{ ...pill(ts.bg, ts.fg), marginRight: 6 }}>{ts.label}{a.direction === 'in' ? ' ↓' : a.direction === 'out' ? ' ↑' : ''}</span>
+                          {a.subject && a.type === 'email' ? <b>{a.subject}</b> : null}
+                          {a.subject && a.type === 'email' ? <div>{a.body}</div> : a.body}
+                        </div>
+                        <button onClick={() => delActivity(a.id)} title="Delete" style={iconBtn}>🗑</button>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 3 }}>
+                        {pretty((a.occurred_at || a.created_at || '').slice(0, 10))}{a.created_by ? ` · ${a.created_by}` : ''}
+                        {a.next_action_date && !a.next_action_done && (
+                          <span style={{ ...pill('#fef3c7', '#92400e'), marginLeft: 6 }}>
+                            followup {pretty(a.next_action_date)}{' '}
+                            <button onClick={() => doFollowupDone(a.id)} style={{ background: 'none', border: 'none', color: '#92400e', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 11 }}>done</button>
+                          </span>
+                        )}
+                      </div>
+                      {a.attachments && a.attachments.length > 0 && (
+                        <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                          {a.attachments.map(att => att.url ? (att.kind === 'photo'
+                            ? <a key={att.id} href={att.url} target="_blank" rel="noreferrer"><img src={att.url} alt="" style={{ width: 54, height: 54, objectFit: 'cover', borderRadius: 6, border: '1px solid #e5e7eb' }} /></a>
+                            : <a key={att.id} href={att.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: NAVY }}>{att.kind === 'video' ? '🎥' : '📎'} {att.file_name || 'file'}</a>
+                          ) : null)}
+                        </div>
                       )}
                     </div>
-                    {a.attachments && a.attachments.length > 0 && (
-                      <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
-                        {a.attachments.map(att => att.url ? (att.kind === 'photo'
-                          ? <a key={att.id} href={att.url} target="_blank" rel="noreferrer"><img src={att.url} alt="" style={{ width: 54, height: 54, objectFit: 'cover', borderRadius: 6, border: '1px solid #e5e7eb' }} /></a>
-                          : <a key={att.id} href={att.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: NAVY }}>{att.kind === 'video' ? '🎥' : '📎'} {att.file_name || 'file'}</a>
-                        ) : null)}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -339,6 +478,47 @@ export default function Customer360Page() {
           <div style={{ color: '#9ca3af', fontSize: 14, padding: 20 }}>Search for a customer above to see their full picture.</div>
         )}
       </div>
+
+      {/* Email composer */}
+      {eOpen && (
+        <div onClick={() => !eBusy && setEOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 20, zIndex: 50, overflowY: 'auto' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: 14, padding: 18, width: '100%', maxWidth: 560, boxShadow: '0 20px 50px rgba(0,0,0,0.25)', marginTop: 40 }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a' }}>✉ Send email</div>
+              <button onClick={() => setEOpen(false)} style={{ ...iconBtn, marginLeft: 'auto', color: '#94a3b8', fontSize: 20 }}>×</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: '#6b7280' }}>To
+                <input value={eTo} onChange={e => setETo(e.target.value)} placeholder="name@example.com (comma-separated)"
+                  style={{ ...sinp, width: '100%', marginTop: 3 }} />
+              </label>
+              <label style={{ fontSize: 12, fontWeight: 700, color: '#6b7280' }}>Cc <span style={{ fontWeight: 400 }}>(optional)</span>
+                <input value={eCc} onChange={e => setECc(e.target.value)} placeholder="comma-separated"
+                  style={{ ...sinp, width: '100%', marginTop: 3 }} />
+              </label>
+              <label style={{ fontSize: 12, fontWeight: 700, color: '#6b7280' }}>Subject
+                <input value={eSubj} onChange={e => setESubj(e.target.value)} style={{ ...sinp, width: '100%', marginTop: 3 }} />
+              </label>
+              <label style={{ fontSize: 12, fontWeight: 700, color: '#6b7280' }}>Message
+                <textarea value={eBody} onChange={e => setEBody(e.target.value)} rows={8}
+                  style={{ ...sinp, width: '100%', marginTop: 3, resize: 'vertical' }} />
+              </label>
+            </div>
+            {eMsg && <div style={{ color: '#991b1b', fontSize: 12, marginTop: 8 }}>{eMsg}</div>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14 }}>
+              <span style={{ fontSize: 11, color: '#9ca3af' }}>Sends from your address and logs to this customer.</span>
+              <button onClick={() => setEOpen(false)} disabled={eBusy}
+                style={{ marginLeft: 'auto', padding: '9px 16px', borderRadius: 9, border: '1px solid #e5e7eb', background: '#fff', color: '#475569', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={doSendEmail} disabled={eBusy || !eTo.trim() || !eSubj.trim()}
+                style={{ padding: '9px 20px', borderRadius: 9, border: 'none', background: (eBusy || !eTo.trim() || !eSubj.trim()) ? '#94a3b8' : NAVY, color: '#fff', fontWeight: 800, fontSize: 14, cursor: (eBusy || !eTo.trim() || !eSubj.trim()) ? 'default' : 'pointer' }}>
+                {eBusy ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
