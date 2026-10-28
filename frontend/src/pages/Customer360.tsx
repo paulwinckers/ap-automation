@@ -95,7 +95,6 @@ function JobCard({ j, onBudget }: { j: C360Job; onBudget?: (j: C360Job) => void 
   if (j.pha) chips.push(<span key="ph" style={pill('#fee2e2', '#991b1b')} title="Project Hazard Assessment">PHA {j.pha.status || ''}</span>);
   if (j.comms?.length) chips.push(<span key="cm" style={pill('#ecfccb', '#3f6212')} title="Emails sent">✉ {j.comms.length}</span>);
 
-  const pct = j.pct_complete != null ? Math.round(j.pct_complete * 100) : null;
   return (
     <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: '10px 12px', background: '#fff' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
@@ -103,17 +102,13 @@ function JobCard({ j, onBudget }: { j: C360Job; onBudget?: (j: C360Job) => void 
         <span style={{ fontSize: 11, color: '#9ca3af' }}>{j.number ? `#${j.number}` : ''}</span>
         <span style={{ ...pill('#f8fafc', '#475569'), border: '1px solid #e5e7eb' }}>{DIV_ICON[j.division || ''] || '📍'} {j.division}</span>
         <span style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>{j.status}</span>
-        {pct != null && <span style={{ fontSize: 12, color: '#6b7280' }}>· {pct}%</span>}
         {fmt$(j.won_dollars) && <span style={{ fontSize: 12, color: '#6b7280' }}>· {fmt$(j.won_dollars)}</span>}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
-          {isMaintenance(j) && onBudget && (
-            <button onClick={() => onBudget(j)}
-              style={{ fontSize: 12, fontWeight: 700, color: '#15803d', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, padding: '3px 9px', cursor: 'pointer' }}>
-              $ Est vs actual
-            </button>
-          )}
-          <a href={`/field/project/${j.opportunity_id}`} style={{ fontSize: 12, fontWeight: 700, color: NAVY, textDecoration: 'none' }}>Open ↗</a>
-        </div>
+        {isMaintenance(j) && onBudget && (
+          <button onClick={() => onBudget(j)}
+            style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: '#15803d', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, padding: '3px 9px', cursor: 'pointer' }}>
+            $ Est vs actual
+          </button>
+        )}
       </div>
       {chips.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 7 }}>{chips}</div>}
     </div>
@@ -530,7 +525,7 @@ export default function Customer360Page() {
         <div onClick={() => setBudgetJob(null)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 20, zIndex: 50, overflowY: 'auto' }}>
           <div onClick={e => e.stopPropagation()}
-            style={{ background: '#fff', borderRadius: 14, padding: 18, width: '100%', maxWidth: 520, boxShadow: '0 20px 50px rgba(0,0,0,0.25)', marginTop: 50 }}>
+            style={{ background: '#fff', borderRadius: 14, padding: 18, width: '100%', maxWidth: 720, maxHeight: '86vh', overflowY: 'auto', boxShadow: '0 20px 50px rgba(0,0,0,0.25)', marginTop: 40 }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
               <div>
                 <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a' }}>{budgetJob.name || 'Maintenance contract'}</div>
@@ -547,14 +542,60 @@ export default function Customer360Page() {
             {!budgetBusy && budgetData && (() => {
               const t = budgetData.totals;
               const contract = budgetJob.won_dollars != null && budgetJob.won_dollars > 0 ? budgetJob.won_dollars : t.price;
+              // group tickets by service (estimate category)
+              const gmap = new Map<string, { service: string; n: number; est: number; act: number }>();
+              for (const tk of budgetData.tickets) {
+                const k = tk.service || '(unspecified)';
+                const g = gmap.get(k) || { service: k, n: 0, est: 0, act: 0 };
+                g.n += 1; g.est += tk.est_hours || 0; g.act += tk.act_hours || 0;
+                gmap.set(k, g);
+              }
+              const groups = [...gmap.values()].sort((a, b) => b.act - a.act);
+              const hrs = (v: number) => (Math.round(v * 10) / 10).toLocaleString();
+              const varCol = (est: number, act: number) => act - est > 0.05 ? '#b91c1c' : act - est < -0.05 ? '#15803d' : '#64748b';
+              const varTxt = (est: number, act: number) => {
+                const d = act - est; if (Math.abs(d) < 0.05) return '0';
+                const p = est ? ` (${d > 0 ? '+' : '−'}${Math.abs(Math.round(100 * d / est))}%)` : '';
+                return `${d > 0 ? '+' : '−'}${hrs(Math.abs(d))}${p}`;
+              };
+              const tn: React.CSSProperties = { fontVariantNumeric: 'tabular-nums', textAlign: 'right' };
+              const th: React.CSSProperties = { padding: '8px 12px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6b7280', borderBottom: '1px solid #e5e7eb' };
               return (
                 <div style={{ marginTop: 8 }}>
-                  <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#9ca3af', fontWeight: 700 }}>Estimate vs actual</div>
+                  <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#9ca3af', fontWeight: 700 }}>Totals — estimate vs actual</div>
                   <CompareRow label="Hours" est={t.est_hours} act={t.act_hours} />
                   <CompareRow label="Cost" est={t.est_cost} act={t.act_cost} money />
                   <CompareRow label="Revenue (contract → earned)" est={contract} act={t.revenue} money neutral />
+
+                  <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#9ca3af', fontWeight: 700, marginTop: 18, marginBottom: 6 }}>By estimate category (hours)</div>
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+                    <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ position: 'sticky', top: 0, background: '#f8fafc' }}>
+                            <th style={{ ...th, textAlign: 'left' }}>Service</th>
+                            <th style={{ ...th, ...tn }}>Est hrs</th>
+                            <th style={{ ...th, ...tn }}>Act hrs</th>
+                            <th style={{ ...th, ...tn }}>Variance</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {groups.map(g => (
+                            <tr key={g.service} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                              <td style={{ padding: '8px 12px', color: '#0f172a' }}>{g.service} <span style={{ color: '#9ca3af' }}>({g.n})</span></td>
+                              <td style={{ ...tn, padding: '8px 12px', color: '#6b7280' }}>{hrs(g.est)}</td>
+                              <td style={{ ...tn, padding: '8px 12px', fontWeight: 700, color: '#0f172a' }}>{hrs(g.act)}</td>
+                              <td style={{ ...tn, padding: '8px 12px', fontWeight: 700, color: varCol(g.est, g.act) }}>{varTxt(g.est, g.act)}</td>
+                            </tr>
+                          ))}
+                          {groups.length === 0 && <tr><td colSpan={4} style={{ padding: 14, color: '#9ca3af', fontSize: 13 }}>No work tickets on this contract yet.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
                   <div style={{ fontSize: 11.5, color: '#9ca3af', marginTop: 10 }}>
-                    {budgetData.ticket_count} work ticket{budgetData.ticket_count === 1 ? '' : 's'} · cost = labor + materials + equip + sub + other · negative variance = under estimate.
+                    {budgetData.ticket_count} work ticket{budgetData.ticket_count === 1 ? '' : 's'} · red = over estimate, green = under · cost = labor + materials + equip + sub + other.
                   </div>
                   <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
                     <a href={aspireOpportunityUrl(budgetJob.opportunity_id)} target="_blank" rel="noreferrer"
