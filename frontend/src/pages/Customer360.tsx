@@ -163,6 +163,7 @@ export default function Customer360Page() {
   const [budgetJob, setBudgetJob] = useState<C360Job | null>(null);
   const [budgetData, setBudgetData] = useState<OppTicketSummary | null>(null);
   const [budgetBusy, setBudgetBusy] = useState(false);
+  const [budgetCompleted, setBudgetCompleted] = useState(false);
   const tmr = useRef<ReturnType<typeof setTimeout> | null>(null);
   const justPicked = useRef(false);
 
@@ -260,7 +261,7 @@ export default function Customer360Page() {
     } catch (e) { setEMsg((e as Error).message); } finally { setEBusy(false); }
   }
   async function openBudget(j: C360Job) {
-    setBudgetJob(j); setBudgetData(null); setBudgetBusy(true);
+    setBudgetJob(j); setBudgetData(null); setBudgetBusy(true); setBudgetCompleted(false);
     try { setBudgetData(await getOpportunityTickets(j.opportunity_id)); }
     catch { setBudgetData(null); } finally { setBudgetBusy(false); }
   }
@@ -540,11 +541,17 @@ export default function Customer360Page() {
             {budgetBusy && <Spinner label="Loading budget…" />}
             {!budgetBusy && !budgetData && <div style={{ color: '#991b1b', fontSize: 13, padding: '10px 0' }}>Couldn't load the estimate vs actual for this job.</div>}
             {!budgetBusy && budgetData && (() => {
-              const t = budgetData.totals;
+              const items = budgetData.tickets.filter(tk => !budgetCompleted || (tk.status || '').toLowerCase().startsWith('complete'));
+              // totals recomputed from the (optionally filtered) tickets so the toggle moves everything
+              const t = items.reduce((s, tk) => ({
+                est_hours: s.est_hours + (tk.est_hours || 0), act_hours: s.act_hours + (tk.act_hours || 0),
+                est_cost: s.est_cost + (tk.est_cost || 0), act_cost: s.act_cost + (tk.act_cost || 0),
+                price: s.price + (tk.price || 0), revenue: s.revenue + (tk.revenue || 0),
+              }), { est_hours: 0, act_hours: 0, est_cost: 0, act_cost: 0, price: 0, revenue: 0 });
               const contract = budgetJob.won_dollars != null && budgetJob.won_dollars > 0 ? budgetJob.won_dollars : t.price;
               // group tickets by service (estimate category)
               const gmap = new Map<string, { service: string; n: number; est: number; act: number }>();
-              for (const tk of budgetData.tickets) {
+              for (const tk of items) {
                 const k = tk.service || '(unspecified)';
                 const g = gmap.get(k) || { service: k, n: 0, est: 0, act: 0 };
                 g.n += 1; g.est += tk.est_hours || 0; g.act += tk.act_hours || 0;
@@ -562,7 +569,13 @@ export default function Customer360Page() {
               const th: React.CSSProperties = { padding: '8px 12px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6b7280', borderBottom: '1px solid #e5e7eb' };
               return (
                 <div style={{ marginTop: 8 }}>
-                  <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#9ca3af', fontWeight: 700 }}>Totals — estimate vs actual</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#9ca3af', fontWeight: 700 }}>Totals — estimate vs actual</div>
+                    <label style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#475569', cursor: 'pointer', userSelect: 'none' }}>
+                      <input type="checkbox" checked={budgetCompleted} onChange={e => setBudgetCompleted(e.target.checked)} />
+                      Completed tickets only
+                    </label>
+                  </div>
                   <CompareRow label="Hours" est={t.est_hours} act={t.act_hours} />
                   <CompareRow label="Cost" est={t.est_cost} act={t.act_cost} money />
                   <CompareRow label="Revenue (contract → earned)" est={contract} act={t.revenue} money neutral />
@@ -595,7 +608,7 @@ export default function Customer360Page() {
                   </div>
 
                   <div style={{ fontSize: 11.5, color: '#9ca3af', marginTop: 10 }}>
-                    {budgetData.ticket_count} work ticket{budgetData.ticket_count === 1 ? '' : 's'} · red = over estimate, green = under · cost = labor + materials + equip + sub + other.
+                    {items.length} {budgetCompleted ? 'completed ' : ''}work ticket{items.length === 1 ? '' : 's'}{budgetCompleted ? ` of ${budgetData.ticket_count}` : ''} · red = over estimate, green = under · cost = labor + materials + equip + sub + other.
                   </div>
                   <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
                     <a href={aspireOpportunityUrl(budgetJob.opportunity_id)} target="_blank" rel="noreferrer"
