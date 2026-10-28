@@ -10,7 +10,9 @@ import {
   searchCustomerEntities, getCustomer360, getCustomer360ByContact,
   listSalesActivities, listSalesTasks, createSalesActivity, patchSalesActivity, patchSalesTask,
   createSalesTask, deleteSalesActivity, deleteSalesTask, sendSalesEmail, listSalesAssignees,
+  getOpportunityTickets, aspireOpportunityUrl,
   type CustomerEntity, type Customer360, type C360Job, type SalesActivity, type SalesTask, type Assignee,
+  type OppTicketSummary,
 } from '../lib/api';
 
 const sinp: React.CSSProperties = { padding: '9px 11px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' };
@@ -62,7 +64,29 @@ function pill(bg: string, fg: string): React.CSSProperties {
   return { display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: bg, color: fg, whiteSpace: 'nowrap' };
 }
 
-function JobCard({ j }: { j: C360Job }) {
+function isMaintenance(j: C360Job): boolean {
+  return (j.division || '').toLowerCase().includes('maintenance');
+}
+
+function CompareRow({ label, est, act, money, neutral }: { label: string; est: number | null; act: number | null; money?: boolean; neutral?: boolean }) {
+  const fmt = (v: number | null) => v == null ? '—' : money ? '$' + Math.round(v).toLocaleString() : (Math.round(v * 10) / 10).toLocaleString() + 'h';
+  const e = est || 0, a = act || 0, diff = a - e;
+  const pct = e ? Math.round(100 * diff / e) : null;
+  const sign = diff > 0 ? '+' : diff < 0 ? '−' : '';
+  const col = neutral ? '#64748b' : (diff > 0.05 ? '#b91c1c' : diff < -0.05 ? '#15803d' : '#64748b');
+  const tn: React.CSSProperties = { fontVariantNumeric: 'tabular-nums' };
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 14, alignItems: 'baseline', padding: '10px 0', borderTop: '1px solid #f1f5f9' }}>
+      <span style={{ fontSize: 13, color: '#475569', fontWeight: 700 }}>{label}</span>
+      <span style={{ ...tn, fontSize: 13, color: '#6b7280' }}>est {fmt(est)} · <b style={{ color: '#0f172a' }}>act {fmt(act)}</b></span>
+      <span style={{ ...tn, fontSize: 12.5, fontWeight: 800, color: col, minWidth: 90, textAlign: 'right' }}>
+        {Math.abs(diff) < 0.05 ? 'on budget' : `${sign}${fmt(Math.abs(diff))}${pct != null ? ` (${sign}${Math.abs(pct)}%)` : ''}`}
+      </span>
+    </div>
+  );
+}
+
+function JobCard({ j, onBudget }: { j: C360Job; onBudget?: (j: C360Job) => void }) {
   const chips: React.ReactNode[] = [];
   if (j.stage) chips.push(<span key="st" style={pill('#eef2ff', '#3730a3')} title="Portal stage">{j.stage}</span>);
   if (j.lead) chips.push(<span key="ld" style={pill('#fef3c7', '#92400e')} title="Lead">★ {j.lead}</span>);
@@ -81,7 +105,15 @@ function JobCard({ j }: { j: C360Job }) {
         <span style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>{j.status}</span>
         {pct != null && <span style={{ fontSize: 12, color: '#6b7280' }}>· {pct}%</span>}
         {fmt$(j.won_dollars) && <span style={{ fontSize: 12, color: '#6b7280' }}>· {fmt$(j.won_dollars)}</span>}
-        <a href={`/field/project/${j.opportunity_id}`} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: NAVY, textDecoration: 'none' }}>Open ↗</a>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
+          {isMaintenance(j) && onBudget && (
+            <button onClick={() => onBudget(j)}
+              style={{ fontSize: 12, fontWeight: 700, color: '#15803d', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, padding: '3px 9px', cursor: 'pointer' }}>
+              $ Est vs actual
+            </button>
+          )}
+          <a href={`/field/project/${j.opportunity_id}`} style={{ fontSize: 12, fontWeight: 700, color: NAVY, textDecoration: 'none' }}>Open ↗</a>
+        </div>
       </div>
       {chips.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 7 }}>{chips}</div>}
     </div>
@@ -132,11 +164,18 @@ export default function Customer360Page() {
   const [eBody, setEBody] = useState('');
   const [eBusy, setEBusy] = useState(false);
   const [eMsg, setEMsg] = useState('');
+  // maintenance budget (est vs actual) popup
+  const [budgetJob, setBudgetJob] = useState<C360Job | null>(null);
+  const [budgetData, setBudgetData] = useState<OppTicketSummary | null>(null);
+  const [budgetBusy, setBudgetBusy] = useState(false);
   const tmr = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const justPicked = useRef(false);
 
   useEffect(() => { listSalesAssignees().then(r => setAssignees(r.assignees || [])).catch(() => {}); }, []);
 
   useEffect(() => {
+    // Setting the box to the picked name must not re-open the dropdown.
+    if (justPicked.current) { justPicked.current = false; setResults([]); return; }
     if (q.trim().length < 2) { setResults([]); return; }
     if (tmr.current) clearTimeout(tmr.current);
     tmr.current = setTimeout(async () => {
@@ -147,7 +186,9 @@ export default function Customer360Page() {
   }, [q]);
 
   async function pick(e: CustomerEntity) {
-    setResults([]); setQ(e.name); setLoading(true); setErr(''); setData(null);
+    justPicked.current = true;
+    if (tmr.current) clearTimeout(tmr.current);
+    setResults([]); setSearching(false); setQ(e.name); setLoading(true); setErr(''); setData(null);
     try { setData(e.kind === 'contact' ? await getCustomer360ByContact(e.id) : await getCustomer360(e.id)); }
     catch (err) { setErr((err as Error).message); }
     finally { setLoading(false); }
@@ -222,6 +263,11 @@ export default function Customer360Page() {
       setEOpen(false);
       if (customerKey) await loadSales(customerKey);
     } catch (e) { setEMsg((e as Error).message); } finally { setEBusy(false); }
+  }
+  async function openBudget(j: C360Job) {
+    setBudgetJob(j); setBudgetData(null); setBudgetBusy(true);
+    try { setBudgetData(await getOpportunityTickets(j.opportunity_id)); }
+    catch { setBudgetData(null); } finally { setBudgetBusy(false); }
   }
   const openTasks = salesTasks.filter(t => t.status === 'open');
   const findL = find.trim().toLowerCase();
@@ -436,7 +482,7 @@ export default function Customer360Page() {
                   <div key={prop} style={{ marginBottom: 16 }}>
                     <div style={{ fontWeight: 800, fontSize: 14, color: NAVY, margin: '2px 0 8px' }}>📍 {prop} <span style={{ color: '#9ca3af', fontWeight: 500 }}>({pj.length})</span></div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {pj.sort((a, b) => (b.start_date || b.won_date || '').localeCompare(a.start_date || a.won_date || '')).map(j => <JobCard key={j.opportunity_id} j={j} />)}
+                      {pj.sort((a, b) => (b.start_date || b.won_date || '').localeCompare(a.start_date || a.won_date || '')).map(j => <JobCard key={j.opportunity_id} j={j} onBudget={openBudget} />)}
                     </div>
                   </div>
                 ))}
@@ -449,7 +495,7 @@ export default function Customer360Page() {
                     </button>
                     {showHistory && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, opacity: 0.85 }}>
-                        {history.sort((a, b) => (b.start_date || b.won_date || '').localeCompare(a.start_date || a.won_date || '')).map(j => <JobCard key={j.opportunity_id} j={j} />)}
+                        {history.sort((a, b) => (b.start_date || b.won_date || '').localeCompare(a.start_date || a.won_date || '')).map(j => <JobCard key={j.opportunity_id} j={j} onBudget={openBudget} />)}
                       </div>
                     )}
                   </div>
@@ -478,6 +524,52 @@ export default function Customer360Page() {
           <div style={{ color: '#9ca3af', fontSize: 14, padding: 20 }}>Search for a customer above to see their full picture.</div>
         )}
       </div>
+
+      {/* Maintenance budget — estimate vs actual */}
+      {budgetJob && (
+        <div onClick={() => setBudgetJob(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 20, zIndex: 50, overflowY: 'auto' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: 14, padding: 18, width: '100%', maxWidth: 520, boxShadow: '0 20px 50px rgba(0,0,0,0.25)', marginTop: 50 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a' }}>{budgetJob.name || 'Maintenance contract'}</div>
+                <div style={{ fontSize: 12, color: '#9ca3af' }}>
+                  {DIV_ICON[budgetJob.division || ''] || '📍'} {budgetJob.division}{budgetJob.number ? ` · #${budgetJob.number}` : ''}
+                  {budgetJob.pct_complete != null ? ` · ${Math.round(budgetJob.pct_complete * 100)}% complete` : ''}
+                </div>
+              </div>
+              <button onClick={() => setBudgetJob(null)} style={{ ...iconBtn, marginLeft: 'auto', color: '#94a3b8', fontSize: 20 }}>×</button>
+            </div>
+
+            {budgetBusy && <Spinner label="Loading budget…" />}
+            {!budgetBusy && !budgetData && <div style={{ color: '#991b1b', fontSize: 13, padding: '10px 0' }}>Couldn't load the estimate vs actual for this job.</div>}
+            {!budgetBusy && budgetData && (() => {
+              const t = budgetData.totals;
+              const contract = budgetJob.won_dollars != null && budgetJob.won_dollars > 0 ? budgetJob.won_dollars : t.price;
+              return (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#9ca3af', fontWeight: 700 }}>Estimate vs actual</div>
+                  <CompareRow label="Hours" est={t.est_hours} act={t.act_hours} />
+                  <CompareRow label="Cost" est={t.est_cost} act={t.act_cost} money />
+                  <CompareRow label="Revenue (contract → earned)" est={contract} act={t.revenue} money neutral />
+                  <div style={{ fontSize: 11.5, color: '#9ca3af', marginTop: 10 }}>
+                    {budgetData.ticket_count} work ticket{budgetData.ticket_count === 1 ? '' : 's'} · cost = labor + materials + equip + sub + other · negative variance = under estimate.
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+                    <a href={aspireOpportunityUrl(budgetJob.opportunity_id)} target="_blank" rel="noreferrer"
+                      style={{ padding: '9px 16px', borderRadius: 9, background: NAVY, color: '#fff', fontWeight: 800, fontSize: 13.5, textDecoration: 'none' }}>
+                      Open estimate in Aspire ↗
+                    </a>
+                    <button onClick={() => setBudgetJob(null)}
+                      style={{ marginLeft: 'auto', padding: '9px 16px', borderRadius: 9, border: '1px solid #e5e7eb', background: '#fff', color: '#475569', fontWeight: 700, fontSize: 13.5, cursor: 'pointer' }}>Close</button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
 
       {/* Email composer */}
       {eOpen && (

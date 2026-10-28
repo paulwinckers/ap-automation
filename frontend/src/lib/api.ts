@@ -685,6 +685,25 @@ export interface Customer360 {
   activity_timeline: C360TimelineEvent[];
   counts: { jobs: number; properties: number; contacts: number; comms: number };
 }
+// Per-opportunity estimate-vs-actual (hours + $) for the Customer 360 budget popup.
+export interface OppTicket {
+  work_ticket_id: number; number: number | null; service: string | null; status: string | null;
+  scheduled_date: string | null; complete_date: string | null;
+  est_hours: number | null; act_hours: number | null; est_cost: number | null; act_cost: number | null;
+  price: number | null; revenue: number | null; pct_complete: number | null;
+}
+export interface OppTicketSummary {
+  opportunity_id: number; ticket_count: number;
+  totals: { est_hours: number; act_hours: number; est_cost: number; act_cost: number; price: number; revenue: number };
+  tickets: OppTicket[];
+}
+export async function getOpportunityTickets(oppId: number): Promise<OppTicketSummary> {
+  return request('GET', `/customer/opportunity/${oppId}/tickets`);
+}
+export function aspireOpportunityUrl(oppId: number): string {
+  return `https://cloud.youraspire.com/app/opportunities/details/${oppId}`;
+}
+
 // Unified customer search — companies (commercial) + contacts (residential bill to a person).
 export interface CustomerEntity { kind: 'company' | 'contact'; id: number; name: string; sub: string; }
 export async function searchCustomerEntities(q: string): Promise<CustomerEntity[]> {

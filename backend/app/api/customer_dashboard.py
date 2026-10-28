@@ -773,7 +773,8 @@ async def _fetch_opp_tickets(opp_id: int) -> list[dict]:
             "$filter": f"OpportunityID eq {opp_id}",
             "$select": ("WorkTicketID,WorkTicketNumber,OpportunityID,OpportunityServiceID,"
                         "WorkTicketStatusName,ScheduledStartDate,CompleteDate,CrewLeaderName,"
-                        "HoursEst,HoursAct,TotalCostAct,EarnedRevenue,PercentComplete,Notes"),
+                        "HoursEst,HoursAct,HourCostEst,MaterialCostEst,EquipCostEst,SubCostEst,OtherCostEst,"
+                        "TotalCostAct,Price,EarnedRevenue,PercentComplete,Notes"),
             "$orderby": "ScheduledStartDate asc",
             "$top": "300",
         }))
@@ -798,12 +799,17 @@ async def opportunity_tickets(opp_id: int):
         except (TypeError, ValueError):
             return None
 
-    tickets, tot = [], {"est_hours": 0.0, "act_hours": 0.0, "act_cost": 0.0, "revenue": 0.0}
+    tickets = []
+    tot = {"est_hours": 0.0, "act_hours": 0.0, "est_cost": 0.0, "act_cost": 0.0, "price": 0.0, "revenue": 0.0}
     for r in rows:
         eh, ah = _num(r.get("HoursEst")), _num(r.get("HoursAct"))
         ac, rev = _num(r.get("TotalCostAct")), _num(r.get("EarnedRevenue"))
+        ec = sum((_num(r.get(f)) or 0) for f in
+                 ("HourCostEst", "MaterialCostEst", "EquipCostEst", "SubCostEst", "OtherCostEst"))
+        pr = _num(r.get("Price"))
         tot["est_hours"] += eh or 0; tot["act_hours"] += ah or 0
-        tot["act_cost"]  += ac or 0; tot["revenue"]   += rev or 0
+        tot["est_cost"]  += ec;      tot["act_cost"]  += ac or 0
+        tot["price"]     += pr or 0; tot["revenue"]   += rev or 0
         tickets.append({
             "work_ticket_id": r.get("WorkTicketID"),
             "number": r.get("WorkTicketNumber"),
@@ -812,11 +818,14 @@ async def opportunity_tickets(opp_id: int):
             "scheduled_date": (r.get("ScheduledStartDate") or "")[:10] or None,
             "complete_date": (r.get("CompleteDate") or "")[:10] or None,
             "crew_leader": r.get("CrewLeaderName"),
-            "est_hours": eh, "act_hours": ah, "act_cost": ac, "revenue": rev,
+            "est_hours": eh, "act_hours": ah, "est_cost": round(ec, 2), "act_cost": ac,
+            "price": pr, "revenue": rev,
             "pct_complete": _num(r.get("PercentComplete")),
             "notes": (r.get("Notes") or None),
             "visit_notes": notes.get(r.get("WorkTicketID"), []),
         })
+    for k in tot:
+        tot[k] = round(tot[k], 2)
     return {"opportunity_id": opp_id, "ticket_count": len(tickets), "totals": tot, "tickets": tickets}
 
 
