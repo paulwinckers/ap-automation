@@ -856,6 +856,168 @@ async def service_hours(
     }
 
 
+@router.get("/ticket-notes", dependencies=[Depends(require_access)])
+async def ticket_notes(
+    query:            str           = Query("", description="Case-insensitive text to find in ticket Notes; blank = every ticket that has a note"),
+    service_contains: str           = Query("", description="Only tickets whose service name contains this (e.g. 'blowout', 'irrigation')"),
+    property_query:   Optional[str] = Query(None, description="Limit to one property by name"),
+    property_id:      Optional[int] = Query(None, description="Limit to one property by Aspire PropertyID"),
+    year:             Optional[int] = Query(None, description="Calendar year (by scheduled or completed date)"),
+    start:            Optional[str] = Query(None, description="YYYY-MM-DD inclusive (overrides year)"),
+    end:              Optional[str] = Query(None, description="YYYY-MM-DD inclusive (overrides year)"),
+    limit:            int           = Query(300, description="Max tickets to return"),
+):
+    """Search the Notes on work tickets. Free-text `query` matches the note body; narrow with
+    service_contains, a property, and/or a period. Returns each matching ticket's note plus property,
+    service, dates, status and actual hours — for reviewing loose ends / follow-ups across the book.
+    Requires at least one of: query, service_contains, a property, or a period (to stay bounded)."""
+    if not (query or service_contains or property_query or property_id or year or start or end):
+        raise HTTPException(status_code=422, detail="Provide at least one of: query, service_contains, property, year, or start/end")
+
+    sel = ("WorkTicketID,WorkTicketNumber,OpportunityID,OpportunityServiceID,ScheduledStartDate,"
+           "CompleteDate,HoursAct,WorkTicketStatusName,Notes")
+    esc = lambda s: s.replace("'", "''")
+
+    def _period_filter(field: str) -> Optional[str]:
+        if start or end:
+            parts = []
+            if start: parts.append(f"{field} ge {start}T00:00:00Z")
+            if end:   parts.append(f"{field} le {end}T23:59:59Z")
+            return " and ".join(parts)
+        if year:
+            return f"{field} ge {year}-01-01T00:00:00Z and {field} le {year}-12-31T23:59:59Z"
+        return None
+
+    # ── Resolve property (optional) ─────────────────────────────────────────────
+    resolved_prop = None
+    if property_query and not property_id:
+        cands = await _aspire.search_all_opportunities_field(property_query, limit=25)
+        if not cands:
+            return {"resolved": False, "reason": f"No property matching '{property_query}'", "candidates": []}
+        if len(cands) > 1:
+            return {"resolved": False, "reason": "Multiple properties match — pass property_id",
+                    "candidates": [{"property_id": c.get("PropertyID"), "property_name": c.get("PropertyName")} for c in cands]}
+        property_id   = cands[0].get("PropertyID")
+        resolved_prop = cands[0].get("PropertyName")
+
+    tickets: list[dict] = []
+
+    # ── Gather candidate tickets by the narrowest available key ─────────────────
+    if property_id:
+        res = await _aspire._get("Opportunities", {"$filter": f"PropertyID eq {property_id}",
+                                                   "$select": "OpportunityID", "$top": "500"})
+        opp_ids = [o.get("OpportunityID") for o in _aspire._extract_list(res) if o.get("OpportunityID")]
+        for i in range(0, len(opp_ids), 15):
+            chunk = opp_ids[i:i + 15]
+            flt = "(" + " or ".join(f"OpportunityID eq {o}" for o in chunk) + ")"
+            r = await _aspire._get("WorkTickets", {"$filter": flt, "$select": sel, "$top": "1000"})
+            tickets.extend(_aspire._extract_list(r))
+    elif service_contains:
+        # Find matching service lines, then their tickets
+        os_res = await _aspire._get("OpportunityServices", {
+            "$filter": f"contains(DisplayName, '{esc(service_contains)}')",
+            "$select": "OpportunityServiceID", "$top": "1000"})
+        os_ids = [s.get("OpportunityServiceID") for s in _aspire._extract_list(os_res) if s.get("OpportunityServiceID")]
+        for i in range(0, len(os_ids), 15):
+            chunk = os_ids[i:i + 15]
+            flt = "(" + " or ".join(f"OpportunityServiceID eq {s}" for s in chunk) + ")"
+            pf = _period_filter("ScheduledStartDate")
+            if pf: flt += f" and ({pf})"
+            r = await _aspire._get("WorkTickets", {"$filter": flt, "$select": sel, "$top": "1000"})
+            tickets.extend(_aspire._extract_list(r))
+    else:
+        # query and/or period only — filter on the server, keyset-paginate
+        base_parts = []
+        if query: base_parts.append(f"contains(Notes, '{esc(query)}')")
+        pf = _period_filter("ScheduledStartDate")
+        if pf: base_parts.append(f"({pf})")
+        base = " and ".join(base_parts)
+        last_id = 0
+        for _ in range(30):
+            flt = (base + " and " if base else "") + f"WorkTicketID gt {last_id}"
+            r = await _aspire._get("WorkTickets", {"$filter": flt, "$select": sel,
+                                                   "$orderby": "WorkTicketID asc", "$top": "1000"})
+            rows = _aspire._extract_list(r)
+            if not rows:
+                break
+            tickets.extend(rows)
+            last_id = rows[-1].get("WorkTicketID") or (last_id + 1)
+            if len(rows) < 1000:
+                break
+
+    # ── Resolve service + property names for the candidates ─────────────────────
+    os_ids = list({t.get("OpportunityServiceID") for t in tickets if t.get("OpportunityServiceID")})
+    os_name: dict = {}
+    for i in range(0, len(os_ids), 20):
+        chunk = os_ids[i:i + 20]
+        flt = "(" + " or ".join(f"OpportunityServiceID eq {s}" for s in chunk) + ")"
+        r = await _aspire._get("OpportunityServices", {"$filter": flt, "$select": "OpportunityServiceID,DisplayName", "$top": "1000"})
+        for s in _aspire._extract_list(r):
+            os_name[s.get("OpportunityServiceID")] = s.get("DisplayName") or ""
+    opp_ids = list({t.get("OpportunityID") for t in tickets if t.get("OpportunityID")})
+    opp_info: dict = {}
+    for i in range(0, len(opp_ids), 20):
+        chunk = opp_ids[i:i + 20]
+        flt = "(" + " or ".join(f"OpportunityID eq {o}" for o in chunk) + ")"
+        r = await _aspire._get("Opportunities", {"$filter": flt, "$select": "OpportunityID,OpportunityName,PropertyName,DivisionName", "$top": "1000"})
+        for o in _aspire._extract_list(r):
+            opp_info[o.get("OpportunityID")] = o
+
+    # ── Client-side refine: notes present, text query, service, period ──────────
+    q = query.lower()
+    sub = service_contains.lower()
+    def _in_period(t) -> bool:
+        if not (start or end or year):
+            return True
+        dates = [d for d in [(t.get("ScheduledStartDate") or "")[:10], (t.get("CompleteDate") or "")[:10]] if d]
+        if start or end:
+            return any((not start or d >= start) and (not end or d <= end) for d in dates)
+        return any(d[:4] == str(year) for d in dates)
+
+    seen: set = set()
+    out = []
+    for t in tickets:
+        wid = t.get("WorkTicketID")
+        if wid in seen:
+            continue
+        notes = (t.get("Notes") or "").strip()
+        if not notes:
+            continue
+        if q and q not in notes.lower():
+            continue
+        svc = os_name.get(t.get("OpportunityServiceID"), "")
+        if sub and sub not in svc.lower():
+            continue
+        if not _in_period(t):
+            continue
+        seen.add(wid)
+        info = opp_info.get(t.get("OpportunityID"), {})
+        out.append({
+            "work_ticket": t.get("WorkTicketNumber"),
+            "property":    info.get("PropertyName"),
+            "opportunity": info.get("OpportunityName"),
+            "division":    info.get("DivisionName"),
+            "service":     svc,
+            "scheduled":   (t.get("ScheduledStartDate") or "")[:10],
+            "completed":   (t.get("CompleteDate") or "")[:10],
+            "status":      t.get("WorkTicketStatusName"),
+            "hours_act":   t.get("HoursAct") or 0.0,
+            "notes":       notes,
+        })
+
+    out.sort(key=lambda x: x["scheduled"], reverse=True)
+    return {
+        "resolved": True,
+        "query": query or None,
+        "service_contains": service_contains or None,
+        "property": ({"property_id": property_id, "property_name": resolved_prop} if property_id else None),
+        "period": ({"start": start, "end": end} if (start or end) else {"year": year} if year else "all time"),
+        "tickets_with_notes": len(out),
+        "truncated": len(out) > limit,
+        "tickets": out[:limit],
+    }
+
+
 @router.post("/submit/{session_id}")
 async def submit_session(session_id: int, db: Database = Depends(get_db)):
     """
