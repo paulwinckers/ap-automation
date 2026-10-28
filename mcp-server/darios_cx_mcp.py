@@ -138,6 +138,32 @@ async def get_service_hours(property: Optional[str] = None, property_id: Optiona
 
 
 @mcp.tool()
+async def get_maintenance_summary(year: Optional[int] = None, start: Optional[str] = None,
+                                  end: Optional[str] = None, service_contains: str = "maintenance",
+                                  division_contains: Optional[str] = None,
+                                  sort: str = "variance_pct", limit: int = 200) -> dict:
+    """Book-wide actual-vs-estimated summary across EVERY maintenance contract — answers 'how are our
+    maintenance contracts tracking on time vs estimate' and 'which contracts are most over'. Aggregates
+    work-ticket HoursEst/HoursAct by opportunity (the contract) for the period and ranks them. Period:
+    `year` (default current year) OR `start`/`end` ('YYYY-MM-DD'). `service_contains` defines the
+    contract work (default 'maintenance'; change it to summarize another recurring service book-wide).
+    `division_contains` optionally limits to e.g. 'commercial' or 'residential'. `sort` = 'variance_pct'
+    (default, most over estimate first), 'variance' (most over by hours), or 'hours_act'. Returns a
+    totals block (hours_est, hours_act, variance, variance_pct, revenue) and a ranked `contracts` list,
+    each with opportunity, property, division, tickets, hours_est, hours_act, variance, variance_pct,
+    revenue. For a single site's detail use get_service_hours instead."""
+    params: dict = {}
+    if year:              params["year"]              = year
+    if start:             params["start"]             = start
+    if end:               params["end"]               = end
+    if service_contains:  params["service_contains"]  = service_contains
+    if division_contains: params["division_contains"] = division_contains
+    if sort:              params["sort"]              = sort
+    if limit:             params["limit"]             = limit
+    return await _get("/time/maintenance-summary", params or None)
+
+
+@mcp.tool()
 async def search_ticket_notes(query: str = "", service_contains: str = "",
                               property: Optional[str] = None, property_id: Optional[int] = None,
                               year: Optional[int] = None, start: Optional[str] = None,

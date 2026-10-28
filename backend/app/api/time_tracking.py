@@ -885,6 +885,131 @@ async def service_hours(
     }
 
 
+@router.get("/maintenance-summary", dependencies=[Depends(require_access)])
+async def maintenance_summary(
+    year:              Optional[int] = Query(None, description="Calendar year; default = current year"),
+    start:             Optional[str] = Query(None, description="YYYY-MM-DD inclusive (overrides year)"),
+    end:               Optional[str] = Query(None, description="YYYY-MM-DD inclusive (overrides year)"),
+    service_contains:  str           = Query("maintenance", description="Service-name substring that defines the contract work (default 'maintenance')"),
+    division_contains: Optional[str] = Query(None, description="Optional division filter, e.g. 'commercial' or 'residential'"),
+    sort:              str           = Query("variance_pct", description="Rank by 'variance_pct' | 'variance' | 'hours_act'"),
+    limit:             int           = Query(200, description="Max contracts to return"),
+):
+    """Book-wide actual-vs-estimated summary across every maintenance contract. Aggregates work-ticket
+    HoursEst/HoursAct by OPPORTUNITY (the contract) for the period, ranked so the contracts most OVER
+    estimate surface first. Answers 'how are our maintenance contracts tracking vs estimate'. A contract
+    is any opportunity with a service whose name matches service_contains (default 'maintenance')."""
+    if not (year or start or end):
+        year = datetime.now(timezone.utc).year
+    esc = lambda s: s.replace("'", "''")
+
+    def _pf(field: str) -> Optional[str]:
+        if start or end:
+            parts = []
+            if start: parts.append(f"{field} ge {start}T00:00:00Z")
+            if end:   parts.append(f"{field} le {end}T23:59:59Z")
+            return " and ".join(parts)
+        if year:
+            return f"{field} ge {year}-01-01T00:00:00Z and {field} le {year}-12-31T23:59:59Z"
+        return None
+
+    # 1) Maintenance service lines across the book (keyset-paginated)
+    os_ids: set = set()
+    last = 0
+    for _ in range(25):
+        r = await _aspire._get("OpportunityServices", {
+            "$filter": f"contains(DisplayName, '{esc(service_contains)}') and OpportunityServiceID gt {last}",
+            "$orderby": "OpportunityServiceID asc", "$top": "1000",
+            "$select": "OpportunityServiceID"})
+        rows = _aspire._extract_list(r)
+        if not rows:
+            break
+        for s in rows:
+            if s.get("OpportunityServiceID"):
+                os_ids.add(s["OpportunityServiceID"])
+        last = rows[-1].get("OpportunityServiceID") or (last + 1)
+        if len(rows) < 1000:
+            break
+
+    # 2) Tickets for those service lines in the period → aggregate by opportunity
+    agg: dict = defaultdict(lambda: {"tickets": 0, "hours_est": 0.0, "hours_act": 0.0, "revenue": 0.0})
+    os_list = list(os_ids)
+    pf = _pf("ScheduledStartDate")
+    for i in range(0, len(os_list), 15):
+        chunk = os_list[i:i + 15]
+        flt = "(" + " or ".join(f"OpportunityServiceID eq {s}" for s in chunk) + ")"
+        if pf:
+            flt += f" and ({pf})"
+        r = await _aspire._get("WorkTickets", {"$filter": flt,
+            "$select": "WorkTicketID,OpportunityID,HoursEst,HoursAct,Revenue", "$top": "1000"})
+        for t in _aspire._extract_list(r):
+            oid = t.get("OpportunityID")
+            if not oid:
+                continue
+            a = agg[oid]
+            a["tickets"] += 1
+            a["hours_est"] += t.get("HoursEst") or 0.0
+            a["hours_act"] += t.get("HoursAct") or 0.0
+            a["revenue"]   += t.get("Revenue") or 0.0
+
+    # 3) Resolve opportunity → name / property / division
+    opp_ids = list(agg)
+    opp_info: dict = {}
+    for i in range(0, len(opp_ids), 20):
+        chunk = opp_ids[i:i + 20]
+        flt = "(" + " or ".join(f"OpportunityID eq {o}" for o in chunk) + ")"
+        r = await _aspire._get("Opportunities", {"$filter": flt,
+            "$select": "OpportunityID,OpportunityName,PropertyName,DivisionName", "$top": "1000"})
+        for o in _aspire._extract_list(r):
+            opp_info[o.get("OpportunityID")] = o
+
+    rnd = lambda x: round(x, 1)
+    pct = lambda est, act: (round(100 * (act - est) / est, 1) if est else None)
+    div_sub = (division_contains or "").lower()
+    contracts = []
+    for oid, a in agg.items():
+        info = opp_info.get(oid, {})
+        div = info.get("DivisionName") or ""
+        if div_sub and div_sub not in div.lower():
+            continue
+        contracts.append({
+            "opportunity": info.get("OpportunityName"),
+            "property":    info.get("PropertyName"),
+            "division":    div,
+            "tickets":     a["tickets"],
+            "hours_est":   rnd(a["hours_est"]),
+            "hours_act":   rnd(a["hours_act"]),
+            "variance":    rnd(a["hours_act"] - a["hours_est"]),   # + = over
+            "variance_pct": pct(a["hours_est"], a["hours_act"]),
+            "revenue":     rnd(a["revenue"]),
+        })
+
+    key = {"variance": lambda c: c["variance"],
+           "hours_act": lambda c: c["hours_act"]}.get(sort,
+           lambda c: (c["variance_pct"] if c["variance_pct"] is not None else -9999))
+    contracts.sort(key=key, reverse=True)
+
+    tot_est = sum(c["hours_est"] for c in contracts)
+    tot_act = sum(c["hours_act"] for c in contracts)
+    return {
+        "period": ({"start": start, "end": end} if (start or end) else {"year": year}),
+        "service_contains": service_contains,
+        "division_contains": division_contains,
+        "contracts_count": len(contracts),
+        "totals": {
+            "hours_est": rnd(tot_est), "hours_act": rnd(tot_act),
+            "variance": rnd(tot_act - tot_est), "variance_pct": pct(tot_est, tot_act),
+            "revenue": rnd(sum(c["revenue"] for c in contracts)),
+        },
+        "contracts": contracts[:limit],
+        "truncated": len(contracts) > limit,
+        "note": ("Each row aggregates a contract's work tickets: hours_act vs hours_est; variance = "
+                 "actual − estimate (positive = OVER estimate), variance_pct as a % of estimate. "
+                 "Ranked most-over first. A contract = an opportunity with a service matching "
+                 "service_contains."),
+    }
+
+
 @router.get("/ticket-notes", dependencies=[Depends(require_access)])
 async def ticket_notes(
     query:            str           = Query("", description="Case-insensitive text to find in ticket Notes; blank = every ticket that has a note"),
