@@ -50,3 +50,28 @@ The portal API is currently open (no auth on the endpoints). This local connecto
 your machine, so it's contained — but the API itself is reachable by anyone with the URL,
 including the send endpoint. Before rolling this out to staff, add an API key to the backend
 and set it here as `DARIOS_API_KEY` (this server already sends it as `X-API-Key`).
+
+## Hosted version — Claude Team custom connector
+
+The same server runs on Railway so everyone on the darios.ca Claude Team can use it in chat,
+Cowork and mobile. Each person signs in with their **Darios portal login**
+(`oauth_provider.py`) and Claude acts as them — `whoami`, `get_my_worklist` etc. are theirs.
+Deactivating someone in the portal cuts their Claude access immediately.
+
+**Railway (one-time):** New service → GitHub repo → Settings → Root Directory `mcp-server`
+(builds this folder's `Dockerfile`). Networking → Generate Domain. Variables:
+
+| Var | Value |
+|---|---|
+| `DARIOS_API_KEY` | same value as the backend's `SERVICE_API_KEY` |
+| `MCP_PUBLIC_URL` | the generated domain, e.g. `https://darios-mcp-production.up.railway.app` |
+| `MCP_SIGNING_KEY` | a random 48+ char secret (rotating it signs everyone out) |
+
+Check `https://<domain>/health` → `{"ok":true}`.
+
+**Claude Team (Owner):** Admin settings → Connectors → Add custom connector →
+URL `https://<domain>/mcp`. Then each person: Settings → Connectors → Darios CX → Connect →
+signs in with their portal email + password.
+
+Tokens are stateless (signed), so redeploys don't sign anyone out; access tokens last 1 h,
+refresh 30 days. Only claude.ai / claude.com / localhost redirect URIs can register.

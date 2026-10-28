@@ -13,14 +13,23 @@ It talks to the portal's existing HTTP API (no database access of its own):
   - POST /construction/cx/project/{opp}/send       → SEND an email (gated)
   - POST /construction/cx/skip                     → dismiss an action as not necessary
 
-Run it from Claude Desktop (see README.md). Config via env vars:
-  DARIOS_API      base URL (default: the production backend)
-  DARIOS_API_KEY  optional; sent as X-API-Key if the API later requires it
+Two ways to run it (see README.md):
+  - LOCAL (stdio, default): Claude Code / Desktop on one PC, identity from DARIOS_ACT_AS.
+  - HOSTED (MCP_TRANSPORT=http): a Claude Team custom connector on Railway. Each person
+    signs in with their Darios portal login (oauth_provider.py) and acts as themselves.
+
+Config via env vars:
+  DARIOS_API       base URL (default: the production backend)
+  DARIOS_API_KEY   the backend SERVICE_API_KEY, sent as X-API-Key
+  DARIOS_ACT_AS    local mode only: the rep this connector acts as
+  MCP_TRANSPORT    'http' to host it; MCP_PUBLIC_URL (its https URL), MCP_SIGNING_KEY
+                   (random secret, 32+ chars) and PORT are then required
 """
 import os
 from typing import Optional
 
 import httpx
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.fastmcp import FastMCP
 
 API = os.environ.get("DARIOS_API", "https://ap-automation-production.up.railway.app").rstrip("/")
@@ -30,15 +39,44 @@ KEY = os.environ.get("DARIOS_API_KEY", "")
 # X-Act-As-User header. Leave unset for the generic service principal.
 ACT_AS = os.environ.get("DARIOS_ACT_AS", "").strip()
 TIMEOUT = 120.0
+HOSTED = os.environ.get("MCP_TRANSPORT", "stdio").lower() == "http"
 
-mcp = FastMCP("Darios CX")
+if HOSTED:
+    from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
+    from oauth_provider import SCOPE, DariosOAuthProvider
+
+    PUBLIC_URL = os.environ["MCP_PUBLIC_URL"].rstrip("/")
+    _oauth = DariosOAuthProvider(os.environ["MCP_SIGNING_KEY"], API, PUBLIC_URL)
+    mcp = FastMCP(
+        "Darios CX",
+        host="0.0.0.0", port=int(os.environ.get("PORT", "8000")),
+        stateless_http=True,
+        auth_server_provider=_oauth,
+        auth=AuthSettings(
+            issuer_url=PUBLIC_URL,
+            resource_server_url=f"{PUBLIC_URL}/mcp",
+            validate_token_resource=False,
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True, valid_scopes=[SCOPE], default_scopes=[SCOPE]),
+            revocation_options=RevocationOptions(enabled=True),
+        ),
+    )
+    mcp.custom_route("/login", methods=["GET", "POST"])(_oauth.login_page)
+else:
+    mcp = FastMCP("Darios CX")
 
 
 def _headers() -> dict:
     h: dict = {}
     if KEY:
         h["X-API-Key"] = KEY
-    if ACT_AS:
+    if HOSTED:
+        # Hosted: ALWAYS the signed-in person — never fall back to a shared identity.
+        tok = get_access_token()
+        if not tok or not tok.subject:
+            raise RuntimeError("Not signed in to Darios")
+        h["X-Act-As-User"] = tok.subject
+    elif ACT_AS:
         h["X-Act-As-User"] = ACT_AS
     return h
 
@@ -407,5 +445,12 @@ def cx_review() -> str:
     )
 
 
+if HOSTED:
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health(request):
+        from starlette.responses import JSONResponse
+        return JSONResponse({"ok": True})
+
+
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(transport="streamable-http" if HOSTED else "stdio")
