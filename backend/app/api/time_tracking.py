@@ -640,6 +640,19 @@ async def _wt_servicetype_map(wt_ids: set[int]) -> dict[int, Optional[str]]:
     return {wt: svc_type.get(os_serviceid.get(wt_osid.get(wt))) for wt in wt_list}
 
 
+def _strip_html(s: str) -> str:
+    """Flatten Aspire's rich-text Notes (HTML) to plain text for display."""
+    if not s:
+        return ""
+    import re, html
+    s = re.sub(r"(?i)</p>|<br\s*/?>|</div>|</li>", "\n", s)
+    s = re.sub(r"<[^>]+>", "", s)
+    s = html.unescape(s)
+    s = re.sub(r"[ \t]*\n[ \t]*", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
 def _is_indirect_dept(dept: Optional[str]) -> bool:
     """No service type, or an overhead one (Aspire's is 'Indirect/Overhead') → non-billable."""
     if not dept:
@@ -865,12 +878,15 @@ async def ticket_notes(
     year:             Optional[int] = Query(None, description="Calendar year (by scheduled or completed date)"),
     start:            Optional[str] = Query(None, description="YYYY-MM-DD inclusive (overrides year)"),
     end:              Optional[str] = Query(None, description="YYYY-MM-DD inclusive (overrides year)"),
+    include_empty_notes: bool       = Query(False, description="Include tickets that have no note (full ticket review, not just noted ones)"),
     limit:            int           = Query(300, description="Max tickets to return"),
 ):
     """Search the Notes on work tickets. Free-text `query` matches the note body; narrow with
     service_contains, a property, and/or a period. Returns each matching ticket's note plus property,
-    service, dates, status and actual hours — for reviewing loose ends / follow-ups across the book.
-    Requires at least one of: query, service_contains, a property, or a period (to stay bounded)."""
+    service, division, dates, status and actual hours — for reviewing loose ends / follow-ups across
+    the book. By default only tickets that HAVE a note are returned; pass include_empty_notes=true to
+    see every matching ticket (note or not). Requires at least one of: query, service_contains, a
+    property, or a period (to stay bounded)."""
     if not (query or service_contains or property_query or property_id or year or start or end):
         raise HTTPException(status_code=422, detail="Provide at least one of: query, service_contains, property, year, or start/end")
 
@@ -981,7 +997,7 @@ async def ticket_notes(
         if wid in seen:
             continue
         notes = (t.get("Notes") or "").strip()
-        if not notes:
+        if not notes and not include_empty_notes:
             continue
         if q and q not in notes.lower():
             continue
@@ -1002,17 +1018,27 @@ async def ticket_notes(
             "completed":   (t.get("CompleteDate") or "")[:10],
             "status":      t.get("WorkTicketStatusName"),
             "hours_act":   t.get("HoursAct") or 0.0,
-            "notes":       notes,
+            "has_note":    bool(notes),
+            "notes":       _strip_html(notes),
         })
 
     out.sort(key=lambda x: x["scheduled"], reverse=True)
+    by_division: dict = defaultdict(lambda: {"tickets": 0, "with_notes": 0})
+    for t in out:
+        bd = by_division[t.get("division") or "(none)"]
+        bd["tickets"] += 1
+        if t["has_note"]:
+            bd["with_notes"] += 1
     return {
         "resolved": True,
         "query": query or None,
         "service_contains": service_contains or None,
         "property": ({"property_id": property_id, "property_name": resolved_prop} if property_id else None),
         "period": ({"start": start, "end": end} if (start or end) else {"year": year} if year else "all time"),
-        "tickets_with_notes": len(out),
+        "include_empty_notes": include_empty_notes,
+        "tickets_returned": len(out),
+        "tickets_with_notes": sum(1 for t in out if t["has_note"]),
+        "by_division": {k: v for k, v in sorted(by_division.items(), key=lambda x: -x[1]["tickets"])},
         "truncated": len(out) > limit,
         "tickets": out[:limit],
     }

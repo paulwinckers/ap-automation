@@ -139,25 +139,30 @@ async def get_service_hours(property: Optional[str] = None, property_id: Optiona
 async def search_ticket_notes(query: str = "", service_contains: str = "",
                               property: Optional[str] = None, property_id: Optional[int] = None,
                               year: Optional[int] = None, start: Optional[str] = None,
-                              end: Optional[str] = None, limit: int = 300) -> dict:
-    """Search the Notes field on Aspire work tickets (any service/division) for reviewing loose ends,
+                              end: Optional[str] = None, include_empty_notes: bool = False,
+                              limit: int = 300) -> dict:
+    """Search/review Aspire work tickets (any service/division) and their Notes — for loose ends,
     follow-ups, or anything crews recorded. `query` is case-insensitive free text matched in the note
-    body (blank = every ticket that has a note). Narrow with `service_contains` (service name, e.g.
-    'blowout', 'irrigation', 'maintenance'), a `property` name (or `property_id`; an ambiguous name
-    returns candidates with resolved=False), and a period (`year`, or `start`/`end` 'YYYY-MM-DD').
-    Must pass at least one filter so the search stays bounded. Returns tickets_with_notes and a list
-    of {work_ticket, property, service, division, scheduled, completed, status, hours_act, notes}.
-    Examples: review all irrigation-blowout notes this year → service_contains='blowout', year=2026;
-    find tickets mentioning a broken part → query='broken'."""
+    body. Narrow with `service_contains` (service name, e.g. 'blowout', 'irrigation', 'maintenance'),
+    a `property` name (or `property_id`; an ambiguous name returns candidates with resolved=False),
+    and a period (`year`, or `start`/`end` 'YYYY-MM-DD'). Must pass at least one filter so the search
+    stays bounded. By default only tickets that HAVE a note are returned — pass include_empty_notes=
+    True for a FULL review of every matching ticket (commercial site tickets often have no note, so
+    use this to avoid missing them). Returns tickets_returned, tickets_with_notes, a by_division
+    breakdown, and a list of {work_ticket, property, service, division, scheduled, completed, status,
+    hours_act, has_note, notes}. Examples: review ALL irrigation blowouts this year across both
+    divisions → service_contains='blowout', year=2026, include_empty_notes=True; find tickets
+    mentioning a broken part → query='broken'."""
     params: dict = {}
-    if query:            params["query"]            = query
-    if service_contains: params["service_contains"] = service_contains
-    if property:         params["property_query"]   = property
-    if property_id:      params["property_id"]      = property_id
-    if year:             params["year"]             = year
-    if start:            params["start"]            = start
-    if end:              params["end"]              = end
-    if limit:            params["limit"]            = limit
+    if query:               params["query"]               = query
+    if service_contains:    params["service_contains"]    = service_contains
+    if property:            params["property_query"]      = property
+    if property_id:         params["property_id"]         = property_id
+    if year:                params["year"]                = year
+    if start:               params["start"]               = start
+    if end:                 params["end"]                 = end
+    if include_empty_notes: params["include_empty_notes"] = "true"
+    if limit:               params["limit"]               = limit
     return await _get("/time/ticket-notes", params or None)
 
 
