@@ -84,30 +84,89 @@ async def _require_admin(user: dict = Depends(_get_current_user)) -> dict:
     return user
 
 
+async def _lookup_active_user(db: Database, ident: str) -> Optional[dict]:
+    """Resolve an identity string to an active user row — numeric id or email (case-insensitive)."""
+    ident = (ident or "").strip()
+    if not ident:
+        return None
+    if ident.isdigit():
+        rows = await db._q("SELECT * FROM users WHERE id = ? AND active = 1", [int(ident)])
+    else:
+        rows = await db._q("SELECT * FROM users WHERE lower(email) = lower(?) AND active = 1", [ident])
+    return rows[0] if rows else None
+
+
+async def _resolve_actor(
+    x_api_key: Optional[str],
+    act_as: Optional[str],
+    token: Optional[str],
+    db: Database,
+    *,
+    allow_service_fallback: bool,
+) -> dict:
+    """Shared auth resolver. Precedence:
+      1. A valid user JWT → that user (the office frontend path).
+      2. The service API key + an X-Act-As-User header → the named rep (server-to-server
+         callers like the MCP connector acting ON BEHALF OF a specific person).
+      3. The service API key alone → the generic 'service' principal, only where
+         allow_service_fallback is True (endpoints that don't need a specific person).
+    The act-as header is only honoured together with a valid service key, so only a trusted
+    server-side caller can assert an identity; it never escalates admin endpoints, which keep
+    their own JWT-only `_get_current_user` guard."""
+    # 1) JWT identity wins when present
+    if token:
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+            user_id = int(payload["sub"])
+        except (JWTError, KeyError, ValueError):
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        rows = await db._q("SELECT * FROM users WHERE id = ? AND active = 1", [user_id])
+        if not rows:
+            raise HTTPException(status_code=401, detail="User not found or inactive")
+        return rows[0]
+
+    # 2/3) Service key paths
+    svc = settings.SERVICE_API_KEY
+    service_ok = bool(svc and x_api_key and secrets.compare_digest(x_api_key, svc))
+    if service_ok:
+        if act_as:
+            user = await _lookup_active_user(db, act_as)
+            if not user:
+                raise HTTPException(status_code=400,
+                    detail=f"X-Act-As-User '{act_as}' did not match an active user")
+            return user
+        if allow_service_fallback:
+            return {"id": 0, "email": "service", "role": "service", "name": "Service"}
+        raise HTTPException(status_code=400,
+            detail="This endpoint is per-user: supply a user JWT, or the service key with an X-Act-As-User header")
+
+    raise HTTPException(status_code=401, detail="Not authenticated")
+
+
 async def require_access(
     x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    x_act_as_user: Optional[str] = Header(default=None, alias="X-Act-As-User"),
     token: Optional[str] = Depends(oauth2_scheme),
     db: Database = Depends(get_db),
 ) -> dict:
-    """Gate for protected endpoints. Passes if the request carries EITHER a valid
-    service API key (X-API-Key — for server-to-server callers like the MCP connector)
-    OR a valid user JWT (the office frontend already sends this). Anonymous callers
-    get 401. Field (no-login) pages simply don't use this dependency, so they're
-    unaffected."""
-    svc = settings.SERVICE_API_KEY
-    if svc and x_api_key and secrets.compare_digest(x_api_key, svc):
-        return {"id": 0, "email": "service", "role": "service"}
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = int(payload["sub"])
-    except (JWTError, KeyError, ValueError):
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    rows = await db._q("SELECT * FROM users WHERE id = ? AND active = 1", [user_id])
-    if not rows:
-        raise HTTPException(status_code=401, detail="User not found or inactive")
-    return rows[0]
+    """Gate for protected endpoints. Passes with EITHER a valid user JWT (office frontend) OR the
+    service API key (server-to-server callers like the MCP connector). When the service key is
+    accompanied by an X-Act-As-User header, the returned principal is that specific rep — so
+    created-by / assignee attribution lands on the real person. Anonymous callers get 401; field
+    (no-login) pages don't use this dependency."""
+    return await _resolve_actor(x_api_key, x_act_as_user, token, db, allow_service_fallback=True)
+
+
+async def current_actor(
+    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    x_act_as_user: Optional[str] = Header(default=None, alias="X-Act-As-User"),
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Database = Depends(get_db),
+) -> dict:
+    """Like require_access but requires a CONCRETE person (JWT, or service key + X-Act-As-User).
+    Used by per-user endpoints (e.g. 'my worklist') where a generic service principal makes no
+    sense. The service key alone (no act-as) is rejected with 400."""
+    return await _resolve_actor(x_api_key, x_act_as_user, token, db, allow_service_fallback=False)
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -187,12 +246,13 @@ async def login(
 
 
 @router.get("/me")
-async def me(user: dict = Depends(_get_current_user)):
-    """Return current user info (validates token)."""
+async def me(user: dict = Depends(current_actor)):
+    """Return the current actor — the JWT user, or the rep named via X-Act-As-User with the
+    service key. Used by the frontend (token) and by the MCP connector to confirm identity."""
     return {
         "id":    user["id"],
         "email": user["email"],
-        "name":  user["name"],
+        "name":  user.get("name"),
         "role":  user["role"],
     }
 

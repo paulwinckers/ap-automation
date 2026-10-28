@@ -25,13 +25,22 @@ from mcp.server.fastmcp import FastMCP
 
 API = os.environ.get("DARIOS_API", "https://ap-automation-production.up.railway.app").rstrip("/")
 KEY = os.environ.get("DARIOS_API_KEY", "")
+# Identity this connector acts as (a rep's email or user id). On Claude Team this is set per rep
+# so "my tasks / my worklist" resolve to that person; with the service key it is sent as the
+# X-Act-As-User header. Leave unset for the generic service principal.
+ACT_AS = os.environ.get("DARIOS_ACT_AS", "").strip()
 TIMEOUT = 120.0
 
 mcp = FastMCP("Darios CX")
 
 
 def _headers() -> dict:
-    return {"X-API-Key": KEY} if KEY else {}
+    h: dict = {}
+    if KEY:
+        h["X-API-Key"] = KEY
+    if ACT_AS:
+        h["X-Act-As-User"] = ACT_AS
+    return h
 
 
 async def _get(path: str, params: dict | None = None):
@@ -276,10 +285,36 @@ async def complete_followup(activity_id: int) -> dict:
 
 
 @mcp.tool()
+async def whoami() -> dict:
+    """Return the person this connector is acting as (id, email, name, role). Use to confirm
+    identity for 'my tasks / my worklist'. If it returns the 'service' principal or errors, the
+    connector has no rep identity set (DARIOS_ACT_AS) — say so rather than guessing a person."""
+    return await _get("/auth/me")
+
+
+@mcp.tool()
+async def get_my_worklist() -> dict:
+    """THE signed-in rep's personal morning worklist — their open sales tasks, pending followups,
+    due client-comms they own, and assigned job-prep items, merged and bucketed (overdue / today /
+    soon). This is 'what's on my plate'. Scoped to the connector's identity (DARIOS_ACT_AS / the
+    signed-in user); if no identity is set it returns 400 — call whoami to check."""
+    return await _get("/sales/worklist/mine")
+
+
+@mcp.tool()
+async def get_my_due_items() -> dict:
+    """The signed-in rep's own due items — their open tasks + pending followups matched by their
+    user id and name, each with a due bucket. Narrower than get_my_worklist (sales items only).
+    Scoped to the connector's identity; 400 if no identity is set (see whoami)."""
+    return await _get("/sales/due/mine")
+
+
+@mcp.tool()
 async def list_due_items(assignee: Optional[str] = None, due_before: Optional[str] = None) -> dict:
     """What's due on the sales side: open tasks + pending followups, merged and sorted by
     date. Filter by `assignee` (a coworker, or a rep's own followups) and `due_before`
-    (YYYY-MM-DD, e.g. today for 'due now'). Use this to prompt 'here's what's due'."""
+    (YYYY-MM-DD, e.g. today for 'due now'). Use this to prompt 'here's what's due'. For the
+    CURRENT rep's own list, prefer get_my_worklist / get_my_due_items."""
     qs = []
     if assignee:
         qs.append(f"assignee={assignee}")

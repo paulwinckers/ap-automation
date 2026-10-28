@@ -27,7 +27,7 @@ from app.core.config import settings
 from app.core.database import Database
 from app.services import r2
 from app.services.aspire import AspireClient
-from app.api.auth import require_access, _get_current_user
+from app.api.auth import require_access, _get_current_user, current_actor
 from app.api.construction_plan import get_db
 
 router = APIRouter(prefix="/sales", tags=["sales"])
@@ -439,7 +439,7 @@ async def due_items(assignee: Optional[str] = None, assignee_user_id: Optional[i
 
 
 @router.get("/due/mine")
-async def my_due_items(user: dict = Depends(_get_current_user), db: Database = Depends(get_db)):
+async def my_due_items(user: dict = Depends(current_actor), db: Database = Depends(get_db)):
     """The logged-in user's personal worklist — their open tasks + pending followups, matched by
     their user id AND their name (so legacy name-only rows still appear). Items carry a `bucket`
     (overdue/today/week/later/someday) for grouping. This is the 'My Action Items' surface."""
@@ -459,7 +459,7 @@ _BUCKET_ORDER = {"overdue": 0, "today": 1, "week": 2, "later": 3, "someday": 4}
 
 
 @router.get("/worklist/mine")
-async def my_worklist(user: dict = Depends(_get_current_user), db: Database = Depends(get_db)):
+async def my_worklist(user: dict = Depends(current_actor), db: Database = Depends(get_db)):
     """ONE morning worklist for the logged-in user: their sales tasks + pending followups
     (source sales_task / sales_followup) PLUS the CX client-comms due that they OWN — scoped by
     the comms template's role→person map in CX settings (scheduler→Keeland, supervisor→Dustin,
