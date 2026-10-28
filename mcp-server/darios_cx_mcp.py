@@ -266,17 +266,23 @@ async def get_invoices(opportunity_id: int) -> dict:
 async def log_sales_activity(customer_key: str, body: str, type: str = "note",
                              subject: Optional[str] = None, opportunity_id: Optional[int] = None,
                              next_action_date: Optional[str] = None, next_action_note: Optional[str] = None,
-                             created_by: Optional[str] = None) -> dict:
+                             created_by: Optional[str] = None, direction: Optional[str] = None,
+                             occurred_at: Optional[str] = None) -> dict:
     """Log a sales activity for a customer — a conversation note, call, meeting, email, or
     SITE VISIT. `customer_key` is 'company:{id}' | 'contact:{id}' (from search_customers;
     works for a brand-new lead too). `type`: note|call|meeting|email|site_visit. Set
     next_action_date (YYYY-MM-DD) + next_action_note to schedule a followup. `created_by` =
     the salesperson's name. Returns the created activity (note its id to attach photos or
-    spawn tasks). Photos/videos are added from the field app, not here."""
+    spawn tasks). Photos/videos are added from the field app, not here.
+    For an EMAIL: type='email', subject = the email's subject, body = who it was from/to plus
+    the message text (trim long quoted threads/signatures), direction = 'in' (customer → us) or
+    'out' (us → customer), occurred_at = when it was sent/received (ISO 8601, from the email
+    itself — not now)."""
     return await _post("/sales/activity", {
         "customer_key": customer_key, "type": type, "subject": subject, "body": body,
         "opportunity_id": opportunity_id, "next_action_date": next_action_date,
-        "next_action_note": next_action_note, "created_by": created_by})
+        "next_action_note": next_action_note, "created_by": created_by,
+        "direction": direction, "occurred_at": occurred_at})
 
 
 @mcp.tool()
@@ -442,6 +448,28 @@ def cx_review() -> str:
         "draft_email to draft it, show it to me to review, and only send with send_email "
         "after I explicitly approve the recipient, subject and body. Never send without "
         "my go-ahead."
+    )
+
+
+@mcp.prompt(title="Save email to Darios")
+def save_email(which_email: str = "") -> str:
+    """Save an email (from your Outlook) to a customer's history in Darios."""
+    target = f" The email: {which_email}." if which_email else ""
+    return (
+        "Save an email to a customer's history in Darios." + target + " Steps:\n"
+        "1. Find the email in my Outlook (if I haven't said which, ask, or show my 5 most recent "
+        "customer emails to pick from). If it's a thread, use the specific message I mean.\n"
+        "2. Find the customer with search_customers (try the sender's company, then the person's "
+        "name, then the property/address mentioned). If more than one match, or none, ask me — "
+        "never guess the account.\n"
+        "3. Show me what you'll save in one short block: customer, subject, in/out, date, and a "
+        "1-2 line summary. Wait for my OK.\n"
+        "4. Save it with log_sales_activity: type='email', subject, body = from/to + the message "
+        "text (drop long quoted history and signatures), direction 'in' if the customer sent it or "
+        "'out' if we did, occurred_at = the email's own sent/received time. Link opportunity_id only "
+        "if the email is clearly about one job.\n"
+        "5. Then ask whether to set a follow-up (next_action_date + next_action_note) or create a "
+        "task for someone."
     )
 
 
