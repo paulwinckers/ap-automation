@@ -730,6 +730,132 @@ async def time_efficiency(
     }
 
 
+@router.get("/service-hours", dependencies=[Depends(require_access)])
+async def service_hours(
+    property_query:   Optional[str] = Query(None, description="Property name to resolve (e.g. 'Mission Flats'); omit if property_id given"),
+    property_id:      Optional[int] = Query(None, description="Aspire PropertyID; skips name resolution"),
+    year:             Optional[int] = Query(None, description="Calendar year to include; omit (with no start/end) for all years"),
+    start:            Optional[str] = Query(None, description="YYYY-MM-DD inclusive (overrides year)"),
+    end:              Optional[str] = Query(None, description="YYYY-MM-DD inclusive (overrides year)"),
+    service_contains: str           = Query("", description="Case-insensitive substring of the service name (e.g. 'blowout', 'irrigation'); blank = every service"),
+):
+    """Actual labor hours (and revenue) for a property's service work tickets, optionally filtered to
+    a service and a period. Resolves the property by name, finds its opportunities → work tickets
+    scheduled or completed in the period whose service name matches → sums each ticket's HoursAct
+    (with a WorkTicketTimes cross-check) and Revenue. Answers questions like 'how many hours did the
+    X blowout take last year' or 'what did we bill for Y maintenance in 2025'. If the name matches
+    more than one property, returns the candidates instead of guessing."""
+    # ── Resolve property ──────────────────────────────────────────────────────
+    resolved_name = None
+    if not property_id:
+        if not property_query:
+            raise HTTPException(status_code=422, detail="Provide property_query or property_id")
+        candidates = await _aspire.search_all_opportunities_field(property_query, limit=25)
+        if not candidates:
+            return {"resolved": False, "reason": f"No property matching '{property_query}'", "candidates": []}
+        if len(candidates) > 1:
+            return {"resolved": False, "reason": "Multiple properties match — pass property_id",
+                    "candidates": [{"property_id": c.get("PropertyID"), "property_name": c.get("PropertyName"),
+                                    "division": c.get("DivisionName")} for c in candidates]}
+        property_id   = candidates[0].get("PropertyID")
+        resolved_name = candidates[0].get("PropertyName")
+
+    # ── Opportunities for the property ─────────────────────────────────────────
+    res = await _aspire._get("Opportunities", {"$filter": f"PropertyID eq {property_id}",
+        "$select": "OpportunityID,OpportunityName,PropertyName,DivisionName", "$top": "500"})
+    opps = {o.get("OpportunityID"): o for o in _aspire._extract_list(res)}
+    if not opps:
+        return {"resolved": False, "reason": f"No opportunities for property {property_id}", "candidates": []}
+    if not resolved_name:
+        resolved_name = next(iter(opps.values())).get("PropertyName")
+
+    # ── Work tickets for those opportunities ────────────────────────────────────
+    tickets: list[dict] = []
+    opp_ids = list(opps)
+    for i in range(0, len(opp_ids), 15):
+        chunk = opp_ids[i:i + 15]
+        flt = "(" + " or ".join(f"OpportunityID eq {o}" for o in chunk) + ")"
+        r = await _aspire._get("WorkTickets", {"$filter": flt,
+            "$select": "WorkTicketID,WorkTicketNumber,OpportunityID,OpportunityServiceID,ScheduledStartDate,CompleteDate,HoursAct,HoursEst,OTHoursAct,Revenue",
+            "$top": "1000"})
+        tickets.extend(_aspire._extract_list(r))
+
+    # ── Resolve service display names ───────────────────────────────────────────
+    os_ids = list({t.get("OpportunityServiceID") for t in tickets if t.get("OpportunityServiceID")})
+    os_name: dict = {}
+    for i in range(0, len(os_ids), 20):
+        chunk = os_ids[i:i + 20]
+        flt = "(" + " or ".join(f"OpportunityServiceID eq {s}" for s in chunk) + ")"
+        r = await _aspire._get("OpportunityServices", {"$filter": flt, "$select": "OpportunityServiceID,DisplayName", "$top": "1000"})
+        for s in _aspire._extract_list(r):
+            os_name[s.get("OpportunityServiceID")] = s.get("DisplayName") or ""
+
+    # ── Period predicate ────────────────────────────────────────────────────────
+    def _in_period(t) -> bool:
+        dates = [(t.get("ScheduledStartDate") or "")[:10], (t.get("CompleteDate") or "")[:10]]
+        dates = [d for d in dates if d]
+        if start or end:
+            return any((not start or d >= start) and (not end or d <= end) for d in dates)
+        if year:
+            return any(d[:4] == str(year) for d in dates)
+        return True
+
+    sub = service_contains.lower()
+    matched = []
+    for t in tickets:
+        name = os_name.get(t.get("OpportunityServiceID"), "")
+        if sub in name.lower() and _in_period(t):
+            matched.append({
+                "work_ticket": t.get("WorkTicketNumber"),
+                "_wt_id":      t.get("WorkTicketID"),
+                "opportunity": opps.get(t.get("OpportunityID"), {}).get("OpportunityName"),
+                "service":     name,
+                "scheduled":   (t.get("ScheduledStartDate") or "")[:10],
+                "completed":   (t.get("CompleteDate") or "")[:10],
+                "hours_act":   t.get("HoursAct") or 0.0,
+                "ot_hours_act": t.get("OTHoursAct") or 0.0,
+                "revenue":     t.get("Revenue") or 0.0,
+            })
+
+    # ── Cross-check hours against WorkTicketTimes ───────────────────────────────
+    wtt_hours: dict = defaultdict(float)
+    mids = [m["_wt_id"] for m in matched]
+    for i in range(0, len(mids), 15):
+        chunk = mids[i:i + 15]
+        flt = "(" + " or ".join(f"WorkTicketID eq {w}" for w in chunk) + ")"
+        r = await _aspire._get("WorkTicketTimes", {"$filter": flt, "$select": "WorkTicketID,Hours", "$top": "1000"})
+        for e in _aspire._extract_list(r):
+            wtt_hours[e.get("WorkTicketID")] += e.get("Hours") or 0.0
+
+    rnd = lambda x: round(x, 1)
+    by_service: dict = defaultdict(lambda: {"tickets": 0, "hours_act": 0.0, "revenue": 0.0})
+    for m in matched:
+        m["wtt_hours"] = round(wtt_hours.get(m["_wt_id"], 0.0), 2)
+        bs = by_service[m["service"]]
+        bs["tickets"] += 1
+        bs["hours_act"] += m["hours_act"]
+        bs["revenue"] += m["revenue"]
+        m.pop("_wt_id", None)
+
+    return {
+        "resolved": True,
+        "property": {"property_id": property_id, "property_name": resolved_name},
+        "period": ({"start": start, "end": end} if (start or end) else {"year": year} if year else "all time"),
+        "service_contains": service_contains or None,
+        "tickets_matched": len(matched),
+        "total_hours_act": rnd(sum(m["hours_act"] for m in matched)),
+        "total_ot_hours": rnd(sum(m["ot_hours_act"] for m in matched)),
+        "total_wtt_hours": rnd(sum(m["wtt_hours"] for m in matched)),
+        "total_revenue": rnd(sum(m["revenue"] for m in matched)),
+        "by_service": sorted(
+            [{"service": k, "tickets": v["tickets"], "hours_act": rnd(v["hours_act"]), "revenue": rnd(v["revenue"])}
+             for k, v in by_service.items()], key=lambda x: -x["hours_act"]),
+        "tickets": sorted(matched, key=lambda x: x["scheduled"]),
+        "note": ("Hours = Aspire WorkTicket HoursAct (actual labor booked to the ticket); wtt_hours is the "
+                 "same hours re-summed from individual time entries as a cross-check. Revenue = ticket Revenue."),
+    }
+
+
 @router.post("/submit/{session_id}")
 async def submit_session(session_id: int, db: Database = Depends(get_db)):
     """
