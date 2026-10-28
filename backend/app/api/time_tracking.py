@@ -818,6 +818,8 @@ async def service_hours(
     for t in tickets:
         name = os_name.get(t.get("OpportunityServiceID"), "")
         if sub in name.lower() and _in_period(t):
+            est = t.get("HoursEst") or 0.0
+            act = t.get("HoursAct") or 0.0
             matched.append({
                 "work_ticket": t.get("WorkTicketNumber"),
                 "_wt_id":      t.get("WorkTicketID"),
@@ -825,7 +827,9 @@ async def service_hours(
                 "service":     name,
                 "scheduled":   (t.get("ScheduledStartDate") or "")[:10],
                 "completed":   (t.get("CompleteDate") or "")[:10],
-                "hours_act":   t.get("HoursAct") or 0.0,
+                "hours_est":   est,
+                "hours_act":   act,
+                "variance":    round(act - est, 2),      # + = over estimate
                 "ot_hours_act": t.get("OTHoursAct") or 0.0,
                 "revenue":     t.get("Revenue") or 0.0,
             })
@@ -841,31 +845,43 @@ async def service_hours(
             wtt_hours[e.get("WorkTicketID")] += e.get("Hours") or 0.0
 
     rnd = lambda x: round(x, 1)
-    by_service: dict = defaultdict(lambda: {"tickets": 0, "hours_act": 0.0, "revenue": 0.0})
+    by_service: dict = defaultdict(lambda: {"tickets": 0, "hours_est": 0.0, "hours_act": 0.0, "revenue": 0.0})
     for m in matched:
         m["wtt_hours"] = round(wtt_hours.get(m["_wt_id"], 0.0), 2)
         bs = by_service[m["service"]]
         bs["tickets"] += 1
+        bs["hours_est"] += m["hours_est"]
         bs["hours_act"] += m["hours_act"]
         bs["revenue"] += m["revenue"]
         m.pop("_wt_id", None)
 
+    tot_est = sum(m["hours_est"] for m in matched)
+    tot_act = sum(m["hours_act"] for m in matched)
+    pct = lambda est, act: (round(100 * (act - est) / est, 1) if est else None)
     return {
         "resolved": True,
         "property": {"property_id": property_id, "property_name": resolved_name},
         "period": ({"start": start, "end": end} if (start or end) else {"year": year} if year else "all time"),
         "service_contains": service_contains or None,
         "tickets_matched": len(matched),
-        "total_hours_act": rnd(sum(m["hours_act"] for m in matched)),
+        "total_hours_est": rnd(tot_est),
+        "total_hours_act": rnd(tot_act),
+        "total_variance": rnd(tot_act - tot_est),          # + = over estimate
+        "variance_pct": pct(tot_est, tot_act),             # + % = over estimate
         "total_ot_hours": rnd(sum(m["ot_hours_act"] for m in matched)),
         "total_wtt_hours": rnd(sum(m["wtt_hours"] for m in matched)),
         "total_revenue": rnd(sum(m["revenue"] for m in matched)),
         "by_service": sorted(
-            [{"service": k, "tickets": v["tickets"], "hours_act": rnd(v["hours_act"]), "revenue": rnd(v["revenue"])}
+            [{"service": k, "tickets": v["tickets"],
+              "hours_est": rnd(v["hours_est"]), "hours_act": rnd(v["hours_act"]),
+              "variance": rnd(v["hours_act"] - v["hours_est"]), "variance_pct": pct(v["hours_est"], v["hours_act"]),
+              "revenue": rnd(v["revenue"])}
              for k, v in by_service.items()], key=lambda x: -x["hours_act"]),
         "tickets": sorted(matched, key=lambda x: x["scheduled"]),
-        "note": ("Hours = Aspire WorkTicket HoursAct (actual labor booked to the ticket); wtt_hours is the "
-                 "same hours re-summed from individual time entries as a cross-check. Revenue = ticket Revenue."),
+        "note": ("hours_act = Aspire WorkTicket HoursAct (actual labor); hours_est = HoursEst (estimated). "
+                 "variance = actual − estimate (positive = OVER estimate); variance_pct is that over/under as "
+                 "a % of estimate. wtt_hours re-sums the time entries as an actual-hours cross-check. "
+                 "Revenue = ticket Revenue."),
     }
 
 

@@ -115,15 +115,17 @@ async def get_time_efficiency(start: Optional[str] = None, end: Optional[str] = 
 async def get_service_hours(property: Optional[str] = None, property_id: Optional[int] = None,
                             year: Optional[int] = None, start: Optional[str] = None,
                             end: Optional[str] = None, service_contains: str = "") -> dict:
-    """Actual labor hours (and revenue) for a specific property's service work tickets, optionally
-    narrowed to one service and a time period. Use for 'how many hours did the <property> <service>
-    take [in <year>]', 'what did we bill for <property> <service>', or totals of any recurring service
-    at a site. `property` is a name to resolve (e.g. 'Mission Flats') — if it matches more than one
-    property the tool returns the candidates (resolved=False) so you can re-call with `property_id`.
-    Period: pass `year` (e.g. 2025) OR `start`/`end` ('YYYY-MM-DD'); omit both for all years.
-    `service_contains` is a case-insensitive substring of the service name (e.g. 'blowout',
-    'irrigation', 'maintenance'); leave blank for every service. Returns tickets_matched,
-    total_hours_act (actual labor), total_revenue, a by_service breakdown, and the ticket list.
+    """Actual-vs-ESTIMATED labor hours (and revenue) for a property's service work tickets, optionally
+    narrowed to one service and a time period. Use for 'how are we tracking time vs estimate on
+    <property>'s maintenance contract', 'how many hours did the <property> <service> take [in <year>]',
+    'what did we bill for <property> <service>', or totals of any recurring service at a site.
+    `property` is a name to resolve (e.g. 'Mission Flats') — if it matches more than one property the
+    tool returns the candidates (resolved=False) so you can re-call with `property_id`. Period: pass
+    `year` (e.g. 2025) OR `start`/`end` ('YYYY-MM-DD'); omit both for all years. `service_contains` is a
+    case-insensitive substring of the service name (e.g. 'blowout', 'irrigation', 'maintenance'); leave
+    blank for every service. Returns tickets_matched; total_hours_est, total_hours_act, total_variance
+    (actual − estimate; positive = OVER) and variance_pct; total_revenue; a by_service breakdown (each
+    with est/act/variance); and the ticket list (each ticket has hours_est, hours_act, variance).
     hours_act is Aspire's booked actual hours; wtt_hours re-sums the time entries as a cross-check."""
     params: dict = {}
     if property:          params["property_query"]   = property
