@@ -64,10 +64,6 @@ function pill(bg: string, fg: string): React.CSSProperties {
   return { display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: bg, color: fg, whiteSpace: 'nowrap' };
 }
 
-function isMaintenance(j: C360Job): boolean {
-  return (j.division || '').toLowerCase().includes('maintenance');
-}
-
 function CompareRow({ label, est, act, money, neutral }: { label: string; est: number | null; act: number | null; money?: boolean; neutral?: boolean }) {
   const fmt = (v: number | null) => v == null ? '—' : money ? '$' + Math.round(v).toLocaleString() : (Math.round(v * 10) / 10).toLocaleString() + 'h';
   const e = est || 0, a = act || 0, diff = a - e;
@@ -103,7 +99,7 @@ function JobCard({ j, onBudget }: { j: C360Job; onBudget?: (j: C360Job) => void 
         <span style={{ ...pill('#f8fafc', '#475569'), border: '1px solid #e5e7eb' }}>{DIV_ICON[j.division || ''] || '📍'} {j.division}</span>
         <span style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>{j.status}</span>
         {fmt$(j.won_dollars) && <span style={{ fontSize: 12, color: '#6b7280' }}>· {fmt$(j.won_dollars)}</span>}
-        {isMaintenance(j) && onBudget && (
+        {onBudget && (
           <button onClick={() => onBudget(j)}
             style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: '#15803d', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, padding: '3px 9px', cursor: 'pointer' }}>
             $ Est vs actual
@@ -529,7 +525,7 @@ export default function Customer360Page() {
             style={{ background: '#fff', borderRadius: 14, padding: 18, width: '100%', maxWidth: 720, maxHeight: '86vh', overflowY: 'auto', boxShadow: '0 20px 50px rgba(0,0,0,0.25)', marginTop: 40 }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
               <div>
-                <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a' }}>{budgetJob.name || 'Maintenance contract'}</div>
+                <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a' }}>{budgetJob.name || 'Job budget'}</div>
                 <div style={{ fontSize: 12, color: '#9ca3af' }}>
                   {DIV_ICON[budgetJob.division || ''] || '📍'} {budgetJob.division}{budgetJob.number ? ` · #${budgetJob.number}` : ''}
                   {budgetJob.pct_complete != null ? ` · ${Math.round(budgetJob.pct_complete * 100)}% complete` : ''}
