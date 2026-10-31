@@ -211,6 +211,45 @@ async def get_maintenance_summary(year: Optional[int] = None, start: Optional[st
 
 
 @mcp.tool()
+async def list_estimates(division: Optional[str] = None, status: Optional[str] = None,
+                         query: Optional[str] = None, year: Optional[int] = None, limit: int = 100) -> dict:
+    """List/filter Aspire estimates with their header totals (price, gross-margin %, labor hours).
+    Use to review a batch or find estimates to compare. `division` is a name substring (e.g. 'Snow',
+    'Construction', 'Maintenance'; blank = all). `status` is one or more exact Aspire statuses,
+    comma-separated (e.g. 'Reviewed,Estimated'). `query` matches the opportunity or property name.
+    `year` limits to estimates created that calendar year. Each result has opportunity_id (use it
+    with get_estimate / compare_estimates), name, number, division, status, property, sales_rep,
+    created/start dates, price, gross_margin_pct, labor_hours, and an aspire_url."""
+    params: dict = {}
+    if division: params["division"] = division
+    if status:   params["status"]   = status
+    if query:    params["query"]    = query
+    if year:     params["year"]     = year
+    if limit:    params["limit"]    = limit
+    return await _get("/estimates", params or None)
+
+
+@mcp.tool()
+async def get_estimate(opportunity_id: int) -> dict:
+    """Full detail of one Aspire estimate: header totals (estimate price, cost, gross-margin $/%,
+    net-profit $/%, labor hours, and cost by category — labor/material/equipment/sub/other/overhead),
+    the matching actuals once the job runs, and the service-LINE breakdown (each line's hours, cost,
+    price, margin %). Includes an aspire_url to open the estimate. Answers 'break down estimate X'."""
+    return await _get(f"/estimates/{opportunity_id}")
+
+
+@mcp.tool()
+async def compare_estimates(a: int, b: int) -> dict:
+    """Compare two Aspire estimates side by side (Darios builds a separate opportunity per option/
+    revision, so pass the two opportunity_ids). Returns both estimates' header totals, the b−a
+    DELTAS (price, cost, gross margin $/%, net profit, labor hours, and each cost category; positive
+    = the second is higher), and a line-by-line comparison matched on service name (with only_in
+    flagging a line present in just one). Use for 'compare these two revisions for [client]' or a
+    year-over-year maintenance comparison (last year's vs this year's opportunity)."""
+    return await _get("/estimates/compare", {"a": a, "b": b})
+
+
+@mcp.tool()
 async def search_ticket_notes(query: str = "", service_contains: str = "",
                               property: Optional[str] = None, property_id: Optional[int] = None,
                               year: Optional[int] = None, start: Optional[str] = None,

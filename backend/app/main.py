@@ -44,6 +44,7 @@ from app.api.schedule import router as schedule_router
 from app.api.cx import router as cx_router
 from app.api.spine import router as spine_router, start_spine_scheduler, stop_spine_scheduler
 from app.api.sales import router as sales_router
+from app.api.estimates import router as estimates_router
 from app.api.backup import router as backup_router, start_backup_scheduler, stop_backup_scheduler
 from app.api.property_hazards import router as property_hazards_router
 from app.api.project_checkin import (
@@ -713,6 +714,7 @@ app.include_router(schedule_router, dependencies=[Depends(require_access)])
 app.include_router(cx_router)
 app.include_router(spine_router)
 app.include_router(sales_router)
+app.include_router(estimates_router)
 app.include_router(backup_router)
 app.include_router(property_hazards_router)
 app.include_router(checkin_router)
