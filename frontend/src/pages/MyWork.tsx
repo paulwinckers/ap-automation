@@ -14,6 +14,7 @@ import {
   currentUser, WorklistItem,
 } from '../lib/api';
 import { ClientCommsModal } from '../components/ClientComms';
+import { enablePush, currentPushState, pushSupported, type PushState } from '../lib/push';
 
 function pretty(date: string | null): string {
   if (!date) return '';
@@ -51,6 +52,8 @@ export default function MyWork() {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [queue, setQueue] = useState<WorklistItem[]>([]);   // CX items being sent, one at a time
+  const [notif, setNotif] = useState<PushState>('default');
+  useEffect(() => { currentPushState().then(setNotif).catch(() => {}); }, []);
 
   async function load() {
     setLoading(true); setErr('');
@@ -146,9 +149,20 @@ export default function MyWork() {
   return (
     <div style={{ maxWidth: 780, margin: '0 auto', padding: '24px 16px',
       paddingBottom: selectedItems.length > 0 ? 96 : 24 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
         <h1 style={{ fontSize: 22, fontWeight: 800, color: '#0f172a', margin: 0 }}>My Action Items</h1>
-        <button onClick={load} style={{ ...btn, color: '#475569' }}>↻ Refresh</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {pushSupported() && (
+            notif === 'subscribed'
+              ? <span style={{ ...btn, color: '#15803d', cursor: 'default' }} title="You'll get a push when a task is assigned to you">🔔 Alerts on</span>
+            : notif === 'denied'
+              ? <span style={{ ...btn, color: '#9ca3af', cursor: 'default' }} title="Notifications are blocked — turn them on in your browser/site settings">🔕 Blocked</span>
+            : notif === 'unconfigured'
+              ? <span style={{ ...btn, color: '#9ca3af', cursor: 'default' }} title="Push isn't switched on yet">🔔 Coming soon</span>
+              : <button onClick={async () => setNotif(await enablePush())} style={{ ...btn, color: '#2563eb' }} title="Get a push when a task is assigned to you">🔔 Enable alerts</button>
+          )}
+          <button onClick={load} style={{ ...btn, color: '#475569' }}>↻ Refresh</button>
+        </div>
       </div>
       <div style={{ color: '#64748b', fontSize: 13, marginBottom: 14 }}>
         {me?.name ? `${me.name} · ` : ''}your tasks, follow-ups, and the client emails you're responsible for sending.

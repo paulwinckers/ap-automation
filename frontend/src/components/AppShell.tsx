@@ -3,9 +3,9 @@
  * Sidebar is collapsible: full (220px) or icon-only (56px).
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { logout, currentUser } from '../lib/api';
+import { logout, currentUser, listMyWorklist } from '../lib/api';
 
 const SIDEBAR_FULL  = 220;
 const SIDEBAR_MINI  = 56;
@@ -70,6 +70,20 @@ const NAV = [
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+  const [actionCount, setActionCount] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    async function refresh() {
+      try {
+        const r = await listMyWorklist();
+        if (alive) setActionCount((r.counts?.overdue || 0) + (r.counts?.today || 0));
+      } catch { /* not logged in or unavailable — no badge */ }
+    }
+    refresh();
+    const t = setInterval(refresh, 120000);   // refresh the badge every 2 min
+    return () => { alive = false; clearInterval(t); };
+  }, [pathname]);
 
   const w = collapsed ? SIDEBAR_MINI : SIDEBAR_FULL;
 
@@ -147,15 +161,30 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 });
                 const active = pathname.startsWith(item.path);
                 const ic = 'color' in item ? (item as { color?: string }).color : undefined;
+                const badge = item.path === '/my-work' ? actionCount : 0;
+                const badgeEl = badge > 0 ? (
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9,
+                    background: '#ef4444', color: '#fff', fontSize: 11, fontWeight: 800,
+                    lineHeight: 1,
+                  }}>{badge > 99 ? '99+' : badge}</span>
+                ) : null;
                 return (
                   <Link
                     key={item.path}
                     to={item.path}
-                    title={collapsed ? item.label : undefined}
-                    style={linkStyle(active)}
+                    title={collapsed ? `${item.label}${badge > 0 ? ` (${badge})` : ''}` : undefined}
+                    style={{ ...linkStyle(active), position: 'relative' }}
                   >
-                    <span style={{ fontSize: 18, flexShrink: 0, color: active ? undefined : ic, fontWeight: ic ? 700 : undefined }}>{item.icon}</span>
+                    <span style={{ fontSize: 18, flexShrink: 0, color: active ? undefined : ic, fontWeight: ic ? 700 : undefined, position: 'relative' }}>
+                      {item.icon}
+                      {collapsed && badgeEl && (
+                        <span style={{ position: 'absolute', top: -6, right: -10 }}>{badgeEl}</span>
+                      )}
+                    </span>
                     {!collapsed && <span style={{ color: active ? undefined : ic }}>{item.label}</span>}
+                    {!collapsed && badgeEl && <span style={{ marginLeft: 'auto' }}>{badgeEl}</span>}
                   </Link>
                 );
               })}
