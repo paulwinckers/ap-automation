@@ -13,6 +13,7 @@ import {
   listMyWorklist, patchSalesTask, patchSalesActivity, skipCxAction, setChecklistStatus,
   currentUser, WorklistItem,
 } from '../lib/api';
+import { Link } from 'react-router-dom';
 import { ClientCommsModal } from '../components/ClientComms';
 import { enablePush, currentPushState, pushSupported, type PushState } from '../lib/push';
 
@@ -218,6 +219,16 @@ export default function MyWork() {
                     </div>
                     {context && <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{context}</div>}
                   </div>
+                  {(it.customer_key || it.opportunity_id) && (
+                    <Link
+                      to={it.customer_key
+                        ? `/dashboards/customer/360?key=${encodeURIComponent(it.customer_key)}`
+                        : `/field/project/${it.opportunity_id}`}
+                      title={it.customer_key ? 'Open Customer 360' : 'Open the job'}
+                      style={{ ...btn, color: '#1e3a5f', textDecoration: 'none', flexShrink: 0 }}>
+                      {it.customer_key ? '👤 360' : '🏗️ Job'}
+                    </Link>
+                  )}
                   {it.source === 'cx_comms' ? (
                     <button onClick={() => startSend([it])} style={{ ...btn, color: '#3730a3' }}>Send…</button>
                   ) : (

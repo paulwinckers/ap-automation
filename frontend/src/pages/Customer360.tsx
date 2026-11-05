@@ -6,6 +6,7 @@
  * Route: /dashboards/customer/360
  */
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   searchCustomerEntities, getCustomer360, getCustomer360ByContact,
   listSalesActivities, listSalesTasks, createSalesActivity, patchSalesActivity, patchSalesTask,
@@ -164,6 +165,23 @@ export default function Customer360Page() {
   const justPicked = useRef(false);
 
   useEffect(() => { listSalesAssignees().then(r => setAssignees(r.assignees || [])).catch(() => {}); }, []);
+
+  // Deep-link: /dashboards/customer/360?key=company:123 | contact:45 — auto-load that customer.
+  const [sp] = useSearchParams();
+  useEffect(() => {
+    const key = sp.get('key');
+    if (!key) return;
+    const [kind, idStr] = key.split(':');
+    const id = Number(idStr);
+    if (!id) return;
+    justPicked.current = true;        // don't let setQ re-open the search dropdown
+    setLoading(true); setErr(''); setData(null);
+    (kind === 'contact' ? getCustomer360ByContact(id) : getCustomer360(id))
+      .then(d => { setData(d); setQ(d.customer.name || ''); })
+      .catch(e => setErr((e as Error).message))
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sp]);
 
   useEffect(() => {
     // Setting the box to the picked name must not re-open the dropdown.
