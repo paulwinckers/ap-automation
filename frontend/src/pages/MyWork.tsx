@@ -15,6 +15,7 @@ import {
 } from '../lib/api';
 import { Link } from 'react-router-dom';
 import { ClientCommsModal } from '../components/ClientComms';
+import { TaskThread } from '../components/TaskThread';
 import { enablePush, currentPushState, pushSupported, type PushState } from '../lib/push';
 
 function pretty(date: string | null): string {
@@ -54,6 +55,7 @@ export default function MyWork() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [queue, setQueue] = useState<WorklistItem[]>([]);   // CX items being sent, one at a time
   const [notif, setNotif] = useState<PushState>('default');
+  const [threadTask, setThreadTask] = useState<number | null>(null);
   useEffect(() => { currentPushState().then(setNotif).catch(() => {}); }, []);
 
   async function load() {
@@ -229,6 +231,9 @@ export default function MyWork() {
                       {it.customer_key ? '👤 360' : '🏗️ Job'}
                     </Link>
                   )}
+                  {it.source === 'sales_task' && (
+                    <button onClick={() => setThreadTask(Number(it.id))} title="Open the conversation" style={{ ...btn, color: '#1e3a5f' }}>💬 Thread</button>
+                  )}
                   {it.source === 'cx_comms' ? (
                     <button onClick={() => startSend([it])} style={{ ...btn, color: '#3730a3' }}>Send…</button>
                   ) : (
@@ -282,6 +287,10 @@ export default function MyWork() {
           <ClientCommsModal oppId={current.opportunity_id} jobName={current.job || ''}
             initialTemplateKey={current.template_key || undefined} onClose={closeModal} />
         </>
+      )}
+
+      {threadTask != null && (
+        <TaskThread taskId={threadTask} onClose={() => setThreadTask(null)} onChanged={load} />
       )}
     </div>
   );

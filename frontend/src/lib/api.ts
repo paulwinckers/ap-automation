@@ -727,8 +727,8 @@ export interface SalesActivity {
 }
 export interface SalesTask {
   id: number; title: string; detail?: string | null; assignee: string | null; due_date: string | null;
-  assignee_user_id?: number | null;
-  status: string; created_by?: string | null;
+  assignee_user_id?: number | null; customer_key?: string | null; opportunity_id?: number | null;
+  status: string; created_by?: string | null; created_at?: string | null;
   updates?: { id: number; author: string | null; body: string; created_at: string }[];
   attachments?: SalesAttachment[];
 }
@@ -813,6 +813,14 @@ export async function patchSalesTask(id: number, patch: {
   title?: string; detail?: string;
 }): Promise<{ ok: boolean; task: SalesTask }> {
   return request('PATCH', `/sales/task/${id}`, patch);
+}
+export async function getSalesTask(id: number): Promise<{ task: SalesTask }> {
+  return request('GET', `/sales/task/${id}`);
+}
+export async function addSalesTaskUpdate(id: number, body: string, author?: string): Promise<{
+  ok: boolean; update: { id: number; author: string | null; body: string; created_at: string };
+}> {
+  return request('POST', `/sales/task/${id}/update`, { body, author });
 }
 export async function deleteSalesActivity(id: number): Promise<{ ok: boolean; deleted: number }> {
   return request('DELETE', `/sales/activity/${id}`);
