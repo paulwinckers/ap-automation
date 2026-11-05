@@ -43,6 +43,7 @@ const SOURCE_META: Record<WorklistItem['source'], { icon: string; tag: string; t
   sales_followup: { icon: '🔔', tag: 'Follow-up',    tagBg: '#fef9c3', tagColor: '#854d0e' },
   cx_comms:       { icon: '✉️', tag: 'Client email', tagBg: '#e0e7ff', tagColor: '#3730a3' },
   prep:           { icon: '🧰', tag: 'Job prep',     tagBg: '#fef3c7', tagColor: '#92400e' },
+  field_conv:     { icon: '💬', tag: 'Field thread', tagBg: '#cffafe', tagColor: '#155e75' },
 };
 
 export default function MyWork() {
@@ -206,11 +207,15 @@ export default function MyWork() {
                 ? [it.job, it.last_sent ? `last sent ${pretty(it.last_sent)}` : 'not sent yet'].filter(Boolean).join(' · ')
                 : it.source === 'prep'
                 ? [it.job, it.due_date ? `due ${pretty(it.due_date)}` : ''].filter(Boolean).join(' · ')
+                : it.source === 'field_conv'
+                ? [it.job, 'open thread'].filter(Boolean).join(' · ')
                 : [customerLabel(it.customer_key), it.due_date ? `due ${pretty(it.due_date)}` : ''].filter(Boolean).join(' · ');
               return (
                 <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
                   background: selected.has(k) ? '#f8fafc' : '#fff', borderTop: idx === 0 ? 'none' : '1px solid #f1f5f9' }}>
-                  <input type="checkbox" checked={selected.has(k)} onChange={() => toggle(it)} style={{ width: 16, height: 16, flexShrink: 0 }} />
+                  {it.source === 'field_conv'
+                    ? <span style={{ width: 16, flexShrink: 0 }} />
+                    : <input type="checkbox" checked={selected.has(k)} onChange={() => toggle(it)} style={{ width: 16, height: 16, flexShrink: 0 }} />}
                   <span title={meta.tag} style={{ fontSize: 16 }}>{meta.icon}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -221,23 +226,32 @@ export default function MyWork() {
                     </div>
                     {context && <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{context}</div>}
                   </div>
-                  {(it.customer_key || it.opportunity_id) && (
-                    <Link
-                      to={it.customer_key
-                        ? `/dashboards/customer/360?key=${encodeURIComponent(it.customer_key)}`
-                        : `/field/project/${it.opportunity_id}`}
-                      title={it.customer_key ? 'Open Customer 360' : 'Open the job'}
-                      style={{ ...btn, color: '#1e3a5f', textDecoration: 'none', flexShrink: 0 }}>
-                      {it.customer_key ? '👤 360' : '🏗️ Job'}
-                    </Link>
-                  )}
-                  {it.source === 'sales_task' && (
-                    <button onClick={() => setThreadTask(Number(it.id))} title="Open the conversation" style={{ ...btn, color: '#1e3a5f' }}>💬 Thread</button>
-                  )}
-                  {it.source === 'cx_comms' ? (
-                    <button onClick={() => startSend([it])} style={{ ...btn, color: '#3730a3' }}>Send…</button>
+                  {it.source === 'field_conv' ? (
+                    it.url && (
+                      <Link to={it.url} title="Open the field conversation"
+                        style={{ ...btn, color: '#155e75', textDecoration: 'none', flexShrink: 0 }}>💬 Open</Link>
+                    )
                   ) : (
-                    <button onClick={() => markDone([it])} disabled={busy} style={{ ...btn, color: '#15803d' }}>Done</button>
+                    <>
+                      {(it.customer_key || it.opportunity_id) && (
+                        <Link
+                          to={it.customer_key
+                            ? `/dashboards/customer/360?key=${encodeURIComponent(it.customer_key)}`
+                            : `/field/project/${it.opportunity_id}`}
+                          title={it.customer_key ? 'Open Customer 360' : 'Open the job'}
+                          style={{ ...btn, color: '#1e3a5f', textDecoration: 'none', flexShrink: 0 }}>
+                          {it.customer_key ? '👤 360' : '🏗️ Job'}
+                        </Link>
+                      )}
+                      {it.source === 'sales_task' && (
+                        <button onClick={() => setThreadTask(Number(it.id))} title="Open the conversation" style={{ ...btn, color: '#1e3a5f' }}>💬 Thread</button>
+                      )}
+                      {it.source === 'cx_comms' ? (
+                        <button onClick={() => startSend([it])} style={{ ...btn, color: '#3730a3' }}>Send…</button>
+                      ) : (
+                        <button onClick={() => markDone([it])} disabled={busy} style={{ ...btn, color: '#15803d' }}>Done</button>
+                      )}
+                    </>
                   )}
                 </div>
               );

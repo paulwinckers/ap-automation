@@ -753,8 +753,8 @@ export async function listMyDueItems(): Promise<{
 
 // Unified morning worklist: sales tasks + followups + CX comms the user owns (by role).
 export interface WorklistItem {
-  source: 'sales_task' | 'sales_followup' | 'cx_comms' | 'prep';
-  kind: 'task' | 'followup' | 'cx' | 'prep';
+  source: 'sales_task' | 'sales_followup' | 'cx_comms' | 'prep' | 'field_conv';
+  kind: 'task' | 'followup' | 'cx' | 'prep' | 'field_conv';
   id: number | string;
   title: string;
   customer_key?: string | null;
@@ -769,6 +769,7 @@ export interface WorklistItem {
   action_key?: string | null;
   last_sent?: string | null;
   unassigned?: boolean;
+  url?: string | null;
 }
 export async function listMyWorklist(): Promise<{
   user: { id: number; name: string; email: string; is_admin: boolean };

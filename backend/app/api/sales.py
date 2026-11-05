@@ -783,14 +783,15 @@ async def my_worklist(user: dict = Depends(current_actor), db: Database = Depend
             "who": r.get("assignee"),
         })
 
-    # 4) Open field conversations this user watches (recent) — the field↔office threads
+    # 4) Open field conversations this user watches — the field↔office threads.
+    #    No recency cap: an unresolved thread stays on the action list until it is
+    #    marked resolved (this is a comms tool — quiet != done).
     try:
         conv_rows = await db._q(
             """SELECT c.id AS conv_id, c.opp_id, c.title, c.property_name, c.context_type, c.last_message
                FROM field_conversations c
                JOIN conversation_watchers w ON w.conversation_id = c.id
-               WHERE w.user_id = ? AND COALESCE(c.status, 'open') != 'resolved'
-                 AND COALESCE(c.updated_at, c.created_at) >= datetime('now', '-14 days')""",
+               WHERE w.user_id = ? AND COALESCE(c.status, 'open') != 'resolved'""",
             [user.get("id")])
     except Exception as e:
         logger.warning(f"worklist: field conversations unavailable: {e}")
