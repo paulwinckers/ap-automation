@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.database import Database
-from app.api.auth import optional_actor
+from app.api.auth import optional_actor, current_actor
 
 router = APIRouter(prefix="/push", tags=["push"])
 logger = logging.getLogger(__name__)
@@ -159,6 +159,31 @@ async def unsubscribe(endpoint: str = Query(...)):
     """Remove a push subscription."""
     await _delete_subscription(endpoint)
     return {"ok": True}
+
+
+@router.get("/my-status")
+async def my_status(test: bool = Query(False), user: dict = Depends(current_actor)):
+    """Diagnostics for the current user: VAPID configured?, how many of their devices are subscribed,
+    and (with test=true) fire a test push to them and report the send result."""
+    db = Database()
+    await db.connect()
+    try:
+        await _ensure_user_col(db)
+        rows = await db._q("SELECT COUNT(*) AS n FROM push_subscriptions WHERE user_id = ?", [user["id"]])
+        total = await db._q("SELECT COUNT(*) AS n FROM push_subscriptions", [])
+    finally:
+        await db.close()
+    out = {
+        "user_id": user["id"],
+        "email": user.get("email"),
+        "configured": bool(settings.VAPID_PUBLIC_KEY),
+        "my_subscriptions": (rows[0]["n"] if rows else 0),
+        "total_subscriptions": (total[0]["n"] if total else 0),
+    }
+    if test:
+        out["test_send"] = await push_to_user(
+            user["id"], "Darios test", "If you see this, task push is working.", "/my-work")
+    return out
 
 
 @router.post("/notify")
