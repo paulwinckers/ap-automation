@@ -254,6 +254,22 @@ async def _auto_add_watchers(
     return result
 
 
+def _conv_path(context_type: str, opp_id: int, conv_id: int) -> str:
+    seg = "project" if context_type == "construction" else "maintenance"
+    return f"/field/{seg}/{opp_id}?tab=conversations&conv={conv_id}"
+
+
+async def _push_watchers_web(user_ids, title: str, body: str, url: str) -> None:
+    """Web-push each watching USER (in addition to WhatsApp). No-ops without VAPID / a subscription."""
+    try:
+        from app.api.push import push_to_user
+        for uid in {u for u in (user_ids or []) if u}:
+            await push_to_user(uid, title, body, url)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"field-conv web push failed: {e}")
+
+
 # ── Photo upload helper ───────────────────────────────────────────────────────
 
 async def _upload_photo(photo: UploadFile, opp_id: int, conv_id: int) -> tuple[str | None, int]:
@@ -529,6 +545,10 @@ async def create_conversation(
             selected_ids = None
 
     watchers = await _auto_add_watchers(db, conv_id, user_id_filter=selected_ids)
+    await _push_watchers_web([w.get("user_id") for w in watchers],
+        f"New field issue · {prop_name}",
+        f"{(crew_name or 'Crew')}: {first_message.strip()[:120]}",
+        _conv_path(context_type, opp_id, conv_id))
     if watchers:
         asyncio.get_event_loop().run_in_executor(
             None, _notify_watchers,
@@ -650,9 +670,9 @@ async def add_message(
             crew_wa, opp_id, ctx, prop, conv["title"], content.strip(), display_name, conv_id,
         )
     elif role == "crew":
-        # Crew follow-up → notify all watchers
+        # Crew follow-up → notify all watchers (WhatsApp + web push)
         watchers = await db._q(
-            "SELECT name, whatsapp FROM conversation_watchers WHERE conversation_id = ?",
+            "SELECT user_id, name, whatsapp FROM conversation_watchers WHERE conversation_id = ?",
             [conv_id],
         )
         if watchers:
@@ -661,6 +681,10 @@ async def add_message(
                 list(watchers), opp_id, ctx, prop,
                 conv["title"], display_name, content.strip(), False, None, conv_id,
             )
+            await _push_watchers_web([w.get("user_id") for w in watchers],
+                f"Reply · {conv['title']}",
+                f"{display_name or 'Crew'}: {content.strip()[:120]}",
+                _conv_path(ctx, opp_id, conv_id))
 
     ai_response = None
     if use_ai:

@@ -783,6 +783,30 @@ async def my_worklist(user: dict = Depends(current_actor), db: Database = Depend
             "who": r.get("assignee"),
         })
 
+    # 4) Open field conversations this user watches (recent) — the field↔office threads
+    try:
+        conv_rows = await db._q(
+            """SELECT c.id AS conv_id, c.opp_id, c.title, c.property_name, c.context_type, c.last_message
+               FROM field_conversations c
+               JOIN conversation_watchers w ON w.conversation_id = c.id
+               WHERE w.user_id = ? AND COALESCE(c.status, 'open') != 'resolved'
+                 AND COALESCE(c.updated_at, c.created_at) >= datetime('now', '-14 days')""",
+            [user.get("id")])
+    except Exception as e:
+        logger.warning(f"worklist: field conversations unavailable: {e}")
+        conv_rows = []
+    for c in conv_rows:
+        ctx = c.get("context_type") or "maintenance"
+        seg = "project" if ctx == "construction" else "maintenance"
+        items.append({
+            "kind": "field_conv", "source": "field_conv",
+            "id": f"conv:{c['conv_id']}", "opportunity_id": c.get("opp_id"),
+            "title": c.get("title") or "Field conversation",
+            "job": c.get("property_name") or f"Job #{c.get('opp_id')}",
+            "customer_key": None, "due_date": None, "bucket": "week", "who": None,
+            "url": f"/field/{seg}/{c['opp_id']}?tab=conversations&conv={c['conv_id']}",
+        })
+
     items.sort(key=lambda x: (_BUCKET_ORDER.get(x.get("bucket"), 9), x.get("due_date") or "9999-99-99"))
     counts: dict = {}
     sources: dict = {}
