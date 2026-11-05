@@ -432,16 +432,50 @@ async def capture(body: CaptureIn, user: dict = Depends(require_access), db: Dat
 @router.post("/task/{task_id}/update")
 async def add_task_update(task_id: int, body: TaskUpdateIn, user: dict = Depends(require_access),
                           db: Database = Depends(get_db)):
-    """Append a progress note to a task's thread (the 'living' part)."""
+    """Append a message to a task's thread (the two-way office↔field conversation), then push the
+    OTHER participant (creator ↔ assignee) so they see the reply."""
     if not (body.body or "").strip():
         raise HTTPException(status_code=400, detail="body is required")
-    if not await db._q("SELECT id FROM sales_tasks WHERE id = ?", [task_id]):
+    trows = await db._q("SELECT * FROM sales_tasks WHERE id = ?", [task_id])
+    if not trows:
         raise HTTPException(status_code=404, detail="Task not found")
+    task = trows[0]
+    author_name = _actor(user, body.author)
     rows = await db._q(
         "INSERT INTO sales_task_updates (task_id, author, body, created_at) VALUES (?, ?, ?, datetime('now')) RETURNING *",
-        [task_id, _actor(user, body.author), body.body.strip()])
+        [task_id, author_name, body.body.strip()])
     await db._x("UPDATE sales_tasks SET updated_at = datetime('now') WHERE id = ?", [task_id])
+
+    # Notify the other party in the thread (creator ↔ assignee), never the author.
+    try:
+        from app.api.push import push_to_user
+        author_uid = _actor_id(user, None)
+        recipients = {task.get("assignee_user_id"), task.get("created_by_user_id")}
+        recipients.discard(author_uid)
+        recipients.discard(None)
+        recipients.discard(0)
+        snippet = body.body.strip()[:120]
+        for uid in recipients:
+            await push_to_user(uid, f"Reply · {task.get('title') or 'task'}",
+                               f"{author_name}: {snippet}", "/my-work")
+    except Exception as e:
+        logger.warning(f"task update push failed: {e}")
+
     return {"ok": True, "update": rows[0] if rows else None}
+
+
+@router.get("/task/{task_id}", dependencies=[Depends(require_access)])
+async def get_task(task_id: int, db: Database = Depends(get_db)):
+    """One task with its full message thread and attachments — powers the conversation view."""
+    rows = await db._q("SELECT * FROM sales_tasks WHERE id = ?", [task_id])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task = dict(rows[0])
+    task["updates"] = await db._q(
+        "SELECT * FROM sales_task_updates WHERE task_id = ? ORDER BY created_at ASC, id ASC", [task_id])
+    task["attachments"] = await db._q(
+        "SELECT * FROM sales_attachments WHERE parent_type = 'task' AND parent_id = ?", [task_id])
+    return {"task": task}
 
 
 @router.patch("/task/{task_id}", dependencies=[Depends(require_access)])
