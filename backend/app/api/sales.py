@@ -288,6 +288,124 @@ async def create_task(body: TaskIn, user: dict = Depends(require_access), db: Da
     return {"ok": True, "task": rows[0] if rows else None}
 
 
+class CaptureItem(BaseModel):
+    kind:             Optional[str] = None     # 'task' | 'note' (inferred if omitted)
+    customer_key:     Optional[str] = None     # falls back to the request-level customer_key
+    opportunity_id:   Optional[int] = None
+    # task fields
+    title:            Optional[str] = None
+    detail:           Optional[str] = None
+    assignee:         Optional[str] = None
+    assignee_user_id: Optional[int] = None
+    due_date:         Optional[str] = None
+    priority:         Optional[str] = None
+    # note fields
+    type:             Optional[str] = None      # note/call/meeting/email/site_visit
+    body:             Optional[str] = None
+    next_action_date: Optional[str] = None
+    next_action_note: Optional[str] = None
+
+
+class CaptureIn(BaseModel):
+    items:         list[CaptureItem]
+    customer_key:  Optional[str] = None         # default for items that don't set their own
+    email_receipt: bool          = True
+    receipt_to:    Optional[str]  = None         # defaults to the acting user's email
+
+
+@router.post("/capture")
+async def capture(body: CaptureIn, user: dict = Depends(require_access), db: Database = Depends(get_db)):
+    """Record several notes/tasks in ONE call and return exactly what was written — plus (by default)
+    an email receipt to the acting user listing each record. The receipt is built from the rows
+    actually created, so if an item couldn't be recorded the gap is visible. Use this for multi-item
+    field capture ('log these three things')."""
+    if not body.items:
+        raise HTTPException(status_code=400, detail="items is required")
+
+    created: list[dict] = []
+    skipped: list[dict] = []
+    for it in body.items:
+        ckey = it.customer_key or body.customer_key
+        kind = (it.kind or ("task" if (it.title or "").strip() else "note")).lower()
+        try:
+            if kind == "task":
+                if not (it.title or "").strip():
+                    skipped.append({"kind": "task", "reason": "no title", "detail": it.detail or it.body})
+                    continue
+                aname = it.assignee
+                if it.assignee_user_id and not (aname or "").strip():
+                    aname = await _user_name(db, it.assignee_user_id)
+                rows = await db._q(
+                    """INSERT INTO sales_tasks
+                       (customer_key, opportunity_id, title, detail, assignee, assignee_user_id,
+                        due_date, priority, status, created_by, created_by_user_id, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, datetime('now')) RETURNING *""",
+                    [ckey, it.opportunity_id, it.title.strip(), it.detail, aname, it.assignee_user_id,
+                     it.due_date, it.priority, _actor(user, None), _actor_id(user, None)])
+                t = rows[0] if rows else {}
+                created.append({"kind": "task", "id": t.get("id"), "title": t.get("title"),
+                                "customer_key": ckey, "assignee": aname, "due_date": it.due_date})
+            else:
+                atype = (it.type or (kind if kind in _ACTIVITY_TYPES else "note"))
+                if atype not in _ACTIVITY_TYPES:
+                    atype = "note"
+                if not (it.body or "").strip():
+                    skipped.append({"kind": "note", "reason": "no body"})
+                    continue
+                rows = await db._q(
+                    """INSERT INTO sales_activities
+                       (customer_key, opportunity_id, type, subject, body, next_action_date,
+                        next_action_note, occurred_at, created_by, created_by_user_id, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) RETURNING *""",
+                    [ckey, it.opportunity_id, atype, None, it.body.strip(), it.next_action_date,
+                     it.next_action_note, _now(), _actor(user, None), _actor_id(user, None)])
+                a = rows[0] if rows else {}
+                created.append({"kind": "note", "id": a.get("id"), "type": atype,
+                                "body": (it.body.strip()[:140]), "customer_key": ckey,
+                                "next_action_date": it.next_action_date})
+        except Exception as e:
+            logger.error(f"capture item failed ({kind}): {e}")
+            skipped.append({"kind": kind, "reason": f"error: {e}"})
+
+    # ── Receipt email, built from what was actually written ──────────────────────
+    recipient = (body.receipt_to or user.get("email") or "").strip()
+    emailed = False
+    if body.email_receipt and recipient and recipient != "service" and created:
+        import html as _html
+        from app.services.email_intake import GraphClient
+        def _line(c):
+            if c["kind"] == "task":
+                extra = []
+                if c.get("assignee"): extra.append(f"assigned to {c['assignee']}")
+                if c.get("due_date"): extra.append(f"due {c['due_date']}")
+                tail = (" — " + ", ".join(extra)) if extra else ""
+                return f"✅ Task: {_html.escape(c.get('title') or '')}{_html.escape(tail)}"
+            tail = f" (follow-up {c['next_action_date']})" if c.get("next_action_date") else ""
+            return f"✅ {c.get('type','note').title()}: {_html.escape(c.get('body') or '')}{_html.escape(tail)}"
+        lines = "".join(f"<li>{_line(c)}</li>" for c in created)
+        skip_html = ""
+        if skipped:
+            skip_html = ("<p style='color:#b91c1c'><b>Not recorded (please re-check):</b></p><ul>"
+                         + "".join(f"<li>{_html.escape(str(s.get('kind')))} — {_html.escape(str(s.get('reason')))}</li>" for s in skipped)
+                         + "</ul>")
+        html_body = (f"<div style='font-family:Arial,sans-serif;font-size:14px;color:#111'>"
+                     f"<p>Recorded <b>{len(created)}</b> item{'s' if len(created)!=1 else ''} in the Darios portal:</p>"
+                     f"<ul>{lines}</ul>{skip_html}"
+                     f"<p style='color:#6b7280;font-size:12px'>Automated receipt — reply if anything is missing.</p></div>")
+        try:
+            await GraphClient().send_email(
+                mailbox=settings.ms_send_from, to_addresses=[recipient],
+                subject=f"Recorded {len(created)} item{'s' if len(created)!=1 else ''}"
+                        + (f" — {len(skipped)} needs a look" if skipped else ""),
+                body_html=html_body)
+            emailed = True
+        except Exception as e:
+            logger.error(f"capture receipt email failed to {recipient}: {e}")
+
+    return {"ok": True, "count": len(created), "created": created,
+            "skipped": skipped, "receipt_emailed": emailed, "recipient": recipient or None}
+
+
 @router.post("/task/{task_id}/update")
 async def add_task_update(task_id: int, body: TaskUpdateIn, user: dict = Depends(require_access),
                           db: Database = Depends(get_db)):

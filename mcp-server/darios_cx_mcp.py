@@ -250,6 +250,24 @@ async def compare_estimates(a: int, b: int) -> dict:
 
 
 @mcp.tool()
+async def record_items(items: list[dict], customer_key: Optional[str] = None,
+                       email_receipt: bool = True) -> dict:
+    """Record MULTIPLE notes/tasks in ONE call and get back exactly what was written, plus an email
+    receipt to the user. Use this whenever they ask to log more than one thing at once, so nothing is
+    missed. Each entry in `items` is an object: a TASK = {"kind":"task","title":"...","assignee":
+    "<name>" or "assignee_user_id":<id>,"due_date":"YYYY-MM-DD","detail":"..."}; a NOTE = {"kind":
+    "note","type":"note|call|meeting|email|site_visit","body":"...","next_action_date":"YYYY-MM-DD"}.
+    Put "customer_key" on each item, or pass a top-level `customer_key` that applies to all. Returns
+    created[] (what was actually recorded, with ids), skipped[] (anything that could NOT be recorded
+    — re-check these with the user), count, and receipt_emailed. ALWAYS read created[] back to the
+    user so they can confirm every item landed; call out anything in skipped[]."""
+    body: dict = {"items": items, "email_receipt": email_receipt}
+    if customer_key:
+        body["customer_key"] = customer_key
+    return await _post("/sales/capture", body)
+
+
+@mcp.tool()
 async def search_ticket_notes(query: str = "", service_contains: str = "",
                               property: Optional[str] = None, property_id: Optional[int] = None,
                               year: Optional[int] = None, start: Optional[str] = None,
