@@ -285,7 +285,15 @@ async def create_task(body: TaskIn, user: dict = Depends(require_access), db: Da
         [body.customer_key, body.opportunity_id, body.activity_id, body.title.strip(), body.detail,
          assignee_name, body.assignee_user_id, body.due_date, body.priority,
          _actor(user, body.created_by), _actor_id(user, None)])
-    return {"ok": True, "task": rows[0] if rows else None}
+    task = rows[0] if rows else None
+    if task and body.assignee_user_id:
+        try:
+            from app.api.push import push_to_user
+            due = f" · due {body.due_date}" if body.due_date else ""
+            await push_to_user(body.assignee_user_id, "New task", f"{body.title.strip()}{due}", "/my-work")
+        except Exception as e:
+            logger.warning(f"task push failed: {e}")
+    return {"ok": True, "task": task}
 
 
 class CaptureItem(BaseModel):
@@ -344,7 +352,8 @@ async def capture(body: CaptureIn, user: dict = Depends(require_access), db: Dat
                      it.due_date, it.priority, _actor(user, None), _actor_id(user, None)])
                 t = rows[0] if rows else {}
                 created.append({"kind": "task", "id": t.get("id"), "title": t.get("title"),
-                                "customer_key": ckey, "assignee": aname, "due_date": it.due_date})
+                                "customer_key": ckey, "assignee": aname,
+                                "assignee_user_id": it.assignee_user_id, "due_date": it.due_date})
             else:
                 atype = (it.type or (kind if kind in _ACTIVITY_TYPES else "note"))
                 if atype not in _ACTIVITY_TYPES:
@@ -366,6 +375,20 @@ async def capture(body: CaptureIn, user: dict = Depends(require_access), db: Dat
         except Exception as e:
             logger.error(f"capture item failed ({kind}): {e}")
             skipped.append({"kind": kind, "reason": f"error: {e}"})
+
+    # ── Push each assignee once for the task(s) they picked up ───────────────────
+    try:
+        from app.api.push import push_to_user
+        by_assignee: dict = defaultdict(list)
+        for c in created:
+            if c["kind"] == "task" and c.get("assignee_user_id"):
+                by_assignee[c["assignee_user_id"]].append(c["title"])
+        for uid, titles in by_assignee.items():
+            n = len(titles)
+            btxt = "; ".join(titles[:3]) + (f" +{n - 3} more" if n > 3 else "")
+            await push_to_user(uid, f"{n} new task{'s' if n > 1 else ''}", btxt, "/my-work")
+    except Exception as e:
+        logger.warning(f"capture push failed: {e}")
 
     # ── Receipt email, built from what was actually written ──────────────────────
     recipient = (body.receipt_to or user.get("email") or "").strip()

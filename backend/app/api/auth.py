@@ -169,6 +169,21 @@ async def current_actor(
     return await _resolve_actor(x_api_key, x_act_as_user, token, db, allow_service_fallback=False)
 
 
+async def optional_actor(
+    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    x_act_as_user: Optional[str] = Header(default=None, alias="X-Act-As-User"),
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Database = Depends(get_db),
+) -> Optional[dict]:
+    """Resolve the actor if the request is authenticated, else return None — never raises. For
+    endpoints open to both logged-in users and no-login field pages (e.g. push subscribe), so a
+    signed-in user gets stamped while anonymous callers still work."""
+    try:
+        return await _resolve_actor(x_api_key, x_act_as_user, token, db, allow_service_fallback=True)
+    except HTTPException:
+        return None
+
+
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
 # Divisions a user can belong to (many-per-user). is_default = pre-checked in the
