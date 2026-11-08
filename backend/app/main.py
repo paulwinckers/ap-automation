@@ -26,6 +26,7 @@ from app.api.aspire_field import router as aspire_field_router
 from app.api.crew_schedule import router as crew_schedule_router
 from app.api.time_tracking import router as time_tracking_router
 from app.api.auth import router as auth_router, require_access, _require_admin
+from app.api.permissions import area_guard
 from app.api.keys import router as keys_router
 from app.api.safety_talks import router as safety_talks_router
 from app.api.construction_report import router as construction_report_router, start_scheduler as start_construction_scheduler, stop_scheduler as stop_construction_scheduler
@@ -527,6 +528,8 @@ async def lifespan(app: FastAPI):
     # Column migrations — ALTER TABLE for columns added after initial schema deploy.
     # D1 has no IF NOT EXISTS for ALTER TABLE, so we probe first.
     _COLUMN_MIGRATIONS = [
+        # users.areas — access areas (comma list; empty = default staff areas). See api/permissions.py
+        ("users", "areas", "ALTER TABLE users ADD COLUMN areas TEXT"),
         # vendor_statements.pdf_r2_key — added after initial reconciliation deploy
         ("vendor_statements", "pdf_r2_key", "ALTER TABLE vendor_statements ADD COLUMN pdf_r2_key TEXT"),
         # vendor_statements diff cache — added for bulk-diff speed improvement
@@ -662,6 +665,8 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs" if settings.DEBUG else None,
     lifespan=lifespan,
+    # Every login-protected route is also checked against the person's access areas.
+    dependencies=[Depends(area_guard)],
 )
 
 # allow_credentials must NOT be used with allow_origins=["*"] — browsers reject it.

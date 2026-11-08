@@ -6,8 +6,11 @@
 import { useEffect, useState } from 'react';
 import {
   listUsers, createUser, updateUser, resetUserPassword, changeMyPassword,
-  UserRecord, DivisionMembership, DIVISIONS,
+  UserRecord, DivisionMembership, DIVISIONS, AREAS, Area,
 } from '../lib/api';
+
+// New staff start with the same areas existing staff got by default (backend DEFAULT_STAFF_AREAS).
+const DEFAULT_AREAS: Area[] = ['customers', 'operations'];
 
 const CARD: React.CSSProperties = {
   background: '#1e293b', border: '1px solid #334155',
@@ -83,6 +86,45 @@ function DivisionPicker({ value, onChange }: { value: DivisionMembership[]; onCh
   );
 }
 
+// Access areas — what this person can see and do. Admins always have every area.
+function AreaPicker({ value, onChange, isAdmin }: { value: Area[]; onChange: (v: Area[]) => void; isAdmin: boolean }) {
+  const toggle = (a: Area) => onChange(value.includes(a) ? value.filter(x => x !== a) : [...value, a]);
+  return (
+    <div>
+      <div style={{ color: '#94a3b8', fontSize: 11, fontWeight: 700, marginBottom: 5 }}>ACCESS</div>
+      {isAdmin ? (
+        <div style={{ color: '#64748b', fontSize: 13 }}>Admins have access to everything.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {AREAS.map(a => (
+            <label key={a.key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input type="checkbox" checked={value.includes(a.key)} onChange={() => toggle(a.key)}
+                style={{ width: 16, height: 16, accentColor: '#2563eb', cursor: 'pointer' }} />
+              <span style={{ color: value.includes(a.key) ? '#e2e8f0' : '#64748b', fontSize: 13, minWidth: 140 }}>{a.label}</span>
+              <span style={{ color: '#475569', fontSize: 11 }}>{a.hint}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AreaChips({ user }: { user: UserRecord }) {
+  if (user.role === 'admin' || !user.areas) return null;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+      {user.areas.length === 0
+        ? <span style={{ color: '#f87171', fontSize: 10, fontWeight: 600 }}>No access areas</span>
+        : AREAS.filter(a => user.areas!.includes(a.key)).map(a => (
+          <span key={a.key} style={{ background: '#1e3a8a', color: '#bfdbfe', fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 99 }}>
+            {a.label}
+          </span>
+        ))}
+    </div>
+  );
+}
+
 function DivisionChips({ divisions }: { divisions?: DivisionMembership[] }) {
   if (!divisions || divisions.length === 0) return null;
   return (
@@ -112,6 +154,7 @@ export default function UserAdmin() {
   const [newRole,  setNewRole]  = useState<'staff' | 'admin'>('staff');
   const [newPhone, setNewPhone] = useState('');
   const [newDivisions, setNewDivisions] = useState<DivisionMembership[]>([]);
+  const [newAreas, setNewAreas] = useState<Area[]>(DEFAULT_AREAS);
   const [adding,   setAdding]   = useState(false);
   const [addErr,   setAddErr]   = useState('');
 
@@ -121,6 +164,7 @@ export default function UserAdmin() {
   const [editRole,  setEditRole]  = useState<'staff' | 'admin'>('staff');
   const [editPhone, setEditPhone] = useState('');
   const [editDivisions, setEditDivisions] = useState<DivisionMembership[]>([]);
+  const [editAreas, setEditAreas] = useState<Area[]>([]);
   const [saving,    setSaving]    = useState(false);
 
   // Reset password
@@ -146,8 +190,8 @@ export default function UserAdmin() {
     if (newPass.length < 8) { setAddErr('Password must be at least 8 characters.'); return; }
     setAddErr(''); setAdding(true);
     try {
-      await createUser({ email: newEmail.trim(), name: newName.trim(), password: newPass, role: newRole, phone: newPhone.trim() || undefined, divisions: newDivisions });
-      setNewName(''); setNewEmail(''); setNewPass(''); setNewRole('staff'); setNewPhone(''); setNewDivisions([]);
+      await createUser({ email: newEmail.trim(), name: newName.trim(), password: newPass, role: newRole, phone: newPhone.trim() || undefined, divisions: newDivisions, areas: newAreas });
+      setNewName(''); setNewEmail(''); setNewPass(''); setNewRole('staff'); setNewPhone(''); setNewDivisions([]); setNewAreas(DEFAULT_AREAS);
       setShowAdd(false);
       await load();
     } catch (e) {
@@ -160,7 +204,7 @@ export default function UserAdmin() {
   async function handleSaveEdit(userId: number) {
     setSaving(true);
     try {
-      await updateUser(userId, { name: editName, role: editRole, phone: editPhone.trim() || null, divisions: editDivisions });
+      await updateUser(userId, { name: editName, role: editRole, phone: editPhone.trim() || null, divisions: editDivisions, areas: editAreas });
       setEditId(null);
       await load();
     } catch (e) {
@@ -201,6 +245,7 @@ export default function UserAdmin() {
     setEditRole(user.role);
     setEditPhone(user.phone || '');
     setEditDivisions(user.divisions || []);
+    setEditAreas(user.areas || DEFAULT_AREAS);
     setResetId(null);
   }
 
@@ -305,6 +350,9 @@ export default function UserAdmin() {
               </label>
             </div>
             <div style={{ marginBottom: 16 }}>
+              <AreaPicker value={newAreas} onChange={setNewAreas} isAdmin={newRole === 'admin'} />
+            </div>
+            <div style={{ marginBottom: 16 }}>
               <DivisionPicker value={newDivisions} onChange={setNewDivisions} />
             </div>
             <button type="submit" disabled={adding} style={BTN('#16a34a', adding)}>
@@ -328,6 +376,8 @@ export default function UserAdmin() {
             editPhone={editPhone}
             editDivisions={editDivisions}
             onEditDivisions={setEditDivisions}
+            editAreas={editAreas}
+            onEditAreas={setEditAreas}
             saving={saving}
             resetId={resetId}
             resetPass={resetPass}
@@ -357,6 +407,8 @@ export default function UserAdmin() {
               editPhone={editPhone}
               editDivisions={editDivisions}
               onEditDivisions={setEditDivisions}
+              editAreas={editAreas}
+              onEditAreas={setEditAreas}
               saving={saving}
               resetId={resetId}
               resetPass={resetPass}
@@ -433,6 +485,8 @@ interface UserTableProps {
   editPhone: string;
   editDivisions: DivisionMembership[];
   onEditDivisions: (v: DivisionMembership[]) => void;
+  editAreas: Area[];
+  onEditAreas: (v: Area[]) => void;
   saving: boolean;
   resetId: number | null;
   resetPass: string;
@@ -453,7 +507,7 @@ interface UserTableProps {
 
 function UserTable({
   users, title, dimmed = false,
-  editId, editName, editRole, editPhone, editDivisions, onEditDivisions, saving,
+  editId, editName, editRole, editPhone, editDivisions, onEditDivisions, editAreas, onEditAreas, saving,
   resetId, resetPass, resetting, resetErr,
   onStartEdit, onEditName, onEditRole, onEditPhone, onSaveEdit, onCancelEdit,
   onToggleActive, onStartReset, onResetPass, onResetPassChange, onCancelReset,
@@ -484,6 +538,7 @@ function UserTable({
                 {user.phone && (
                   <div style={{ color: '#475569', fontSize: 12, marginTop: 1 }}>📱 {user.phone}</div>
                 )}
+                <AreaChips user={user} />
                 <DivisionChips divisions={user.divisions} />
               </div>
 
@@ -533,6 +588,9 @@ function UserTable({
                       <option value="admin">Admin</option>
                     </select>
                   </label>
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <AreaPicker value={editAreas} onChange={onEditAreas} isAdmin={editRole === 'admin'} />
                 </div>
                 <div style={{ marginBottom: 14 }}>
                   <DivisionPicker value={editDivisions} onChange={onEditDivisions} />

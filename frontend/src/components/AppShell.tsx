@@ -5,7 +5,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { logout, currentUser, listMyWorklist } from '../lib/api';
+import { logout, currentUser, listMyWorklist, hasArea, refreshMe, Area } from '../lib/api';
 
 const SIDEBAR_FULL  = 220;
 const SIDEBAR_MINI  = 56;
@@ -38,31 +38,31 @@ const NAV = [
   {
     section: 'Field Ops',
     items: [
-      { label: 'Daily Schedule', path: '/dashboards/schedule', icon: '🗺️' },
-      { label: 'Weekly Schedule', path: '/dashboards/schedule/week', icon: '📆' },
-      { label: 'Construction Schedule', path: '/dashboards/construction/board', icon: '📅' },
-      { label: 'Construction Planning', path: '/dashboards/construction/plan', icon: '🏗️' },
-      { label: 'Field Chat',    path: '/ops/issues',        icon: '💬' },
-      { label: 'Crew Schedule', path: '/ops/crew-schedule', icon: '👥' },
-      { label: 'Safety Talks',  path: '/ops/safety-talks',  icon: '🦺' },
-      { label: 'Incident Reports', path: '/ops/safety-incidents', icon: '🚨' },
-      { label: 'Hazard Assessments', path: '/ops/safety-pha', icon: '🦺' },
-      { label: 'Vehicle Inspections', path: '/ops/vehicle-inspections', icon: '🚛' },
-      { label: 'Documents Admin', path: '/ops/documents',   icon: '🗂️' },
-      { label: 'Key Box Admin', path: '/keys/admin',        icon: '🔑' },
+      { label: 'Daily Schedule', path: '/dashboards/schedule', icon: '🗺️', area: 'operations' as Area },
+      { label: 'Weekly Schedule', path: '/dashboards/schedule/week', icon: '📆', area: 'operations' as Area },
+      { label: 'Construction Schedule', path: '/dashboards/construction/board', icon: '📅', area: 'operations' as Area },
+      { label: 'Construction Planning', path: '/dashboards/construction/plan', icon: '🏗️', area: 'operations' as Area },
+      { label: 'Field Chat',    path: '/ops/issues',        icon: '💬', area: 'operations' as Area },
+      { label: 'Crew Schedule', path: '/ops/crew-schedule', icon: '👥', area: 'operations' as Area },
+      { label: 'Safety Talks',  path: '/ops/safety-talks',  icon: '🦺', area: 'operations' as Area },
+      { label: 'Incident Reports', path: '/ops/safety-incidents', icon: '🚨', area: 'hr' as Area },
+      { label: 'Hazard Assessments', path: '/ops/safety-pha', icon: '🦺', area: 'operations' as Area },
+      { label: 'Vehicle Inspections', path: '/ops/vehicle-inspections', icon: '🚛', area: 'operations' as Area },
+      { label: 'Documents Admin', path: '/ops/documents',   icon: '🗂️', area: 'operations' as Area },
+      { label: 'Key Box Admin', path: '/keys/admin',        icon: '🔑', area: 'operations' as Area },
     ],
   },
   {
     section: 'Accounting & Dashboards',
     items: [
-      { label: 'Invoices',        path: '/ap',                 icon: '💳' },
-      { label: 'Invoice Summary', path: '/ap/invoice-summary', icon: '📋' },
-      { label: 'Vendors',         path: '/vendors',            icon: '🏢' },
-      { label: 'Reconciliation',  path: '/reconcile',          icon: '🔄' },
+      { label: 'Invoices',        path: '/ap',                 icon: '💳', area: 'finance' as Area },
+      { label: 'Invoice Summary', path: '/ap/invoice-summary', icon: '📋', area: 'finance' as Area },
+      { label: 'Vendors',         path: '/vendors',            icon: '🏢', area: 'finance' as Area },
+      { label: 'Reconciliation',  path: '/reconcile',          icon: '🔄', area: 'finance' as Area },
       { label: 'Dashboards',      path: '/dashboards',         icon: '📊' },
-      { label: 'Users',           path: '/users',              icon: '👤' },
-      { label: 'Email Settings',  path: '/settings/email',     icon: '✉️' },
-      { label: 'Backups',         path: '/ops/backups',        icon: '💾' },
+      { label: 'Users',           path: '/users',              icon: '👤', area: 'admin' as Area },
+      { label: 'Email Settings',  path: '/settings/email',     icon: '✉️', area: 'admin' as Area },
+      { label: 'Backups',         path: '/ops/backups',        icon: '💾', area: 'admin' as Area },
     ],
   },
 ];
@@ -70,6 +70,12 @@ const NAV = [
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+  // Re-read role + access areas once per visit so an admin's changes show up in the menu.
+  const [, setAreasLoaded] = useState(0);
+  useEffect(() => { refreshMe().then(() => setAreasLoaded(n => n + 1)); }, []);
+  const nav = NAV
+    .map(sec => ({ ...sec, items: sec.items.filter(it => !('area' in it) || hasArea((it as { area: Area }).area)) }))
+    .filter(sec => sec.items.length > 0);
   const [actionCount, setActionCount] = useState(0);
 
   useEffect(() => {
@@ -132,7 +138,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
         {/* Nav items */}
         <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '8px 0' }}>
-          {NAV.map(group => (
+          {nav.map(group => (
             <div key={group.section} style={{ marginBottom: 8 }}>
               {/* Section label — hidden when collapsed */}
               {!collapsed && (

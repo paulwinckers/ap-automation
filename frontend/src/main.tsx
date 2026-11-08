@@ -101,44 +101,44 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/field/maintenance/:oppId" element={<FieldMaintenance />} />
 
         {/* Field Ops — login required */}
-        <Route path="/ops/issues"        element={<RequireAuth><Office><IssuesDashboard /></Office></RequireAuth>} />
-        <Route path="/ops/crew-schedule" element={<RequireAuth><Office><CrewSchedule /></Office></RequireAuth>} />
-        <Route path="/ops/safety-talks"  element={<RequireAuth><Office><SafetyTalksAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/issues"        element={<RequireAuth area="operations"><Office><IssuesDashboard /></Office></RequireAuth>} />
+        <Route path="/ops/crew-schedule" element={<RequireAuth area="operations"><Office><CrewSchedule /></Office></RequireAuth>} />
+        <Route path="/ops/safety-talks"  element={<RequireAuth area="operations"><Office><SafetyTalksAdmin /></Office></RequireAuth>} />
         <Route path="/ops/time-tracking" element={<TimeTracking />} />
-        <Route path="/ops/contacts"      element={<RequireAuth><Office><PropertyLookup /></Office></RequireAuth>} />
-        <Route path="/keys/admin"        element={<RequireAuth><Office><KeysAdmin /></Office></RequireAuth>} />
-        <Route path="/ops/documents"          element={<RequireAuth><Office><DocumentsAdmin /></Office></RequireAuth>} />
-        <Route path="/ops/safety-inspections" element={<RequireAuth><Office><SafetyInspectionsAdmin /></Office></RequireAuth>} />
-        <Route path="/ops/safety-incidents"   element={<RequireAuth><Office><SafetyIncidentsAdmin /></Office></RequireAuth>} />
-        <Route path="/ops/vehicle-inspections" element={<RequireAuth><Office><VehicleInspectionsAdmin /></Office></RequireAuth>} />
-        <Route path="/ops/safety-pha"          element={<RequireAuth><Office><SafetyPHAAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/contacts"      element={<RequireAuth area="customers"><Office><PropertyLookup /></Office></RequireAuth>} />
+        <Route path="/keys/admin"        element={<RequireAuth area="operations"><Office><KeysAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/documents"          element={<RequireAuth area="operations"><Office><DocumentsAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/safety-inspections" element={<RequireAuth area="operations"><Office><SafetyInspectionsAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/safety-incidents"   element={<RequireAuth area="hr"><Office><SafetyIncidentsAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/vehicle-inspections" element={<RequireAuth area="operations"><Office><VehicleInspectionsAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/safety-pha"          element={<RequireAuth area="operations"><Office><SafetyPHAAdmin /></Office></RequireAuth>} />
 
         {/* AP & Finance */}
-        <Route path="/ap/invoice-summary" element={<RequireAuth><Office><InvoiceSummaryReport /></Office></RequireAuth>} />
-        <Route path="/ap"        element={<RequireAuth><Office><APDashboard /></Office></RequireAuth>} />
-        <Route path="/vendors"   element={<RequireAuth><Office><VendorAdmin /></Office></RequireAuth>} />
-        <Route path="/reconcile" element={<RequireAuth><Office><Reconcile /></Office></RequireAuth>} />
-        <Route path="/users"     element={<RequireAuth><Office><UserAdmin /></Office></RequireAuth>} />
-        <Route path="/settings/email" element={<RequireAuth><Office><EmailSettings /></Office></RequireAuth>} />
-        <Route path="/ops/backups"     element={<RequireAuth><Office><BackupsAdmin /></Office></RequireAuth>} />
+        <Route path="/ap/invoice-summary" element={<RequireAuth area="finance"><Office><InvoiceSummaryReport /></Office></RequireAuth>} />
+        <Route path="/ap"        element={<RequireAuth area="finance"><Office><APDashboard /></Office></RequireAuth>} />
+        <Route path="/vendors"   element={<RequireAuth area="finance"><Office><VendorAdmin /></Office></RequireAuth>} />
+        <Route path="/reconcile" element={<RequireAuth area="finance"><Office><Reconcile /></Office></RequireAuth>} />
+        <Route path="/users"     element={<RequireAuth area="admin"><Office><UserAdmin /></Office></RequireAuth>} />
+        <Route path="/settings/email" element={<RequireAuth area="admin"><Office><EmailSettings /></Office></RequireAuth>} />
+        <Route path="/ops/backups"     element={<RequireAuth area="admin"><Office><BackupsAdmin /></Office></RequireAuth>} />
 
         {/* Personal worklist */}
         <Route path="/my-work" element={<RequireAuth><Office><MyWork /></Office></RequireAuth>} />
 
         {/* Dashboards */}
         <Route path="/dashboards"              element={<RequireAuth><Office><DashboardsIndex /></Office></RequireAuth>} />
-        <Route path="/dashboards/sales"        element={<RequireAuth><Office><SalesDashboard /></Office></RequireAuth>} />
-        <Route path="/dashboards/ops"          element={<RequireAuth><Office><OpsDashboard /></Office></RequireAuth>} />
-        <Route path="/dashboards/schedule"      element={<RequireAuth><Office><DailySchedule /></Office></RequireAuth>} />
-        <Route path="/dashboards/customer"      element={<RequireAuth><Office><CustomerDashboard /></Office></RequireAuth>} />
-        <Route path="/dashboards/customer/360"  element={<RequireAuth><Office><Customer360 /></Office></RequireAuth>} />
-        <Route path="/sales/log"                 element={<RequireAuth><SalesVisit /></RequireAuth>} />
-        <Route path="/dashboards/schedule/week" element={<RequireAuth><Office><WeeklySchedule /></Office></RequireAuth>} />
-        <Route path="/dashboards/construction" element={<RequireAuth><Office><ConstructionDashboard /></Office></RequireAuth>} />
-        <Route path="/dashboards/construction/plan" element={<RequireAuth><Office><ConstructionPlan /></Office></RequireAuth>} />
-        <Route path="/dashboards/construction/board" element={<RequireAuth><Office><ConstructionBoard /></Office></RequireAuth>} />
-        <Route path="/dashboards/estimating"   element={<RequireAuth><Office><EstimatingDashboard /></Office></RequireAuth>} />
-        <Route path="/dashboards/activities"   element={<RequireAuth><Office><ActivitiesDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/sales"        element={<RequireAuth area="customers"><Office><SalesDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/ops"          element={<RequireAuth area="operations"><Office><OpsDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/schedule"      element={<RequireAuth area="operations"><Office><DailySchedule /></Office></RequireAuth>} />
+        <Route path="/dashboards/customer"      element={<RequireAuth area="customers"><Office><CustomerDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/customer/360"  element={<RequireAuth area="customers"><Office><Customer360 /></Office></RequireAuth>} />
+        <Route path="/sales/log"                 element={<RequireAuth area="customers"><SalesVisit /></RequireAuth>} />
+        <Route path="/dashboards/schedule/week" element={<RequireAuth area="operations"><Office><WeeklySchedule /></Office></RequireAuth>} />
+        <Route path="/dashboards/construction" element={<RequireAuth area="operations"><Office><ConstructionDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/construction/plan" element={<RequireAuth area="operations"><Office><ConstructionPlan /></Office></RequireAuth>} />
+        <Route path="/dashboards/construction/board" element={<RequireAuth area="operations"><Office><ConstructionBoard /></Office></RequireAuth>} />
+        <Route path="/dashboards/estimating"   element={<RequireAuth area="customers"><Office><EstimatingDashboard /></Office></RequireAuth>} />
+        <Route path="/dashboards/activities"   element={<RequireAuth area="customers"><Office><ActivitiesDashboard /></Office></RequireAuth>} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />

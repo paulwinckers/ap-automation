@@ -49,7 +49,17 @@ export function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Pro
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-export interface AuthUser { id: number; email: string; name: string; role: string; phone?: string | null; }
+export interface AuthUser { id: number; email: string; name: string; role: string; phone?: string | null; areas?: Area[]; }
+
+// Access areas — must match backend app/api/permissions.py. Admins hold all of them.
+export type Area = 'finance' | 'hr' | 'customers' | 'operations' | 'admin';
+export const AREAS: { key: Area; label: string; hint: string }[] = [
+  { key: 'finance',    label: 'Finance',           hint: 'Invoices, vendors, reconciliation, revenue, customer billing' },
+  { key: 'hr',         label: 'HR',                hint: 'Staff records, incident reports' },
+  { key: 'customers',  label: 'Customers & Sales', hint: 'Customer 360, sales activity, client emails, estimates' },
+  { key: 'operations', label: 'Operations',        hint: 'Construction plan & schedule, crews, documents, keys, safety admin' },
+  { key: 'admin',      label: 'Admin',             hint: 'Users, backups, email settings, system tools' },
+];
 
 export async function login(email: string, password: string): Promise<AuthUser> {
   const form = new URLSearchParams({ username: email, password });
@@ -61,7 +71,7 @@ export async function login(email: string, password: string): Promise<AuthUser> 
   if (!res.ok) throw new Error('Invalid email or password');
   const data = await res.json();
   localStorage.setItem('ap_token', data.access_token);
-  localStorage.setItem('ap_user', JSON.stringify({ name: data.name, email: data.email, role: data.role, phone: data.phone ?? null }));
+  localStorage.setItem('ap_user', JSON.stringify({ name: data.name, email: data.email, role: data.role, phone: data.phone ?? null, areas: data.areas }));
   if (data.phone) localStorage.setItem('user_phone', data.phone);
   else localStorage.removeItem('user_phone');
   localStorage.setItem('user_name', data.name);
@@ -80,6 +90,26 @@ export function logout() {
 
 export function currentUser(): AuthUser | null {
   try { return JSON.parse(localStorage.getItem('ap_user') || ''); } catch { return null; }
+}
+
+/** Whether the signed-in person may use an area. Unknown (not yet refreshed) → allow; the server decides. */
+export function hasArea(area: Area): boolean {
+  const u = currentUser();
+  if (!u) return false;
+  if (u.role === 'admin' || !u.areas) return true;
+  return u.areas.includes(area);
+}
+
+/** Re-read the signed-in person (role + areas) so menu changes made by an admin show up. */
+export async function refreshMe(): Promise<AuthUser | null> {
+  try {
+    const me = await getMe();
+    const prev = currentUser();
+    localStorage.setItem('ap_user', JSON.stringify({ ...prev, name: me.name, email: me.email, role: me.role, areas: me.areas }));
+    return currentUser();
+  } catch {
+    return null;
+  }
 }
 
 // ── Invoice endpoints ─────────────────────────────────────────────────────────
@@ -1199,6 +1229,7 @@ export interface UserRecord {
   created_at: string;
   last_login: string | null;
   divisions?: DivisionMembership[];
+  areas?: Area[];
 }
 
 export async function listUsers(): Promise<UserRecord[]> {
@@ -1208,14 +1239,14 @@ export async function listUsers(): Promise<UserRecord[]> {
 
 export async function createUser(data: {
   email: string; name: string; password: string; role: string; phone?: string;
-  divisions?: DivisionMembership[];
+  divisions?: DivisionMembership[]; areas?: Area[];
 }): Promise<UserRecord> {
   return request('POST', '/auth/users', data);
 }
 
 export async function updateUser(id: number, data: {
   name?: string; role?: string; active?: boolean; phone?: string | null;
-  divisions?: DivisionMembership[];
+  divisions?: DivisionMembership[]; areas?: Area[];
 }): Promise<UserRecord> {
   return request('PUT', `/auth/users/${id}`, data);
 }

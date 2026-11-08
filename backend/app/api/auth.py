@@ -208,6 +208,7 @@ class UserCreate(BaseModel):
     role:      str = "staff"
     phone:     Optional[str] = None
     divisions: Optional[list[DivisionMembership]] = None
+    areas:     Optional[list[str]] = None   # access areas (app.api.permissions.AREAS)
 
 class UserUpdate(BaseModel):
     name:      Optional[str] = None
@@ -215,6 +216,7 @@ class UserUpdate(BaseModel):
     active:    Optional[bool] = None
     phone:     Optional[str] = None
     divisions: Optional[list[DivisionMembership]] = None
+    areas:     Optional[list[str]] = None
 
 class PasswordReset(BaseModel):
     password: str
@@ -290,6 +292,7 @@ async def login(
         "email":        user["email"],
         "role":         user["role"],
         "phone":        user.get("phone"),
+        "areas":        _areas_list(user),
     }
 
 
@@ -302,6 +305,7 @@ async def me(user: dict = Depends(current_actor)):
         "email": user["email"],
         "name":  user.get("name"),
         "role":  user["role"],
+        "areas": _areas_list(user),
     }
 
 
@@ -359,6 +363,19 @@ async def _divisions_by_user(db: Database) -> dict[int, list[dict]]:
     return out
 
 
+def _areas_list(user: dict) -> list[str]:
+    from app.api.permissions import AREAS, user_areas   # lazy: permissions imports this module
+    held = user_areas(user)
+    return [a for a in AREAS if a in held]
+
+
+async def _set_user_areas(db: Database, user_id: int, areas: Optional[list[str]]) -> None:
+    from app.api.permissions import parse_areas
+    stored = parse_areas(areas)
+    if stored is not None:
+        await db._x("UPDATE users SET areas = ? WHERE id = ?", [stored, user_id])
+
+
 @router.get("/users")
 async def list_users(
     _: dict = Depends(_require_admin),
@@ -367,8 +384,14 @@ async def list_users(
     """List all users (admin only)."""
     rows = await db._q("SELECT id, email, name, phone, role, active, created_at, last_login FROM users ORDER BY name")
     div_map = await _divisions_by_user(db)
+    try:   # separate query: the areas column may not be migrated yet
+        area_rows = await db._q("SELECT id, areas FROM users")
+        stored = {r["id"]: r.get("areas") for r in area_rows or []}
+    except Exception:
+        stored = {}
     for r in rows or []:
         r["divisions"] = div_map.get(r["id"], [])
+        r["areas"] = _areas_list({**r, "areas": stored.get(r["id"])})
     return {"users": rows}
 
 
@@ -393,6 +416,7 @@ async def create_user(
     )
     if body.divisions is not None:
         await _set_user_divisions(db, uid, body.divisions)
+    await _set_user_areas(db, uid, body.areas)
     logger.info(f"User created: {body.email} (role={body.role})")
     return {"id": uid, "email": body.email, "name": body.name, "role": body.role, "phone": body.phone}
 
@@ -424,6 +448,7 @@ async def update_user(
     )
     if body.divisions is not None:
         await _set_user_divisions(db, user_id, body.divisions)
+    await _set_user_areas(db, user_id, body.areas)
     return {"id": user_id, "name": new_name, "role": new_role, "active": bool(new_active), "phone": new_phone}
 
 
