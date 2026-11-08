@@ -503,9 +503,12 @@ async def get_task(task_id: int, db: Database = Depends(get_db)):
     return {"task": task}
 
 
-@router.patch("/task/{task_id}", dependencies=[Depends(require_access)])
-async def patch_task(task_id: int, body: TaskPatch, db: Database = Depends(get_db)):
-    """Edit a task / reassign / mark done (sets done_at)."""
+@router.patch("/task/{task_id}")
+async def patch_task(task_id: int, body: TaskPatch, user: dict = Depends(require_access),
+                     db: Database = Depends(get_db)):
+    """Edit a task / reassign / mark done (sets done_at). A reassignment notifies the new person."""
+    before = await db._q("SELECT assignee_user_id FROM sales_tasks WHERE id = ?", [task_id])
+    prev_assignee = before[0].get("assignee_user_id") if before else None
     sets, params = ["updated_at = datetime('now')"], []
     if body.title is not None:    sets.append("title = ?");    params.append(body.title)
     if body.detail is not None:   sets.append("detail = ?");   params.append(body.detail)
@@ -526,7 +529,16 @@ async def patch_task(task_id: int, body: TaskPatch, db: Database = Depends(get_d
     rows = await db._q(f"UPDATE sales_tasks SET {', '.join(sets)} WHERE id = ? RETURNING *", params)
     if not rows:
         raise HTTPException(status_code=404, detail="Task not found")
-    return {"ok": True, "task": rows[0]}
+    task = rows[0]
+    new_assignee = task.get("assignee_user_id")
+    if new_assignee and new_assignee != prev_assignee and new_assignee != user.get("id"):
+        try:
+            from app.api.push import push_to_user
+            due = f" · due {task['due_date']}" if task.get("due_date") else ""
+            await push_to_user(new_assignee, "Task assigned to you", f"{task.get('title')}{due}", "/my-work")
+        except Exception as e:
+            logger.warning(f"task reassign push failed: {e}")
+    return {"ok": True, "task": task}
 
 
 @router.get("/tasks", dependencies=[Depends(require_access)])
