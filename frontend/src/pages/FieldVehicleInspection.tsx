@@ -167,10 +167,9 @@ export default function FieldVehicleInspection() {
   function header() {
     return (
       <div style={S.header}>
-        <a href="/" title="Home"><img src="/darios-logo.png" alt="Darios" style={S.logo} /></a>
+        <a href="/crew" title="Home"><img src="/darios-logo.png" alt="Darios" style={S.logo} /></a>
         <span style={S.title}>🚛 Vehicle Inspection</span>
         <button onClick={() => honk(1)} title="Honk!" style={{ background: '#fbbf24', border: 'none', borderRadius: 8, fontSize: 18, padding: '4px 10px', cursor: 'pointer' }}>📣</button>
-        <a href="/" style={S.home}>🏠</a>
       </div>
     );
   }
@@ -190,7 +189,7 @@ export default function FieldVehicleInspection() {
             {clean ? 'Drive safe out there. 🦺' : 'The shop has been notified of the defects.'}
           </div>
           <button onClick={() => honk(2)} style={{ ...S.btn, background: '#fbbf24', color: '#1f2937', maxWidth: 220, margin: '0 auto 12px', display: 'block' }}>📣 Honk!</button>
-          <a href="/" style={{ display: 'inline-block', color: '#94a3b8', fontSize: 13 }}>← Back to Home</a>
+          <a href="/crew" style={{ display: 'inline-block', color: '#94a3b8', fontSize: 13 }}>← Back to Main Menu</a>
         </div>
       </div>
     );

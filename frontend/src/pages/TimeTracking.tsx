@@ -1742,7 +1742,7 @@ export default function TimeTracking() {
         justifyContent: 'center', padding: 24, position: 'relative',
       }}>
         <div style={{ position: 'absolute', top: 20, left: 20 }}>
-          <a href="/" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }} title="Home">
+          <a href="/crew" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }} title="Home">
             <img src="/darios-logo.png" alt="Darios" style={{ height: 28, objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
           </a>
         </div>
@@ -1982,7 +1982,7 @@ export default function TimeTracking() {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <a href="/" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none', flexShrink: 0 }} title="Home">
+            <a href="/crew" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none', flexShrink: 0 }} title="Home">
               <img src="/darios-logo.png" alt="Darios" style={{ height: 26, objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
             </a>
           </div>

@@ -125,9 +125,8 @@ export default function FieldAmendPO() {
   function header(subtitle: string) {
     return (
       <div style={S.header}>
-        <a href="/" title="Home"><img src="/darios-logo.png" alt="Darios" style={S.logo} /></a>
+        <a href="/crew" title="Home"><img src="/darios-logo.png" alt="Darios" style={S.logo} /></a>
         <span style={S.title}>{subtitle}</span>
-        <a href="/" style={S.homeBtn}>🏠 Home</a>
       </div>
     );
   }
@@ -152,8 +151,8 @@ export default function FieldAmendPO() {
           <button style={{ ...S.btn, ...S.btnGray }} onClick={() => window.location.reload()}>
             Try Again
           </button>
-          <a href="/" style={{ display: 'block', textAlign: 'center', color: '#94a3b8', marginTop: 12, fontSize: 13 }}>
-            ← Back to Home
+          <a href="/crew" style={{ display: 'block', textAlign: 'center', color: '#94a3b8', marginTop: 12, fontSize: 13 }}>
+            ← Back to Main Menu
           </a>
         </div>
       </div>
@@ -181,8 +180,8 @@ export default function FieldAmendPO() {
             <div style={{ color: '#4ade80', fontWeight: 700, fontSize: 18, marginBottom: 32 }}>
               {result.vendor_name}
             </div>
-            <a href="/" style={{ display: 'inline-block', background: '#1e293b', color: '#94a3b8', padding: '12px 28px', borderRadius: 10, textDecoration: 'none', fontWeight: 600, fontSize: 14 }}>
-              🏠 Back to Home
+            <a href="/crew" style={{ display: 'inline-block', background: '#1e293b', color: '#94a3b8', padding: '12px 28px', borderRadius: 10, textDecoration: 'none', fontWeight: 600, fontSize: 14 }}>
+              🏠 Back to Main Menu
             </a>
           </div>
         </div>

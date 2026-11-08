@@ -379,7 +379,7 @@ export default function FieldInspection() {
           >
             New Inspection
           </button>
-          <a href="/" style={{ textAlign: 'center', color: '#64748b', fontSize: 14, paddingTop: 4, textDecoration: 'none' }}>
+          <a href="/crew" style={{ textAlign: 'center', color: '#64748b', fontSize: 14, paddingTop: 4, textDecoration: 'none' }}>
             ← Back to menu
           </a>
         </div>
@@ -393,7 +393,7 @@ export default function FieldInspection() {
   const header = (
     <div style={{ background: CARD, padding: '16px 16px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-        <a href="/" style={{ color: '#64748b', fontSize: 20, textDecoration: 'none' }}>←</a>
+        <a href="/crew" style={{ color: '#64748b', fontSize: 20, textDecoration: 'none' }}>←</a>
         <h1 style={{ margin: 0, color: '#fff', fontSize: 18, fontWeight: 800 }}>🔍 Site Inspection</h1>
       </div>
       {/* Step progress */}

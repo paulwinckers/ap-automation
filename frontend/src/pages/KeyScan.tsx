@@ -143,7 +143,7 @@ export default function KeyScan() {
           <div style={{ fontWeight: 700, fontSize: 15 }}>{keyData?.name || 'Key Box'}</div>
           <div style={{ color: MUTED, fontSize: 12 }}>{keyData ? typeLabel(keyData.key_type) : ''}</div>
         </div>
-        <Link to="/" style={{ color: MUTED, fontSize: 12, textDecoration: 'none' }}>Home</Link>
+        <Link to="/crew" style={{ color: MUTED, fontSize: 12, textDecoration: 'none' }}>Home</Link>
       </div>
 
       <div style={{ maxWidth: 440, margin: '0 auto', padding: '24px 16px' }}>

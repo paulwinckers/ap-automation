@@ -178,7 +178,7 @@ export default function FieldSubmit() {
       {/* Header */}
       <div style={S.header}>
         <div style={S.headerTop}>
-          <a href="/" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }} title="Home">
+          <a href="/crew" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }} title="Home">
             <img src="/darios-logo.png" alt="Dario's Landscape Services" style={{ height: 32, filter: 'brightness(0) invert(1)' }} />
           </a>
           <span style={S.chip}>{employee || 'Field crew'}</span>
@@ -396,16 +396,13 @@ export default function FieldSubmit() {
         {step===5 ? (
           <>
             <button style={S.bsuccess} onClick={reset}>Submit another receipt</button>
-            <a href="/" style={{...S.bback,display:'block',textAlign:'center',textDecoration:'none',marginTop:8}}>🏠 Main Menu</a>
+            <a href="/crew" style={{...S.bback,display:'block',textAlign:'center',textDecoration:'none',marginTop:8}}>🏠 Main Menu</a>
           </>
         ) : <>
           <button style={{...S.bprimary,opacity:canProceed()&&!submitting?1:.4}} onClick={next} disabled={!canProceed()||submitting}>
             {submitting?'Submitting...':step===4?'Submit receipt':'Continue'}
           </button>
-          {step>1
-            ? <button style={S.bback} onClick={back}>← Back</button>
-            : <a href="/" style={{...S.bback,display:'block',textAlign:'center',textDecoration:'none',marginTop:8}}>🏠 Main Menu</a>
-          }
+          {step>1 && <button style={S.bback} onClick={back}>← Back</button>}
         </>}
       </div>
     </div>

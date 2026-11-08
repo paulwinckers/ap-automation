@@ -166,9 +166,8 @@ export default function FieldIncident() {
   function header() {
     return (
       <div style={S.header}>
-        <a href="/" title="Home"><img src="/darios-logo.png" alt="Darios" style={S.logo} /></a>
+        <a href="/crew" title="Home"><img src="/darios-logo.png" alt="Darios" style={S.logo} /></a>
         <span style={S.title}>🚨 Safety Incident Report</span>
-        <a href="/" style={S.home}>🏠 Home</a>
       </div>
     );
   }
@@ -186,7 +185,7 @@ export default function FieldIncident() {
                   onClick={() => { setDoneId(null); setWhat(''); setInjury(''); setAction(''); setPeople([]); setWitnesses([]); setPhotos([]); setSentMedical(null); setFactors([]); setWorksafe(null); setDamage(null); setDamageDesc(''); setEmpSignoff(''); setAck(false); setMgrSignoff(''); setMgrAck(false); }}>
             Report another
           </button>
-          <a href="/" style={{ display: 'inline-block', marginTop: 14, color: '#94a3b8', fontSize: 13 }}>← Back to Home</a>
+          <a href="/crew" style={{ display: 'inline-block', marginTop: 14, color: '#94a3b8', fontSize: 13 }}>← Back to Main Menu</a>
         </div>
       </div>
     );

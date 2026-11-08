@@ -205,7 +205,7 @@ export default function FieldWorkTicket() {
       {/* Header */}
       <div style={S.header}>
         <div style={S.headerTop}>
-          <a href="/" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }} title="Home">
+          <a href="/crew" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }} title="Home">
             <img src="/darios-logo.png" alt="Dario's" style={{ height: 30, filter: 'brightness(0) invert(1)' }} />
           </a>
           {step > 1 && selectedTicket && (

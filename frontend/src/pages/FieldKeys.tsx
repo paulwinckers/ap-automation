@@ -307,9 +307,8 @@ export default function FieldKeys() {
   return (
     <div style={S.page}>
       <div style={S.header}>
-        <a href="/" title="Home"><img src="/darios-logo.png" alt="Darios" style={S.logo} /></a>
+        <a href="/crew" title="Home"><img src="/darios-logo.png" alt="Darios" style={S.logo} /></a>
         <span style={S.title}>🔑 Key Box</span>
-        <a href="/" style={S.homeBtn}>🏠 Home</a>
       </div>
 
       <div style={S.body}>

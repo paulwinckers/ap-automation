@@ -827,7 +827,7 @@ export default function FieldProject() {
         <div style={HDR}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, marginBottom: 8 }}>
             <a href="/field/project" style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(255,255,255,0.15)', borderRadius: 20, padding: '5px 12px' }}>
-              ← Home
+              ← Projects
             </a>
             <button
               onClick={openCO}

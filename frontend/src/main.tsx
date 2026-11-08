@@ -59,6 +59,7 @@ import EmergencyReset         from './pages/EmergencyReset';
 import InvoiceSummaryReport   from './pages/InvoiceSummaryReport';
 import MyWork                 from './pages/MyWork';
 import FieldHome              from './pages/FieldHome';
+import FieldShell             from './components/FieldShell';
 import OfficeHome             from './pages/OfficeHome';
 
 /** Wrap a page in the office sidebar shell */
@@ -82,33 +83,33 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/emergency-reset" element={<EmergencyReset />} />
 
         {/* Field crew — no shell, phone-optimised, no login required */}
-        <Route path="/field"             element={<FieldSubmit />} />
-        <Route path="/field/work-ticket" element={<FieldWorkTicket />} />
+        <Route path="/field"             element={<FieldShell lift={110}><FieldSubmit /></FieldShell>} />
+        <Route path="/field/work-ticket" element={<FieldShell lift={110}><FieldWorkTicket /></FieldShell>} />
         {/* New Opportunity — access removed for now (kept for easy re-enable)
         <Route path="/field/opportunity" element={<FieldOpportunity />} /> */}
         {/* Contacts — public (no login), moved up into Field Staff */}
-        <Route path="/field/contacts"    element={<PropertyLookup />} />
-        <Route path="/field/issue"          element={<FieldIssue />} />
-        <Route path="/field/purchase-order" element={<FieldPurchaseOrder />} />
-        <Route path="/field/amend-po"       element={<FieldAmendPO />} />
-        <Route path="/keys/scan/:id"        element={<KeyScan />} />
-        <Route path="/field/keys"           element={<FieldKeys />} />
-        <Route path="/field/safety"           element={<FieldSafetyTalk />} />
-        <Route path="/field/documents"          element={<FieldDocuments />} />
-        <Route path="/field/inspection"         element={<FieldInspection />} />
-        <Route path="/field/incident"           element={<FieldIncident />} />
-        <Route path="/field/vehicle-inspection"  element={<FieldVehicleInspection />} />
-        <Route path="/field/checkin/:token"     element={<FieldCheckin />} />
-        <Route path="/field/project"            element={<FieldProjectLookup />} />
-        <Route path="/field/project/:oppId"     element={<FieldProject />} />
-        <Route path="/field/maintenance"        element={<FieldMaintenanceLookup />} />
-        <Route path="/field/maintenance/:oppId" element={<FieldMaintenance />} />
+        <Route path="/field/contacts"    element={<FieldShell><PropertyLookup /></FieldShell>} />
+        <Route path="/field/issue"          element={<FieldShell><FieldIssue /></FieldShell>} />
+        <Route path="/field/purchase-order" element={<FieldShell><FieldPurchaseOrder /></FieldShell>} />
+        <Route path="/field/amend-po"       element={<FieldShell><FieldAmendPO /></FieldShell>} />
+        <Route path="/keys/scan/:id"        element={<FieldShell><KeyScan /></FieldShell>} />
+        <Route path="/field/keys"           element={<FieldShell><FieldKeys /></FieldShell>} />
+        <Route path="/field/safety"           element={<FieldShell><FieldSafetyTalk /></FieldShell>} />
+        <Route path="/field/documents"          element={<FieldShell><FieldDocuments /></FieldShell>} />
+        <Route path="/field/inspection"         element={<FieldShell><FieldInspection /></FieldShell>} />
+        <Route path="/field/incident"           element={<FieldShell><FieldIncident /></FieldShell>} />
+        <Route path="/field/vehicle-inspection"  element={<FieldShell><FieldVehicleInspection /></FieldShell>} />
+        <Route path="/field/checkin/:token"     element={<FieldShell><FieldCheckin /></FieldShell>} />
+        <Route path="/field/project"            element={<FieldShell><FieldProjectLookup /></FieldShell>} />
+        <Route path="/field/project/:oppId"     element={<FieldShell><FieldProject /></FieldShell>} />
+        <Route path="/field/maintenance"        element={<FieldShell><FieldMaintenanceLookup /></FieldShell>} />
+        <Route path="/field/maintenance/:oppId" element={<FieldShell><FieldMaintenance /></FieldShell>} />
 
         {/* Field Ops — login required */}
         <Route path="/ops/issues"        element={<RequireAuth area="operations"><Office><IssuesDashboard /></Office></RequireAuth>} />
         <Route path="/ops/crew-schedule" element={<RequireAuth area="operations"><Office><CrewSchedule /></Office></RequireAuth>} />
         <Route path="/ops/safety-talks"  element={<RequireAuth area="operations"><Office><SafetyTalksAdmin /></Office></RequireAuth>} />
-        <Route path="/ops/time-tracking" element={<TimeTracking />} />
+        <Route path="/ops/time-tracking" element={<FieldShell><TimeTracking /></FieldShell>} />
         <Route path="/ops/contacts"      element={<RequireAuth area="customers"><Office><PropertyLookup /></Office></RequireAuth>} />
         <Route path="/keys/admin"        element={<RequireAuth area="operations"><Office><KeysAdmin /></Office></RequireAuth>} />
         <Route path="/ops/documents"          element={<RequireAuth area="operations"><Office><DocumentsAdmin /></Office></RequireAuth>} />

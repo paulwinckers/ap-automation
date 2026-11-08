@@ -1376,7 +1376,7 @@ export default function FieldSafetyTalk() {
         borderBottom: '1px solid #1e293b',
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
-        <a href="/" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none', flexShrink: 0 }} title="Home">
+        <a href="/crew" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none', flexShrink: 0 }} title="Home">
           <img src="/darios-logo.png" alt="Darios" style={{ height: 28, objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
         </a>
         <div>

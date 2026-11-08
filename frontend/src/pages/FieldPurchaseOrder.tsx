@@ -445,13 +445,10 @@ export default function FieldPurchaseOrder() {
     return (
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-          <a href="/" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }} title="Home">
+          <a href="/crew" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }} title="Home">
             <img src="/darios-logo.png" alt="Darios" style={{ height: 28, objectFit: 'contain' }} />
           </a>
           <span style={{ color: '#64748b', fontSize: 12 }}>Purchase Order</span>
-          <a href="/" style={{ marginLeft: 'auto', color: '#475569', fontSize: 13, textDecoration: 'none', padding: '4px 10px', borderRadius: 6, border: '1px solid #334155' }}>
-            🏠 Home
-          </a>
         </div>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{title}</h2>
       </div>
@@ -1067,8 +1064,8 @@ export default function FieldPurchaseOrder() {
         }}>
           + Create Another PO
         </button>
-        <a href="/" style={{ display: 'block', textAlign: 'center', color: '#475569', fontSize: 14, marginTop: 16, textDecoration: 'none' }}>
-          🏠 Back to Home
+        <a href="/crew" style={{ display: 'block', textAlign: 'center', color: '#475569', fontSize: 14, marginTop: 16, textDecoration: 'none' }}>
+          🏠 Back to Main Menu
         </a>
       </div>
     </div>

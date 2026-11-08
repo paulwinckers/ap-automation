@@ -199,7 +199,7 @@ export default function FieldDocuments() {
       {/* Header */}
       <div style={{ background: '#1e293b', padding: '20px 20px 16px', marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-          <a href="/" style={{ color: '#64748b', fontSize: 20, textDecoration: 'none' }}>←</a>
+          <a href="/crew" style={{ color: '#64748b', fontSize: 20, textDecoration: 'none' }}>←</a>
           <h1 style={{ margin: 0, color: '#fff', fontSize: 20, fontWeight: 800, flex: 1 }}>
             📋 Company Documents
           </h1>
