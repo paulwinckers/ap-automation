@@ -2335,3 +2335,29 @@ export interface MyProjectResult {
 export async function myProjectLookup(): Promise<MyProjectResult> {
   return request('GET', `/checkin/my-project`);
 }
+
+// ── Portal usage (page views) ─────────────────────────────────────────────────
+
+/** Record that a page was opened. Fire-and-forget; never throws. Works signed in or not. */
+export function trackPageView(v: { path: string; tab?: string | null; device?: string; name?: string }): void {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = localStorage.getItem('ap_token');
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    fetch(`${BASE}/usage/pageview`, { method: 'POST', headers, body: JSON.stringify(v), keepalive: true })
+      .catch(() => { /* offline — skip */ });
+  } catch { /* storage blocked — skip */ }
+}
+
+export interface UsagePage { path: string; kind: 'office' | 'field'; views: number; people: number; last_at: string }
+export interface UsagePerson {
+  who: string; user_id: number | null; kind: 'office' | 'field'; views: number; pages: number;
+  days_active: number; last_at: string; top_pages: { path: string; views: number }[];
+}
+export interface UsageReport {
+  days: number; since: string; total_views: number;
+  by_page: UsagePage[]; by_person: UsagePerson[]; by_day: { day: string; kind: string; views: number }[];
+}
+export async function getUsageReport(days = 7): Promise<UsageReport> {
+  return request('GET', `/admin/usage?days=${days}`);
+}

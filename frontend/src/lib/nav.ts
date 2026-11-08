@@ -86,6 +86,7 @@ export const OFFICE_SECTIONS: OfficeSection[] = [
       { path: '/users',          icon: '👤', label: 'Users',          sub: 'Logins & access' },
       { path: '/settings/email', icon: '✉️', label: 'Email Settings', sub: 'Timing & recipients of automated emails' },
       { path: '/ops/backups',    icon: '💾', label: 'Backups',        sub: 'Database snapshots' },
+      { path: '/ops/usage',      icon: '📈', label: 'Usage',          sub: 'Which pages people open, how often' },
     ],
   },
   {

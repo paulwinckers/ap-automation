@@ -60,6 +60,8 @@ import FieldHome              from './pages/FieldHome';
 import FieldShell             from './components/FieldShell';
 import OfficeHome             from './pages/OfficeHome';
 import FieldFeed              from './pages/FieldFeed';
+import UsageAdmin             from './pages/UsageAdmin';
+import PageViewTracker        from './components/PageViewTracker';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -69,6 +71,7 @@ function Office({ children }: { children: React.ReactNode }) {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
+      <PageViewTracker />
       <Routes>
 
         {/* Landing */}
@@ -125,6 +128,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/users"     element={<RequireAuth area="admin"><Office><UserAdmin /></Office></RequireAuth>} />
         <Route path="/settings/email" element={<RequireAuth area="admin"><Office><EmailSettings /></Office></RequireAuth>} />
         <Route path="/ops/backups"     element={<RequireAuth area="admin"><Office><BackupsAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/usage"       element={<RequireAuth area="admin"><Office><UsageAdmin /></Office></RequireAuth>} />
 
         {/* Personal worklist */}
         <Route path="/my-work" element={<RequireAuth><Office><MyWork /></Office></RequireAuth>} />

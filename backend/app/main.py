@@ -56,6 +56,7 @@ from app.api.project_checkin import (
 from app.api.maintenance_field import router as maintenance_field_router
 from app.api.field_conversations import router as field_conversations_router
 from app.api.invoice_summary import router as invoice_summary_router
+from app.api.usage import router as usage_router
 from app.core.config import settings
 from app.core.database import Database
 from app.services.qbo import qbo_auth_router
@@ -520,6 +521,17 @@ async def lifespan(app: FastAPI):
                 PRIMARY KEY (user_id, item_key)
             )
         """,
+        "page_views": """
+            CREATE TABLE IF NOT EXISTS page_views (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                path      TEXT    NOT NULL,          -- record ids folded to :id
+                kind      TEXT    NOT NULL,          -- office | field
+                user_id   INTEGER,                   -- signed-in person, if any
+                who       TEXT,                      -- their name, or the crew name a phone remembers
+                device    TEXT,                      -- random id kept on the device
+                viewed_at TEXT    NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:
@@ -532,6 +544,10 @@ async def lifespan(app: FastAPI):
                 logger.info(f"DB startup: {tbl} created successfully")
             except Exception as e2:
                 logger.error(f"DB startup: FAILED to create {tbl}: {e2}")
+    try:
+        await _db._x("CREATE INDEX IF NOT EXISTS idx_page_views_at ON page_views(viewed_at)")
+    except Exception as e:
+        logger.warning(f"DB startup: page_views index: {e}")
     # Column migrations — ALTER TABLE for columns added after initial schema deploy.
     # D1 has no IF NOT EXISTS for ALTER TABLE, so we probe first.
     _COLUMN_MIGRATIONS = [
@@ -743,3 +759,4 @@ app.include_router(checkin_public_router)
 app.include_router(maintenance_field_router)
 app.include_router(field_conversations_router)
 app.include_router(invoice_summary_router, dependencies=[Depends(require_access)])
+app.include_router(usage_router)
