@@ -18,6 +18,8 @@ Flow:
 """
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import time
 from datetime import date, datetime
@@ -1140,6 +1142,25 @@ class QBOClient:
 qbo_auth_router = APIRouter(prefix="/auth/qbo", tags=["auth"])
 
 
+_STATE_TTL = 15 * 60
+
+
+def _make_oauth_state() -> str:
+    """Signed, short-lived state so only a flow started from /connect can complete."""
+    ts = str(int(time.time()))
+    sig = hmac.new(settings.SECRET_KEY.encode(), f"qbo:{ts}".encode(), hashlib.sha256).hexdigest()
+    return f"{ts}.{sig}"
+
+
+def _valid_oauth_state(state: str) -> bool:
+    try:
+        ts, sig = state.split(".", 1)
+        good = hmac.new(settings.SECRET_KEY.encode(), f"qbo:{ts}".encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig, good) and 0 <= time.time() - int(ts) <= _STATE_TTL
+    except (ValueError, AttributeError):
+        return False
+
+
 @qbo_auth_router.get("/connect")
 async def qbo_connect():
     """
@@ -1151,7 +1172,7 @@ async def qbo_connect():
         "response_type": "code",
         "scope":         SCOPE,
         "redirect_uri":  "https://ap-automation-production.up.railway.app/auth/qbo/callback",
-        "state":         "ap-automation-setup",
+        "state":         _make_oauth_state(),
     }
     return RedirectResponse(f"{INTUIT_AUTH_URL}?{urlencode(params)}")
 
@@ -1164,6 +1185,13 @@ async def qbo_callback(code: str, realmId: str, state: str):
     Store the refresh_token as QBO_REFRESH_TOKEN in your .env.
     Store realmId as QBO_REALM_ID in your .env.
     """
+    from fastapi import HTTPException
+    if not _valid_oauth_state(state):
+        raise HTTPException(status_code=400, detail="This QuickBooks link has expired. Start again from /auth/qbo/connect.")
+    if settings.QBO_REALM_ID and realmId != settings.QBO_REALM_ID:
+        # Only Darios's own QuickBooks company may be connected.
+        logger.warning(f"QBO callback refused for realm {realmId}")
+        raise HTTPException(status_code=403, detail="That isn't the Darios QuickBooks company.")
     async with httpx.AsyncClient() as http:
         resp = await http.post(
             INTUIT_TOKEN_URL,
@@ -1188,12 +1216,8 @@ async def qbo_callback(code: str, realmId: str, state: str):
     await set_setting("QBO_REFRESH_TOKEN", refresh_token)
     logger.info("New QBO refresh token saved to D1")
 
+    # Never echo the token back — it's saved to D1, where the app reads it.
     return {
         "message": "✅ QBO reconnected successfully. Token saved — no manual steps needed.",
-        "QBO_REALM_ID":      realmId,
-        "QBO_REFRESH_TOKEN": refresh_token,
-        "note": (
-            "The refresh token has been saved to D1 automatically. "
-            "Also update QBO_REFRESH_TOKEN in Railway env vars so it survives a full redeploy."
-        ),
+        "QBO_REALM_ID": realmId,
     }

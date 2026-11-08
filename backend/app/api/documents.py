@@ -11,7 +11,9 @@ import mimetypes
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+
+from app.api.auth import require_access
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -56,7 +58,7 @@ async def list_folders():
         await db.close()
 
 
-@router.post("/folders")
+@router.post("/folders", dependencies=[Depends(require_access)])
 async def create_folder(body: FolderCreate):
     """Create a folder (optionally nested under parent_id)."""
     name = (body.name or "").strip()
@@ -103,7 +105,7 @@ async def _descendant_ids(db: Database, folder_id: int) -> set[int]:
     return out
 
 
-@router.patch("/folders/{folder_id}")
+@router.patch("/folders/{folder_id}", dependencies=[Depends(require_access)])
 async def update_folder(folder_id: int, body: FolderUpdate):
     """Rename a folder and/or move it under a new parent (-1 → move to root)."""
     db = Database()
@@ -140,7 +142,7 @@ async def update_folder(folder_id: int, body: FolderUpdate):
         await db.close()
 
 
-@router.delete("/folders/{folder_id}")
+@router.delete("/folders/{folder_id}", dependencies=[Depends(require_access)])
 async def delete_folder(folder_id: int):
     """Delete a folder — only when it's empty (no subfolders, no documents)."""
     db = Database()
@@ -164,7 +166,7 @@ async def delete_folder(folder_id: int):
         await db.close()
 
 
-@router.patch("/{doc_id}/move")
+@router.patch("/{doc_id}/move", dependencies=[Depends(require_access)])
 async def move_document(doc_id: int, body: DocMove):
     """Move a document into a folder (folder_id null → unfiled)."""
     db = Database()
@@ -201,7 +203,7 @@ async def list_documents():
 
 # ── Upload ────────────────────────────────────────────────────────────────────
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_access)])
 async def upload_document(
     title:       str            = Form(...),
     description: Optional[str] = Form(default=None),
@@ -316,7 +318,7 @@ async def get_document_file(doc_id: int):
 
 # ── Delete (soft) ─────────────────────────────────────────────────────────────
 
-@router.delete("/{doc_id}")
+@router.delete("/{doc_id}", dependencies=[Depends(require_access)])
 async def delete_document(doc_id: int):
     """Soft-delete a document (admin)."""
     db = Database()

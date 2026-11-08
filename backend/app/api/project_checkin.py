@@ -31,6 +31,8 @@ import uuid
 
 import anthropic as _anthropic
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+
+from app.api.auth import require_access
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
@@ -1736,7 +1738,7 @@ async def save_project_strategy(
     return {"ok": True}
 
 
-@public_router.get("/project/{opp_id}/scope-probe")
+@public_router.get("/project/{opp_id}/scope-probe", dependencies=[Depends(require_access)])
 async def scope_probe(opp_id: int):
     """
     Dev endpoint: returns raw field names + values from every entity that might
@@ -1783,7 +1785,7 @@ async def scope_probe(opp_id: int):
     return results
 
 
-@public_router.get("/project/{opp_id}/activity-probe")
+@public_router.get("/project/{opp_id}/activity-probe", dependencies=[Depends(require_access)])
 async def activity_probe(opp_id: int):
     """Dev endpoint: returns raw Notes HTML for each activity so we can see Aspire's comment format."""
     try:
@@ -1813,7 +1815,7 @@ async def activity_probe(opp_id: int):
         raise HTTPException(500, str(e))
 
 
-@public_router.get("/debug/job-search")
+@public_router.get("/debug/job-search", dependencies=[Depends(require_access)])
 async def debug_job_search(name: str = "", opp_number: int = None):
     """
     Dev endpoint: search Aspire for opportunities matching a name or number, then fetch

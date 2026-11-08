@@ -14,7 +14,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+
+from app.api.auth import require_access
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.core.config import settings
@@ -622,7 +624,7 @@ async def get_nightly_report(
     return HTMLResponse(content=html)
 
 
-@router.post("/nightly-report/send")
+@router.post("/nightly-report/send", dependencies=[Depends(require_access)])
 async def send_nightly_report(branch: Optional[str] = Query(None)):
     """Manually trigger the construction report email."""
     try:
@@ -633,7 +635,7 @@ async def send_nightly_report(branch: Optional[str] = Query(None)):
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
 
-@router.get("/nightly-report/send-test", response_class=HTMLResponse)
+@router.get("/nightly-report/send-test", response_class=HTMLResponse, dependencies=[Depends(require_access)])
 async def send_nightly_report_test(
     branch: Optional[str] = Query(None),
     to: Optional[str] = Query(None, description="Override recipients — single address for testing"),

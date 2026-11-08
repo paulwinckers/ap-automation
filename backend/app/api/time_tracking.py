@@ -19,9 +19,10 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from app.api.auth import _check_rate, _client_ip, _record_fail
 from app.core.database import Database
 from app.core.config import settings
 from app.services.aspire import AspireClient
@@ -160,15 +161,39 @@ class DriveTicketBody(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+def _public_member(m: dict) -> dict:
+    # PINs, emails and phones never leave the server: this list is public.
+    return {"ContactID": m.get("ContactID"), "FullName": m.get("FullName")}
+
+
+class PinBody(BaseModel):
+    pin: str
+
+
 @router.get("/crew-members")
 async def get_crew_members():
-    """Return active employees with EmployeePin — cached 10 min."""
+    """Active employees (id + name only) — cached 10 min."""
     try:
         members = await _get_crew_members()
-        return {"crew_members": members}
+        return {"crew_members": [_public_member(m) for m in members]}
     except Exception as e:
         logger.error(f"get_crew_members failed: {e}", exc_info=True)
         raise HTTPException(status_code=502, detail=f"Failed to fetch crew members: {e}")
+
+
+@router.post("/verify-pin")
+async def verify_pin(body: PinBody, request: Request):
+    """Check a crew member's Aspire EmployeePin on the server; returns who it belongs to."""
+    limits = [(f"pin:ip:{_client_ip(request)}", 10, 600)]
+    _check_rate(limits)
+    pin = body.pin.strip().lower()
+    members = await _get_crew_members() if pin else []
+    match = next((m for m in members
+                  if (m.get("EmployeePin") or "").strip().lower() == pin), None)
+    if not match:
+        _record_fail(limits)
+        raise HTTPException(status_code=401, detail="PIN not recognised. Check with your supervisor.")
+    return {"member": _public_member(match)}
 
 
 @router.get("/session")

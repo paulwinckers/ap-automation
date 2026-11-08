@@ -12,7 +12,9 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+
+from app.api.auth import require_access
 from pydantic import BaseModel
 
 from app.core.config import settings
@@ -258,7 +260,7 @@ def _render_incident_email(**k) -> str:
 
 # ── List (admin) ────────────────────────────────────────────────────────────────
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_access)])
 async def list_incidents(
     start_date: Optional[str] = None,
     end_date:   Optional[str] = None,
@@ -309,7 +311,7 @@ async def list_incidents(
 
 # ── Detail ──────────────────────────────────────────────────────────────────────
 
-@router.get("/{incident_id}")
+@router.get("/{incident_id}", dependencies=[Depends(require_access)])
 async def get_incident(incident_id: int):
     """Full incident detail, with short-lived presigned photo URLs."""
     db = await _get_db()
@@ -350,7 +352,7 @@ class StatusBody(BaseModel):
     reviewed_by: Optional[str] = None
 
 
-@router.patch("/{incident_id}/status")
+@router.patch("/{incident_id}/status", dependencies=[Depends(require_access)])
 async def set_incident_status(incident_id: int, body: StatusBody):
     """Set review status: open | reviewed | closed."""
     if body.status not in STATUSES:
@@ -373,7 +375,7 @@ class SignOffBody(BaseModel):
     role: str = "manager"   # 'manager' | 'employee'
 
 
-@router.patch("/{incident_id}/signoff")
+@router.patch("/{incident_id}/signoff", dependencies=[Depends(require_access)])
 async def sign_off_incident(incident_id: int, body: SignOffBody):
     """Sign-off by manager or employee — stamps who signed and when. Empty name clears it."""
     name = (body.signed_off_by or "").strip()

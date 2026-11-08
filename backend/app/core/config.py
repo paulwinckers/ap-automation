@@ -62,7 +62,8 @@ class Settings(BaseSettings):
         return self.MS_SEND_FROM or self.MS_AP_INBOX
 
     # Auth
-    SECRET_KEY:          str = "change-me-in-production"  # set via Railway env var
+    SECRET_KEY:          str = "change-me-in-production"  # set via Railway env var (startup refuses the default)
+    CORS_ORIGIN_REGEX:   str = r"https://([a-z0-9-]+\.)?(darios-ap|darios-accounting)\.pages\.dev|http://(localhost|127\.0\.0\.1)(:\d+)?"
     TOKEN_EXPIRE_HOURS:  int = 24
     # Shared secret for server-to-server callers (the MCP connector / automation).
     # When set (via Railway env), protected endpoints accept it as the X-API-Key

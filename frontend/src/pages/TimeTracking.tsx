@@ -17,9 +17,6 @@ const BASE = import.meta.env.VITE_API_URL || 'https://ap-automation-production.u
 interface CrewMember {
   ContactID:   number;
   FullName:    string;
-  Email:       string;
-  MobilePhone: string;
-  EmployeePin: string;
 }
 
 interface TimeSession {
@@ -1330,9 +1327,6 @@ export default function TimeTracking() {
             setEmployee({
               ContactID:   stored.employee_id,
               FullName:    stored.employee_name,
-              Email:       '',
-              MobilePhone: '',
-              EmployeePin: '',
             });
             setPhase('main');
           } else {
@@ -1378,12 +1372,12 @@ export default function TimeTracking() {
     const pin = pinInput.trim();
     if (!pin) { setPinError('Enter your PIN'); return; }
 
-    const pinLower = pin.toLowerCase();
-    const match = crewMembers.find(m =>
-      m.EmployeePin && m.EmployeePin.trim().toLowerCase() === pinLower
-    );
-    if (!match) {
-      setPinError('PIN not recognised. Check with your supervisor.');
+    // The server checks the PIN; PINs are never sent to the phone.
+    let match: CrewMember;
+    try {
+      match = (await apiFetch<{ member: CrewMember }>('POST', '/time/verify-pin', { pin })).member;
+    } catch (e) {
+      setPinError(e instanceof Error ? e.message : 'PIN not recognised. Check with your supervisor.');
       setPinInput('');
       return;
     }

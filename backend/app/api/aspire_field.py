@@ -15,7 +15,9 @@ import uuid
 from datetime import date
 from typing import List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+
+from app.api.auth import require_access
 
 from app.core.config import settings
 from app.services.aspire import AspireClient
@@ -351,7 +353,7 @@ async def get_employees():
 
 # ── Opportunity probe ────────────────────────────────────────────────────────
 
-@router.get("/clock-times/probe")
+@router.get("/clock-times/probe", dependencies=[Depends(require_access)])
 async def probe_clock_times():
     """
     Probe the Aspire ClockTimes endpoint.
@@ -399,7 +401,7 @@ async def probe_clock_times():
     return result
 
 
-@router.get("/opportunities/probe")
+@router.get("/opportunities/probe", dependencies=[Depends(require_access)])
 async def probe_opportunity_fields():
     """Return all fields on a sample Opportunity — used to find Status/Type field names."""
     _check_credentials()
@@ -419,7 +421,7 @@ async def probe_opportunity_fields():
     }
 
 
-@router.get("/issues/probe")
+@router.get("/issues/probe", dependencies=[Depends(require_access)])
 async def probe_issues():
     """
     Probe the Aspire Issues endpoint — check if it exists, what fields it has,
@@ -445,85 +447,7 @@ async def probe_issues():
     return results
 
 
-@router.get("/opportunities/notes-probe")
-async def probe_notes_field(opp_id: int):
-    """
-    Try PATCHing a real opportunity with different notes field names.
-    Hit: GET /aspire/field/opportunities/notes-probe?opp_id=<any_existing_opp_id>
-    """
-    _check_credentials()
-    # First find which URL format works
-    url_format = None
-    for fmt in [f"Opportunities({opp_id})", f"Opportunities/{opp_id}"]:
-        try:
-            await _aspire._patch(fmt, {"EstimatorNotes": "__url_test__"})
-            url_format = fmt
-            break
-        except Exception as e:
-            pass
-
-    if not url_format:
-        return {"opp_id": opp_id, "error": "PATCH not supported on Opportunities — both URL formats returned 404/405", "results": {}}
-
-    candidates = [
-        "Notes", "SalesNotes", "InternalNotes", "EstimatorNotes",
-        "Description", "CustomerNotes", "PrivateNotes", "OpportunityNotes",
-        "Comments", "Memo",
-    ]
-    results = {}
-    for field in candidates:
-        try:
-            await _aspire._patch(url_format, {field: f"__probe_{field}__"})
-            results[field] = "SUCCESS"
-            logger.info(f"Notes probe: {field} WRITABLE via PATCH {url_format}")
-        except Exception as e:
-            results[field] = f"FAIL: {str(e)[:80]}"
-    return {"opp_id": opp_id, "url_format": url_format, "results": results}
-
-
-@router.get("/opportunities/salesrep-probe")
-async def probe_salesrep_field(salesperson_id: int):
-    """
-    Try posting a minimal opportunity with different SalesRep field names.
-    Tells us which field name Aspire actually accepts for write.
-    Hit: GET /aspire/field/opportunities/salesrep-probe?salesperson_id=<id>
-    """
-    _check_credentials()
-    base = {
-        "OpportunityName":    "__probe_delete_me__",
-        "DivisionID":         2,
-        "BranchID":           settings.ASPIRE_BRANCH_ID or 2,
-        "OpportunityStatusID": 9,
-        "OpportunityType":    "Contract",
-        "EstimatedDollars":   0,
-    }
-    candidates = [
-        "SalesRepContactID",
-        "SalesRepID",
-        "SalesRepresentativeID",
-        "SalesPersonID",
-        "SalesPersonContactID",
-        "SalesmanID",
-        "AssignedToContactID",
-        "OwnerContactID",
-    ]
-    results = {}
-    for field in candidates:
-        body = {**base, "OpportunityName": f"__probe_{field}__", field: salesperson_id}
-        try:
-            res = await _aspire._post("Opportunities", body)
-            results[field] = f"SUCCESS — id={res}"
-            # Immediately log so we know what worked
-            logger.info(f"SalesRep probe: {field}={salesperson_id} SUCCEEDED: {res}")
-        except Exception as e:
-            err_text = str(e)[:120]
-            results[field] = f"FAIL: {err_text}"
-    return {"salesperson_id": salesperson_id, "results": results}
-
-
-# ── Work ticket field probe ───────────────────────────────────────────────────
-
-@router.get("/work-tickets/probe")
+@router.get("/work-tickets/probe", dependencies=[Depends(require_access)])
 async def probe_work_ticket_fields():
     """
     Return all fields present on a sample WorkTicket.
@@ -533,7 +457,7 @@ async def probe_work_ticket_fields():
     return await _aspire.probe_work_ticket_fields()
 
 
-@router.get("/debug-property")
+@router.get("/debug-property", dependencies=[Depends(require_access)])
 async def debug_property(property_id: int = Query(...)):
     """Debug: fetch a single Property record to see available address fields."""
     _check_credentials()
@@ -1505,7 +1429,7 @@ async def search_catalog_items(q: str = Query(default="", description="Search te
         return {"items": []}
 
 
-@router.get("/purchase-order/catalog-probe")
+@router.get("/purchase-order/catalog-probe", dependencies=[Depends(require_access)])
 async def probe_catalog_items():
     """Probe CatalogItems endpoint — tries multiple strategies and reports what works."""
     _check_credentials()
@@ -2222,7 +2146,7 @@ async def get_work_ticket_material_items(work_ticket_id: int):
     return {"work_ticket_id": work_ticket_id, "items": items}
 
 
-@router.get("/purchase-order/uom-probe")
+@router.get("/purchase-order/uom-probe", dependencies=[Depends(require_access)])
 async def probe_uom_endpoints():
     """Probe Aspire for UOM / Unit-of-Measure endpoints. Development tool; read-only."""
     _check_credentials()
@@ -2237,7 +2161,7 @@ async def probe_uom_endpoints():
     return results
 
 
-@router.get("/purchase-order/probe")
+@router.get("/purchase-order/probe", dependencies=[Depends(require_access)])
 async def probe_receipts():
     """
     Probe the Aspire Receipts endpoint — lists fields on a recent receipt.
@@ -2258,45 +2182,3 @@ async def probe_receipts():
         return {"fields": [], "sample": {}}
     except Exception as e:
         return {"error": str(e)}
-
-
-@router.get("/visit-notes/probe")
-async def probe_visit_notes(ticket_id: int = Query(default=16914)):
-    """Probe VisitNotes endpoint and WorkTicket PATCH to find customer-portal-visible note path."""
-    _check_credentials()
-    results = {}
-
-    # 1. Try GET VisitNotes
-    for ep in ["VisitNotes", "WorkTicketNotes", "PropertyNotes", "CustomerNotes"]:
-        try:
-            data = await _aspire._get(ep, {"$top": "3"})
-            items = _aspire._extract_list(data)
-            results[f"GET_{ep}"] = {
-                "status": "OK",
-                "count": len(items),
-                "fields": sorted(items[0].keys()) if items else [],
-                "sample": items[0] if items else {},
-            }
-        except Exception as e:
-            results[f"GET_{ep}"] = {"status": f"FAIL: {str(e)[:100]}"}
-
-    # 2. Try PATCH WorkTicket Notes field
-    for url_fmt in [f"WorkTickets({ticket_id})", f"WorkTickets/{ticket_id}"]:
-        for field in ["Notes", "ProductionNote", "CustomerNote", "PublicNote"]:
-            try:
-                await _aspire._patch(url_fmt, {field: "__probe_visit_note__"})
-                results[f"PATCH_{url_fmt}_{field}"] = "SUCCESS"
-            except Exception as e:
-                results[f"PATCH_{url_fmt}_{field}"] = f"FAIL: {str(e)[:80]}"
-
-    # 3. Try POST VisitNotes with minimal body
-    try:
-        r = await _aspire._post("VisitNotes", {
-            "WorkTicketID": ticket_id,
-            "Note": "__probe__",
-        })
-        results["POST_VisitNotes"] = f"SUCCESS: {r}"
-    except Exception as e:
-        results["POST_VisitNotes"] = f"FAIL: {str(e)[:120]}"
-
-    return results

@@ -900,7 +900,7 @@ async def email_preview(company_id: int, week_start: str | None = None, db: Data
     return HTMLResponse(_render_report_html(report))
 
 
-@router.post("/{company_id}/email")
+@router.post("/{company_id}/email", dependencies=[Depends(require_access)])
 async def email_report(company_id: int, body: EmailBody, week_start: str | None = None,
                        db: Database = Depends(get_db)):
     """Send the customer report by email. The frontend previews and requires an

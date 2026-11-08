@@ -25,7 +25,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.aspire_field import router as aspire_field_router
 from app.api.crew_schedule import router as crew_schedule_router
 from app.api.time_tracking import router as time_tracking_router
-from app.api.auth import router as auth_router, require_access
+from app.api.auth import router as auth_router, require_access, _require_admin
 from app.api.keys import router as keys_router
 from app.api.safety_talks import router as safety_talks_router
 from app.api.construction_report import router as construction_report_router, start_scheduler as start_construction_scheduler, stop_scheduler as stop_construction_scheduler
@@ -107,6 +107,9 @@ async def seed_vendors_if_empty(db: Database):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if settings.SECRET_KEY == "change-me-in-production" and not settings.DEBUG:
+        # With the default key anyone could sign their own admin login. Refuse to start.
+        raise RuntimeError("SECRET_KEY is not set — set it in Railway before starting the API.")
     if not settings.ANTHROPIC_API_KEY:
         logger.error(
             "ANTHROPIC_API_KEY is not set — invoice extraction will fail with 401. "
@@ -663,9 +666,11 @@ app = FastAPI(
 
 # allow_credentials must NOT be used with allow_origins=["*"] — browsers reject it.
 # The frontend does not send cookies, so credentials=False is correct here.
+# Only our own sites may call the API from a browser. Server-to-server callers (the
+# Claude connector, schedulers) don't send an Origin and are unaffected.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -707,7 +712,7 @@ app.include_router(documents_router)
 app.include_router(push_router)
 app.include_router(site_inspections_router)
 app.include_router(safety_incidents_router)
-app.include_router(email_settings_router)
+app.include_router(email_settings_router, dependencies=[Depends(_require_admin)])
 app.include_router(vehicle_inspections_router)
 app.include_router(safety_pha_router)
 app.include_router(schedule_router, dependencies=[Depends(require_access)])
@@ -715,9 +720,9 @@ app.include_router(cx_router)
 app.include_router(spine_router)
 app.include_router(sales_router)
 app.include_router(estimates_router)
-app.include_router(backup_router)
+app.include_router(backup_router, dependencies=[Depends(_require_admin)])
 app.include_router(property_hazards_router)
-app.include_router(checkin_router)
+app.include_router(checkin_router, dependencies=[Depends(require_access)])
 app.include_router(checkin_public_router)
 app.include_router(maintenance_field_router)
 app.include_router(field_conversations_router)

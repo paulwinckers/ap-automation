@@ -9,14 +9,16 @@ POST /auth/users        — create a user (admin only)
 PUT  /auth/users/{id}   — update user name/role/active (admin only)
 POST /auth/users/{id}/reset-password  — set new password (admin only)
 """
+import hmac
 import logging
 import os
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt as _bcrypt
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from pydantic import BaseModel
@@ -228,19 +230,50 @@ class ChangePassword(BaseModel):
     new_password:     str
 
 
+# ── Brute-force guard ─────────────────────────────────────────────────────────
+# In-memory (single Railway instance): failed attempts per key within a window.
+_FAILS: dict[str, list[float]] = {}
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    return fwd.split(",")[0].strip() or (request.client.host if request.client else "?")
+
+
+def _check_rate(keys: list[tuple[str, int, int]]) -> None:
+    """keys = [(key, max_failures, window_seconds)]; 429 if any is over its limit."""
+    now = time.time()
+    for key, limit, window in keys:
+        recent = [t for t in _FAILS.get(key, []) if t > now - window]
+        _FAILS[key] = recent
+        if len(recent) >= limit:
+            raise HTTPException(status_code=429, detail="Too many attempts. Wait a few minutes and try again.")
+
+
+def _record_fail(keys: list[tuple[str, int, int]]) -> None:
+    now = time.time()
+    for key, _, _ in keys:
+        _FAILS.setdefault(key, []).append(now)
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/login")
 async def login(
+    request: Request,
     form: OAuth2PasswordRequestForm = Depends(),
     db: Database = Depends(get_db),
 ):
     """Email + password → JWT access token."""
+    limits = [(f"login:ip:{_client_ip(request)}", 30, 900),
+              (f"login:email:{form.username.strip().lower()}", 10, 900)]
+    _check_rate(limits)
     rows = await db._q(
         "SELECT * FROM users WHERE LOWER(email) = LOWER(?) AND active = 1",
         [form.username],
     )
     if not rows or not _verify_pw(form.password, rows[0]["password_hash"]):
+        _record_fail(limits)
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     user = rows[0]
@@ -395,14 +428,18 @@ async def update_user(
 
 
 @router.post("/emergency-reset")
-async def emergency_reset(body: EmergencyReset, db: Database = Depends(get_db)):
+async def emergency_reset(body: EmergencyReset, request: Request, db: Database = Depends(get_db)):
     """
     Emergency admin password reset — protected by ADMIN_RESET_PIN env var.
     Use this when locked out and no admin token is available.
     Creates user if not found, or updates password if found.
     """
+    limits = [(f"reset:ip:{_client_ip(request)}", 5, 3600), ("reset:all", 20, 3600)]
+    _check_rate(limits)
     pin = os.environ.get("ADMIN_RESET_PIN", "")
-    if not pin or body.pin != pin:
+    if not pin or not hmac.compare_digest(body.pin.encode(), pin.encode()):
+        _record_fail(limits)
+        logger.warning(f"Emergency reset: wrong PIN from {_client_ip(request)} for {body.email}")
         raise HTTPException(status_code=403, detail="Invalid PIN")
 
     pw_hash = _hash_pw(body.password)

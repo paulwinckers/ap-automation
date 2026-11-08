@@ -17,6 +17,8 @@ import csv
 import io
 import logging
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
+
+from app.api.auth import require_access
 from app.core.database import Database
 
 logger = logging.getLogger(__name__)
@@ -33,7 +35,7 @@ async def get_db() -> Database:
     return _db
 
 
-@router.post("/import")
+@router.post("/import", dependencies=[Depends(require_access)])
 async def import_vendors_csv(
     file: UploadFile = File(...),
     db: Database = Depends(get_db),

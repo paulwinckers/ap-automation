@@ -18,6 +18,8 @@ from typing import Optional
 import anthropic as _anthropic
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
+from app.api.auth import require_access
+
 from app.core.config import settings
 from app.core.database import Database
 from app.services import r2 as _r2
@@ -496,7 +498,7 @@ async def maintenance_lookup():
     return {"contracts": [], "loading": True}
 
 
-@router.get("/debug/opp-statuses")
+@router.get("/debug/opp-statuses", dependencies=[Depends(require_access)])
 async def debug_opp_statuses():
     """Return all OpportunityStatus records so we can see stage values."""
     try:
@@ -506,7 +508,7 @@ async def debug_opp_statuses():
         return {"error": str(e)}
 
 
-@router.get("/debug/opp-fields/{opp_id}")
+@router.get("/debug/opp-fields/{opp_id}", dependencies=[Depends(require_access)])
 async def debug_opp_fields(opp_id: int):
     """Return ALL fields on a single opportunity so we can find status/production flags."""
     try:
@@ -522,7 +524,7 @@ async def debug_opp_fields(opp_id: int):
         return {"error": str(e)}
 
 
-@router.get("/debug/tickets/{opp_id}")
+@router.get("/debug/tickets/{opp_id}", dependencies=[Depends(require_access)])
 async def debug_tickets(opp_id: int):
     """Test: fetch ticket summary for one opp and return raw results."""
     try:
@@ -543,7 +545,7 @@ async def debug_tickets(opp_id: int):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 
-@router.get("/debug/divisions")
+@router.get("/debug/divisions", dependencies=[Depends(require_access)])
 async def debug_divisions():
     """
     Dev endpoint: shows what DivisionName and OpportunityStatusName values

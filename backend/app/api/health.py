@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.api.auth import require_access
 
 router = APIRouter()
 
@@ -7,7 +9,7 @@ async def health():
     return {"status": "ok"}
 
 
-@router.get("/email/status")
+@router.get("/email/status", dependencies=[Depends(require_access)])
 async def email_status():
     """Return the current state of the email intake service."""
     from app.services.email_intake import email_intake
@@ -37,7 +39,7 @@ async def list_coa():
         return {"error": str(e)}
 
 
-@router.post("/email/trigger")
+@router.post("/email/trigger", dependencies=[Depends(require_access)])
 async def email_trigger():
     """Manually trigger one email poll cycle. Returns what was found and processed."""
     import logging

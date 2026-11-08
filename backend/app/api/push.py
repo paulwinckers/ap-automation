@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.database import Database
-from app.api.auth import optional_actor, current_actor
+from app.api.auth import optional_actor, current_actor, require_access
 
 router = APIRouter(prefix="/push", tags=["push"])
 logger = logging.getLogger(__name__)
@@ -186,7 +186,7 @@ async def my_status(test: bool = Query(False), user: dict = Depends(current_acto
     return out
 
 
-@router.post("/notify")
+@router.post("/notify", dependencies=[Depends(require_access)])
 async def notify_all(payload: NotifyPayload):
     """Send a push to EVERY subscribed device (broadcast — used by office staff after a document upload)."""
     if not settings.VAPID_PRIVATE_KEY or not settings.VAPID_PUBLIC_KEY:
