@@ -1,0 +1,195 @@
+:root {
+  --bg: #0b0f14;
+  --panel: #111827;
+  --card: #0f172a;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --border: rgba(255,255,255,0.10);
+  --pill: rgba(255,255,255,0.10);
+  --btn: #2563eb;
+  --btn2: rgba(255,255,255,0.10);
+  --danger: #dc2626;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.header {
+  padding: 18px 18px 8px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+h1 { margin: 0; font-size: 20px; }
+h2 { margin: 0 0 12px 0; font-size: 16px; }
+h3 { margin: 0 0 10px 0; font-size: 14px; color: #d1d5db; }
+
+.sub { color: var(--muted); font-size: 13px; margin-top: 6px; }
+.muted { color: var(--muted); }
+.tiny { font-size: 12px; }
+.hint { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.dash-nav{
+  position: sticky;
+  top: 0;
+  z-index: 9999;
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(0,0,0,.45);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(55,233,255,.18);
+}
+
+.dash-nav a{
+  color: #e9f1ff;
+  text-decoration: none;
+  border: 1px solid rgba(55,233,255,.22);
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(3,5,12,.55);
+  font-size: 13px;
+}
+
+.dash-nav a:hover{ border-color: rgba(55,233,255,.55); }
+
+.dash-nav a.active{
+  border-color: rgba(24,240,139,.55);
+  box-shadow: 0 0 18px rgba(24,240,139,.18);
+}
+.panel {
+  margin: 12px 18px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 14px;
+}
+
+.bottomPanel { margin-bottom: 24px; }
+
+.sep {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.control { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+
+/* ✅ Black inputs/selects */
+.control input, .control select {
+  background: rgba(0,0,0,0.65);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  border-radius: 10px;
+  outline: none;
+}
+
+.control select option {
+  background: #0b0f14;
+  color: var(--text);
+}
+
+.btn {
+  border: 1px solid var(--border);
+  background: var(--btn);
+  color: white;
+  padding: 9px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.btn.secondary { background: var(--btn2); color: var(--text); }
+.btn.danger { background: var(--danger); }
+.fileBtn { display: inline-flex; align-items:center; justify-content:center; gap: 8px; }
+
+.grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 1000px) {
+  .grid3 { grid-template-columns: 1fr; }
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+}
+.cardTitle { font-weight: 800; font-size: 13px; margin-bottom: 8px; }
+.cardBody { font-size: 13px; color: var(--muted); }
+.row { display:flex; align-items:center; justify-content: space-between; gap:10px; margin-bottom: 8px; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--pill);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.actuals {
+  display: grid;
+  grid-template-columns: 1fr 1fr minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 10px;
+}
+@media (max-width: 1000px) {
+  .actuals { grid-template-columns: 1fr; }
+}
+.actualsCol, .actualsActions {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+}
+.actualsActions {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+@media (max-width: 1000px) {
+  .charts { grid-template-columns: 1fr; }
+}
+.chartCard {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+/* Prevent Chart.js resize/reflow loops */
+.chartCard canvas{
+  width: 100% !important;
+  height: 300px !important;
+  display: block;
+}
+
+code { color: #c7d2fe; }
+

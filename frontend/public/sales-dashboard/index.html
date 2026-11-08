@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Darios Sales Dashboard</title>
+
+  <!-- Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#0b1220;
+      --card:#0f1b2e;
+      --muted:#8aa0c2;
+      --text:#e7eefc;
+      --border:rgba(255,255,255,0.08);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--text);
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    }
+    header{
+      padding:14px 16px;
+      border-bottom:1px solid var(--border);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      position:sticky;
+      top:0;
+      background:rgba(11,18,32,0.9);
+      backdrop-filter: blur(8px);
+      z-index:10;
+    }
+    .left{
+      display:flex;
+      gap:12px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .title{
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+      line-height:1.2;
+    }
+    .title h1{
+      font-size:16px;
+      margin:0;
+      font-weight:700;
+    }
+    .title .sub{
+      font-size:12px;
+      color:var(--muted);
+    }
+
+    .nav{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .nav a{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      height:34px;
+      padding:0 10px;
+      border-radius:10px;
+      border:1px solid var(--border);
+      background:rgba(255,255,255,0.06);
+      color:var(--text);
+      text-decoration:none;
+      font-size:13px;
+    }
+    .nav a:hover{ filter:brightness(1.1); }
+
+    .controls{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+
+    select, button{
+      height:34px;
+      border-radius:10px;
+      border:1px solid var(--border);
+      background:#000;     /* black backdrop */
+      color:#fff;          /* white text */
+      padding:0 10px;
+      font-size:13px;
+      outline:none;
+    }
+    button{
+      cursor:pointer;
+      background:#111827;
+    }
+    button:hover{ filter:brightness(1.1); }
+
+    main{
+      padding:14px;
+      display:grid;
+      gap:12px;
+      max-width:1200px;
+      margin:0 auto;
+    }
+
+    .grid-2{
+      display:grid;
+      grid-template-columns:1fr;
+      gap:12px;
+    }
+    @media (min-width: 980px){
+      .grid-2{ grid-template-columns:1fr 1fr; }
+    }
+
+    .card{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:16px;
+      padding:12px;
+      box-shadow:0 8px 20px rgba(0,0,0,0.25);
+    }
+    .card h2{
+      margin:0 0 10px 0;
+      font-size:14px;
+      font-weight:700;
+      color:#dce8ff;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .meta{
+      font-size:12px;
+      color:var(--muted);
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+    .pill{
+      font-size:12px;
+      padding:4px 10px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background:rgba(255,255,255,0.06);
+      color:var(--text);
+      white-space:nowrap;
+    }
+    .chart-wrap{ height:320px; }
+    .chart-wrap.tall{ height:380px; }
+
+    .kpi-row{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      margin-bottom:8px;
+    }
+    .kpi-pill{
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      font-size:12px;
+      white-space:nowrap;
+    }
+
+    /* Status section is NOT sticky */
+    .status-section{
+      max-width:1200px;
+      margin: 10px auto 24px auto;
+      padding: 0 14px;
+    }
+    .status-card{
+      background:rgba(255,255,255,0.04);
+      border:1px solid var(--border);
+      border-radius:16px;
+      padding:12px;
+      display:grid;
+      gap:10px;
+    }
+    .status-left{
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      align-items:center;
+    }
+    .paths{
+      font-size:11px;
+      color:var(--muted);
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+    }
+    code{color:#c7d2fe}
+  </style>
+</head>
+
+<body>
+<header>
+  <div class="left">
+    <div class="title">
+      <h1>Darios Sales Dashboard</h1>
+      <div class="sub">Targets • Pipeline • Work Tickets • Capacity • SalesAct actuals</div>
+    </div>
+
+    <!-- ✅ Ops dashboard toggle link restored -->
+    <nav class="nav">
+      <!-- change href to your ops dashboard URL/path -->
+      <a id="opsLink" href="/dashboards/ops" target="_top">Ops Dashboard</a>
+      <a id="salesLink" href="index.html">Sales Dashboard</a>
+    </nav>
+  </div>
+
+  <div class="controls">
+    <select id="viewToggle" title="Division">
+      <option value="all">All</option>
+      <option value="construction">Construction</option>
+      <option value="maintenance">Maintenance</option>
+    </select>
+
+    <select id="asOfMonth" title="Month"></select>
+
+    <button id="refreshBtn">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <div class="grid-2">
+    <div class="card">
+      <h2>
+       Pipeline Target vs Actual (Year)
+        <span class="meta"><span class="pill" id="salesActStamp"></span></span>
+      </h2>
+      <div class="chart-wrap">
+        <canvas id="chartRevenueYear"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Revenue Pace (Selected Month)</h2>
+      <div class="chart-wrap">
+        <canvas id="chartRevenuePace"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h2>Hours by Month (Construction)</h2>
+      <div class="chart-wrap tall">
+        <canvas id="chartConstruction"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Hours by Month (Maintenance)</h2>
+      <div class="chart-wrap tall">
+        <canvas id="chartMaintenance"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h2>Next 3 Months Coverage (Construction)</h2>
+      <div id="kpiCoverageConstr" class="kpi-row"></div>
+      <div class="chart-wrap">
+        <canvas id="chartCoverageConstr"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Next 3 Months Coverage (Maintenance)</h2>
+      <div id="kpiCoverageMaint" class="kpi-row"></div>
+      <div class="chart-wrap">
+        <canvas id="chartCoverageMaint"></canvas>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ✅ NOT sticky; normal section at bottom of page -->
+<section class="status-section">
+  <div class="status-card">
+    <div class="status-left">
+      <span class="pill" id="targetsStatus">Targets: …</span>
+      <span class="pill" id="pipelineStatus">Pipeline: …</span>
+      <span class="pill" id="ticketsStatus">Work tickets: …</span>
+      <span class="pill" id="capacityStatus">Capacity: …</span>
+      <span class="pill" id="salesActStatus">SalesAct: …</span>
+      <span class="pill">Last refresh: <span id="lastRefresh">—</span></span>
+    </div>
+
+    <div class="paths">
+      <div>targets: <code id="targetsPath"></code></div>
+      <div>pipeline: <code id="pipelinePath"></code></div>
+      <div>tickets: <code id="ticketsPath"></code></div>
+      <div>capacity: <code id="capacityPath"></code></div>
+    </div>
+  </div>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>
+
+
