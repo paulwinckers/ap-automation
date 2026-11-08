@@ -72,6 +72,24 @@ async def _user_name(db: Database, user_id: Optional[int]) -> Optional[str]:
     return rows[0].get("name") or rows[0].get("email")
 
 
+async def _resolve_assignee(db: Database, text: Optional[str]) -> tuple[Optional[int], Optional[str]]:
+    """Match a typed assignee ("Paul", "Paul Winckers", "paul@darios.ca") to ONE active user.
+    Returns (user_id, display name), or (None, text) when there's no single match — e.g. a crew
+    member without a portal login — so the task is still saved under the typed name."""
+    t = (text or "").strip().lower()
+    if not t:
+        return None, text
+    users = await db._q("SELECT id, name, email FROM users WHERE active = 1", [])
+    for key in ("email", "name"):
+        hits = [u for u in users if (u.get(key) or "").strip().lower() == t]
+        if len(hits) == 1:
+            return hits[0]["id"], hits[0].get("name") or hits[0].get("email")
+    firsts = [u for u in users if (u.get("name") or "").strip().lower().split(" ")[0] == t]
+    if len(firsts) == 1:
+        return firsts[0]["id"], firsts[0].get("name")
+    return None, text
+
+
 @router.get("/assignees", dependencies=[Depends(require_access)])
 async def list_assignees(db: Database = Depends(get_db)):
     """Active users for the assignee / 'due from' picker (any logged-in user can read)."""
@@ -277,6 +295,9 @@ async def create_task(body: TaskIn, user: dict = Depends(require_access), db: Da
     assignee_name = body.assignee
     if body.assignee_user_id and not (assignee_name or "").strip():
         assignee_name = await _user_name(db, body.assignee_user_id)
+    elif not body.assignee_user_id and (assignee_name or "").strip():
+        # A typed name (e.g. from Claude) — link it to the real user so it lands on their list.
+        body.assignee_user_id, assignee_name = await _resolve_assignee(db, assignee_name)
     rows = await db._q(
         """INSERT INTO sales_tasks
            (customer_key, opportunity_id, activity_id, title, detail, assignee, assignee_user_id,
@@ -293,7 +314,9 @@ async def create_task(body: TaskIn, user: dict = Depends(require_access), db: Da
             await push_to_user(body.assignee_user_id, "New task", f"{body.title.strip()}{due}", "/my-work")
         except Exception as e:
             logger.warning(f"task push failed: {e}")
-    return {"ok": True, "task": task}
+    # Tell the caller when a typed assignee couldn't be linked to a portal user.
+    unmatched = bool((assignee_name or "").strip()) and not body.assignee_user_id
+    return {"ok": True, "task": task, "assignee_linked": not unmatched}
 
 
 class CaptureItem(BaseModel):
@@ -343,6 +366,8 @@ async def capture(body: CaptureIn, user: dict = Depends(require_access), db: Dat
                 aname = it.assignee
                 if it.assignee_user_id and not (aname or "").strip():
                     aname = await _user_name(db, it.assignee_user_id)
+                elif not it.assignee_user_id and (aname or "").strip():
+                    it.assignee_user_id, aname = await _resolve_assignee(db, aname)
                 rows = await db._q(
                     """INSERT INTO sales_tasks
                        (customer_key, opportunity_id, title, detail, assignee, assignee_user_id,
@@ -489,7 +514,9 @@ async def patch_task(task_id: int, body: TaskPatch, db: Database = Depends(get_d
         sets.append("assignee_user_id = ?"); params.append(body.assignee_user_id or None)
         sets.append("assignee = ?");         params.append(await _user_name(db, body.assignee_user_id) or body.assignee)
     elif body.assignee is not None:
-        sets.append("assignee = ?"); params.append(body.assignee)
+        uid, aname = await _resolve_assignee(db, body.assignee)
+        sets.append("assignee_user_id = ?"); params.append(uid)
+        sets.append("assignee = ?");         params.append(aname)
     if body.due_date is not None: sets.append("due_date = ?"); params.append(body.due_date or None)
     if body.priority is not None: sets.append("priority = ?"); params.append(body.priority)
     if body.status is not None and body.status in ("open", "done", "cancelled"):

@@ -349,17 +349,29 @@ async def list_sales_activities(customer_key: str) -> dict:
 
 
 @mcp.tool()
-async def create_sales_task(title: str, customer_key: Optional[str] = None, assignee: Optional[str] = None,
-                            due_date: Optional[str] = None, detail: Optional[str] = None,
+async def create_sales_task(title: str, due_date: str, customer_key: Optional[str] = None,
+                            assignee: Optional[str] = None, detail: Optional[str] = None,
                             activity_id: Optional[int] = None, opportunity_id: Optional[int] = None,
                             created_by: Optional[str] = None) -> dict:
     """Create a task for a coworker (e.g. from a site visit: 'have Dustin verify the grade').
-    `assignee` = who does it, `due_date` YYYY-MM-DD, `activity_id` links it to the visit that
-    spawned it. Tasks are living records — append progress with add_task_update and attach
-    photos from the app. Returns the task (note its id)."""
+    `due_date` is REQUIRED: YYYY-MM-DD. If the user hasn't said when it's due, ASK them before
+    calling this ("When should Paul have this done by?"); only pass "none" if they say it has no
+    due date. `assignee` = who does it — their name or email as the user said it; it's matched to
+    the person's portal account so the task lands on their My Action Items. If the result has
+    assignee_linked=false, tell the user that name didn't match anyone with a portal login (check
+    get_assignees / ask who they meant) and fix it with update_task. `activity_id` links it to the
+    visit that spawned it. Returns the task (note its id)."""
+    due = None if (due_date or "").strip().lower() in ("", "none", "no date", "null") else due_date
     return await _post("/sales/task", {
-        "title": title, "customer_key": customer_key, "assignee": assignee, "due_date": due_date,
+        "title": title, "customer_key": customer_key, "assignee": assignee, "due_date": due,
         "detail": detail, "activity_id": activity_id, "opportunity_id": opportunity_id, "created_by": created_by})
+
+
+@mcp.tool()
+async def get_assignees() -> dict:
+    """Everyone a task can be assigned to (active portal users: id, name, email). Use it when a
+    name is ambiguous or didn't link (assignee_linked=false)."""
+    return await _get("/sales/assignees")
 
 
 @mcp.tool()
