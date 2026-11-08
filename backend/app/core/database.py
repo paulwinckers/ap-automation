@@ -184,6 +184,10 @@ class _SQLiteBackend:
     async def query(self, sql: str, params: list = None) -> list[dict]:
         async with self._db.execute(sql, params or []) as cursor:
             rows = await cursor.fetchall()
+        # Writes run through query() too (INSERT/UPDATE … RETURNING) — commit them, or the
+        # open transaction locks the file for every other connection (D1 auto-commits).
+        if self._db.in_transaction:
+            await self._db.commit()
         return [dict(r) for r in rows]
 
     async def execute(self, sql: str, params: list = None) -> int:

@@ -7,12 +7,13 @@
  */
 import { Area } from './api';
 
-export interface FieldLink { path: string; icon: string; label: string; sub: string; top?: boolean; urgent?: boolean }
+export interface FieldLink { path: string; icon: string; label: string; sub: string; top?: boolean; urgent?: boolean; wide?: boolean }
 export interface OfficeLink { path: string; icon: string; label: string; sub: string; area?: Area }
 export interface OfficeSection { section: string; area?: Area; items: OfficeLink[] }
 
 // Field crew — public, no login. `top` = the four big tiles; the rest sit under "More".
 export const FIELD_LINKS: FieldLink[] = [
+  { path: '/field/feed',               icon: '💬', label: 'Feed',               sub: 'Every crew chat, newest first', top: true, wide: true },
   { path: '/field',                    icon: '🧾', label: 'Submit Receipt',     sub: 'Invoices, MC & expenses', top: true },
   { path: '/field/work-ticket',        icon: '✅', label: 'My Schedule',        sub: 'Your route & tickets to complete', top: true },
   { path: '/field/purchase-order',     icon: '🛒', label: 'Purchase Order',     sub: 'Create a PO for materials', top: true },

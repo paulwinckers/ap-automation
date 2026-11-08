@@ -16,8 +16,9 @@ opportunity / task / followup), the Claude tools, and the field form build on th
 """
 import json
 import logging
+import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -293,6 +294,19 @@ class TaskPatch(BaseModel):
     due_date: Optional[str] = None
     priority: Optional[str] = None
     status:   Optional[str] = None   # open | done | cancelled
+    waiting_on:    Optional[str] = None   # someone outside the portal ('' clears)
+    waiting_until: Optional[str] = None   # when to chase them ('' clears)
+
+
+class WaitingOnIn(BaseModel):
+    """'My task is waiting on someone.' A portal person gets a linked task of their own;
+    anyone else (customer, supplier) is recorded as text with a date to chase them."""
+    title:            Optional[str] = None   # what you need from them (task title on their side)
+    assignee:         Optional[str] = None   # portal person (name/email) ...
+    assignee_user_id: Optional[int] = None   # ... or their id
+    due_date:         Optional[str] = None   # when you need it by
+    external:         Optional[str] = None   # e.g. "Customer - Mandy Wong", "Brock White"
+    followup_date:    Optional[str] = None   # when to chase the external party
 
 
 class TaskUpdateIn(BaseModel):
@@ -524,8 +538,9 @@ async def get_task(task_id: int, db: Database = Depends(get_db)):
 async def patch_task(task_id: int, body: TaskPatch, user: dict = Depends(require_access),
                      db: Database = Depends(get_db)):
     """Edit a task / reassign / mark done (sets done_at). A reassignment notifies the new person."""
-    before = await db._q("SELECT assignee_user_id FROM sales_tasks WHERE id = ?", [task_id])
+    before = await db._q("SELECT assignee_user_id, status FROM sales_tasks WHERE id = ?", [task_id])
     prev_assignee = before[0].get("assignee_user_id") if before else None
+    prev_status = before[0].get("status") if before else None
     sets, params = ["updated_at = datetime('now')"], []
     if body.title is not None:    sets.append("title = ?");    params.append(body.title)
     if body.detail is not None:   sets.append("detail = ?");   params.append(body.detail)
@@ -539,6 +554,8 @@ async def patch_task(task_id: int, body: TaskPatch, user: dict = Depends(require
         sets.append("assignee = ?");         params.append(aname)
     if body.due_date is not None: sets.append("due_date = ?"); params.append(body.due_date or None)
     if body.priority is not None: sets.append("priority = ?"); params.append(body.priority)
+    if body.waiting_on is not None:    sets.append("waiting_on = ?");    params.append(body.waiting_on.strip() or None)
+    if body.waiting_until is not None: sets.append("waiting_until = ?"); params.append(body.waiting_until or None)
     if body.status is not None and body.status in ("open", "done", "cancelled"):
         sets.append("status = ?");  params.append(body.status)
         sets.append("done_at = ?"); params.append(_now() if body.status == "done" else None)
@@ -556,7 +573,106 @@ async def patch_task(task_id: int, body: TaskPatch, user: dict = Depends(require
                                claude_prompt=task_claude_prompt(task))
         except Exception as e:
             logger.warning(f"task reassign push failed: {e}")
+    if task.get("status") == "done" and prev_status != "done" and task.get("blocks_task_id"):
+        await _notify_unblocked(db, task, user)
     return {"ok": True, "task": task}
+
+
+async def _notify_unblocked(db: Database, child: dict, user: dict) -> None:
+    """A task someone was waiting on is done: note it on their task's thread and push them."""
+    prows = await db._q("SELECT * FROM sales_tasks WHERE id = ?", [child["blocks_task_id"]])
+    if not prows:
+        return
+    parent = prows[0]
+    who = _actor(user, None) or child.get("assignee") or "Someone"
+    try:
+        await db._x("INSERT INTO sales_task_updates (task_id, author, body, created_at) VALUES (?, ?, ?, datetime('now'))",
+                    [parent["id"], who, f"\u2705 Done: {child.get('title')} \u2014 no longer waiting on {who}."])
+        await db._x("UPDATE sales_tasks SET updated_at = datetime('now') WHERE id = ?", [parent["id"]])
+    except Exception as e:
+        logger.warning(f"unblock thread note failed: {e}")
+    owner = parent.get("assignee_user_id")
+    if owner and owner != user.get("id"):
+        try:
+            from app.api.push import push_to_user
+            await push_to_user(owner, "Ready to go", f"{who} finished \u201c{child.get('title')}\u201d \u2014 "
+                               f"{parent.get('title')} is unblocked", "/my-work",
+                               claude_prompt=task_claude_prompt(parent))
+        except Exception as e:
+            logger.warning(f"unblock push failed: {e}")
+
+
+@router.post("/task/{task_id}/waiting-on")
+async def add_waiting_on(task_id: int, body: WaitingOnIn, user: dict = Depends(require_access),
+                         db: Database = Depends(get_db)):
+    """Mark a task as waiting on someone. A portal person gets a linked task ('X is waiting on
+    this'); when they finish it this task un-blocks and its owner is notified. Someone outside
+    the portal is stored as text + a chase date on this task."""
+    prows = await db._q("SELECT * FROM sales_tasks WHERE id = ?", [task_id])
+    if not prows:
+        raise HTTPException(status_code=404, detail="Task not found")
+    parent = prows[0]
+    if (body.external or "").strip():
+        rows = await db._q("UPDATE sales_tasks SET waiting_on = ?, waiting_until = ?, updated_at = datetime('now') "
+                           "WHERE id = ? RETURNING *", [body.external.strip(), body.followup_date or None, task_id])
+        return {"ok": True, "task": rows[0] if rows else None, "external": True}
+
+    title = (body.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Say what you need from them (title).")
+    uid, aname = body.assignee_user_id, body.assignee
+    if uid and not (aname or "").strip():
+        aname = await _user_name(db, uid)
+    elif not uid:
+        uid, aname = await _resolve_assignee(db, aname)
+    if not uid:
+        raise HTTPException(status_code=400, detail=f"Couldn't find a portal user called '{body.assignee}'. "
+                            "For someone outside the portal, use 'external' instead.")
+    me = _actor(user, None)
+    rows = await db._q(
+        """INSERT INTO sales_tasks
+           (customer_key, opportunity_id, title, detail, assignee, assignee_user_id, due_date, status,
+            created_by, created_by_user_id, blocks_task_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, datetime('now')) RETURNING *""",
+        [parent.get("customer_key"), parent.get("opportunity_id"), title,
+         f"Needed for: {parent.get('title')} (task #{task_id})", aname, uid, body.due_date,
+         me, _actor_id(user, None), task_id])
+    child = rows[0] if rows else None
+    if child and uid != user.get("id"):
+        try:
+            from app.api.push import push_to_user
+            due = f" by {body.due_date}" if body.due_date else ""
+            await push_to_user(uid, f"{me or 'Someone'} is waiting on you", f"{title}{due}", "/my-work",
+                               claude_prompt=task_claude_prompt(child))
+        except Exception as e:
+            logger.warning(f"waiting-on push failed: {e}")
+    return {"ok": True, "task": child, "external": False}
+
+
+@router.post("/task/{task_id}/nudge")
+async def nudge_task(task_id: int, user: dict = Depends(require_access), db: Database = Depends(get_db)):
+    """Remind the person on a task you're waiting on (push + a line on its thread)."""
+    rows = await db._q("SELECT * FROM sales_tasks WHERE id = ?", [task_id])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Task not found")
+    t = rows[0]
+    if t.get("status") != "open":
+        return {"ok": False, "error": "That task is already closed."}
+    me = _actor(user, None) or "Someone"
+    await db._x("INSERT INTO sales_task_updates (task_id, author, body, created_at) VALUES (?, ?, ?, datetime('now'))",
+                [task_id, me, "\U0001F44B Nudge \u2014 still waiting on this."])
+    await db._x("UPDATE sales_tasks SET updated_at = datetime('now') WHERE id = ?", [task_id])
+    sent = False
+    if t.get("assignee_user_id") and t["assignee_user_id"] != user.get("id"):
+        try:
+            from app.api.push import push_to_user
+            due = f" \u00b7 needed {t['due_date']}" if t.get("due_date") else ""
+            res = await push_to_user(t["assignee_user_id"], f"{me} is still waiting", f"{t.get('title')}{due}",
+                                     "/my-work", claude_prompt=task_claude_prompt(t))
+            sent = bool((res or {}).get("sent"))
+        except Exception as e:
+            logger.warning(f"nudge push failed: {e}")
+    return {"ok": True, "notified": sent}
 
 
 @router.get("/tasks", dependencies=[Depends(require_access)])
@@ -692,6 +808,8 @@ async def _collect_due(db: Database, *, assignee_user_id: Optional[int] = None,
                       "detail": t.get("detail"), "customer_key": t.get("customer_key"),
                       "who": t.get("assignee"), "who_user_id": t.get("assignee_user_id"),
                       "due_date": t.get("due_date"), "opportunity_id": t.get("opportunity_id"),
+                      "created_by": t.get("created_by"), "blocks_task_id": t.get("blocks_task_id"),
+                      "waiting_on": t.get("waiting_on"), "waiting_until": t.get("waiting_until"),
                       "bucket": _due_bucket(t.get("due_date"), today)})
     for a in await db._q(
             "SELECT * FROM sales_activities WHERE next_action_done = 0 AND next_action_date IS NOT NULL", []):
@@ -840,30 +958,9 @@ async def my_worklist(user: dict = Depends(current_actor), db: Database = Depend
             "who": r.get("assignee"),
         })
 
-    # 4) Open field conversations this user watches — the field↔office threads.
-    #    No recency cap: an unresolved thread stays on the action list until it is
-    #    marked resolved (this is a comms tool — quiet != done).
-    try:
-        conv_rows = await db._q(
-            """SELECT c.id AS conv_id, c.opp_id, c.title, c.property_name, c.context_type, c.last_message
-               FROM field_conversations c
-               JOIN conversation_watchers w ON w.conversation_id = c.id
-               WHERE w.user_id = ? AND COALESCE(c.status, 'open') != 'resolved'""",
-            [user.get("id")])
-    except Exception as e:
-        logger.warning(f"worklist: field conversations unavailable: {e}")
-        conv_rows = []
-    for c in conv_rows:
-        ctx = c.get("context_type") or "maintenance"
-        seg = "project" if ctx == "construction" else "maintenance"
-        items.append({
-            "kind": "field_conv", "source": "field_conv",
-            "id": f"conv:{c['conv_id']}", "opportunity_id": c.get("opp_id"),
-            "title": c.get("title") or "Field conversation",
-            "job": c.get("property_name") or f"Job #{c.get('opp_id')}",
-            "customer_key": None, "due_date": None, "bucket": "week", "who": None,
-            "url": f"/field/{seg}/{c['opp_id']}?tab=conversations&conv={c['conv_id']}",
-        })
+    # 4) Lanes + dependencies. Chats are no longer action items — they live in the Feed
+    #    (GET /sales/feed/mine) as read/unread.
+    await _annotate_lanes_and_waiting(db, items, user)
 
     items.sort(key=lambda x: (_BUCKET_ORDER.get(x.get("bucket"), 9), x.get("due_date") or "9999-99-99"))
     counts: dict = {}
@@ -871,9 +968,243 @@ async def my_worklist(user: dict = Depends(current_actor), db: Database = Depend
     for it in items:
         counts[it["bucket"]] = counts.get(it["bucket"], 0) + 1
         sources[it["source"]] = sources.get(it["source"], 0) + 1
+    lanes: dict = {}
+    for it in items:
+        lanes[it["lane"]] = lanes.get(it["lane"], 0) + 1
+    waiting = await _my_waiting(db, user)
+    try:
+        feed_unread = (await _build_feed(db, user))["unread"]
+    except Exception as e:
+        logger.warning(f"worklist: feed unavailable: {e}")
+        feed_unread = 0
     return {"user": {"id": user.get("id"), "name": user.get("name"), "email": user.get("email"),
                      "is_admin": is_admin},
-            "count": len(items), "counts": counts, "sources": sources, "items": items}
+            "count": len(items), "counts": counts, "sources": sources, "lanes": lanes,
+            "waiting": waiting, "feed_unread": feed_unread, "items": items}
+
+
+# ── Lanes (Day-to-day / Workflows / Projects) and "waiting on" ────────────────────
+
+async def _project_opp_ids(db: Database) -> set:
+    """Opportunities that are construction jobs on the plan — tasks tied to them go to Projects."""
+    try:
+        return {r["opportunity_id"] for r in await db._q("SELECT opportunity_id FROM job_planning", [])}
+    except Exception:
+        return set()
+
+
+async def _annotate_lanes_and_waiting(db: Database, items: list[dict], user: dict) -> None:
+    """Give every worklist item a `lane`:
+         workflow  steps of a set process — today the construction client emails (cx_comms)
+         project   upcoming construction jobs — prep items + tasks tied to a planned job
+         daily     everything else (own tasks + follow-ups)
+       and, on tasks, who they're waiting on (`waiting`) / who is waiting on them (`blocking`)."""
+    project_opps = await _project_opp_ids(db)
+    for it in items:
+        if it["source"] == "cx_comms":
+            it["lane"] = "workflow"
+        elif it["source"] == "prep":
+            it["lane"] = "project"
+        elif it.get("opportunity_id") and it["opportunity_id"] in project_opps:
+            it["lane"] = "project"
+        else:
+            it["lane"] = "daily"
+
+    # Name the job on project tasks (prep / client emails already carry it).
+    need = list({it["opportunity_id"] for it in items if it["lane"] == "project" and not it.get("job")})
+    for i in range(0, len(need), 90):
+        chunk = need[i:i + 90]
+        ph = ",".join("?" for _ in chunk)
+        try:
+            for jr in await db._q(f"SELECT opportunity_id, payload FROM spine_jobs WHERE opportunity_id IN ({ph})", chunk):
+                pl = json.loads(jr.get("payload") or "{}")
+                nm = pl.get("property_name") or pl.get("opportunity_name")
+                for it in items:
+                    if it.get("opportunity_id") == jr["opportunity_id"] and not it.get("job") and nm:
+                        it["job"] = nm
+        except Exception:
+            pass
+
+    task_items = [it for it in items if it["source"] == "sales_task"]
+    if not task_items:
+        return
+    try:
+        links = await db._q("SELECT id, title, assignee, assignee_user_id, due_date, status, blocks_task_id "
+                            "FROM sales_tasks WHERE blocks_task_id IS NOT NULL", [])
+    except Exception:
+        links = []
+    open_children: dict = defaultdict(list)
+    for c in links:
+        if c.get("status") == "open":
+            open_children[c["blocks_task_id"]].append(c)
+    parent_ids = {it["blocks_task_id"] for it in task_items if it.get("blocks_task_id")}
+    parents: dict = {}
+    if parent_ids:
+        ph = ",".join("?" for _ in parent_ids)
+        for r in await db._q(f"SELECT id, title, assignee FROM sales_tasks WHERE id IN ({ph})", list(parent_ids)):
+            parents[r["id"]] = r
+    today = datetime.now(timezone.utc).date().isoformat()
+    for it in task_items:
+        w = [{"task_id": c["id"], "title": c.get("title"), "who": c.get("assignee"),
+              "due_date": c.get("due_date"), "late": bool(c.get("due_date") and c["due_date"][:10] < today)}
+             for c in open_children.get(it["id"], [])]
+        if it.get("waiting_on"):
+            w.append({"task_id": None, "title": None, "who": it["waiting_on"], "external": True,
+                      "due_date": it.get("waiting_until"),
+                      "late": bool(it.get("waiting_until") and it["waiting_until"][:10] <= today)})
+        it["waiting"] = w
+        if it.get("blocks_task_id") and it["blocks_task_id"] in parents:
+            p = parents[it["blocks_task_id"]]
+            it["blocking"] = {"task_id": p["id"], "title": p.get("title"), "who": p.get("assignee")}
+
+
+async def _my_waiting(db: Database, user: dict) -> list[dict]:
+    """What I'm waiting on other people for: open tasks that block one of MY open tasks,
+    plus my tasks that wait on someone outside the portal. Oldest first."""
+    uid = user.get("id")
+    name = (user.get("name") or "").strip().lower()
+    mine = [t for t in await db._q("SELECT id, title, assignee, assignee_user_id, waiting_on, waiting_until, "
+                                   "updated_at, created_at FROM sales_tasks WHERE status = 'open'", [])
+            if (uid and t.get("assignee_user_id") == uid) or (name and (t.get("assignee") or "").strip().lower() == name)]
+    if not mine:
+        return []
+    by_id = {t["id"]: t for t in mine}
+    today = datetime.now(timezone.utc).date().isoformat()
+    out = []
+    ph = ",".join("?" for _ in by_id)
+    for c in await db._q(f"SELECT id, title, assignee, due_date, created_at, blocks_task_id FROM sales_tasks "
+                         f"WHERE status = 'open' AND blocks_task_id IN ({ph})", list(by_id)):
+        p = by_id[c["blocks_task_id"]]
+        out.append({"kind": "person", "task_id": c["id"], "for_task_id": p["id"], "for_title": p.get("title"),
+                    "what": c.get("title"), "who": c.get("assignee"), "due_date": c.get("due_date"),
+                    "since": (c.get("created_at") or "")[:10],
+                    "late": bool(c.get("due_date") and c["due_date"][:10] < today)})
+    for t in mine:
+        if t.get("waiting_on"):
+            out.append({"kind": "external", "task_id": None, "for_task_id": t["id"], "for_title": t.get("title"),
+                        "what": None, "who": t["waiting_on"], "due_date": t.get("waiting_until"),
+                        "since": (t.get("updated_at") or t.get("created_at") or "")[:10],
+                        "late": bool(t.get("waiting_until") and t["waiting_until"][:10] <= today)})
+    out.sort(key=lambda w: w.get("since") or "")
+    return out
+
+
+# ── Feed: every chat the person is part of, newest first, read / unread ───────────
+
+def _ts(v: Optional[str]) -> str:
+    """Normalise ISO ('2026-11-08T14:00:00+00:00') and SQLite ('2026-11-08 14:00:00') to one form."""
+    return (v or "").replace("T", " ")[:19]
+
+
+async def _build_feed(db: Database, user: dict, days: int = 30) -> dict:
+    uid = user.get("id")
+    me_name = (user.get("name") or "").strip().lower()
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    reads = {r["item_key"]: _ts(r.get("read_at")) for r in
+             await db._q("SELECT item_key, read_at FROM feed_reads WHERE user_id = ?", [uid])}
+    entries: list[dict] = []
+
+    # Field chats this person watches
+    try:
+        convs = await db._q(
+            """SELECT c.id, c.opp_id, c.title, c.tag, c.status, c.property_name, c.context_type,
+                      c.last_message, COALESCE(c.updated_at, c.created_at) AS last_at
+               FROM field_conversations c JOIN conversation_watchers w ON w.conversation_id = c.id
+               WHERE w.user_id = ? AND COALESCE(c.updated_at, c.created_at) >= ?""", [uid, since])
+    except Exception as e:
+        logger.warning(f"feed: field conversations unavailable: {e}")
+        convs = []
+    last_by_conv: dict = {}
+    ids = [c["id"] for c in convs]
+    for i in range(0, len(ids), 90):
+        chunk = ids[i:i + 90]
+        ph = ",".join("?" for _ in chunk)
+        for m in await db._q(f"SELECT conversation_id, role, crew_name, content FROM field_conversation_messages "
+                             f"WHERE id IN (SELECT MAX(id) FROM field_conversation_messages "
+                             f"WHERE conversation_id IN ({ph}) GROUP BY conversation_id)", chunk):
+            last_by_conv[m["conversation_id"]] = m
+    seen = set()
+    for c in convs:
+        if c["id"] in seen:
+            continue
+        seen.add(c["id"])
+        seg = "project" if c.get("context_type") == "construction" else "maintenance"
+        m = last_by_conv.get(c["id"]) or {}
+        author = m.get("crew_name") or ("AI" if m.get("role") == "assistant" else None)
+        key = f"conv:{c['id']}"
+        last_at = _ts(c.get("last_at"))
+        entries.append({
+            "key": key, "kind": "field_chat", "title": c.get("title") or "Field chat",
+            "context": c.get("property_name") or f"Job #{c.get('opp_id')}", "tag": c.get("tag"),
+            "status": c.get("status") or "open", "last_author": author,
+            "snippet": (_plain(m.get("content")) or c.get("last_message") or "")[:160],
+            "last_at": last_at, "unread": last_at > reads.get(key, ""),
+            "url": f"/field/{seg}/{c['opp_id']}?tab=conversations&conv={c['id']}",
+        })
+
+    # Task threads this person is on (assignee or creator)
+    tasks = [t for t in await db._q("SELECT id, title, status, customer_key, assignee, assignee_user_id, "
+                                    "created_by, created_by_user_id FROM sales_tasks", [])
+             if uid in (t.get("assignee_user_id"), t.get("created_by_user_id"))
+             or (me_name and me_name in ((t.get("assignee") or "").lower(), (t.get("created_by") or "").lower()))]
+    tids = {t["id"]: t for t in tasks}
+    if tids:
+        latest: dict = {}
+        for u in await db._q("SELECT task_id, author, body, created_at FROM sales_task_updates "
+                             "WHERE created_at >= ? ORDER BY id", [since]):
+            if u["task_id"] in tids:
+                latest[u["task_id"]] = u
+        for tid, u in latest.items():
+            t = tids[tid]
+            key = f"task:{tid}"
+            last_at = _ts(u.get("created_at"))
+            mine = (u.get("author") or "").strip().lower() == me_name and bool(me_name)
+            entries.append({
+                "key": key, "kind": "task_thread", "task_id": tid, "title": t.get("title") or f"Task #{tid}",
+                "context": t.get("customer_key"), "tag": None, "status": t.get("status"),
+                "last_author": u.get("author"), "snippet": (u.get("body") or "")[:160],
+                "last_at": last_at, "unread": (not mine) and last_at > reads.get(key, ""),
+                "url": None,
+            })
+
+    entries.sort(key=lambda e: e["last_at"], reverse=True)
+    return {"count": len(entries), "unread": sum(1 for e in entries if e["unread"]), "items": entries}
+
+
+def _plain(content) -> str:
+    """Field messages may be stored as JSON content blocks — pull out the text."""
+    if not content:
+        return ""
+    if isinstance(content, str) and content.lstrip().startswith("["):
+        try:
+            blocks = json.loads(content)
+            return " ".join(b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text").strip()
+        except Exception:
+            return content
+    return str(content)
+
+
+@router.get("/feed/mine")
+async def my_feed(days: int = 30, user: dict = Depends(current_actor), db: Database = Depends(get_db)):
+    """The person's Feed: field chats they watch + task threads they're on, newest first,
+    each flagged unread until they open it (POST /sales/feed/read)."""
+    return await _build_feed(db, user, max(1, min(days, 120)))
+
+
+class FeedReadIn(BaseModel):
+    keys: list[str]
+
+
+@router.post("/feed/read")
+async def mark_feed_read(body: FeedReadIn, user: dict = Depends(current_actor), db: Database = Depends(get_db)):
+    """Mark Feed items read ('conv:12', 'task:10'). Stamped with now, so newer messages show unread again."""
+    uid = user.get("id")
+    for k in body.keys[:200]:
+        if not re.fullmatch(r"(conv|task):\d+", k or ""):
+            continue
+        await db._x("INSERT INTO feed_reads (user_id, item_key, read_at) VALUES (?, ?, datetime('now')) "
+                    "ON CONFLICT(user_id, item_key) DO UPDATE SET read_at = datetime('now')", [uid, k])
+    return {"ok": True}
 
 
 # ── Fan-out: create an Aspire opportunity from a site visit (GATED — prod write) ──

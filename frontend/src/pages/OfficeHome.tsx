@@ -23,13 +23,14 @@ export default function OfficeHome() {
   const sections = visibleSections(hasArea);
   const areaSections = sections.filter(s => s.area);
 
-  const [counts, setCounts] = useState<{ overdue: number; today: number; chats: number } | null>(null);
+  const [counts, setCounts] = useState<{ overdue: number; today: number; waiting: number; feed: number } | null>(null);
   useEffect(() => {
     listMyWorklist()
       .then(r => setCounts({
         overdue: r.counts?.overdue || 0,
         today:   r.counts?.today || 0,
-        chats:   r.sources?.field_conv || 0,
+        waiting: (r.waiting || []).length,
+        feed:    r.feed_unread || 0,
       }))
       .catch(() => setCounts(null));
   }, []);
@@ -62,8 +63,8 @@ export default function OfficeHome() {
     return [...pages, ...people];
   }, [q, customers, sections]);
 
-  const tile = (label: string, n: number | undefined, tone?: string) => (
-    <Link to="/my-work" style={{
+  const tile = (label: string, n: number | undefined, tone?: string, to = '/my-work') => (
+    <Link to={to} style={{
       textDecoration: 'none', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12,
       padding: '14px 16px', display: 'block',
     }}>
@@ -85,7 +86,8 @@ export default function OfficeHome() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }}>
           {tile('Overdue', counts?.overdue, counts?.overdue ? '#dc2626' : undefined)}
           {tile('Due today', counts?.today)}
-          {tile('Open field chats', counts?.chats)}
+          {tile('Waiting on others', counts?.waiting)}
+          {tile('New in Feed', counts?.feed, counts?.feed ? '#2563eb' : undefined, '/my-work?tab=feed')}
         </div>
 
         <div style={{ position: 'relative', marginBottom: 28 }}>

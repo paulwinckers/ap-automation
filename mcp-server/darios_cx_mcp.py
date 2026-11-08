@@ -444,11 +444,50 @@ async def whoami() -> dict:
 
 @mcp.tool()
 async def get_my_worklist() -> dict:
-    """THE signed-in rep's personal morning worklist — their open sales tasks, pending followups,
-    due client-comms they own, and assigned job-prep items, merged and bucketed (overdue / today /
-    soon). This is 'what's on my plate'. Scoped to the connector's identity (DARIOS_ACT_AS / the
-    signed-in user); if no identity is set it returns 400 — call whoami to check."""
+    """THE signed-in person's own dashboard ('what's on my plate'), bucketed overdue / today /
+    this week / later. Each item has a `lane`:
+      daily     their own tasks + follow-ups
+      workflow  steps of a set process — today the construction client emails they own
+      project   upcoming construction jobs — prep items + tasks tied to a planned job
+    Tasks carry `waiting` (who that task is waiting on) and `blocking` (someone waiting on it — do
+    these first). The top-level `waiting` list is everything they're waiting on others for, with
+    `late` flags; `feed_unread` counts unread chats (see get_my_feed). Present it lane by lane.
+    Scoped to the signed-in user; 400 if no identity is set (call whoami to check)."""
     return await _get("/sales/worklist/mine")
+
+
+@mcp.tool()
+async def get_my_feed(days: int = 30) -> dict:
+    """The signed-in person's Feed: every chat they're part of — field chats they watch and task
+    threads they're on — newest first, each with the last message and an `unread` flag. Use for
+    'what's new', 'any messages', 'catch me up'. To read a whole task thread use get_task; field
+    chats open in the portal at the item's `url`."""
+    return await _get("/sales/feed/mine", {"days": days})
+
+
+@mcp.tool()
+async def wait_on(task_id: int, who: str, what: Optional[str] = None, need_by: Optional[str] = None,
+                  outside_portal: bool = False) -> dict:
+    """Mark task `task_id` as WAITING ON someone (a dependency) — e.g. 'my quote task is waiting on
+    Jenna for the estimate'.
+      Coworker (default): `who` = their name/email; `what` = what you need from them (required);
+        `need_by` = YYYY-MM-DD. They get their own linked task ('Paul is waiting on this') and a
+        notification; when they finish it, this task's owner is notified it's unblocked.
+      Someone outside the portal (customer, supplier): outside_portal=True, `who` = their name,
+        `need_by` = the date to chase them.
+    Ask for the need-by date if the user didn't give one. Confirm the details before calling."""
+    if outside_portal:
+        return await _post(f"/sales/task/{task_id}/waiting-on", {"external": who, "followup_date": need_by})
+    return await _post(f"/sales/task/{task_id}/waiting-on",
+                       {"assignee": who, "title": what, "due_date": need_by})
+
+
+@mcp.tool()
+async def nudge_task(task_id: int) -> dict:
+    """Remind the person on a task you're waiting on: pushes them a 'still waiting' notification and
+    notes it on the task thread. `task_id` is THEIR task (the `task_id` in get_my_worklist's
+    `waiting` list). For someone outside the portal, draft an email instead."""
+    return await _post(f"/sales/task/{task_id}/nudge", {})
 
 
 @mcp.tool()

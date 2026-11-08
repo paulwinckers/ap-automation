@@ -800,12 +800,66 @@ export interface WorklistItem {
   last_sent?: string | null;
   unassigned?: boolean;
   url?: string | null;
+  lane: Lane;
+  created_by?: string | null;
+  // Dependencies (tasks only)
+  waiting?: WaitingRef[];                                   // who this task is waiting on
+  blocking?: { task_id: number; title: string; who: string | null } | null;  // someone waiting on this
+}
+export type Lane = 'daily' | 'workflow' | 'project';
+export interface WaitingRef {
+  task_id: number | null; title: string | null; who: string | null;
+  due_date: string | null; late: boolean; external?: boolean;
+}
+export interface WaitingItem {
+  kind: 'person' | 'external';
+  task_id: number | null;        // the other person's task (null for someone outside the portal)
+  for_task_id: number; for_title: string;
+  what: string | null; who: string | null; due_date: string | null; since: string; late: boolean;
 }
 export async function listMyWorklist(): Promise<{
   user: { id: number; name: string; email: string; is_admin: boolean };
-  count: number; counts: Record<string, number>; sources: Record<string, number>; items: WorklistItem[];
+  count: number; counts: Record<string, number>; sources: Record<string, number>;
+  lanes: Partial<Record<Lane, number>>; waiting: WaitingItem[]; feed_unread: number;
+  items: WorklistItem[];
 }> {
   return request('GET', '/sales/worklist/mine');
+}
+
+// "Waiting on": a portal person gets a linked task; anyone else is text + a date to chase.
+export async function addWaitingOn(taskId: number, payload: {
+  title?: string; assignee_user_id?: number; due_date?: string;
+  external?: string; followup_date?: string;
+}): Promise<{ ok: boolean; external: boolean }> {
+  return request('POST', `/sales/task/${taskId}/waiting-on`, payload);
+}
+export async function nudgeTask(taskId: number): Promise<{ ok: boolean; notified?: boolean; error?: string }> {
+  return request('POST', `/sales/task/${taskId}/nudge`);
+}
+
+// Feed: every chat the person is part of, newest first.
+export interface FeedItem {
+  key: string; kind: 'field_chat' | 'task_thread'; task_id?: number;
+  title: string; context: string | null; tag: string | null; status: string | null;
+  last_author: string | null; snippet: string; last_at: string; unread: boolean; url: string | null;
+}
+export async function listMyFeed(): Promise<{ count: number; unread: number; items: FeedItem[] }> {
+  return request('GET', '/sales/feed/mine');
+}
+export async function markFeedRead(keys: string[]): Promise<{ ok: boolean }> {
+  return request('POST', '/sales/feed/read', { keys });
+}
+
+// Crew Feed (public field page): recent field chats across all jobs.
+export interface FieldFeedItem {
+  id: number; opp_id: number; context_type: string; title: string; tag: string | null; status: string;
+  property_name: string | null; message_count: number; last_message: string; last_author: string | null;
+  last_at: string; url: string;
+}
+export async function listFieldFeed(days = 14): Promise<{ conversations: FieldFeedItem[] }> {
+  const res = await fetch(`${BASE}/field/conversations/feed/recent?days=${days}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
 }
 
 export async function createSalesActivity(payload: {
@@ -841,7 +895,7 @@ export async function patchSalesActivity(id: number, patch: {
 }
 export async function patchSalesTask(id: number, patch: {
   status?: string; assignee?: string; assignee_user_id?: number; due_date?: string;
-  title?: string; detail?: string;
+  title?: string; detail?: string; waiting_on?: string; waiting_until?: string;
 }): Promise<{ ok: boolean; task: SalesTask }> {
   return request('PATCH', `/sales/task/${id}`, patch);
 }

@@ -59,6 +59,7 @@ import MyWork                 from './pages/MyWork';
 import FieldHome              from './pages/FieldHome';
 import FieldShell             from './components/FieldShell';
 import OfficeHome             from './pages/OfficeHome';
+import FieldFeed              from './pages/FieldFeed';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -82,6 +83,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
         {/* Field crew — no shell, phone-optimised, no login required */}
         <Route path="/field"             element={<FieldShell lift={110}><FieldSubmit /></FieldShell>} />
+        <Route path="/field/feed" element={<FieldShell><FieldFeed /></FieldShell>} />
         <Route path="/field/work-ticket" element={<FieldShell lift={110}><FieldWorkTicket /></FieldShell>} />
         {/* New Opportunity — access removed for now (kept for easy re-enable)
         <Route path="/field/opportunity" element={<FieldOpportunity />} /> */}

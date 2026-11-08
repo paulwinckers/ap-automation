@@ -38,6 +38,7 @@ _RULES: list[tuple[str, str, Optional[str]]] = [
     ("*", "/push/my-status", None),
     ("*", "/sales/task", None),          # /sales/task, /sales/task/{id}, /sales/tasks
     ("*", "/sales/assignees", None),
+    ("*", "/sales/feed", None),           # the person's own Feed (chats they're part of)
     ("*", "/sales/{parent_type}/{parent_id}/attachment", None),
     # Admin
     ("*", "/admin/", "admin"),

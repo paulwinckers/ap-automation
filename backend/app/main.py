@@ -512,6 +512,14 @@ async def lifespan(app: FastAPI):
                 uploaded_at  TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """,
+        "feed_reads": """
+            CREATE TABLE IF NOT EXISTS feed_reads (
+                user_id  INTEGER NOT NULL,
+                item_key TEXT    NOT NULL,          -- 'conv:{id}' | 'task:{id}'
+                read_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (user_id, item_key)
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:
@@ -541,6 +549,11 @@ async def lifespan(app: FastAPI):
         # sales — directory identity: link a task to the real user it's due from, and a note/followup to its owner
         ("sales_tasks", "assignee_user_id",   "ALTER TABLE sales_tasks ADD COLUMN assignee_user_id INTEGER"),
         ("sales_tasks", "created_by_user_id", "ALTER TABLE sales_tasks ADD COLUMN created_by_user_id INTEGER"),
+        # Dependencies: a task that another task is waiting on points at it (blocks_task_id);
+        # waiting on someone outside the portal (customer/supplier) is free text + a chase date.
+        ("sales_tasks", "blocks_task_id", "ALTER TABLE sales_tasks ADD COLUMN blocks_task_id INTEGER"),
+        ("sales_tasks", "waiting_on",     "ALTER TABLE sales_tasks ADD COLUMN waiting_on TEXT"),
+        ("sales_tasks", "waiting_until",  "ALTER TABLE sales_tasks ADD COLUMN waiting_until TEXT"),
         ("sales_activities", "created_by_user_id", "ALTER TABLE sales_activities ADD COLUMN created_by_user_id INTEGER"),
         # job_prep_checklist — N/A/Complete/Upload-Doc status + linked attachment
         ("job_prep_checklist", "status",        "ALTER TABLE job_prep_checklist ADD COLUMN status TEXT"),

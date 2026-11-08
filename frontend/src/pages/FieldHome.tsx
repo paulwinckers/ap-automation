@@ -4,12 +4,18 @@
  * Crews can add this page to their home screen.
  */
 
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FIELD_LINKS } from '../lib/nav';
+import { listFieldFeed } from '../lib/api';
+import { countNew } from './FieldFeed';
 
 export default function FieldHome() {
-  const top  = FIELD_LINKS.filter(l => l.top);
+  const wide = FIELD_LINKS.filter(l => l.top && l.wide);
+  const top  = FIELD_LINKS.filter(l => l.top && !l.wide);
   const more = FIELD_LINKS.filter(l => !l.top);
+  const [fresh, setFresh] = useState(0);
+  useEffect(() => { listFieldFeed().then(r => setFresh(countNew(r.conversations))).catch(() => {}); }, []);
   return (
     <div style={{
       minHeight: '100vh', background: '#0f172a',
@@ -21,6 +27,22 @@ export default function FieldHome() {
           <Link to="/"><img src="/darios-logo.png" alt="Darios Landscaping" style={{ height: 40, objectFit: 'contain' }} /></Link>
           <span style={{ color: '#86efac', fontSize: 12, fontWeight: 600 }}>Field</span>
         </div>
+
+        {wide.map(l => (
+          <Link key={l.path} to={l.path} style={{
+            textDecoration: 'none', borderRadius: 16, padding: '16px 18px', marginBottom: 12,
+            background: '#0c4a6e', border: '1px solid #0284c7',
+            display: 'flex', alignItems: 'center', gap: 14,
+          }}>
+            <span style={{ fontSize: 30, lineHeight: 1 }}>{l.icon}</span>
+            <span style={{ flex: 1 }}>
+              <span style={{ color: '#fff', fontWeight: 700, fontSize: 16, display: 'block' }}>{l.label}</span>
+              <span style={{ color: '#bae6fd', fontSize: 12 }}>{l.sub}</span>
+            </span>
+            {fresh > 0 && <span style={{ background: '#dc2626', color: '#fff', fontWeight: 800, fontSize: 13,
+              padding: '3px 10px', borderRadius: 999 }}>{fresh} new</span>}
+          </Link>
+        ))}
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 26 }}>
           {top.map(l => (

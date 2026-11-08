@@ -451,6 +451,45 @@ async def all_conversations_dashboard(
     return {"conversations": rows or []}
 
 
+@router.get("/feed/recent")
+async def field_feed(days: int = 14, db: Database = Depends(get_db)):
+    """The crew Feed tile: every field chat with activity in the last `days`, newest first, with
+    who spoke last. Same data the job pages already show (field pages have no login); the phone
+    keeps its own 'last seen' so it can mark what's new."""
+    days = max(1, min(days, 60))
+    rows = await db._q(
+        """SELECT id, opp_id, context_type, title, tag, status, property_name, last_message,
+                  message_count, COALESCE(updated_at, created_at) AS last_at
+           FROM field_conversations
+           WHERE COALESCE(updated_at, created_at) >= datetime('now', ?)
+           ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 100""",
+        [f"-{days} days"],
+    )
+    rows = rows or []
+    last: dict = {}
+    ids = [r["id"] for r in rows]
+    if ids:
+        ph = ",".join("?" for _ in ids)
+        for m in await db._q(
+                f"""SELECT conversation_id, role, crew_name FROM field_conversation_messages
+                    WHERE id IN (SELECT MAX(id) FROM field_conversation_messages
+                                 WHERE conversation_id IN ({ph}) GROUP BY conversation_id)""", ids) or []:
+            last[m["conversation_id"]] = m
+    out = []
+    for r in rows:
+        m = last.get(r["id"]) or {}
+        out.append({
+            "id": r["id"], "opp_id": r["opp_id"], "context_type": r.get("context_type"),
+            "title": r.get("title"), "tag": r.get("tag"), "status": r.get("status"),
+            "property_name": r.get("property_name"), "message_count": r.get("message_count"),
+            "last_message": (r.get("last_message") or "")[:160],
+            "last_author": m.get("crew_name") or ("AI" if m.get("role") == "assistant" else None),
+            "last_at": (r.get("last_at") or "").replace("T", " ")[:19],
+            "url": _conv_path(r.get("context_type") or "maintenance", r["opp_id"], r["id"]),
+        })
+    return {"conversations": out}
+
+
 @router.get("/{opp_id}")
 async def list_conversations(
     opp_id:       int,
