@@ -1,167 +1,68 @@
 /**
- * Landing — branded entry point for the Darios Operations Portal.
- *
- * /field/*  — public, no login required (field crew)
- * /ap/*     — protected by Cloudflare Access (office staff)
- * /dashboards/* and /ops/* — protected by Cloudflare Access
+ * Landing — the front door of the Darios Operations Portal. Two choices only:
+ *   • I'm in the field → /crew  (public tile page, no login)
+ *   • Office           → /home  (sign in first if needed)
+ * Every individual page is reached from those two places (see src/lib/nav.ts).
  */
 
 import { Link } from 'react-router-dom';
 
-const FIELD_LINKS = [
-  { to: '/field',                  icon: '🧾', label: 'Submit Receipt',   sub: 'Invoices, MC & expenses' },
-  { to: '/field/work-ticket',      icon: '✅', label: 'Schedule',         sub: 'View routes & complete tickets' },
-  { to: '/field/project',          icon: '🏗️', label: 'Projects', sub: 'Construction & enhancement — hours, updates & check-ins' },
-  { to: '/field/maintenance',      icon: '🌿', label: 'Maintenance',           sub: 'Contracts & service history' },
-  { to: '/field/purchase-order',   icon: '🛒', label: 'Purchase Order',   sub: 'Create a PO for materials' },
-  { to: '/field/contacts',         icon: '📞', label: 'Contacts',         sub: 'Property & client lookup' },
-  { to: '/field/safety',           icon: '🦺', label: 'Safety Talk',       sub: 'Record a toolbox talk' },
-  { to: '/field/keys',             icon: '🔑', label: 'Key Box',            sub: 'Check keys in / out' },
-  { to: '/field/documents',        icon: '📋', label: 'Documents',           sub: 'Policies & procedures' },
-  { to: '/field/inspection',       icon: '🔍', label: 'Site Inspection',      sub: 'Safety & compliance check' },
-  { to: '/field/incident',         icon: '🚨', label: 'Incident Report',       sub: 'Report a safety incident' },
-  { to: '/field/vehicle-inspection', icon: '🚛', label: 'Vehicle Inspection',   sub: 'Weekly pre-use vehicle check' },
-];
-
-const OFFICE_GROUPS = [
-  {
-    label: 'Field Ops',
-    items: [
-      { to: '/dashboards/schedule', icon: '🗺️', label: 'Daily Schedule', sub: 'Sites visited today by division & lead' },
-      { to: '/dashboards/construction/board', icon: '📅', label: 'Construction Schedule', sub: 'Crew × day board — drag jobs onto the week' },
-      { to: '/dashboards/construction/plan', icon: '🏗️', label: 'Construction Planning', sub: 'Pipeline from intake to completion' },
-      { to: '/ops/issues',        icon: '💬', label: 'Field Chat',     sub: 'All crew conversations' },
-      { to: '/ops/crew-schedule', icon: '👥', label: 'Crew Schedule',  sub: 'Assign staff to routes' },
-      { to: '/ops/safety-talks',  icon: '🦺', label: 'Safety Talks',   sub: 'Toolbox talk records' },
-      { to: '/ops/safety-incidents', icon: '🚨', label: 'Incident Reports', sub: 'Field safety incident log' },
-      { to: '/ops/safety-pha',       icon: '🦺', label: 'Hazard Assessments', sub: 'Project hazard assessments (PHA)' },
-      { to: '/ops/vehicle-inspections', icon: '🚛', label: 'Vehicle Inspections', sub: 'Weekly vehicle inspection log' },
-      { to: '/ops/documents',     icon: '🗂️', label: 'Documents Admin', sub: 'Upload & organise company documents' },
-      { to: '/keys/admin',        icon: '🔑', label: 'Key Box Admin',  sub: 'Manage keys & view log' },
-    ],
-  },
-  {
-    label: 'Accounting & Dashboards',
-    items: [
-      { to: '/ap',          icon: '💳', label: 'Invoices',       sub: 'AP inbox & invoice processing' },
-      { to: '/ap/invoice-summary', icon: '📋', label: 'Invoice Summary', sub: 'Weekly progress report by service category' },
-      { to: '/vendors',     icon: '🏢', label: 'Vendors',        sub: 'Vendor rules & settings' },
-      { to: '/reconcile',   icon: '🔄', label: 'Reconciliation', sub: 'Statement vs QBO reconcile' },
-      { to: '/dashboards',  icon: '📊', label: 'Dashboards',     sub: 'Sales, ops & construction views' },
-      { to: '/users',       icon: '👤', label: 'Users',          sub: 'Manage portal logins' },
-      { to: '/settings/email', icon: '✉️', label: 'Email Settings', sub: 'Timing & recipients of automated emails' },
-      { to: '/ops/backups',    icon: '💾', label: 'Backups',        sub: 'Database snapshots & restore points' },
-    ],
-  },
-];
-
-function CardLink({ to, icon, label, sub, external }: { to: string; icon: string; label: string; sub: string; external?: boolean }) {
-  const inner = (
-    <div
-      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', cursor: 'pointer' }}
-      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
-      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-    >
-      <span style={{ fontSize: 20, flexShrink: 0, width: 28, textAlign: 'center' }}>{icon}</span>
-      <div style={{ flex: 1 }}>
-        <div style={{ color: '#fff', fontWeight: 600, fontSize: 14 }}>{label}</div>
-        <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 1 }}>{sub}</div>
-      </div>
-      <span style={{ color: '#475569', fontSize: 14 }}>›</span>
-    </div>
-  );
-  if (external) {
-    return <a href={to} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>{inner}</a>;
+function signedIn(): boolean {
+  const token = localStorage.getItem('ap_token');
+  if (!token) return false;
+  try {
+    return JSON.parse(atob(token.split('.')[1])).exp > Date.now() / 1000;
+  } catch {
+    return false;
   }
-  return <Link to={to} style={{ textDecoration: 'none' }}>{inner}</Link>;
 }
 
+const DOOR: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 16,
+  padding: '22px 22px', borderRadius: 16, textDecoration: 'none',
+};
+
 export default function Landing() {
+  const office = signedIn();
   return (
     <div style={{
-      minHeight: '100vh',
-      background: '#0f172a',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
+      minHeight: '100vh', background: '#0f172a',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       padding: '24px 16px',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }}>
-
-      {/* Brand */}
       <div style={{ textAlign: 'center', marginBottom: 36 }}>
-        <img src="/darios-logo.png" alt="Darios Landscaping" style={{ height: 80, marginBottom: 12, objectFit: 'contain' }} />
-        <p style={{ color: '#475569', marginTop: 6, fontSize: 13, margin: '6px 0 0' }}>
-          Operations Portal
-        </p>
+        <img src="/darios-logo.png" alt="Darios Landscaping" style={{ height: 80, objectFit: 'contain' }} />
+        <p style={{ color: '#64748b', fontSize: 13, margin: '8px 0 0' }}>Operations Portal</p>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%', maxWidth: 400 }}>
-
-        {/* ── Field Staff — public, no login ── */}
-        <div style={{
-          background: '#14532d',
-          border: '1px solid #16a34a',
-          borderRadius: 14,
-          overflow: 'hidden',
-        }}>
-          <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid #16a34a', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 20 }}>📱</span>
-            <div style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>Field Staff</div>
-            <span style={{ marginLeft: 'auto', background: '#166534', color: '#86efac', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, letterSpacing: '0.05em' }}>
-              NO LOGIN NEEDED
-            </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, width: '100%', maxWidth: 380 }}>
+        <Link to="/crew" style={{ ...DOOR, background: '#14532d', border: '1px solid #16a34a' }}>
+          <span style={{ fontSize: 34 }}>🌿</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ color: '#fff', fontWeight: 700, fontSize: 18 }}>I'm in the field</div>
+            <div style={{ color: '#86efac', fontSize: 13, marginTop: 2 }}>Receipts, schedule, POs, safety — no login</div>
           </div>
-          {FIELD_LINKS.map(item => (
-            <Link key={item.to} to={item.to} style={{ textDecoration: 'none' }}>
-              <div
-                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', cursor: 'pointer' }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-              >
-                <span style={{ fontSize: 20, flexShrink: 0, width: 28, textAlign: 'center' }}>{item.icon}</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ color: '#fff', fontWeight: 600, fontSize: 14 }}>{item.label}</div>
-                  <div style={{ color: '#86efac', fontSize: 12, marginTop: 1 }}>{item.sub}</div>
-                </div>
-                <span style={{ color: '#4ade80', fontSize: 14 }}>›</span>
-              </div>
-            </Link>
-          ))}
-        </div>
+          <span style={{ color: '#4ade80', fontSize: 22 }}>›</span>
+        </Link>
 
-        {/* ── Office & Management — protected ── */}
-        <div style={{
-          background: '#1e293b',
-          border: '1px solid #334155',
-          borderRadius: 14,
-          overflow: 'hidden',
-        }}>
-          <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 20 }}>🏢</span>
-            <div style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>Office &amp; Management</div>
-            <span style={{ marginLeft: 'auto', background: '#1e3a5f', color: '#93c5fd', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, letterSpacing: '0.05em' }}>
-              🔒 LOGIN REQUIRED
-            </span>
-          </div>
-
-          {OFFICE_GROUPS.map((group, gi) => (
-            <div key={group.label}>
-              {gi > 0 && <div style={{ height: 1, background: '#334155', margin: '0 20px' }} />}
-              <div style={{ padding: '8px 20px 2px', color: '#475569', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                {group.label}
-              </div>
-              {group.items.map(item => (
-                <CardLink key={item.to} {...item} />
-              ))}
+        <Link
+          to={office ? '/home' : '/login'}
+          state={office ? undefined : { from: '/home' }}
+          style={{ ...DOOR, background: '#1e293b', border: '1px solid #334155' }}
+        >
+          <span style={{ fontSize: 30 }}>🏢</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ color: '#fff', fontWeight: 700, fontSize: 18 }}>{office ? 'Office' : 'Office sign in'}</div>
+            <div style={{ color: '#94a3b8', fontSize: 13, marginTop: 2 }}>
+              {office ? 'Go to your home page' : 'Staff login'}
             </div>
-          ))}
-        </div>
-
+          </div>
+          <span style={{ color: '#64748b', fontSize: 22 }}>›</span>
+        </Link>
       </div>
 
-      <p style={{ color: '#1e293b', fontSize: 11, marginTop: 40 }}>
+      <p style={{ color: '#334155', fontSize: 11, marginTop: 40 }}>
         Darios Landscaping &copy; {new Date().getFullYear()}
       </p>
     </div>

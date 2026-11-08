@@ -58,6 +58,8 @@ import IssuesDashboard        from './pages/IssuesDashboard';
 import EmergencyReset         from './pages/EmergencyReset';
 import InvoiceSummaryReport   from './pages/InvoiceSummaryReport';
 import MyWork                 from './pages/MyWork';
+import FieldHome              from './pages/FieldHome';
+import OfficeHome             from './pages/OfficeHome';
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
@@ -71,6 +73,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
         {/* Landing */}
         <Route path="/"    element={<Landing />} />
+        <Route path="/crew" element={<FieldHome />} />
+        <Route path="/home" element={<RequireAuth><Office><OfficeHome /></Office></RequireAuth>} />
 
         {/* Auth */}
         <Route path="/login"           element={<Login />} />

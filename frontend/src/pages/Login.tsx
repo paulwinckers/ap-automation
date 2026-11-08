@@ -10,7 +10,7 @@ import { login, getMe } from '../lib/api';
 export default function Login() {
   const navigate  = useNavigate();
   const location  = useLocation();
-  const from      = (location.state as any)?.from || '/ap';
+  const from      = (location.state as any)?.from || '/home';
 
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');

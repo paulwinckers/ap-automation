@@ -4,6 +4,11 @@
  */
 
 import { Link } from 'react-router-dom';
+import { hasArea } from '../lib/api';
+import { OFFICE_SECTIONS } from '../lib/nav';
+
+// Each dashboard is opened by the area it sits under in the menu.
+const AREA_BY_PATH = new Map(OFFICE_SECTIONS.flatMap(s => s.items.map(it => [it.path, it.area ?? s.area] as const)));
 
 const DASHBOARDS = [
   {
@@ -89,7 +94,7 @@ export default function DashboardsIndex() {
       </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16, maxWidth: 900 }}>
-        {DASHBOARDS.map(d => (
+        {DASHBOARDS.filter(d => { const a = AREA_BY_PATH.get(d.to); return !a || hasArea(a); }).map(d => (
           <Link
             key={d.to}
             to={d.to}

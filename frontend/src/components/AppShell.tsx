@@ -5,67 +5,11 @@
 
 import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { logout, currentUser, listMyWorklist, hasArea, refreshMe, Area } from '../lib/api';
+import { logout, currentUser, listMyWorklist, hasArea, refreshMe } from '../lib/api';
+import { visibleSections, activePath } from '../lib/nav';
 
 const SIDEBAR_FULL  = 220;
 const SIDEBAR_MINI  = 56;
-
-// Kept in sync with the Landing main menu (src/pages/Landing.tsx).
-const NAV = [
-  {
-    section: 'My Work',
-    items: [
-      { label: 'My Action Items', path: '/my-work', icon: '🎯' },
-    ],
-  },
-  {
-    section: 'Field Staff',
-    items: [
-      { label: 'Submit Receipt',        path: '/field',                icon: '🧾' },
-      { label: 'Schedule',              path: '/field/work-ticket',    icon: '✅' },
-      { label: 'Projects', path: '/field/project',        icon: '🏗️' },
-      { label: 'Maintenance',           path: '/field/maintenance',    icon: '🌿' },
-      { label: 'Purchase Order',        path: '/field/purchase-order', icon: '🛒', color: '#f59e0b' },
-      { label: 'Contacts',              path: '/field/contacts',       icon: '📞' },
-      { label: 'Safety Talk',           path: '/field/safety',         icon: '🦺' },
-      { label: 'Key Box',               path: '/field/keys',           icon: '🗝️', color: '#fbbf24' },
-      { label: 'Documents',             path: '/field/documents',      icon: '📋' },
-      { label: 'Site Inspection',       path: '/field/inspection',     icon: '🔍' },
-      { label: 'Incident Report',       path: '/field/incident',       icon: '🚨' },
-      { label: 'Vehicle Inspection',    path: '/field/vehicle-inspection', icon: '🚛' },
-    ],
-  },
-  {
-    section: 'Field Ops',
-    items: [
-      { label: 'Daily Schedule', path: '/dashboards/schedule', icon: '🗺️', area: 'operations' as Area },
-      { label: 'Weekly Schedule', path: '/dashboards/schedule/week', icon: '📆', area: 'operations' as Area },
-      { label: 'Construction Schedule', path: '/dashboards/construction/board', icon: '📅', area: 'operations' as Area },
-      { label: 'Construction Planning', path: '/dashboards/construction/plan', icon: '🏗️', area: 'operations' as Area },
-      { label: 'Field Chat',    path: '/ops/issues',        icon: '💬', area: 'operations' as Area },
-      { label: 'Crew Schedule', path: '/ops/crew-schedule', icon: '👥', area: 'operations' as Area },
-      { label: 'Safety Talks',  path: '/ops/safety-talks',  icon: '🦺', area: 'operations' as Area },
-      { label: 'Incident Reports', path: '/ops/safety-incidents', icon: '🚨', area: 'hr' as Area },
-      { label: 'Hazard Assessments', path: '/ops/safety-pha', icon: '🦺', area: 'operations' as Area },
-      { label: 'Vehicle Inspections', path: '/ops/vehicle-inspections', icon: '🚛', area: 'operations' as Area },
-      { label: 'Documents Admin', path: '/ops/documents',   icon: '🗂️', area: 'operations' as Area },
-      { label: 'Key Box Admin', path: '/keys/admin',        icon: '🔑', area: 'operations' as Area },
-    ],
-  },
-  {
-    section: 'Accounting & Dashboards',
-    items: [
-      { label: 'Invoices',        path: '/ap',                 icon: '💳', area: 'finance' as Area },
-      { label: 'Invoice Summary', path: '/ap/invoice-summary', icon: '📋', area: 'finance' as Area },
-      { label: 'Vendors',         path: '/vendors',            icon: '🏢', area: 'finance' as Area },
-      { label: 'Reconciliation',  path: '/reconcile',          icon: '🔄', area: 'finance' as Area },
-      { label: 'Dashboards',      path: '/dashboards',         icon: '📊' },
-      { label: 'Users',           path: '/users',              icon: '👤', area: 'admin' as Area },
-      { label: 'Email Settings',  path: '/settings/email',     icon: '✉️', area: 'admin' as Area },
-      { label: 'Backups',         path: '/ops/backups',        icon: '💾', area: 'admin' as Area },
-    ],
-  },
-];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
@@ -73,9 +17,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   // Re-read role + access areas once per visit so an admin's changes show up in the menu.
   const [, setAreasLoaded] = useState(0);
   useEffect(() => { refreshMe().then(() => setAreasLoaded(n => n + 1)); }, []);
-  const nav = NAV
-    .map(sec => ({ ...sec, items: sec.items.filter(it => !('area' in it) || hasArea((it as { area: Area }).area)) }))
-    .filter(sec => sec.items.length > 0);
+  const nav = visibleSections(hasArea);
+  const current = activePath(pathname, nav.flatMap(sec => sec.items.map(it => it.path)));
   const [actionCount, setActionCount] = useState(0);
 
   useEffect(() => {
@@ -165,8 +108,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   transition: 'color 0.15s, background 0.15s',
                   whiteSpace: 'nowrap' as const,
                 });
-                const active = pathname.startsWith(item.path);
-                const ic = 'color' in item ? (item as { color?: string }).color : undefined;
+                const active = item.path === current;
                 const badge = item.path === '/my-work' ? actionCount : 0;
                 const badgeEl = badge > 0 ? (
                   <span style={{
@@ -183,13 +125,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     title={collapsed ? `${item.label}${badge > 0 ? ` (${badge})` : ''}` : undefined}
                     style={{ ...linkStyle(active), position: 'relative' }}
                   >
-                    <span style={{ fontSize: 18, flexShrink: 0, color: active ? undefined : ic, fontWeight: ic ? 700 : undefined, position: 'relative' }}>
+                    <span style={{ fontSize: 18, flexShrink: 0, position: 'relative' }}>
                       {item.icon}
                       {collapsed && badgeEl && (
                         <span style={{ position: 'absolute', top: -6, right: -10 }}>{badgeEl}</span>
                       )}
                     </span>
-                    {!collapsed && <span style={{ color: active ? undefined : ic }}>{item.label}</span>}
+                    {!collapsed && <span>{item.label}</span>}
                     {!collapsed && badgeEl && <span style={{ marginLeft: 'auto' }}>{badgeEl}</span>}
                   </Link>
                 );
