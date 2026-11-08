@@ -1259,46 +1259,6 @@ export async function changeMyPassword(currentPassword: string, newPassword: str
   await request('POST', '/auth/change-password', { current_password: currentPassword, new_password: newPassword });
 }
 
-// ── Crew Schedule ─────────────────────────────────────────────────────────────
-
-export interface CrewEmployee {
-  ContactID: number;
-  FullName: string;
-  Email?: string;
-}
-
-export interface CrewAssignment {
-  id: number;
-  route_name: string;
-  employee_id: number;
-  employee_name: string;
-}
-
-export async function getCrewEmployees(): Promise<CrewEmployee[]> {
-  const res = await request<{ employees: CrewEmployee[] }>('GET', '/crew/employees');
-  return res.employees;
-}
-
-export async function getCrewAssignments(workDate: string): Promise<Record<string, CrewAssignment[]>> {
-  const res = await request<{ assignments: Record<string, CrewAssignment[]> }>(
-    'GET', `/crew/assignments?work_date=${workDate}`
-  );
-  return res.assignments;
-}
-
-export async function addCrewAssignment(
-  workDate: string, routeName: string, employeeId: number, employeeName: string
-): Promise<{ id: number; created: boolean }> {
-  return request('POST', '/crew/assignments', {
-    work_date: workDate, route_name: routeName,
-    employee_id: employeeId, employee_name: employeeName,
-  });
-}
-
-export async function removeCrewAssignment(assignmentId: number): Promise<void> {
-  await request('DELETE', `/crew/assignments/${assignmentId}`);
-}
-
 export async function createFieldOpportunity(p: FieldOpportunityPayload): Promise<CreateOpportunityResponse> {
   const form = new FormData();
   form.append('submitter_name', p.submitterName);

@@ -67,7 +67,6 @@ _RULES: list[tuple[str, str, Optional[str]]] = [
     # Operations
     ("*", "/construction", "operations"),
     ("*", "/checkin", "operations"),
-    ("*", "/crew", "operations"),
     ("*", "/schedule", "operations"),
     ("*", "/documents", "operations"),
     ("*", "/keys", "operations"),

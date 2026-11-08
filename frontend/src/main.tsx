@@ -12,7 +12,6 @@ import VendorAdmin            from './pages/VendorAdmin';
 import Reconcile              from './pages/Reconcile';
 import UserAdmin              from './pages/UserAdmin';
 import SalesDashboard         from './pages/SalesDashboard';
-import OpsDashboard           from './pages/OpsDashboard';
 import ConstructionDashboard  from './pages/ConstructionDashboard';
 import ConstructionPlan       from './pages/ConstructionPlan';
 import ConstructionBoard      from './pages/ConstructionBoard';
@@ -35,7 +34,6 @@ import FieldSafetyTalk    from './pages/FieldSafetyTalk';
 import FieldDocuments     from './pages/FieldDocuments';
 import DocumentsAdmin     from './pages/DocumentsAdmin';
 import KeyScan            from './pages/KeyScan';
-import CrewSchedule       from './pages/CrewSchedule';
 import TimeTracking       from './pages/TimeTracking';
 import PropertyLookup     from './pages/PropertyLookup';
 import KeysAdmin          from './pages/KeysAdmin';
@@ -107,7 +105,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
         {/* Field Ops — login required */}
         <Route path="/ops/issues"        element={<RequireAuth area="operations"><Office><IssuesDashboard /></Office></RequireAuth>} />
-        <Route path="/ops/crew-schedule" element={<RequireAuth area="operations"><Office><CrewSchedule /></Office></RequireAuth>} />
         <Route path="/ops/safety-talks"  element={<RequireAuth area="operations"><Office><SafetyTalksAdmin /></Office></RequireAuth>} />
         <Route path="/ops/time-tracking" element={<FieldShell><TimeTracking /></FieldShell>} />
         <Route path="/ops/contacts"      element={<RequireAuth area="customers"><Office><PropertyLookup /></Office></RequireAuth>} />
@@ -133,7 +130,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         {/* Dashboards */}
         <Route path="/dashboards"              element={<RequireAuth><Office><DashboardsIndex /></Office></RequireAuth>} />
         <Route path="/dashboards/sales"        element={<RequireAuth area="customers"><Office><SalesDashboard /></Office></RequireAuth>} />
-        <Route path="/dashboards/ops"          element={<RequireAuth area="operations"><Office><OpsDashboard /></Office></RequireAuth>} />
         <Route path="/dashboards/schedule"      element={<RequireAuth area="operations"><Office><DailySchedule /></Office></RequireAuth>} />
         <Route path="/dashboards/customer"      element={<RequireAuth area="customers"><Office><CustomerDashboard /></Office></RequireAuth>} />
         <Route path="/dashboards/customer/360"  element={<RequireAuth area="customers"><Office><Customer360 /></Office></RequireAuth>} />

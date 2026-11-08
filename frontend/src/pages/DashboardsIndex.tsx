@@ -18,12 +18,6 @@ const DASHBOARDS = [
     sub:   'Revenue pipeline, targets & pace',
   },
   {
-    to:    '/dashboards/ops',
-    icon:  '🗓️',
-    label: 'Ops Dashboard',
-    sub:   'Daily hours log vs budget, MTD/YTD',
-  },
-  {
     to:    '/dashboards/schedule',
     icon:  '🗺️',
     label: 'Daily Schedule',
