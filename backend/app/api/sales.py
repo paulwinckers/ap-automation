@@ -72,6 +72,20 @@ async def _user_name(db: Database, user_id: Optional[int]) -> Optional[str]:
     return rows[0].get("name") or rows[0].get("email")
 
 
+def task_claude_prompt(task: dict) -> str:
+    """What a 'Handle with Claude' button pre-types for a task (Darios connector does the rest)."""
+    bits = [f"Darios task #{task.get('id')}: {task.get('title')}"]
+    if task.get("customer_key"):
+        bits.append(f"customer {task['customer_key']}")
+    if task.get("due_date"):
+        bits.append(f"due {task['due_date']}")
+    if task.get("created_by"):
+        bits.append(f"from {task['created_by']}")
+    return (" · ".join(bits) + ". Open it with get_task (details + thread) and check the customer's "
+            "history, then help me act on it — e.g. reply on the thread, update or finish the task, "
+            "or create an Aspire issue. Confirm with me before changing anything.")
+
+
 async def _resolve_assignee(db: Database, text: Optional[str]) -> tuple[Optional[int], Optional[str]]:
     """Match a typed assignee ("Paul", "Paul Winckers", "paul@darios.ca") to ONE active user.
     Returns (user_id, display name), or (None, text) when there's no single match — e.g. a crew
@@ -311,7 +325,8 @@ async def create_task(body: TaskIn, user: dict = Depends(require_access), db: Da
         try:
             from app.api.push import push_to_user
             due = f" · due {body.due_date}" if body.due_date else ""
-            await push_to_user(body.assignee_user_id, "New task", f"{body.title.strip()}{due}", "/my-work")
+            await push_to_user(body.assignee_user_id, "New task", f"{body.title.strip()}{due}", "/my-work",
+                               claude_prompt=task_claude_prompt(task))
         except Exception as e:
             logger.warning(f"task push failed: {e}")
     # Tell the caller when a typed assignee couldn't be linked to a portal user.
@@ -482,7 +497,9 @@ async def add_task_update(task_id: int, body: TaskUpdateIn, user: dict = Depends
         snippet = body.body.strip()[:120]
         for uid in recipients:
             await push_to_user(uid, f"Reply · {task.get('title') or 'task'}",
-                               f"{author_name}: {snippet}", "/my-work")
+                               f"{author_name}: {snippet}", "/my-work",
+                               claude_prompt=f"{author_name} replied on Darios task #{task_id} "
+                                             f"({task.get('title')}): \"{snippet}\". " + task_claude_prompt(task))
     except Exception as e:
         logger.warning(f"task update push failed: {e}")
 
@@ -535,7 +552,8 @@ async def patch_task(task_id: int, body: TaskPatch, user: dict = Depends(require
         try:
             from app.api.push import push_to_user
             due = f" · due {task['due_date']}" if task.get("due_date") else ""
-            await push_to_user(new_assignee, "Task assigned to you", f"{task.get('title')}{due}", "/my-work")
+            await push_to_user(new_assignee, "Task assigned to you", f"{task.get('title')}{due}", "/my-work",
+                               claude_prompt=task_claude_prompt(task))
         except Exception as e:
             logger.warning(f"task reassign push failed: {e}")
     return {"ok": True, "task": task}

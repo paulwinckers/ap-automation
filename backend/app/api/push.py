@@ -74,8 +74,15 @@ async def _delete_subscription(endpoint: str) -> None:
         await db.close()
 
 
-async def _send(rows: list, title: str, body: str, url: str) -> dict:
-    """Web-push `rows` (each with endpoint/p256dh/auth). Dormant until VAPID is configured."""
+def claude_link(prompt: str) -> str:
+    """A claude.ai link that opens a new chat with `prompt` already typed in."""
+    from urllib.parse import quote
+    return "https://claude.ai/new?q=" + quote(prompt[:1500])
+
+
+async def _send(rows: list, title: str, body: str, url: str, claude_url: Optional[str] = None) -> dict:
+    """Web-push `rows` (each with endpoint/p256dh/auth). Dormant until VAPID is configured.
+    `claude_url` adds a "Handle with Claude" button to the notification (where the phone supports it)."""
     if not settings.VAPID_PRIVATE_KEY or not settings.VAPID_PUBLIC_KEY:
         return {"sent": 0, "failed": 0, "configured": False}
     try:
@@ -85,7 +92,7 @@ async def _send(rows: list, title: str, body: str, url: str) -> dict:
         return {"sent": 0, "failed": 0, "configured": False}
     from pywebpush import webpush
 
-    data = json.dumps({"title": title, "body": body, "url": url})
+    data = json.dumps({"title": title, "body": body, "url": url, "claude_url": claude_url})
     sent = failed = 0
     stale: list[str] = []
     for row in rows:
@@ -112,7 +119,8 @@ async def _send(rows: list, title: str, body: str, url: str) -> dict:
     return {"sent": sent, "failed": failed, "configured": True}
 
 
-async def push_to_user(user_id: int, title: str, body: str, url: str = "/my-work") -> dict:
+async def push_to_user(user_id: int, title: str, body: str, url: str = "/my-work",
+                       claude_prompt: Optional[str] = None) -> dict:
     """Send a push to one rep's subscribed devices. No-ops cleanly if VAPID isn't set or the rep
     has no device subscribed. Importable by other modules (e.g. task creation)."""
     if not user_id:
@@ -130,7 +138,7 @@ async def push_to_user(user_id: int, title: str, body: str, url: str = "/my-work
         await db.close()
     if not rows:
         return {"sent": 0, "failed": 0, "no_subscription": True}
-    return await _send(rows, title, body, url)
+    return await _send(rows, title, body, url, claude_link(claude_prompt) if claude_prompt else None)
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────

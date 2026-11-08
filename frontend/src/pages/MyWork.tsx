@@ -13,6 +13,7 @@ import {
   listMyWorklist, patchSalesTask, patchSalesActivity, skipCxAction, setChecklistStatus,
   currentUser, WorklistItem,
 } from '../lib/api';
+import { claudeLink, worklistPrompt } from '../lib/claude';
 import { Link } from 'react-router-dom';
 import { ClientCommsModal } from '../components/ClientComms';
 import { TaskThread } from '../components/TaskThread';
@@ -246,6 +247,14 @@ export default function MyWork() {
                       {it.source === 'sales_task' && (
                         <button onClick={() => setThreadTask(Number(it.id))} title="Open the conversation" style={{ ...btn, color: '#1e3a5f' }}>💬 Thread</button>
                       )}
+                      {(() => {
+                        const p = worklistPrompt(it);
+                        return p && (
+                          <a href={claudeLink(p)} target="_blank" rel="noopener noreferrer"
+                            title="Open Claude with this item ready to act on"
+                            style={{ ...btn, color: '#9a3412', textDecoration: 'none', flexShrink: 0 }}>✳ Claude</a>
+                        );
+                      })()}
                       {it.source === 'cx_comms' ? (
                         <button onClick={() => startSend([it])} style={{ ...btn, color: '#3730a3' }}>Send…</button>
                       ) : (

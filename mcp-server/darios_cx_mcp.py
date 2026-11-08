@@ -102,6 +102,14 @@ async def _patch(path: str, body: dict):
         return r.json()
 
 
+async def _post_form(path: str, fields: dict):
+    async with httpx.AsyncClient(timeout=TIMEOUT) as c:
+        r = await c.post(f"{API}{path}", data={k: str(v) for k, v in fields.items() if v is not None},
+                         headers=_headers())
+        r.raise_for_status()
+        return r.json()
+
+
 # ── Read tools (safe) ──────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -378,6 +386,35 @@ async def get_assignees() -> dict:
 async def add_task_update(task_id: int, body: str, author: Optional[str] = None) -> dict:
     """Append a progress note to a task's thread (the living log)."""
     return await _post(f"/sales/task/{task_id}/update", {"body": body, "author": author})
+
+
+@mcp.tool()
+async def get_task(task_id: int) -> dict:
+    """Open ONE task: its details (title, customer_key, assignee, due date, status), the full
+    conversation thread (updates from each person) and attached photos. Use this first when the
+    user asks to act on a task (e.g. from a "Handle with Claude" link)."""
+    return await _get(f"/sales/task/{task_id}")
+
+
+@mcp.tool()
+async def create_aspire_issue(subject: str, property_id: int, notes: str, confirmed: bool,
+                              property_name: Optional[str] = None, assigned_to_name: Optional[str] = None,
+                              priority: Optional[str] = None, due_date: Optional[str] = None) -> dict:
+    """CREATE an Issue in Aspire against a property (e.g. an irrigation problem a customer called
+    about). This writes to Aspire: first show the user the property, subject, notes, assignee,
+    priority and due date, and only call with confirmed=True after they approve. Get property_id
+    from get_customer_360 (the customer's properties). assigned_to_name = the Aspire user's full
+    name (defaults to you). priority: High | Normal | Low. due_date: YYYY-MM-DD. Returns the new
+    IssueID. Afterwards, offer to note it on the task thread (add_task_update) or the customer's
+    history (log_sales_activity)."""
+    if not confirmed:
+        return {"ok": False, "error": "Not created. Set confirmed=True only after the user approves the issue details."}
+    me = await _get("/auth/me")
+    return await _post_form("/aspire/field/issue", {
+        "submitter_name": me.get("name") or me.get("email"), "property_id": property_id,
+        "property_name": property_name, "subject": subject, "notes": notes,
+        "assigned_to_name": assigned_to_name, "priority": priority, "due_date": due_date,
+    })
 
 
 @mcp.tool()
