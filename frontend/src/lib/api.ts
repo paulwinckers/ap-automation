@@ -1996,6 +1996,7 @@ export interface CxSettings {
   designer_name: string; designer_email: string; designer_title: string; designer_phone: string; designer_mobile: string;
   sales_name: string; sales_email: string; sales_title: string; sales_phone: string; sales_mobile: string;
   company_phone: string; survey_link: string; review_link: string;
+  email_tasks_owner_name: string; email_tasks_owner_email: string; pha_owner_name: string; pha_owner_email: string;
   company_name: string; company_website: string; company_logo_url: string; brand_color: string; email_disclaimer: string;
 }
 export interface CxTemplate {

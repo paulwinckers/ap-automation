@@ -64,6 +64,10 @@ def _cfg_defaults() -> dict:
         "sales_name": "",                     "sales_email": "",
         "sales_title": "", "sales_phone": "", "sales_mobile": "",
         "company_phone": "",
+        # Who HANDLES the board's tasks (lands on their My Action Items) — separate from who the
+        # email is sent as. Blank = fall back to the template's sending role.
+        "email_tasks_owner_name": "Keeland Kannan", "email_tasks_owner_email": "keeland@darios.ca",
+        "pha_owner_name": "Dustin Nikkel",          "pha_owner_email": "dustin@darios.ca",
         # Company-wide signature card
         "company_name": "Dario's Landscape Services Ltd.",
         "company_website": "http://darioslandscapeservices.ca/",
@@ -107,6 +111,8 @@ class SettingsBody(BaseModel):
     sales_name: Optional[str] = None; sales_email: Optional[str] = None
     sales_title: Optional[str] = None; sales_phone: Optional[str] = None; sales_mobile: Optional[str] = None
     company_phone: Optional[str] = None
+    email_tasks_owner_name: Optional[str] = None; email_tasks_owner_email: Optional[str] = None
+    pha_owner_name: Optional[str] = None; pha_owner_email: Optional[str] = None
     company_name: Optional[str] = None; company_website: Optional[str] = None
     company_logo_url: Optional[str] = None; brand_color: Optional[str] = None; email_disclaimer: Optional[str] = None
     survey_link: Optional[str] = None; review_link: Optional[str] = None
@@ -463,6 +469,11 @@ async def enriched_due_actions(db: Database) -> list[dict]:
             tmpl = target.split("comms:", 1)[1] if target.startswith("comms:") else None
             role = role_by_key.get(tmpl) if tmpl else None
             owner_email, owner_name = owner_for(role)
+            # Task owners set in CX setup win: every client email → one person, every PHA → another.
+            fixed = "email_tasks_owner" if tmpl else ("pha_owner" if target == "pha" else None)
+            if fixed and ((cfg.get(f"{fixed}_email") or "").strip() or (cfg.get(f"{fixed}_name") or "").strip()):
+                owner_email = (cfg.get(f"{fixed}_email") or "").strip()
+                owner_name = (cfg.get(f"{fixed}_name") or "").strip()
             items.append({
                 "opportunity_id":   j.get("opportunity_id"),
                 "opportunity_name": j.get("opportunity_name"),

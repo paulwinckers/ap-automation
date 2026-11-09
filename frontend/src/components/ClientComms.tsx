@@ -177,6 +177,18 @@ export function CxSetupModal({ onClose }: { onClose: () => void }) {
               ))}
             </div>
 
+            <div style={{ fontWeight: 800, fontSize: 14, color: '#111827', margin: '4px 0 4px', borderTop: '1px solid #f1f5f9', paddingTop: 14 }}>Who handles the board's tasks</div>
+            <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>These land on that person's My Action Items. Who the email is sent <i>as</i> stays as set above.</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+              {([['email_tasks_owner', 'Every client email'], ['pha_owner', 'Every PHA']] as const).map(([k, label]) => (
+                <div key={k} style={{ border: '1px solid #f1f5f9', borderRadius: 8, padding: 10 }}>
+                  <label style={lbl}>{label}</label>
+                  <input style={{ ...inp, marginBottom: 5 }} value={gv(`${k}_name`)} placeholder="Name" onChange={e => sv(`${k}_name`, e.target.value)} />
+                  <input style={inp} value={gv(`${k}_email`)} placeholder="email@darios.ca" onChange={e => sv(`${k}_email`, e.target.value)} />
+                </div>
+              ))}
+            </div>
+
             <div style={{ fontWeight: 800, fontSize: 14, color: '#111827', margin: '4px 0 10px', borderTop: '1px solid #f1f5f9', paddingTop: 14 }}>Signature card</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 8 }}>
               <div><label style={lbl}>Company name</label><input style={inp} value={s.company_name} onChange={e => setS({ ...s, company_name: e.target.value })} /></div>

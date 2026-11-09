@@ -317,6 +317,25 @@ async def get_work_tickets(opportunity_id: int) -> dict:
 
 
 @mcp.tool()
+async def get_schedule(date: Optional[str] = None, days: int = 1) -> dict:
+    """What's SCHEDULED on a day — 'what's on tomorrow?', 'who's working Thursday?', 'what does
+    next week look like?'. `date` = YYYY-MM-DD (default today, Vancouver time; the response's
+    `today` tells you the date so you can work out 'tomorrow'); `days` = 1–7 consecutive days.
+    Per day:
+      visits.divisions  Aspire work-ticket visits, Division → crew lead → sites (property, type
+                        maintenance/project/other, work ticket #; projects carry their plan stage)
+      construction      construction board jobs working that day: job, lead, the crew actually on
+                        it that day, 'day 2 of 5', and status tentative/confirmed
+      notes             per-lead notes/labels on the construction board for that day
+    Summarise by division and crew lead; call out construction crews and tentative dates.
+    Weekends usually have nothing scheduled."""
+    params: dict = {"days": days}
+    if date:
+        params["date"] = date
+    return await _get("/schedule/agenda", params)
+
+
+@mcp.tool()
 async def get_invoices(opportunity_id: int) -> dict:
     """Invoices billed to one job, from Aspire: each invoice's number, date, this job's
     amount, and paid/open balance — plus totals (invoiced, collected, outstanding,

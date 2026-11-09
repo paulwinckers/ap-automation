@@ -544,3 +544,73 @@ async def email_week_schedule(start: str | None = None, body: WeekEmailBody | No
         "week_start": payload.get("week_start"),
         "sites": payload.get("summary", {}).get("total_sites", 0),
     }
+
+
+@router.get("/agenda")
+async def get_agenda(date: str | None = None, days: int = 1, db: Database = Depends(get_db)):
+    """
+    Everything scheduled on a day (or a short run of days) in one answer — built for the Claude
+    connector ("what's on tomorrow?"). Per day:
+      visits        Aspire work-ticket visits, Division → Lead → sites (same as /schedule/day)
+      construction  construction board blocks working that day, with the crew actually on it
+                    (per-day exceptions removed) and whether the dates are tentative or confirmed
+      notes         the board's per-lead day labels/notes
+    `date` YYYY-MM-DD (default today, Vancouver time); `days` 1–7.
+    """
+    import json as _json
+    from app.api import schedule as _cs
+
+    tz = ZoneInfo(settings.CONSTRUCTION_REPORT_TIMEZONE or "America/Vancouver")
+    today = datetime.now(tz).strftime("%Y-%m-%d")
+    date = date or today
+    try:
+        start = datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    days = max(1, min(7, days))
+    dates = [(start + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+
+    # Construction board: every effective block, then which ones touch each day.
+    try:
+        rows = await db._q("SELECT * FROM schedule_blocks ORDER BY start_date, id", [])
+        blocks = [b for b in (_cs._shape_block(_cs._row(r)) for r in rows) if _cs._is_effective(b)]
+    except Exception as e:
+        logger.warning(f"agenda: construction blocks unavailable: {e}")
+        blocks = []
+    try:
+        label_rows = await db._q(
+            "SELECT work_date, lead_name, job_label, note FROM schedule_assignments "
+            "WHERE work_date >= ? AND work_date <= ? ORDER BY lead_name", [dates[0], dates[-1]])
+    except Exception:
+        label_rows = []
+
+    out = []
+    for d in dates:
+        try:
+            visits = await get_day_schedule(d, db)
+        except Exception as e:
+            logger.warning(f"agenda: Aspire visits unavailable for {d}: {e}")
+            visits = {"divisions": [], "summary": {}, "error": "Aspire visits unavailable"}
+        construction = []
+        for b in blocks:
+            if d not in (b.get("dates") or []):
+                continue
+            exc = set(b.get("exceptions") or [])
+            crew = [e for e in (b.get("employees") or []) if f"{e}|{d}" not in exc]
+            if not crew:
+                continue
+            construction.append({
+                "job": b.get("job_label"), "opportunity_id": b.get("opportunity_id"),
+                "lead": b.get("lead_name") or None, "crew": crew,
+                "status": b.get("status"), "day_of": f"{b['dates'].index(d) + 1} of {len(b['dates'])}",
+                "start_date": b.get("start_date"), "end_date": b.get("end_date"), "note": b.get("note"),
+            })
+        out.append({
+            "date": d,
+            "weekday": datetime.strptime(d, "%Y-%m-%d").strftime("%A"),
+            "visits": {"summary": visits.get("summary"), "divisions": visits.get("divisions"),
+                       **({"error": visits["error"]} if visits.get("error") else {})},
+            "construction": construction,
+            "notes": [dict(r) for r in label_rows if r.get("work_date") == d],
+        })
+    return {"today": today, "days": out}
