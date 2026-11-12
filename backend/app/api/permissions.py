@@ -10,6 +10,9 @@ only applies to routes that already require a login, so the no-login field pages
   customers   Customer 360, sales activity/tasks, CX emails, estimates, pipeline
   operations  construction plan & schedule, crew, daily schedule, documents, keys, safety admin
   admin       users, backups, email settings, CX settings changes, Aspire probes/debug tools
+  training    courses only. Every signed-in person can take courses; an account whose ONLY area
+              is training (e.g. a crew lead) sees the courses and nothing else. The training
+              report (who finished what) is HR.
 
 Existing staff with no areas set get DEFAULT_STAFF_AREAS until an admin sets theirs.
 The Darios connector inherits this automatically: it acts as the signed-in person.
@@ -21,10 +24,10 @@ from fastapi.routing import APIRoute
 
 from app.api.auth import optional_actor
 
-AREAS = ("finance", "hr", "customers", "operations", "admin")
+AREAS = ("finance", "hr", "customers", "operations", "admin", "training")
 AREA_LABELS = {
     "finance": "Finance", "hr": "HR", "customers": "Customers & Sales",
-    "operations": "Operations", "admin": "Admin",
+    "operations": "Operations", "admin": "Admin", "training": "Training",
 }
 DEFAULT_STAFF_AREAS = ("customers", "operations")
 
@@ -40,6 +43,9 @@ _RULES: list[tuple[str, str, Optional[str]]] = [
     ("*", "/sales/assignees", None),
     ("*", "/sales/feed", None),           # the person's own Feed (chats they're part of)
     ("*", "/sales/{parent_type}/{parent_id}/attachment", None),
+    # Training — the report is HR; taking a course is open to every signed-in person
+    ("*", "/training/report", "hr"),
+    ("*", "/training/", None),
     # Admin
     ("*", "/admin/", "admin"),
     ("*", "/settings/", "admin"),

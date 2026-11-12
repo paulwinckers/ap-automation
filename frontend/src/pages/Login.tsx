@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { login, getMe } from '../lib/api';
+import { login, getMe, isTrainingOnly } from '../lib/api';
 
 export default function Login() {
   const navigate  = useNavigate();
@@ -19,7 +19,7 @@ export default function Login() {
 
   // If already logged in, redirect immediately
   useEffect(() => {
-    getMe().then(() => navigate(from, { replace: true })).catch(() => {});
+    getMe().then(() => navigate(from === '/home' && isTrainingOnly() ? '/training' : from, { replace: true })).catch(() => {});
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -27,7 +27,8 @@ export default function Login() {
     setError(''); setLoading(true);
     try {
       await login(email.trim(), password);
-      navigate(from, { replace: true });
+      // A Training-only account (crew lead) goes straight to the courses instead of the office home.
+      navigate(from === '/home' && isTrainingOnly() ? '/training' : from, { replace: true });
     } catch {
       setError('Invalid email or password.');
     } finally {

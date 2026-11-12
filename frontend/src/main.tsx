@@ -61,6 +61,8 @@ import FieldShell             from './components/FieldShell';
 import OfficeHome             from './pages/OfficeHome';
 import FieldFeed              from './pages/FieldFeed';
 import UsageAdmin             from './pages/UsageAdmin';
+import Training               from './pages/Training';
+import TrainingReport         from './pages/TrainingReport';
 import PageViewTracker        from './components/PageViewTracker';
 
 /** Wrap a page in the office sidebar shell */
@@ -129,6 +131,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/settings/email" element={<RequireAuth area="admin"><Office><EmailSettings /></Office></RequireAuth>} />
         <Route path="/ops/backups"     element={<RequireAuth area="admin"><Office><BackupsAdmin /></Office></RequireAuth>} />
         <Route path="/ops/usage"       element={<RequireAuth area="admin"><Office><UsageAdmin /></Office></RequireAuth>} />
+
+        {/* Training — any signed-in person (crew leads get a Training-only account); no sidebar, phone-first */}
+        <Route path="/training"                     element={<RequireAuth><Training /></RequireAuth>} />
+        <Route path="/training/:courseId"           element={<RequireAuth><Training /></RequireAuth>} />
+        <Route path="/training/:courseId/:moduleId" element={<RequireAuth><Training /></RequireAuth>} />
+        <Route path="/ops/training"                 element={<RequireAuth area="hr"><Office><TrainingReport /></Office></RequireAuth>} />
 
         {/* Personal worklist */}
         <Route path="/my-work" element={<RequireAuth><Office><MyWork /></Office></RequireAuth>} />

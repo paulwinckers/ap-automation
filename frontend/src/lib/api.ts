@@ -52,14 +52,21 @@ export function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Pro
 export interface AuthUser { id: number; email: string; name: string; role: string; phone?: string | null; areas?: Area[]; }
 
 // Access areas — must match backend app/api/permissions.py. Admins hold all of them.
-export type Area = 'finance' | 'hr' | 'customers' | 'operations' | 'admin';
+export type Area = 'finance' | 'hr' | 'customers' | 'operations' | 'admin' | 'training';
 export const AREAS: { key: Area; label: string; hint: string }[] = [
   { key: 'finance',    label: 'Finance',           hint: 'Invoices, vendors, reconciliation, revenue, customer billing' },
   { key: 'hr',         label: 'HR',                hint: 'Staff records, incident reports' },
   { key: 'customers',  label: 'Customers & Sales', hint: 'Customer 360, sales activity, client emails, estimates' },
   { key: 'operations', label: 'Operations',        hint: 'Construction plan & schedule, crews, documents, keys, safety admin' },
   { key: 'admin',      label: 'Admin',             hint: 'Users, backups, email settings, system tools' },
+  { key: 'training',   label: 'Training',          hint: 'Courses. Tick only this for crew leads so they see the courses and nothing else' },
 ];
+
+/** Signed in with no area but Training (e.g. a crew lead's account). */
+export function isTrainingOnly(): boolean {
+  const u = currentUser();
+  return !!u && u.role !== 'admin' && Array.isArray(u.areas) && u.areas.length === 1 && u.areas[0] === 'training';
+}
 
 export async function login(email: string, password: string): Promise<AuthUser> {
   const form = new URLSearchParams({ username: email, password });
@@ -2361,4 +2368,28 @@ export interface UsageReport {
 }
 export async function getUsageReport(days = 7): Promise<UsageReport> {
   return request('GET', `/admin/usage?days=${days}`);
+}
+
+// ── Training courses ─────────────────────────────────────────────────────────
+
+export interface CourseProgress { done: string[]; finished_at: string | null }
+
+export async function getTrainingProgress(): Promise<{ courses: Record<string, CourseProgress> }> {
+  return request('GET', '/training/progress');
+}
+
+export async function completeTrainingModule(courseId: string, moduleId: string): Promise<CourseProgress> {
+  return request('POST', `/training/courses/${encodeURIComponent(courseId)}/modules/${encodeURIComponent(moduleId)}/complete`);
+}
+
+export interface TrainingReport {
+  courses: { id: string; title: string; modules: number }[];
+  people: {
+    user_id: number; name: string; email: string; training_only: boolean;
+    courses: Record<string, { done: number; total: number; last_at: string | null; finished_at: string | null }>;
+  }[];
+}
+
+export async function getTrainingReport(): Promise<TrainingReport> {
+  return request('GET', '/training/report');
 }

@@ -104,6 +104,11 @@ function AreaPicker({ value, onChange, isAdmin }: { value: Area[]; onChange: (v:
               <span style={{ color: '#475569', fontSize: 11 }}>{a.hint}</span>
             </label>
           ))}
+          <button type="button" onClick={() => onChange(['training'])}
+            style={{ alignSelf: 'flex-start', marginTop: 2, background: 'none', border: '1px solid #334155', color: '#94a3b8',
+              borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer' }}>
+            Crew lead: Training only
+          </button>
         </div>
       )}
     </div>

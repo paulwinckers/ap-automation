@@ -35,6 +35,7 @@ export const OFFICE_SECTIONS: OfficeSection[] = [
     items: [
       { path: '/home',    icon: '🏠', label: 'Home',            sub: 'Your day at a glance' },
       { path: '/my-work', icon: '🎯', label: 'My Action Items', sub: 'Tasks, follow-ups & client emails due' },
+      { path: '/training', icon: '🎓', label: 'Training',      sub: 'Courses with videos & quick checks' },
     ],
   },
   {
@@ -69,6 +70,7 @@ export const OFFICE_SECTIONS: OfficeSection[] = [
     section: 'HR', area: 'hr',
     items: [
       { path: '/ops/safety-incidents', icon: '🚨', label: 'Incident Reports', sub: 'Safety incident log & sign-off' },
+      { path: '/ops/training',         icon: '🎓', label: 'Training Report',  sub: 'Who has finished which course' },
     ],
   },
   {

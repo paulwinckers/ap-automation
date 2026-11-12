@@ -57,6 +57,7 @@ from app.api.maintenance_field import router as maintenance_field_router
 from app.api.field_conversations import router as field_conversations_router
 from app.api.invoice_summary import router as invoice_summary_router
 from app.api.usage import router as usage_router
+from app.api.training import router as training_router
 from app.core.config import settings
 from app.core.database import Database
 from app.services.qbo import qbo_auth_router
@@ -532,6 +533,24 @@ async def lifespan(app: FastAPI):
                 viewed_at TEXT    NOT NULL DEFAULT (datetime('now'))
             )
         """,
+        # Training courses — one row per finished module, one row per finished course. See api/training.py
+        "training_progress": """
+            CREATE TABLE IF NOT EXISTS training_progress (
+                user_id      INTEGER NOT NULL,
+                course_id    TEXT    NOT NULL,
+                module_id    TEXT    NOT NULL,
+                completed_at TEXT    NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (user_id, course_id, module_id)
+            )
+        """,
+        "training_completions": """
+            CREATE TABLE IF NOT EXISTS training_completions (
+                user_id      INTEGER NOT NULL,
+                course_id    TEXT    NOT NULL,
+                completed_at TEXT    NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (user_id, course_id)
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:
@@ -760,3 +779,4 @@ app.include_router(maintenance_field_router)
 app.include_router(field_conversations_router)
 app.include_router(invoice_summary_router, dependencies=[Depends(require_access)])
 app.include_router(usage_router)
+app.include_router(training_router)
