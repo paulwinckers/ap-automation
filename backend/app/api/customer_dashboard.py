@@ -34,6 +34,7 @@ from app.core.config import settings
 from app.core.database import Database
 from app.api.construction_plan import _aspire, get_db
 from app.api.auth import require_access
+from app.api.aspire_attachments import signed_attachment_url
 from app.api.daily_schedule import _DIV_ORDER
 from app.services import r2
 
@@ -793,6 +794,24 @@ async def opportunity_tickets(opp_id: int):
     tids = [r.get("WorkTicketID") for r in rows if r.get("WorkTicketID")]
     notes = await _fetch_visit_notes_bulk(tids, public_only=False) if tids else {}
 
+    # Crew photos attached in the Aspire mobile app, keyed by WorkTicketID (signed URLs so
+    # the browser can load them directly). Separate from our R2 job_attachments.
+    aspire_photos: dict[int, list[dict]] = {}
+    if tids:
+        try:
+            raw_photos = await _aspire.get_work_ticket_attachments_bulk(tids, images_only=True)
+            for wt, atts in raw_photos.items():
+                aspire_photos[wt] = [{
+                    "attachment_id": a["attachment_id"],
+                    "url":           signed_attachment_url(a["attachment_id"]),
+                    "file_name":     a.get("file_name"),
+                    "date_uploaded": a.get("date_uploaded"),
+                    "lat":           a.get("lat"),
+                    "lon":           a.get("lon"),
+                } for a in atts]
+        except Exception as e:
+            logger.warning(f"Aspire ticket photos unavailable for opp {opp_id}: {e}")
+
     def _num(v):
         try:
             return float(v) if v is not None else None
@@ -823,10 +842,13 @@ async def opportunity_tickets(opp_id: int):
             "pct_complete": _num(r.get("PercentComplete")),
             "notes": (r.get("Notes") or None),
             "visit_notes": notes.get(r.get("WorkTicketID"), []),
+            "photos": aspire_photos.get(r.get("WorkTicketID"), []),
         })
     for k in tot:
         tot[k] = round(tot[k], 2)
-    return {"opportunity_id": opp_id, "ticket_count": len(tickets), "totals": tot, "tickets": tickets}
+    photo_count = sum(len(p) for p in aspire_photos.values())
+    return {"opportunity_id": opp_id, "ticket_count": len(tickets), "totals": tot,
+            "tickets": tickets, "photo_count": photo_count}
 
 
 async def _fetch_opp_invoices(opp_id: int) -> list[dict]:

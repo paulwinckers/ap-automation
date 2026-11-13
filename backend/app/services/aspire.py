@@ -633,6 +633,34 @@ class AspireClient:
 
     # ── Attachments (crew photos / docs on Aspire work tickets) ─────────────────
     _IMAGE_EXTS = {"jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "bmp", "tif", "tiff"}
+    _ATTACH_SELECT = ",".join([
+        "AttachmentID", "AttachmentTypeName", "WorkTicketID", "WorkTicketNumber",
+        "WorkTicketVisitID", "OpportunityID", "PropertyName", "OriginalFileName",
+        "FileExtension", "DateUploaded", "ShowCustomer", "ExposeToCrew", "Note",
+        "GEOLocationLatitude", "GEOLocationLongitude",
+    ])
+
+    @classmethod
+    def _norm_attachment(cls, a: dict) -> dict:
+        ext = (a.get("FileExtension") or "").lstrip(".").lower()
+        return {
+            "attachment_id":        a.get("AttachmentID"),
+            "file_name":            a.get("OriginalFileName"),
+            "extension":            ext,
+            "is_image":             ext in cls._IMAGE_EXTS,
+            "type_name":            a.get("AttachmentTypeName"),
+            "work_ticket_id":       a.get("WorkTicketID"),
+            "work_ticket_number":   a.get("WorkTicketNumber"),
+            "work_ticket_visit_id": a.get("WorkTicketVisitID"),
+            "opportunity_id":       a.get("OpportunityID"),
+            "property_name":        a.get("PropertyName"),
+            "date_uploaded":        a.get("DateUploaded"),
+            "show_customer":        a.get("ShowCustomer"),
+            "expose_to_crew":       a.get("ExposeToCrew"),
+            "note":                 a.get("Note"),
+            "lat":                  a.get("GEOLocationLatitude"),
+            "lon":                  a.get("GEOLocationLongitude"),
+        }
 
     async def get_work_ticket_attachments(
         self, work_ticket_id: int, images_only: bool = True
@@ -641,45 +669,46 @@ class AspireClient:
         crew upload from the Aspire mobile app. `images_only` keeps just photo file types.
         Returns normalized rows; `file_data` is fetched separately via
         get_attachment_file_data (this list is metadata only, so it stays light)."""
-        select = ",".join([
-            "AttachmentID", "AttachmentTypeName", "WorkTicketID", "WorkTicketNumber",
-            "WorkTicketVisitID", "OpportunityID", "PropertyName", "OriginalFileName",
-            "FileExtension", "DateUploaded", "ShowCustomer", "ExposeToCrew", "Note",
-            "GEOLocationLatitude", "GEOLocationLongitude",
-        ])
         try:
             res = await self._get("Attachments", {
                 "$filter":  f"WorkTicketID eq {int(work_ticket_id)}",
-                "$select":  select,
+                "$select":  self._ATTACH_SELECT,
                 "$orderby": "DateUploaded asc",
             })
         except Exception as e:
             logger.warning(f"Attachments fetch failed for WorkTicketID={work_ticket_id}: {e}")
             return []
-        out: list[dict] = []
-        for a in self._extract_list(res):
-            ext = (a.get("FileExtension") or "").lstrip(".").lower()
-            is_image = ext in self._IMAGE_EXTS
-            if images_only and not is_image:
+        out = [self._norm_attachment(a) for a in self._extract_list(res)]
+        return [a for a in out if a["is_image"]] if images_only else out
+
+    async def get_work_ticket_attachments_bulk(
+        self, work_ticket_ids, images_only: bool = True
+    ) -> dict[int, list[dict]]:
+        """Attachments for many work tickets at once → {work_ticket_id: [rows]}. Chunks the
+        WorkTicketID OR-filter (≤20) so one dashboard load needs only a couple of calls."""
+        out: dict[int, list[dict]] = {}
+        ids = [int(t) for t in work_ticket_ids if t]
+        if not ids:
+            return out
+        for i in range(0, len(ids), 20):
+            chunk = ids[i:i + 20]
+            orf = " or ".join(f"WorkTicketID eq {t}" for t in chunk)
+            try:
+                res = await self._get("Attachments", {
+                    "$filter":  f"({orf})",
+                    "$select":  self._ATTACH_SELECT,
+                    "$orderby": "DateUploaded asc",
+                })
+            except Exception as e:
+                logger.warning(f"Attachments bulk fetch failed for chunk {chunk[:3]}…: {e}")
                 continue
-            out.append({
-                "attachment_id":     a.get("AttachmentID"),
-                "file_name":         a.get("OriginalFileName"),
-                "extension":         ext,
-                "is_image":          is_image,
-                "type_name":         a.get("AttachmentTypeName"),
-                "work_ticket_id":    a.get("WorkTicketID"),
-                "work_ticket_number": a.get("WorkTicketNumber"),
-                "work_ticket_visit_id": a.get("WorkTicketVisitID"),
-                "opportunity_id":    a.get("OpportunityID"),
-                "property_name":     a.get("PropertyName"),
-                "date_uploaded":     a.get("DateUploaded"),
-                "show_customer":     a.get("ShowCustomer"),
-                "expose_to_crew":    a.get("ExposeToCrew"),
-                "note":              a.get("Note"),
-                "lat":               a.get("GEOLocationLatitude"),
-                "lon":               a.get("GEOLocationLongitude"),
-            })
+            for raw in self._extract_list(res):
+                a = self._norm_attachment(raw)
+                if images_only and not a["is_image"]:
+                    continue
+                wt = a["work_ticket_id"]
+                if wt is not None:
+                    out.setdefault(wt, []).append(a)
         return out
 
     async def get_attachment_file_data(self, attachment_id: int) -> Optional[dict]:

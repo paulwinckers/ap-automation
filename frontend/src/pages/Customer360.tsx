@@ -11,7 +11,7 @@ import {
   searchCustomerEntities, getCustomer360, getCustomer360ByContact,
   listSalesActivities, listSalesTasks, createSalesActivity, patchSalesActivity, patchSalesTask,
   createSalesTask, deleteSalesActivity, deleteSalesTask, sendSalesEmail, listSalesAssignees,
-  getOpportunityTickets, aspireOpportunityUrl,
+  getOpportunityTickets, aspireOpportunityUrl, API_BASE,
   type CustomerEntity, type Customer360, type C360Job, type SalesActivity, type SalesTask, type Assignee,
   type OppTicketSummary,
 } from '../lib/api';
@@ -620,6 +620,36 @@ export default function Customer360Page() {
                       </table>
                     </div>
                   </div>
+
+                  {(() => {
+                    // Field photos crew attached in Aspire, across the (filtered) tickets — newest first.
+                    const photos = items
+                      .flatMap(tk => (tk.photos || []).map(p => ({ ...p, _wt: tk.number })))
+                      .sort((a, b) => (b.date_uploaded || '').localeCompare(a.date_uploaded || ''));
+                    if (!photos.length) return null;
+                    const shown = photos.slice(0, 12);
+                    return (
+                      <div style={{ marginTop: 18 }}>
+                        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#9ca3af', fontWeight: 700, marginBottom: 6 }}>
+                          📷 Field photos <span style={{ color: '#cbd5e1' }}>({photos.length} from Aspire)</span>
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {shown.map(p => (
+                            <a key={p.attachment_id} href={API_BASE + p.url} target="_blank" rel="noreferrer"
+                              title={[p.file_name, p._wt ? `WT#${p._wt}` : '', (p.date_uploaded || '').slice(0, 10)].filter(Boolean).join(' · ')}>
+                              <img src={API_BASE + p.url} alt="" loading="lazy"
+                                style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, border: '1px solid #e5e7eb', background: '#f1f5f9' }} />
+                            </a>
+                          ))}
+                          {photos.length > shown.length && (
+                            <div style={{ width: 72, height: 72, borderRadius: 8, border: '1px dashed #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#64748b', fontWeight: 700 }}>
+                              +{photos.length - shown.length}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <div style={{ fontSize: 11.5, color: '#9ca3af', marginTop: 10 }}>
                     {items.length} {budgetCompleted ? 'completed ' : ''}work ticket{items.length === 1 ? '' : 's'}{budgetCompleted ? ` of ${budgetData.ticket_count}` : ''} · red = over estimate, green = under · cost = labor + materials + equip + sub + other.
