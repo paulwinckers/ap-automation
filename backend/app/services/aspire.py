@@ -631,6 +631,79 @@ class AspireClient:
             logger.warning(f"WorkTickets fetch failed for OpportunityID={opportunity_id}: {e}")
             return []
 
+    # ── Attachments (crew photos / docs on Aspire work tickets) ─────────────────
+    _IMAGE_EXTS = {"jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "bmp", "tif", "tiff"}
+
+    async def get_work_ticket_attachments(
+        self, work_ticket_id: int, images_only: bool = True
+    ) -> list[dict]:
+        """List attachments stored in Aspire against a work ticket — the photos (and docs)
+        crew upload from the Aspire mobile app. `images_only` keeps just photo file types.
+        Returns normalized rows; `file_data` is fetched separately via
+        get_attachment_file_data (this list is metadata only, so it stays light)."""
+        select = ",".join([
+            "AttachmentID", "AttachmentTypeName", "WorkTicketID", "WorkTicketNumber",
+            "WorkTicketVisitID", "OpportunityID", "PropertyName", "OriginalFileName",
+            "FileExtension", "DateUploaded", "ShowCustomer", "ExposeToCrew", "Note",
+            "GEOLocationLatitude", "GEOLocationLongitude",
+        ])
+        try:
+            res = await self._get("Attachments", {
+                "$filter":  f"WorkTicketID eq {int(work_ticket_id)}",
+                "$select":  select,
+                "$orderby": "DateUploaded asc",
+            })
+        except Exception as e:
+            logger.warning(f"Attachments fetch failed for WorkTicketID={work_ticket_id}: {e}")
+            return []
+        out: list[dict] = []
+        for a in self._extract_list(res):
+            ext = (a.get("FileExtension") or "").lstrip(".").lower()
+            is_image = ext in self._IMAGE_EXTS
+            if images_only and not is_image:
+                continue
+            out.append({
+                "attachment_id":     a.get("AttachmentID"),
+                "file_name":         a.get("OriginalFileName"),
+                "extension":         ext,
+                "is_image":          is_image,
+                "type_name":         a.get("AttachmentTypeName"),
+                "work_ticket_id":    a.get("WorkTicketID"),
+                "work_ticket_number": a.get("WorkTicketNumber"),
+                "work_ticket_visit_id": a.get("WorkTicketVisitID"),
+                "opportunity_id":    a.get("OpportunityID"),
+                "property_name":     a.get("PropertyName"),
+                "date_uploaded":     a.get("DateUploaded"),
+                "show_customer":     a.get("ShowCustomer"),
+                "expose_to_crew":    a.get("ExposeToCrew"),
+                "note":              a.get("Note"),
+                "lat":               a.get("GEOLocationLatitude"),
+                "lon":               a.get("GEOLocationLongitude"),
+            })
+        return out
+
+    async def get_attachment_file_data(self, attachment_id: int) -> Optional[dict]:
+        """Fetch one attachment's bytes as base64. Aspire's AttachmentFileData endpoint
+        accepts a $filter on AttachmentID ONLY (no $top / other fields), so keep it to that.
+        Returns {attachment_id, file_name, file_data (base64 str)} or None."""
+        try:
+            res = await self._get("Attachments/AttachmentFileData", {
+                "$filter": f"AttachmentID eq {int(attachment_id)}",
+                "$select": "AttachmentID,FileName,FileData",
+            })
+        except Exception as e:
+            logger.warning(f"AttachmentFileData fetch failed for AttachmentID={attachment_id}: {e}")
+            return None
+        rows = self._extract_list(res)
+        if not rows:
+            return None
+        r = rows[0]
+        return {
+            "attachment_id": r.get("AttachmentID"),
+            "file_name":     r.get("FileName"),
+            "file_data":     r.get("FileData"),
+        }
+
     # ── Field write operations ────────────────────────────────────────────────
 
     async def get_aspire_employees(self) -> list[dict]:

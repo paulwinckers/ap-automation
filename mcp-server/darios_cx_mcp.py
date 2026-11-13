@@ -30,7 +30,7 @@ from typing import Optional
 
 import httpx
 from mcp.server.auth.middleware.auth_context import get_access_token
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 
 API = os.environ.get("DARIOS_API", "https://ap-automation-production.up.railway.app").rstrip("/")
 KEY = os.environ.get("DARIOS_API_KEY", "")
@@ -314,6 +314,32 @@ async def get_work_tickets(opportunity_id: int) -> dict:
     customer's jobs (get_customer_360) to answer questions like 'what's the status of job
     X', 'how many hours have we logged', or 'what did the crew note on the last visit'."""
     return await _get(f"/customer/opportunity/{opportunity_id}/tickets")
+
+
+@mcp.tool()
+async def get_ticket_photos(work_ticket_id: int, images_only: bool = True) -> dict:
+    """Photos (and docs) crew attached to an Aspire work ticket in the field. Pass a
+    `work_ticket_id` from get_work_tickets. Returns `count` and `photos`, each with
+    attachment_id, file_name, is_image, type_name, date_uploaded, lat/lon (geotag if the
+    photo carried one), show_customer / expose_to_crew flags, and work_ticket_visit_id.
+    This is metadata only — to actually see an image, call view_ticket_photo with its
+    attachment_id. Set images_only=False to include non-image attachments (PDFs, docs).
+    These are the crew's Aspire-app photos (separate from portal-uploaded job photos)."""
+    return await _get(f"/aspire/ticket/{work_ticket_id}/photos",
+                      {"images_only": "true" if images_only else "false"})
+
+
+@mcp.tool()
+async def view_ticket_photo(attachment_id: int) -> Image:
+    """View one Aspire work-ticket photo by its `attachment_id` (from get_ticket_photos) —
+    returns the actual image so you can describe or review it (e.g. a daily field review,
+    checking a reported turf/irrigation issue). Use get_ticket_photos first to find the id."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as c:
+        r = await c.get(f"{API}/aspire/attachment/{attachment_id}/file", headers=_headers())
+        r.raise_for_status()
+        ct = r.headers.get("content-type", "image/jpeg")
+        fmt = ct.split("/")[-1].split(";")[0] or "jpeg"
+        return Image(data=r.content, format=fmt)
 
 
 @mcp.tool()

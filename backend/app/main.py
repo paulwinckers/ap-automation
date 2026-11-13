@@ -23,6 +23,7 @@ from app.api.vendor_import import router as vendor_import_router
 from app.api.reconcile import router as reconcile_router
 from app.api.dashboard import router as dashboard_router
 from app.api.aspire_field import router as aspire_field_router
+from app.api.aspire_attachments import router as aspire_attachments_router
 from app.api.time_tracking import router as time_tracking_router
 from app.api.auth import router as auth_router, require_access, _require_admin
 from app.api.permissions import area_guard
@@ -750,6 +751,7 @@ app.include_router(vendor_import_router, prefix="/vendors", tags=["vendors"])
 app.include_router(reconcile_router, dependencies=[Depends(require_access)])
 app.include_router(dashboard_router, dependencies=[Depends(require_access)])
 app.include_router(aspire_field_router)
+app.include_router(aspire_attachments_router, dependencies=[Depends(require_access)])
 app.include_router(time_tracking_router)
 app.include_router(auth_router)
 app.include_router(qbo_auth_router)
