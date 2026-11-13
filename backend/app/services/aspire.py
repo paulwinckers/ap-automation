@@ -666,49 +666,98 @@ class AspireClient:
         self, work_ticket_id: int, images_only: bool = True
     ) -> list[dict]:
         """List attachments stored in Aspire against a work ticket — the photos (and docs)
-        crew upload from the Aspire mobile app. `images_only` keeps just photo file types.
-        Returns normalized rows; `file_data` is fetched separately via
-        get_attachment_file_data (this list is metadata only, so it stays light)."""
-        try:
-            res = await self._get("Attachments", {
-                "$filter":  f"WorkTicketID eq {int(work_ticket_id)}",
-                "$select":  self._ATTACH_SELECT,
-                "$orderby": "DateUploaded asc",
-            })
-        except Exception as e:
-            logger.warning(f"Attachments fetch failed for WorkTicketID={work_ticket_id}: {e}")
-            return []
-        out = [self._norm_attachment(a) for a in self._extract_list(res)]
-        return [a for a in out if a["is_image"]] if images_only else out
+        crew upload from the Aspire mobile app, whether attached to the ticket OR to one of
+        its visits. `images_only` keeps just photo file types. Returns normalized rows;
+        `file_data` is fetched separately via get_attachment_file_data (metadata only)."""
+        res = await self.get_work_ticket_attachments_bulk([work_ticket_id], images_only=images_only)
+        return res.get(int(work_ticket_id), [])
+
+    async def _work_ticket_visit_map(self, work_ticket_ids) -> dict[int, int]:
+        """{WorkTicketVisitID: WorkTicketID} for the given tickets — so visit-level
+        attachments (WorkTicketID null) can be mapped back to their ticket."""
+        out: dict[int, int] = {}
+        ids = [int(t) for t in work_ticket_ids if t]
+        for i in range(0, len(ids), 20):
+            chunk = ids[i:i + 20]
+            orf = " or ".join(f"WorkTicketID eq {t}" for t in chunk)
+            try:
+                res = await self._get("WorkTicketVisits", {
+                    "$filter": f"({orf})",
+                    "$select": "WorkTicketVisitID,WorkTicketID",
+                })
+            except Exception as e:
+                logger.warning(f"WorkTicketVisits fetch failed for chunk {chunk[:3]}…: {e}")
+                continue
+            for v in self._extract_list(res):
+                vid, wt = v.get("WorkTicketVisitID"), v.get("WorkTicketID")
+                if vid and wt:
+                    out[vid] = wt
+        return out
 
     async def get_work_ticket_attachments_bulk(
         self, work_ticket_ids, images_only: bool = True
     ) -> dict[int, list[dict]]:
-        """Attachments for many work tickets at once → {work_ticket_id: [rows]}. Chunks the
-        WorkTicketID OR-filter (≤20) so one dashboard load needs only a couple of calls."""
-        out: dict[int, list[dict]] = {}
+        """Attachments for many work tickets at once → {work_ticket_id: [rows]}. Aspire hangs
+        a crew photo off EITHER the work ticket (WorkTicketID) OR a visit (WorkTicketVisitID,
+        with WorkTicketID null — referenced in the visit note). We gather both and key every
+        photo back to its ticket. All OR-filters are chunked (≤20)."""
         ids = [int(t) for t in work_ticket_ids if t]
         if not ids:
-            return out
+            return {}
+        # attachment_id → (work_ticket_id, normalized row) — dedupes across both passes
+        collected: dict[int, tuple[int, dict]] = {}
+
+        def _take(raw: dict, wt: int):
+            a = self._norm_attachment(raw)
+            if images_only and not a["is_image"]:
+                return
+            aid = a["attachment_id"]
+            if aid is None or aid in collected:
+                return
+            a["work_ticket_id"] = wt  # stamp the ticket (null for visit-level rows)
+            collected[aid] = (wt, a)
+
+        # Pass 1: attachments attached directly to the ticket.
         for i in range(0, len(ids), 20):
             chunk = ids[i:i + 20]
             orf = " or ".join(f"WorkTicketID eq {t}" for t in chunk)
             try:
                 res = await self._get("Attachments", {
-                    "$filter":  f"({orf})",
-                    "$select":  self._ATTACH_SELECT,
-                    "$orderby": "DateUploaded asc",
+                    "$filter": f"({orf})", "$select": self._ATTACH_SELECT, "$orderby": "DateUploaded asc",
                 })
             except Exception as e:
-                logger.warning(f"Attachments bulk fetch failed for chunk {chunk[:3]}…: {e}")
+                logger.warning(f"Attachments (ticket) fetch failed for chunk {chunk[:3]}…: {e}")
                 continue
             for raw in self._extract_list(res):
-                a = self._norm_attachment(raw)
-                if images_only and not a["is_image"]:
-                    continue
-                wt = a["work_ticket_id"]
-                if wt is not None:
-                    out.setdefault(wt, []).append(a)
+                wt = raw.get("WorkTicketID")
+                if wt:
+                    _take(raw, wt)
+
+        # Pass 2: attachments attached to the tickets' visits.
+        visit_map = await self._work_ticket_visit_map(ids)
+        visit_ids = list(visit_map.keys())
+        for i in range(0, len(visit_ids), 20):
+            chunk = visit_ids[i:i + 20]
+            orf = " or ".join(f"WorkTicketVisitID eq {v}" for v in chunk)
+            try:
+                res = await self._get("Attachments", {
+                    "$filter": f"({orf})", "$select": self._ATTACH_SELECT, "$orderby": "DateUploaded asc",
+                })
+            except Exception as e:
+                logger.warning(f"Attachments (visit) fetch failed for chunk {chunk[:3]}…: {e}")
+                continue
+            for raw in self._extract_list(res):
+                vid = raw.get("WorkTicketVisitID")
+                wt = visit_map.get(vid)
+                if wt:
+                    _take(raw, wt)
+
+        # Group by ticket, newest last (DateUploaded asc) to match the single-pass order.
+        out: dict[int, list[dict]] = {}
+        for wt, a in collected.values():
+            out.setdefault(wt, []).append(a)
+        for wt in out:
+            out[wt].sort(key=lambda r: (r.get("date_uploaded") or ""))
         return out
 
     async def get_attachment_file_data(self, attachment_id: int) -> Optional[dict]:
