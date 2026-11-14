@@ -343,6 +343,25 @@ async def view_ticket_photo(attachment_id: int) -> Image:
 
 
 @mcp.tool()
+async def attach_photos_to_email(attachment_ids: list[int], draft_id: Optional[str] = None,
+                                 to: Optional[list[str]] = None, cc: Optional[list[str]] = None,
+                                 subject: Optional[str] = None, body_html: Optional[str] = None) -> dict:
+    """Put Aspire crew photos (attachment_ids from get_ticket_photos, max 10) on an Outlook email
+    as real attachments, in the signed-in person's OWN Drafts folder. Nothing is sent: they review
+    and send from Outlook. Photos are resized to email size automatically.
+      Existing draft: pass `draft_id` (e.g. the id the Microsoft 365 connector returned when you
+        created the draft). The photos are added to it; to/subject/body are left alone.
+      New draft: omit draft_id and pass `subject`, `to`, optional `cc`, and `body_html`. Use simple
+        HTML: <p>, <ul>/<li>, <b>.
+    Use this whenever the user wants photos IN an email. Don't paste photo links instead. Confirm
+    which photos to include before calling. Returns web_link to open the draft."""
+    return await _post("/mail/draft-with-photos", {
+        "attachment_ids": attachment_ids, "draft_id": draft_id, "to": to or [], "cc": cc or [],
+        "subject": subject, "body_html": body_html,
+    })
+
+
+@mcp.tool()
 async def get_schedule(date: Optional[str] = None, days: int = 1) -> dict:
     """What's SCHEDULED on a day — 'what's on tomorrow?', 'who's working Thursday?', 'what does
     next week look like?'. `date` = YYYY-MM-DD (default today, Vancouver time; the response's

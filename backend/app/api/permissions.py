@@ -42,6 +42,7 @@ _RULES: list[tuple[str, str, Optional[str]]] = [
     ("*", "/sales/task", None),          # /sales/task, /sales/task/{id}, /sales/tasks
     ("*", "/sales/assignees", None),
     ("*", "/sales/feed", None),           # the person's own Feed (chats they're part of)
+    ("*", "/mail/", None),                # drafts in the person's OWN mailbox (photo reach checked inside)
     ("*", "/sales/{parent_type}/{parent_id}/attachment", None),
     # Training — the report is HR; taking a course is open to every signed-in person
     ("*", "/training/report", "hr"),

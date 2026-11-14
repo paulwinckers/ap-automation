@@ -58,6 +58,7 @@ from app.api.maintenance_field import router as maintenance_field_router
 from app.api.field_conversations import router as field_conversations_router
 from app.api.invoice_summary import router as invoice_summary_router
 from app.api.usage import router as usage_router
+from app.api.mail_drafts import router as mail_drafts_router
 from app.api.training import router as training_router
 from app.core.config import settings
 from app.core.database import Database
@@ -781,4 +782,5 @@ app.include_router(maintenance_field_router)
 app.include_router(field_conversations_router)
 app.include_router(invoice_summary_router, dependencies=[Depends(require_access)])
 app.include_router(usage_router)
+app.include_router(mail_drafts_router)
 app.include_router(training_router)
