@@ -343,20 +343,40 @@ async def view_ticket_photo(attachment_id: int) -> Image:
 
 
 @mcp.tool()
-async def attach_photos_to_email(attachment_ids: list[int], draft_id: Optional[str] = None,
+async def attach_photos_to_email(attachment_ids: Optional[list[int]] = None,
+                                 collages: Optional[list[dict]] = None,
+                                 draft_id: Optional[str] = None,
                                  to: Optional[list[str]] = None, cc: Optional[list[str]] = None,
                                  subject: Optional[str] = None, body_html: Optional[str] = None) -> dict:
-    """Put Aspire crew photos (attachment_ids from get_ticket_photos, max 10) on an Outlook email
-    as real attachments, in the signed-in person's OWN Drafts folder. Nothing is sent: they review
-    and send from Outlook. Photos are resized to email size automatically.
-      Existing draft: pass `draft_id` (e.g. the id the Microsoft 365 connector returned when you
-        created the draft). The photos are added to it; to/subject/body are left alone.
-      New draft: omit draft_id and pass `subject`, `to`, optional `cc`, and `body_html`. Use simple
-        HTML: <p>, <ul>/<li>, <b>.
+    """Put Aspire crew photos on an Outlook email, in the signed-in person's OWN Drafts folder.
+    Nothing is sent: they review and send from Outlook. Photo ids are the attachment_ids from
+    get_ticket_photos.
+
+    Two ways to include photos (use either or both):
+      attachment_ids  individual photos attached as files (max 10), resized to email size.
+      collages        photos merged into ONE labelled grid image, shown in the email body and
+                      also attached. Max 6 photos per collage, up to 4 collages.
+                      DEFAULT: one collage of COMPLETED WORK, e.g.
+                      [{"label": "Completed work", "attachment_ids": [..up to 6]}]
+                      Use view_ticket_photo to look at the photos first. Pick only shots of the
+                      finished result: clean, tidy and showing the work well. Leave out
+                      in-progress shots, bare dirt or base prep, material piles, tools and
+                      equipment, hands or people, and blurry or dark photos. If more than 6
+                      qualify, choose the 6 best and most varied (different angles and areas).
+                      If none look finished, say so instead of building a collage. Only make
+                      other groups (e.g. Before / After) when the user asks for them.
+    Where collages appear: put the text [[PHOTOS]] in the body where they should go. If it isn't
+    there, they go at the end of the body.
+
+    Existing draft: pass `draft_id` (e.g. the id the Microsoft 365 connector returned when you
+      created the draft). Photos and collages are added to it; to and subject are left alone.
+    New draft: omit draft_id and pass `subject`, `to`, optional `cc`, and `body_html`. Use simple
+      HTML: <p>, <ul>/<li>, <b>.
     Use this whenever the user wants photos IN an email. Don't paste photo links instead. Confirm
-    which photos to include before calling. Returns web_link to open the draft."""
+    which photos go in each group before calling. Returns web_link to open the draft."""
     return await _post("/mail/draft-with-photos", {
-        "attachment_ids": attachment_ids, "draft_id": draft_id, "to": to or [], "cc": cc or [],
+        "attachment_ids": attachment_ids or [], "collages": collages or [],
+        "draft_id": draft_id, "to": to or [], "cc": cc or [],
         "subject": subject, "body_html": body_html,
     })
 
