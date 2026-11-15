@@ -25,6 +25,11 @@ from app.models.invoice import Invoice
 
 logger = logging.getLogger(__name__)
 
+# Recently downloaded attachment files (see get_attachment_file_data). ~25 photos ≈ 120 MB max.
+_ATTACHMENT_CACHE: dict[int, tuple[float, dict]] = {}
+_ATTACHMENT_TTL = 20 * 60
+_ATTACHMENT_MAX = 25
+
 PRODUCTION_BASE = "https://cloud-api.youraspire.com"
 SANDBOX_BASE    = "https://cloudsandbox-api.youraspire.com"
 
@@ -102,7 +107,11 @@ class AspireClient:
         # Retry once on 401/403: a stale/invalid cached token would otherwise
         # silently poison this client instance for its whole 23h cache life
         # (callers swallow the error into an empty list). Refreshing self-heals it.
-        for attempt in range(2):
+        # Also wait and retry on 429 (Aspire rate-limits bursts, e.g. pulling a ticket's photos
+        # one after another) instead of failing the call outright.
+        import asyncio as _asyncio
+        auth_retried = False
+        for attempt in range(6):
             token = await self._get_token()
             resp = await self._http.get(
                 f"{self.base_url}/{path.lstrip('/')}",
@@ -112,9 +121,19 @@ class AspireClient:
                     "Accept": "application/json;odata.metadata=minimal",
                 },
             )
-            if resp.status_code in (401, 403) and attempt == 0:
+            if resp.status_code in (401, 403) and not auth_retried:
+                auth_retried = True
                 logger.warning(f"Aspire GET {path} → {resp.status_code}; refreshing token and retrying")
                 self._invalidate_token()
+                continue
+            if resp.status_code == 429 and attempt < 5:
+                try:
+                    wait = float(resp.headers.get("Retry-After") or 0)
+                except ValueError:
+                    wait = 0
+                wait = min(max(wait, 5 * (attempt + 1)), 20)    # 5, 10, 15, 20, 20 s
+                logger.info(f"Aspire GET {path} → 429; waiting {wait:.0f}s before retry")
+                await _asyncio.sleep(wait)
                 continue
             resp.raise_for_status()
             return resp.json()
@@ -763,10 +782,19 @@ class AspireClient:
     async def get_attachment_file_data(self, attachment_id: int) -> Optional[dict]:
         """Fetch one attachment's bytes as base64. Aspire's AttachmentFileData endpoint
         accepts a $filter on AttachmentID ONLY (no $top / other fields), so keep it to that.
-        Returns {attachment_id, file_name, file_data (base64 str)} or None."""
+        Returns {attachment_id, file_name, file_data (base64 str)} or None.
+
+        Recently fetched files are kept in memory for a short while (shared by every client
+        instance): crew photos are ~4–5 MB each and Aspire throttles by volume, so viewing a
+        ticket's photos and then attaching them must not download everything twice."""
+        import time as _time
+        key = int(attachment_id)
+        hit = _ATTACHMENT_CACHE.get(key)
+        if hit and _time.time() - hit[0] < _ATTACHMENT_TTL:
+            return hit[1]
         try:
             res = await self._get("Attachments/AttachmentFileData", {
-                "$filter": f"AttachmentID eq {int(attachment_id)}",
+                "$filter": f"AttachmentID eq {key}",
                 "$select": "AttachmentID,FileName,FileData",
             })
         except Exception as e:
@@ -776,11 +804,15 @@ class AspireClient:
         if not rows:
             return None
         r = rows[0]
-        return {
+        out = {
             "attachment_id": r.get("AttachmentID"),
             "file_name":     r.get("FileName"),
             "file_data":     r.get("FileData"),
         }
+        _ATTACHMENT_CACHE[key] = (_time.time(), out)
+        while len(_ATTACHMENT_CACHE) > _ATTACHMENT_MAX:      # drop the oldest
+            _ATTACHMENT_CACHE.pop(min(_ATTACHMENT_CACHE, key=lambda k: _ATTACHMENT_CACHE[k][0]))
+        return out
 
     # ── Field write operations ────────────────────────────────────────────────
 

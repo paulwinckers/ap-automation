@@ -59,6 +59,7 @@ from app.api.field_conversations import router as field_conversations_router
 from app.api.invoice_summary import router as invoice_summary_router
 from app.api.usage import router as usage_router
 from app.api.mail_drafts import router as mail_drafts_router
+from app.api.visit_recaps import router as visit_recaps_router, start_visit_recap_scheduler, stop_visit_recap_scheduler
 from app.api.training import router as training_router
 from app.core.config import settings
 from app.core.database import Database
@@ -524,6 +525,22 @@ async def lifespan(app: FastAPI):
                 PRIMARY KEY (user_id, item_key)
             )
         """,
+        "visit_recaps": """
+            CREATE TABLE IF NOT EXISTS visit_recaps (
+                work_ticket_id     INTEGER PRIMARY KEY,   -- Aspire WorkTicketID
+                work_ticket_number INTEGER,
+                visit_date         TEXT NOT NULL,         -- the day the visit was completed
+                property           TEXT,
+                service            TEXT,
+                crew_lead          TEXT,
+                contact_email      TEXT,
+                status             TEXT NOT NULL,         -- drafted | skipped | error
+                reason             TEXT,
+                draft_id           TEXT,                  -- Outlook message id in the reviewer's mailbox
+                photos_used        INTEGER DEFAULT 0,
+                created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
         "page_views": """
             CREATE TABLE IF NOT EXISTS page_views (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -692,6 +709,7 @@ async def lifespan(app: FastAPI):
     # Start nightly database backup scheduler (D1 → R2)
     try:
         start_backup_scheduler()
+        start_visit_recap_scheduler()
     except Exception as e:
         logger.error(f"Backup scheduler start failed — startup continues: {e}")
     # Start nightly spine cache refresh (gentle: once/day @ 1 AM, never on boot)
@@ -705,6 +723,7 @@ async def lifespan(app: FastAPI):
     stop_construction_scheduler()
     stop_digest_scheduler()
     stop_backup_scheduler()
+    stop_visit_recap_scheduler()
     stop_spine_scheduler()
 
 
@@ -783,4 +802,5 @@ app.include_router(field_conversations_router)
 app.include_router(invoice_summary_router, dependencies=[Depends(require_access)])
 app.include_router(usage_router)
 app.include_router(mail_drafts_router)
+app.include_router(visit_recaps_router)
 app.include_router(training_router)

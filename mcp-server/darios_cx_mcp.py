@@ -368,8 +368,11 @@ async def attach_photos_to_email(attachment_ids: Optional[list[int]] = None,
     Where collages appear: put the text [[PHOTOS]] in the body where they should go. If it isn't
     there, they go at the end of the body.
 
-    Existing draft: pass `draft_id` (e.g. the id the Microsoft 365 connector returned when you
-      created the draft). Photos and collages are added to it; to and subject are left alone.
+    Existing draft: pass `draft_id` = the exact `id` the Microsoft 365 connector returned when you
+      created the draft (copy it character for character; its Outlook link also works). Photos and
+      collages are added to it; to and subject are left alone. If this returns "not found", the
+      draft was sent, deleted or the id was wrong: call again WITHOUT draft_id, passing subject, to
+      and body_html, to make a fresh draft with the photos, and tell the user to delete the old one.
     New draft: omit draft_id and pass `subject`, `to`, optional `cc`, and `body_html`. Use simple
       HTML: <p>, <ul>/<li>, <b>.
     Use this whenever the user wants photos IN an email. Don't paste photo links instead. Confirm

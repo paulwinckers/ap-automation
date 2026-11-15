@@ -123,10 +123,11 @@ async def _photo_bytes(aid: int) -> tuple[bytes, str]:
         raise HTTPException(status_code=502, detail=f"Photo {aid} came back unreadable from Aspire.")
 
 
-async def _graph_call(method: str, path: str, body: Optional[dict] = None) -> dict:
+async def _graph_call(method: str, path: str, body: Optional[dict] = None, immutable: bool = True) -> dict:
     h = await _graph._headers()
     h["Content-Type"] = "application/json"
-    h["Prefer"] = 'IdType="ImmutableId"'   # the Microsoft 365 connector hands out immutable ids
+    if immutable:
+        h["Prefer"] = 'IdType="ImmutableId"'   # the Microsoft 365 connector hands out immutable ids
     r = await _graph._http.request(method, f"{GRAPH_BASE}/{path}", json=body, headers=h)
     if r.status_code in (401, 403):
         raise HTTPException(status_code=502, detail=(
@@ -138,6 +139,42 @@ async def _graph_call(method: str, path: str, body: Optional[dict] = None) -> di
         logger.warning(f"graph {method} {path} → {r.status_code}: {r.text[:300]}")
         raise HTTPException(status_code=502, detail=f"Outlook refused the request ({r.status_code}).")
     return r.json() if r.content else {}
+
+
+def _id_forms(raw: str) -> list[str]:
+    """A draft id can reach us as the Graph id ('-' and '_') or copied out of an Outlook link
+    (URL-encoded, with '/' and '+'). Try the id as given, then the Graph-safe form."""
+    from urllib.parse import unquote
+    s = unquote((raw or "").strip())
+    if "ItemID=" in s:                       # a whole Outlook link was passed
+        s = s.split("ItemID=", 1)[1].split("&", 1)[0]
+    safe = s.replace("/", "-").replace("+", "_")
+    return list(dict.fromkeys([s, safe]))
+
+
+async def _find_draft(mailbox: str, draft_id: str) -> dict:
+    """Look the draft up by immutable id first (what the Microsoft 365 connector returns), then
+    as a regular id, in each accepted spelling. 404 only if none of them match."""
+    from urllib.parse import quote
+    for form in _id_forms(draft_id):
+        for immutable in (True, False):
+            h = await _graph._headers()
+            if immutable:
+                h["Prefer"] = 'IdType="ImmutableId"'
+            r = await _graph._http.get(
+                f"{GRAPH_BASE}/users/{mailbox}/messages/{quote(form, safe='')}",
+                params={"$select": "id,isDraft,subject,webLink,body"}, headers=h)
+            if r.status_code == 200:
+                msg = r.json()
+                msg["_immutable"] = immutable   # later calls must use the same id style
+                return msg
+            if r.status_code in (401, 403):
+                raise HTTPException(status_code=502, detail=(
+                    "The portal isn't allowed to write to Outlook drafts yet — an admin needs to grant "
+                    "the portal's Microsoft app the Mail.ReadWrite (application) permission."))
+    raise HTTPException(status_code=404, detail=(
+        "That draft wasn't found in your Outlook. It may have been sent or deleted. Pass the exact id "
+        "the Microsoft 365 connector returned, or leave draft_id out to make a new draft."))
 
 
 @router.post("/draft-with-photos")
@@ -180,8 +217,7 @@ async def draft_with_photos(body: DraftPhotosIn, user: dict = Depends(require_ac
 
     # 2) The draft — an existing one, or a new one.
     if body.draft_id:
-        msg = await _graph_call("GET", f"users/{mailbox}/messages/{body.draft_id}"
-                                       "?$select=id,isDraft,subject,webLink,body")
+        msg = await _find_draft(mailbox, body.draft_id)
         if not msg.get("isDraft"):
             raise HTTPException(status_code=400, detail="That message has already been sent — it isn't a draft.")
     else:
@@ -193,6 +229,9 @@ async def draft_with_photos(body: DraftPhotosIn, user: dict = Depends(require_ac
             "toRecipients": [{"emailAddress": {"address": a.strip()}} for a in body.to],
             "ccRecipients": [{"emailAddress": {"address": a.strip()}} for a in body.cc],
         })
+    from urllib.parse import quote
+    imm = msg.get("_immutable", True)
+    mid = quote(msg["id"], safe="")
 
     # 3) Attach one at a time (keeps each request well under Graph's size limit). Collages go in
     #    as inline images so they can show in the body.
@@ -204,7 +243,7 @@ async def draft_with_photos(body: DraftPhotosIn, user: dict = Depends(require_ac
         }
         if cid:
             att.update({"isInline": True, "contentId": cid})
-        await _graph_call("POST", f"users/{mailbox}/messages/{msg['id']}/attachments", att)
+        await _graph_call("POST", f"users/{mailbox}/messages/{mid}/attachments", att, immutable=imm)
 
     # 4) Show the collages in the body: where it says [[PHOTOS]], else at the end.
     cids = [(cid, name) for _, name, _, cid in files if cid]
@@ -219,8 +258,8 @@ async def draft_with_photos(body: DraftPhotosIn, user: dict = Depends(require_ac
             new = current.replace("</body>", imgs + "</body>", 1)
         else:
             new = current + imgs
-        await _graph_call("PATCH", f"users/{mailbox}/messages/{msg['id']}",
-                          {"body": {"contentType": "HTML", "content": new}})
+        await _graph_call("PATCH", f"users/{mailbox}/messages/{mid}",
+                          {"body": {"contentType": "HTML", "content": new}}, immutable=imm)
 
     return {
         "ok": True, "draft_id": msg["id"], "subject": msg.get("subject") or body.subject,
