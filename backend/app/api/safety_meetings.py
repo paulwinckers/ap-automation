@@ -158,6 +158,53 @@ async def open_incidents():
         await db.close()
 
 
+# ── Public (field app) ────────────────────────────────────────────────────────
+# NOTE: these literal /field routes are declared BEFORE the /{meeting_id} routes so
+# FastAPI matches them first (an int path param does not stop "field" from matching).
+
+@router.get("/field")
+async def field_meetings(limit: int = 24):
+    """Posted meeting minutes for the field app, newest first."""
+    db = await _get_db()
+    try:
+        rows = await db._q(
+            """SELECT id, meeting_date, meeting_type, location, chair, attendees,
+                      minutes, next_meeting, posted_at
+               FROM safety_meetings
+               WHERE status = 'posted'
+               ORDER BY meeting_date DESC, id DESC
+               LIMIT ?""",
+            [limit],
+        )
+        return {"meetings": [_row(r) for r in rows]}
+    finally:
+        await db.close()
+
+
+@router.get("/field/{meeting_id}")
+async def field_meeting_detail(meeting_id: int):
+    """One posted meeting with its action items (for the field reading view)."""
+    db = await _get_db()
+    try:
+        mrows = await db._q(
+            "SELECT * FROM safety_meetings WHERE id = ? AND status = 'posted'", [meeting_id]
+        )
+        if not mrows:
+            raise HTTPException(404, "Meeting not found")
+        meeting = _row(mrows[0])
+        irows = await db._q(
+            """SELECT item_type, title, discussion, corrective_action, assignee, due_date, status
+               FROM safety_meeting_items
+               WHERE meeting_id = ?
+               ORDER BY sort_order ASC, id ASC""",
+            [meeting_id],
+        )
+        meeting["items"] = [_row(r) for r in irows]
+        return meeting
+    finally:
+        await db.close()
+
+
 # ── Detail (admin) ────────────────────────────────────────────────────────────
 
 async def _meeting_with_items(db: Database, meeting_id: int) -> dict:
@@ -344,50 +391,5 @@ async def unpost_meeting(meeting_id: int):
             [meeting_id],
         )
         return {"id": meeting_id, "status": "draft"}
-    finally:
-        await db.close()
-
-
-# ── Public (field app) ────────────────────────────────────────────────────────
-
-@router.get("/field")
-async def field_meetings(limit: int = 24):
-    """Posted meeting minutes for the field app, newest first."""
-    db = await _get_db()
-    try:
-        rows = await db._q(
-            """SELECT id, meeting_date, meeting_type, location, chair, attendees,
-                      minutes, next_meeting, posted_at
-               FROM safety_meetings
-               WHERE status = 'posted'
-               ORDER BY meeting_date DESC, id DESC
-               LIMIT ?""",
-            [limit],
-        )
-        return {"meetings": [_row(r) for r in rows]}
-    finally:
-        await db.close()
-
-
-@router.get("/field/{meeting_id}")
-async def field_meeting_detail(meeting_id: int):
-    """One posted meeting with its action items (for the field reading view)."""
-    db = await _get_db()
-    try:
-        mrows = await db._q(
-            "SELECT * FROM safety_meetings WHERE id = ? AND status = 'posted'", [meeting_id]
-        )
-        if not mrows:
-            raise HTTPException(404, "Meeting not found")
-        meeting = _row(mrows[0])
-        irows = await db._q(
-            """SELECT item_type, title, discussion, corrective_action, assignee, due_date, status
-               FROM safety_meeting_items
-               WHERE meeting_id = ?
-               ORDER BY sort_order ASC, id ASC""",
-            [meeting_id],
-        )
-        meeting["items"] = [_row(r) for r in irows]
-        return meeting
     finally:
         await db.close()
