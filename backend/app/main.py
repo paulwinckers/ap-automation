@@ -736,6 +736,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Safety SWP seed skipped — startup continues (D1 error?): {e}")
     try:
+        from app.api.safety_seed_policy import seed_safety_policy_if_missing
+        await seed_safety_policy_if_missing(_db)
+    except Exception as e:
+        logger.error(f"Safety Policy seed skipped — startup continues (D1 error?): {e}")
+    try:
         await _db.close()
     except Exception:
         pass
