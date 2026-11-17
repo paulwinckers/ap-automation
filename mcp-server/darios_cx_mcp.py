@@ -110,6 +110,13 @@ async def _post_form(path: str, fields: dict):
         return r.json()
 
 
+async def _put(path: str, body: dict):
+    async with httpx.AsyncClient(timeout=TIMEOUT) as c:
+        r = await c.put(f"{API}{path}", json=body, headers=_headers())
+        r.raise_for_status()
+        return r.json()
+
+
 # ── Read tools (safe) ──────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -614,6 +621,93 @@ async def create_sales_opportunity(opportunity_name: str, opportunity_type: str,
         "opportunity_name": opportunity_name, "opportunity_type": opportunity_type, "confirmed": confirmed,
         "property_id": property_id, "division_id": division_id, "sales_rep_id": sales_rep_id,
         "start_date": start_date, "activity_id": activity_id})
+
+
+# ── Safety Program authoring (draft → the user publishes) ────────────────────────
+
+SAFETY_CATEGORIES = ("overview", "manual", "swp", "pha", "fhsp", "signoff", "policy")
+SAFETY_LAYER = {"overview": 0, "manual": 1, "policy": 1, "signoff": 1,
+                "swp": 2, "pha": 3, "fhsp": 4}
+
+
+@mcp.tool()
+async def list_safety_docs() -> dict:
+    """List every Safety Program document, including drafts: id, code, title, category, layer,
+    status (draft|published), field_visible, version. This is the OH&S handbook crews read and
+    search on the field app. Use an id with get_safety_doc / update_safety_doc."""
+    return await _get("/safety/program/admin/all")
+
+
+@mcp.tool()
+async def get_safety_doc(doc_id: int) -> dict:
+    """Read one Safety Program document in full — its HTML body, metadata and version_count.
+    `doc_id` comes from list_safety_docs. Read before update_safety_doc so you revise the real
+    content rather than rewriting from scratch."""
+    return await _get(f"/safety/program/admin/{doc_id}")
+
+
+@mcp.tool()
+async def draft_safety_doc(title: str, html: str, category: str = "policy",
+                           code: Optional[str] = None, summary: Optional[str] = None,
+                           version: Optional[str] = None, layer: Optional[int] = None,
+                           field_visible: bool = True) -> dict:
+    """Create a NEW Safety Program document as a DRAFT (never auto-published). Use this to
+    author a new procedure or policy with the user — e.g. a winter de-icing or snow-plow SWP.
+      category: one of overview|manual|swp|pha|fhsp|signoff|policy. SWPs use 'swp'; layer is
+                inferred from category if you omit it.
+      code:     the doc number if it has one, e.g. 'SWP-16'.
+      html:     the body, in the house style — <p class="lead"> intro with the applicable roles,
+                <h2> section heads, a <table> for Hazards (Hazard | Risk level, risk HIGH/MEDIUM/
+                LOW), a <ul> for Required PPE, a <table> for the Step-by-step procedure
+                (# | Action | Key control), <h2>Emergency response</h2> paragraphs, and a
+                <p class="footer-note"> sign-off line. Match an existing SWP's structure.
+    Returns {id, slug}. It stays a DRAFT and is NOT visible to crews until the user opens the
+    Safety Program admin page (office portal → Operations → Safety Program) and clicks Publish —
+    tell them that is the next step."""
+    if category not in SAFETY_CATEGORIES:
+        return {"error": f"category must be one of {list(SAFETY_CATEGORIES)}"}
+    if layer is None:
+        layer = SAFETY_LAYER.get(category)
+    r = await _post("/safety/program/admin", {
+        "title": title, "html": html, "category": category, "code": code,
+        "summary": summary, "version": version, "layer": layer,
+        "field_visible": field_visible, "status": "draft", "updated_by": "Claude (draft)"})
+    r["next"] = ("Draft saved. Review it in the Safety Program admin page and click Publish to "
+                 "make it live on the field app.")
+    return r
+
+
+@mcp.tool()
+async def update_safety_doc(doc_id: int, html: Optional[str] = None, title: Optional[str] = None,
+                            summary: Optional[str] = None, code: Optional[str] = None,
+                            version: Optional[str] = None, category: Optional[str] = None,
+                            layer: Optional[int] = None, field_visible: Optional[bool] = None) -> dict:
+    """Revise an existing Safety Program document (e.g. update the Safety Policy, or amend an SWP).
+    Pass ONLY the fields you're changing — the rest are preserved. The previous version is
+    snapshotted automatically (audit trail). The document KEEPS its current publish state: editing
+    a PUBLISHED doc makes the change live immediately; editing a DRAFT leaves it a draft for the
+    user to publish. Call get_safety_doc first to compose the revised html. Bump `version` on any
+    substantive change."""
+    cur = await _get(f"/safety/program/admin/{doc_id}")
+    body = {
+        "title": title if title is not None else cur.get("title"),
+        "html": html if html is not None else cur.get("html"),
+        "category": category if category is not None else cur.get("category"),
+        "layer": layer if layer is not None else cur.get("layer"),
+        "code": code if code is not None else cur.get("code"),
+        "summary": summary if summary is not None else cur.get("summary"),
+        "version": version if version is not None else cur.get("version"),
+        "status": cur.get("status"),
+        "field_visible": field_visible if field_visible is not None else cur.get("field_visible"),
+        "sort_order": cur.get("sort_order"),
+        "updated_by": "Claude (edit)",
+    }
+    r = await _put(f"/safety/program/admin/{doc_id}", body)
+    r["status"] = cur.get("status")
+    r["note"] = ("This document is PUBLISHED — the change is now live on the field app."
+                 if cur.get("status") == "published"
+                 else "This document is a DRAFT — publish it in the Safety Program admin page to make it live.")
+    return r
 
 
 # ── Draft (no side effects) ──────────────────────────────────────────────────────
