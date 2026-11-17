@@ -41,6 +41,7 @@ from app.api.safety_incidents import router as safety_incidents_router
 from app.api.email_settings_api import router as email_settings_router
 from app.api.vehicle_inspections import router as vehicle_inspections_router
 from app.api.safety_pha import router as safety_pha_router
+from app.api.safety_program import router as safety_program_router
 from app.api.schedule import router as schedule_router
 from app.api.cx import router as cx_router
 from app.api.spine import router as spine_router, start_spine_scheduler, stop_spine_scheduler
@@ -293,6 +294,38 @@ async def lifespan(app: FastAPI):
                 reviewed_by        TEXT,
                 reviewed_at        TEXT,
                 created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
+        "safety_documents": """
+            CREATE TABLE IF NOT EXISTS safety_documents (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug          TEXT NOT NULL UNIQUE,
+                title         TEXT NOT NULL,
+                category      TEXT NOT NULL DEFAULT 'swp',
+                layer         INTEGER,
+                code          TEXT,
+                summary       TEXT,
+                html          TEXT NOT NULL,
+                plain_text    TEXT,
+                version       TEXT,
+                status        TEXT NOT NULL DEFAULT 'draft',
+                field_visible INTEGER NOT NULL DEFAULT 1,
+                sort_order    INTEGER NOT NULL DEFAULT 0,
+                updated_by    TEXT,
+                updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
+        "safety_document_versions": """
+            CREATE TABLE IF NOT EXISTS safety_document_versions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id INTEGER NOT NULL,
+                version     TEXT,
+                title       TEXT,
+                summary     TEXT,
+                html        TEXT,
+                saved_by    TEXT,
+                saved_at    TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """,
         "vehicle_inspections": """
@@ -693,6 +726,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Vendor seed skipped — startup continues (D1 error?): {e}")
     try:
+        from app.api.safety_seed import seed_safety_program_if_empty
+        await seed_safety_program_if_empty(_db)
+    except Exception as e:
+        logger.error(f"Safety program seed skipped — startup continues (D1 error?): {e}")
+    try:
         await _db.close()
     except Exception:
         pass
@@ -788,6 +826,7 @@ app.include_router(safety_incidents_router)
 app.include_router(email_settings_router, dependencies=[Depends(_require_admin)])
 app.include_router(vehicle_inspections_router)
 app.include_router(safety_pha_router)
+app.include_router(safety_program_router)
 app.include_router(schedule_router, dependencies=[Depends(require_access)])
 app.include_router(cx_router)
 app.include_router(spine_router)

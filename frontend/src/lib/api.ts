@@ -1603,6 +1603,44 @@ export async function sendPushNotification(payload: {
   return request('POST', '/push/notify', { url: '/field/documents', ...payload });
 }
 
+// ── Safety Program library ────────────────────────────────────────────────────
+export interface SafetyDoc {
+  id: number; slug: string; title: string; category: string;
+  layer: number | null; code: string | null; summary: string | null;
+  version: string | null; status?: string; field_visible?: boolean;
+  sort_order?: number; updated_by?: string | null; updated_at?: string | null;
+  html?: string;
+}
+/** Published, field-visible safety docs WITH html — for the field handbook (client-side search). */
+export async function listSafetyProgram(): Promise<SafetyDoc[]> {
+  const r = await request<{ documents: SafetyDoc[] }>('GET', '/safety/program');
+  return r.documents;
+}
+export async function adminListSafetyDocs(): Promise<SafetyDoc[]> {
+  const r = await request<{ documents: SafetyDoc[] }>('GET', '/safety/program/admin/all');
+  return r.documents;
+}
+export async function adminGetSafetyDoc(id: number): Promise<SafetyDoc & { version_count: number }> {
+  return request('GET', `/safety/program/admin/${id}`);
+}
+export type SafetyDocInput = Partial<Omit<SafetyDoc, 'id'>> & { title: string; html: string };
+export async function createSafetyDoc(body: SafetyDocInput): Promise<{ id: number; slug: string }> {
+  return request('POST', '/safety/program/admin', body);
+}
+export async function updateSafetyDoc(id: number, body: SafetyDocInput): Promise<{ id: number; ok: boolean }> {
+  return request('PUT', `/safety/program/admin/${id}`, body);
+}
+export async function publishSafetyDoc(id: number, published: boolean): Promise<{ id: number; status: string }> {
+  return request('POST', `/safety/program/admin/${id}/publish`, { published });
+}
+export async function deleteSafetyDoc(id: number): Promise<{ id: number; deleted: boolean }> {
+  return request('DELETE', `/safety/program/admin/${id}`);
+}
+export async function listSafetyDocVersions(id: number): Promise<{ id: number; version: string | null; title: string; saved_by: string | null; saved_at: string }[]> {
+  const r = await request<{ versions: any[] }>('GET', `/safety/program/admin/${id}/versions`);
+  return r.versions;
+}
+
 // ── Site Inspections ──────────────────────────────────────────────────────────
 
 export interface ChecklistItem {

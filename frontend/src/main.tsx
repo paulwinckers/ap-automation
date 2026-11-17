@@ -32,6 +32,8 @@ import FieldAmendPO       from './pages/FieldAmendPO';
 import FieldKeys          from './pages/FieldKeys';
 import FieldSafetyTalk    from './pages/FieldSafetyTalk';
 import FieldDocuments     from './pages/FieldDocuments';
+import FieldSafetyProgram from './pages/FieldSafetyProgram';
+import SafetyProgramAdmin from './pages/SafetyProgramAdmin';
 import DocumentsAdmin     from './pages/DocumentsAdmin';
 import KeyScan            from './pages/KeyScan';
 import TimeTracking       from './pages/TimeTracking';
@@ -101,6 +103,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/field/keys"           element={<FieldShell><FieldKeys /></FieldShell>} />
         <Route path="/field/safety"           element={<FieldShell><FieldSafetyTalk /></FieldShell>} />
         <Route path="/field/documents"          element={<FieldShell><FieldDocuments /></FieldShell>} />
+        <Route path="/field/safety-program"      element={<FieldShell><FieldSafetyProgram /></FieldShell>} />
         <Route path="/field/inspection"         element={<FieldShell><FieldInspection /></FieldShell>} />
         <Route path="/field/incident"           element={<FieldShell><FieldIncident /></FieldShell>} />
         <Route path="/field/vehicle-inspection"  element={<FieldShell><FieldVehicleInspection /></FieldShell>} />
@@ -117,6 +120,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/ops/contacts"      element={<RequireAuth area="customers"><Office><PropertyLookup /></Office></RequireAuth>} />
         <Route path="/keys/admin"        element={<RequireAuth area="operations"><Office><KeysAdmin /></Office></RequireAuth>} />
         <Route path="/ops/documents"          element={<RequireAuth area="operations"><Office><DocumentsAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/safety-program"     element={<RequireAuth area="operations"><Office><SafetyProgramAdmin /></Office></RequireAuth>} />
         <Route path="/ops/safety-inspections" element={<RequireAuth area="operations"><Office><SafetyInspectionsAdmin /></Office></RequireAuth>} />
         <Route path="/ops/safety-incidents"   element={<RequireAuth area="hr"><Office><SafetyIncidentsAdmin /></Office></RequireAuth>} />
         <Route path="/ops/vehicle-inspections" element={<RequireAuth area="operations"><Office><VehicleInspectionsAdmin /></Office></RequireAuth>} />
