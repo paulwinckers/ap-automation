@@ -59,6 +59,8 @@ export const OFFICE_SECTIONS: OfficeSection[] = [
       { path: '/ops/safety-program',      icon: '📖', label: 'Safety Program',      sub: 'Publish & version SWPs, policies & procedures' },
       { path: '/ops/safety-talks',        icon: '🦺', label: 'Safety Talks',        sub: 'Toolbox talk records' },
       { path: '/ops/safety-pha',          icon: '⚠️', label: 'Hazard Assessments',  sub: 'Project hazard assessments (PHA)' },
+      // Incident Reports stays HR-gated (injury details & names) even though it lives here.
+      { path: '/ops/safety-incidents',    icon: '🚨', label: 'Incident Reports',    sub: 'Safety incident log & sign-off', area: 'hr' },
       { path: '/ops/safety-meetings',     icon: '🪧', label: 'Safety Meetings',     sub: 'JHSC meeting log, incident review & minutes' },
       { path: '/ops/safety-inspections',  icon: '🔍', label: 'Site Inspections',    sub: 'Inspections & action items' },
       { path: '/ops/vehicle-inspections', icon: '🚛', label: 'Vehicle Inspections', sub: 'Weekly vehicle inspection log' },
@@ -78,7 +80,6 @@ export const OFFICE_SECTIONS: OfficeSection[] = [
   {
     section: 'HR', area: 'hr',
     items: [
-      { path: '/ops/safety-incidents', icon: '🚨', label: 'Incident Reports', sub: 'Safety incident log & sign-off' },
       { path: '/ops/training',         icon: '🎓', label: 'Training Report',  sub: 'Who has finished which course' },
     ],
   },
