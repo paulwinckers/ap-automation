@@ -21,6 +21,29 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const current = activePath(pathname, nav.flatMap(sec => sec.items.map(it => it.path)));
   const [actionCount, setActionCount] = useState(0);
 
+  // Collapsible sidebar sections — remembered per browser.
+  const [closedSecs, setClosedSecs] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('ap_nav_closed') || '[]')); } catch { return new Set(); }
+  });
+  function setClosed(next: Set<string>) {
+    try { localStorage.setItem('ap_nav_closed', JSON.stringify([...next])); } catch { /* ignore */ }
+    setClosedSecs(next);
+  }
+  function toggleSec(name: string) {
+    const next = new Set(closedSecs);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    setClosed(next);
+  }
+  // Navigating into a collapsed section reveals it, so the active page is always in view.
+  useEffect(() => {
+    if (!current) return;
+    const sec = nav.find(s => s.items.some(it => it.path === current));
+    if (sec && closedSecs.has(sec.section)) {
+      const next = new Set(closedSecs); next.delete(sec.section); setClosed(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current]);
+
   useEffect(() => {
     let alive = true;
     async function refresh() {
@@ -81,21 +104,32 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
         {/* Nav items */}
         <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '8px 0' }}>
-          {nav.map(group => (
+          {nav.map(group => {
+            // Open when the sidebar is icon-only (no headings to click) or the section isn't closed.
+            // Navigating into a closed section auto-reveals it (effect above), so the active item
+            // is never left hidden.
+            const open = collapsed || !closedSecs.has(group.section);
+            return (
             <div key={group.section} style={{ marginBottom: 8 }}>
-              {/* Section label — hidden when collapsed */}
+              {/* Section label — a toggle when expanded, hidden when the sidebar is icon-only */}
               {!collapsed && (
-                <div style={{
-                  color: '#475569', fontSize: 10, fontWeight: 700,
-                  letterSpacing: '0.1em', textTransform: 'uppercase',
-                  padding: '12px 16px 4px', whiteSpace: 'nowrap',
-                }}>
+                <button
+                  onClick={() => toggleSec(group.section)}
+                  title={open ? `Collapse ${group.section}` : `Expand ${group.section}`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                    background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
+                    color: '#475569', fontSize: 10, fontWeight: 700,
+                    letterSpacing: '0.1em', textTransform: 'uppercase',
+                    padding: '12px 16px 4px', whiteSpace: 'nowrap',
+                  }}>
+                  <span style={{ fontSize: 8, width: 8, display: 'inline-block', transition: 'transform 0.15s', transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
                   {group.section}
-                </div>
+                </button>
               )}
               {collapsed && <div style={{ height: 8 }} />}
 
-              {group.items.map(item => {
+              {open && group.items.map(item => {
                 const linkStyle = (active: boolean) => ({
                   display: 'flex', alignItems: 'center',
                   gap: collapsed ? 0 : 10,
@@ -137,7 +171,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 );
               })}
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Footer — user + logout */}
