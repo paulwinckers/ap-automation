@@ -33,7 +33,9 @@ DEFAULT_STAFF_AREAS = ("customers", "operations")
 
 # Ordered (first match wins): (method or "*", route path prefix, area or None = any logged-in person).
 # Matched against the ROUTE TEMPLATE (e.g. /customer/opportunity/{opp_id}/invoices), not the raw URL.
-_RULES: list[tuple[str, str, Optional[str]]] = [
+# Each rule is (method, path-prefix, area). `area` is one area name, or a tuple of names when
+# more than one area may reach the route (any one of them suffices), or None for everyone signed in.
+_RULES: list[tuple[str, str, Optional[object]]] = [
     # Personal — every logged-in person (My Work, own account, task threads)
     ("*", "/auth/", None),
     ("*", "/sales/due/mine", None),
@@ -52,8 +54,13 @@ _RULES: list[tuple[str, str, Optional[str]]] = [
     ("*", "/settings/", "admin"),
     ("PUT", "/construction/cx/settings", "admin"),
     ("*", "/spine/sync", "admin"),
-    # HR
-    ("*", "/safety/incidents", "hr"),
+    # HR / Safety — incident reports hold injury details & names (HR), but are also part of the
+    # Safety toolset, so Operations access reaches them too. Either area suffices.
+    # (Listed before the general /safety rule below so it wins the prefix match.)
+    ("*", "/safety/incidents", ("hr", "operations")),
+    # Safety admin tools — program/policies, talks, hazard assessments (PHA), JHSC meetings,
+    # site inspections, property hazards. All part of the Operations "Safety" toolset.
+    ("*", "/safety", "operations"),
     # Finance
     ("*", "/invoices", "finance"),
     ("*", "/vendors", "finance"),
@@ -78,6 +85,7 @@ _RULES: list[tuple[str, str, Optional[str]]] = [
     ("*", "/schedule", "operations"),
     ("*", "/documents", "operations"),
     ("*", "/keys", "operations"),
+    ("*", "/vehicle", "operations"),     # weekly vehicle inspections (Safety section)
     ("*", "/time", "operations"),
     ("*", "/dashboard", "operations"),
     ("*", "/push/notify", "operations"),
@@ -102,8 +110,9 @@ def _is_gated(route: APIRoute) -> bool:
     return _gated_cache[key]
 
 
-def area_for(method: str, path: str) -> Optional[str]:
-    """The area a gated route belongs to; Aspire probe/debug tools are always admin."""
+def area_for(method: str, path: str) -> Optional[object]:
+    """The area(s) a gated route belongs to — a single area name, a tuple of names (any one
+    suffices), or None. Aspire probe/debug tools are always admin."""
     if any(w in path for w in ("probe", "debug", "/discover", "/fields")):
         return "admin"
     for m, prefix, area in _RULES:
@@ -137,8 +146,11 @@ async def area_guard(request: Request, actor: Optional[dict] = Depends(optional_
     if not isinstance(route, APIRoute) or not _is_gated(route) or actor is None:
         return   # open route, or not authenticated (the route's own guard returns 401)
     area = area_for(request.method, route.path)
-    if area and area not in user_areas(actor):
-        raise HTTPException(
-            status_code=403,
-            detail=f"You don't have access to {AREA_LABELS[area]}. Ask an admin to add it on the Users page.",
-        )
+    if area:
+        needed = {area} if isinstance(area, str) else set(area)
+        if not (needed & user_areas(actor)):
+            labels = " or ".join(AREA_LABELS[a] for a in needed)
+            raise HTTPException(
+                status_code=403,
+                detail=f"You don't have access to {labels}. Ask an admin to add it on the Users page.",
+            )
