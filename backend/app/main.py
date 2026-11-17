@@ -359,6 +359,7 @@ async def lifespan(app: FastAPI):
                 title             TEXT,
                 discussion        TEXT,
                 corrective_action TEXT,
+                recommendation    TEXT,
                 assignee          TEXT,
                 due_date          TEXT,
                 status            TEXT NOT NULL DEFAULT 'open',
@@ -699,6 +700,8 @@ async def lifespan(app: FastAPI):
         ("safety_incidents", "signed_off_at",        "ALTER TABLE safety_incidents ADD COLUMN signed_off_at TEXT"),
         ("safety_incidents", "employee_signed_off_by", "ALTER TABLE safety_incidents ADD COLUMN employee_signed_off_by TEXT"),
         ("safety_incidents", "employee_signed_off_at", "ALTER TABLE safety_incidents ADD COLUMN employee_signed_off_at TEXT"),
+        # safety_meeting_items.recommendation — AI-suggested policy/SWP action for a reviewed incident
+        ("safety_meeting_items", "recommendation", "ALTER TABLE safety_meeting_items ADD COLUMN recommendation TEXT"),
         # job_prep_checklist — per-item due & completed dates
         ("job_prep_checklist", "due_date",       "ALTER TABLE job_prep_checklist ADD COLUMN due_date TEXT"),
         ("job_prep_checklist", "completed_date", "ALTER TABLE job_prep_checklist ADD COLUMN completed_date TEXT"),

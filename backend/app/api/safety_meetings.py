@@ -19,13 +19,17 @@ Public (field app):
   GET    /safety/meetings/field            — posted meetings, newest first
   GET    /safety/meetings/field/{id}       — one posted meeting + its items
 """
+import asyncio
 import logging
+import re
 from typing import Optional
 
+import anthropic as _anthropic
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.api.auth import require_access
+from app.core.config import settings
 from app.core.database import Database
 
 router = APIRouter(prefix="/safety/meetings", tags=["safety-meetings"])
@@ -51,6 +55,77 @@ def _bool(v) -> int:
     return 1 if str(v).strip().lower() in ("1", "true", "yes", "y", "on") else 0 if v is not None else 0
 
 
+def _strip_html(html: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html or "")).strip()
+
+
+_REC_SYSTEM = (
+    "You advise a Joint Health & Safety Committee (JHSC) at a British Columbia landscaping "
+    "company as it reviews a workplace incident during a safety meeting. Recommend, concisely, "
+    "what change to the company's EXISTING safety program would best help prevent a recurrence.\n"
+    "Rules:\n"
+    "- Ground every recommendation ONLY in the provided Safety Library. Reference the specific "
+    "document by its code (e.g. SWP-13, SAF-001) in square brackets at the very start.\n"
+    "- If an existing procedure already covers the activity, recommend the specific addition or "
+    "wording change to make to THAT document.\n"
+    "- If no procedure covers the hazard, say so and recommend creating a new SWP, naming what it "
+    "must require.\n"
+    "- Do NOT invent regulations, statistics, or document codes that are not in the library.\n"
+    "- Write 2–4 sentences, specific and actionable, suitable to paste into the meeting minutes. "
+    "This is a recommendation for the committee to review and decide on — not a final policy."
+)
+
+
+async def _safety_library_text(db: Database) -> str:
+    rows = await db._q(
+        "SELECT code, title, category, layer, summary, plain_text, html "
+        "FROM safety_documents ORDER BY layer, sort_order, id"
+    )
+    parts = []
+    for r in rows:
+        d = _row(r)
+        body = (d.get("plain_text") or "").strip() or _strip_html(d.get("html") or "")
+        tag = d.get("code") or (d.get("category") or "DOC").upper()
+        parts.append(
+            f"[{tag}] {d.get('title')} (layer {d.get('layer')}, {d.get('category')})\n"
+            f"Summary: {d.get('summary') or '—'}\n"
+            f"Excerpt: {body[:700]}"
+        )
+    return "\n\n".join(parts)
+
+
+def _incident_brief(inc: dict) -> str:
+    return (
+        f"Date: {inc.get('incident_date')}  Type: {inc.get('incident_type')}  "
+        f"Severity: {inc.get('severity')}\n"
+        f"Location: {inc.get('location') or '—'}\n"
+        f"What happened: {inc.get('description') or '—'}\n"
+        f"Injury: {inc.get('injury_description') or '—'}\n"
+        f"Immediate action taken: {inc.get('immediate_action') or '—'}\n"
+        f"Contributing factors: {inc.get('contributing_factors') or '—'}"
+    )
+
+
+async def _ask_recommendation(inc: dict, library: str) -> str:
+    """Ask Claude for a grounded policy/SWP recommendation for one incident. Returns text
+    (or raises). Best-effort — callers handle failures."""
+    if not getattr(settings, "ANTHROPIC_API_KEY", None):
+        raise RuntimeError("AI recommendations are not configured (no ANTHROPIC_API_KEY)")
+    client = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    user = (
+        f"INCIDENT UNDER REVIEW:\n{_incident_brief(inc)}\n\n"
+        f"SAFETY LIBRARY (the company's current OH&S program — recommend changes grounded only "
+        f"in these):\n{library}"
+    )
+    resp = await client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=600,
+        system=_REC_SYSTEM,
+        messages=[{"role": "user", "content": user}],
+    )
+    return (resp.content[0].text or "").strip()
+
+
 # ── Models ──────────────────────────────────────────────────────────────────────
 
 class MeetingIn(BaseModel):
@@ -73,6 +148,7 @@ class ItemIn(BaseModel):
     title: Optional[str] = None
     discussion: Optional[str] = None
     corrective_action: Optional[str] = None
+    recommendation: Optional[str] = None
     assignee: Optional[str] = None
     due_date: Optional[str] = None
     status: str = "open"
@@ -154,6 +230,130 @@ async def open_incidents():
                  incident_date DESC, id DESC""",
         )
         return {"incidents": [_row(r) for r in rows]}
+    finally:
+        await db.close()
+
+
+# ── Bulk load + AI recommendations ────────────────────────────────────────────
+
+async def _unlinked_open_incidents(db: Database, meeting_id: int) -> list[dict]:
+    linked = {
+        _row(r).get("incident_id")
+        for r in await db._q(
+            "SELECT incident_id FROM safety_meeting_items "
+            "WHERE meeting_id = ? AND item_type = 'incident' AND incident_id IS NOT NULL",
+            [meeting_id],
+        )
+    }
+    rows = await db._q(
+        """SELECT * FROM safety_incidents WHERE status != 'closed'
+           ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'serious' THEN 1
+                                  WHEN 'moderate' THEN 2 ELSE 3 END,
+                    incident_date DESC, id DESC"""
+    )
+    return [_row(r) for r in rows if _row(r).get("id") not in linked]
+
+
+@router.post("/{meeting_id}/load-incidents", dependencies=[Depends(require_access)])
+async def load_incidents(meeting_id: int, recommend: bool = True):
+    """Bulk-pull every unresolved incident (not already on this meeting) in as a review item.
+    When recommend=true (default), also generate a grounded policy/SWP recommendation for each,
+    cross-referencing the incident against the company's safety library."""
+    db = await _get_db()
+    try:
+        if not await db._q("SELECT id FROM safety_meetings WHERE id = ?", [meeting_id]):
+            raise HTTPException(404, "Meeting not found")
+        pending = await _unlinked_open_incidents(db, meeting_id)
+        created: list[tuple[int, dict]] = []
+        for inc in pending:
+            rows = await db._q(
+                """INSERT INTO safety_meeting_items
+                   (meeting_id, item_type, incident_id, title, status, sort_order)
+                   VALUES (?, 'incident', ?, ?, 'open', 0)
+                   RETURNING id""",
+                [meeting_id, inc["id"], f"{inc.get('incident_type') or 'Incident'} — {inc.get('location') or 'Field'}"],
+            )
+            created.append((rows[0]["id"], inc))
+
+        recs = 0
+        errors = 0
+        if recommend and created:
+            try:
+                library = await _safety_library_text(db)
+                results = await asyncio.gather(
+                    *[_ask_recommendation(inc, library) for _id, inc in created],
+                    return_exceptions=True,
+                )
+                for (item_id, _inc), res in zip(created, results):
+                    if isinstance(res, str) and res:
+                        await db._x("UPDATE safety_meeting_items SET recommendation = ? WHERE id = ?", [res, item_id])
+                        recs += 1
+                    else:
+                        errors += 1
+                        logger.warning("Recommendation failed for item %s: %s", item_id, res)
+            except Exception as e:
+                logger.error("Bulk recommendation step failed: %s", e)
+                errors = len(created)
+        return {"added": len(created), "recommendations": recs, "recommendation_errors": errors}
+    finally:
+        await db.close()
+
+
+@router.post("/{meeting_id}/recommend-all", dependencies=[Depends(require_access)])
+async def recommend_all(meeting_id: int, overwrite: bool = False):
+    """Generate a policy/SWP recommendation for every incident-review item on the meeting.
+    By default only fills items that don't have one yet; overwrite=true regenerates all."""
+    db = await _get_db()
+    try:
+        where_rec = "" if overwrite else "AND (recommendation IS NULL OR recommendation = '')"
+        items = await db._q(
+            f"""SELECT id, incident_id FROM safety_meeting_items
+                WHERE meeting_id = ? AND item_type = 'incident' AND incident_id IS NOT NULL {where_rec}""",
+            [meeting_id],
+        )
+        if not items:
+            return {"recommendations": 0, "recommendation_errors": 0}
+        library = await _safety_library_text(db)
+        incs = {}
+        for it in items:
+            irow = await db._q("SELECT * FROM safety_incidents WHERE id = ?", [_row(it)["incident_id"]])
+            if irow:
+                incs[_row(it)["id"]] = _row(irow[0])
+        pairs = [(iid, inc) for iid, inc in incs.items()]
+        results = await asyncio.gather(*[_ask_recommendation(inc, library) for _iid, inc in pairs], return_exceptions=True)
+        recs = errors = 0
+        for (item_id, _inc), res in zip(pairs, results):
+            if isinstance(res, str) and res:
+                await db._x("UPDATE safety_meeting_items SET recommendation = ? WHERE id = ?", [res, item_id])
+                recs += 1
+            else:
+                errors += 1
+        return {"recommendations": recs, "recommendation_errors": errors}
+    finally:
+        await db.close()
+
+
+@router.post("/items/{item_id}/recommend", dependencies=[Depends(require_access)])
+async def recommend_item(item_id: int):
+    """(Re)generate the grounded policy/SWP recommendation for one incident-review item."""
+    db = await _get_db()
+    try:
+        rows = await db._q("SELECT * FROM safety_meeting_items WHERE id = ?", [item_id])
+        if not rows:
+            raise HTTPException(404, "Item not found")
+        item = _row(rows[0])
+        if not item.get("incident_id"):
+            raise HTTPException(400, "Recommendations are generated from a linked incident")
+        inc_rows = await db._q("SELECT * FROM safety_incidents WHERE id = ?", [item["incident_id"]])
+        if not inc_rows:
+            raise HTTPException(404, "Linked incident not found")
+        library = await _safety_library_text(db)
+        try:
+            rec = await _ask_recommendation(_row(inc_rows[0]), library)
+        except Exception as e:
+            raise HTTPException(503, f"Could not generate a recommendation: {e}")
+        await db._x("UPDATE safety_meeting_items SET recommendation = ? WHERE id = ?", [rec, item_id])
+        return {"id": item_id, "recommendation": rec}
     finally:
         await db.close()
 
@@ -317,11 +517,13 @@ async def update_item(item_id: int, body: ItemIn):
         await db._x(
             """UPDATE safety_meeting_items SET
                  item_type = ?, incident_id = ?, title = ?, discussion = ?,
-                 corrective_action = ?, assignee = ?, due_date = ?, status = ?, sort_order = ?
+                 corrective_action = ?, recommendation = ?, assignee = ?, due_date = ?,
+                 status = ?, sort_order = ?
                WHERE id = ?""",
             [
                 itype, body.incident_id, (body.title or "").strip() or None,
                 (body.discussion or "").strip() or None, (body.corrective_action or "").strip() or None,
+                (body.recommendation or "").strip() or None,
                 (body.assignee or "").strip() or None, (body.due_date or "").strip() or None,
                 istatus, body.sort_order or 0, item_id,
             ],
