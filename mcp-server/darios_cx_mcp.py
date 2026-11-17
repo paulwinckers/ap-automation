@@ -117,6 +117,13 @@ async def _put(path: str, body: dict):
         return r.json()
 
 
+async def _delete(path: str):
+    async with httpx.AsyncClient(timeout=TIMEOUT) as c:
+        r = await c.delete(f"{API}{path}", headers=_headers())
+        r.raise_for_status()
+        return r.json()
+
+
 # ── Read tools (safe) ──────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -707,6 +714,27 @@ async def update_safety_doc(doc_id: int, html: Optional[str] = None, title: Opti
     r["note"] = ("This document is PUBLISHED — the change is now live on the field app."
                  if cur.get("status") == "published"
                  else "This document is a DRAFT — publish it in the Safety Program admin page to make it live.")
+    return r
+
+
+# ── Company documents ──────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def list_documents() -> dict:
+    """List the company documents in the portal (Documents): id, title, folder, filename,
+    file_size, uploaded_by, created_at. Use this to find a document's id before delete_document."""
+    return await _get("/documents")
+
+
+@mcp.tool()
+async def delete_document(doc_id: int) -> dict:
+    """Remove a company document from the portal's Documents library by id. This is a SOFT delete
+    (the record is hidden, not erased) so it can be restored later if needed. Get the id from
+    list_documents. Only delete a document the user has explicitly asked you to remove — confirm
+    the exact title with them first, then call this. Returns {status, id}."""
+    r = await _delete(f"/documents/{doc_id}")
+    r["note"] = ("Soft-deleted — the document no longer appears in the Documents library, but the "
+                 "record is retained and can be restored by an admin if this was a mistake.")
     return r
 
 
