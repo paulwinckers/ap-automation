@@ -42,6 +42,7 @@ from app.api.email_settings_api import router as email_settings_router
 from app.api.vehicle_inspections import router as vehicle_inspections_router
 from app.api.safety_pha import router as safety_pha_router
 from app.api.safety_program import router as safety_program_router
+from app.api.safety_meetings import router as safety_meetings_router
 from app.api.schedule import router as schedule_router
 from app.api.cx import router as cx_router
 from app.api.spine import router as spine_router, start_spine_scheduler, stop_spine_scheduler
@@ -326,6 +327,43 @@ async def lifespan(app: FastAPI):
                 html        TEXT,
                 saved_by    TEXT,
                 saved_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
+        "safety_meetings": """
+            CREATE TABLE IF NOT EXISTS safety_meetings (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                meeting_date   TEXT NOT NULL,
+                meeting_time   TEXT,
+                location       TEXT,
+                meeting_type   TEXT NOT NULL DEFAULT 'monthly',
+                chair          TEXT,
+                attendees      TEXT,
+                quorum_met     INTEGER NOT NULL DEFAULT 0,
+                agenda         TEXT,
+                minutes        TEXT,
+                next_meeting   TEXT,
+                status         TEXT NOT NULL DEFAULT 'draft',
+                posted_at      TEXT,
+                posted_by      TEXT,
+                updated_by     TEXT,
+                updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """,
+        "safety_meeting_items": """
+            CREATE TABLE IF NOT EXISTS safety_meeting_items (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                meeting_id        INTEGER NOT NULL,
+                item_type         TEXT NOT NULL DEFAULT 'topic',
+                incident_id       INTEGER,
+                title             TEXT,
+                discussion        TEXT,
+                corrective_action TEXT,
+                assignee          TEXT,
+                due_date          TEXT,
+                status            TEXT NOT NULL DEFAULT 'open',
+                sort_order        INTEGER NOT NULL DEFAULT 0,
+                created_at        TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """,
         "vehicle_inspections": """
@@ -842,6 +880,7 @@ app.include_router(email_settings_router, dependencies=[Depends(_require_admin)]
 app.include_router(vehicle_inspections_router)
 app.include_router(safety_pha_router)
 app.include_router(safety_program_router)
+app.include_router(safety_meetings_router)
 app.include_router(schedule_router, dependencies=[Depends(require_access)])
 app.include_router(cx_router)
 app.include_router(spine_router)
