@@ -61,6 +61,7 @@ import MyWork                 from './pages/MyWork';
 import FieldHome              from './pages/FieldHome';
 import FieldShell             from './components/FieldShell';
 import OfficeHome             from './pages/OfficeHome';
+import Account                from './pages/Account';
 import FieldFeed              from './pages/FieldFeed';
 import UsageAdmin             from './pages/UsageAdmin';
 import Training               from './pages/Training';
@@ -82,6 +83,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/"    element={<Landing />} />
         <Route path="/crew" element={<FieldHome />} />
         <Route path="/home" element={<RequireAuth><Office><OfficeHome /></Office></RequireAuth>} />
+        <Route path="/account" element={<RequireAuth><Office><Account /></Office></RequireAuth>} />
 
         {/* Auth */}
         <Route path="/login"           element={<Login />} />

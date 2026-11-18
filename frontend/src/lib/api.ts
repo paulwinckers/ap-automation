@@ -1313,7 +1313,7 @@ export async function createUser(data: {
 }
 
 export async function updateUser(id: number, data: {
-  name?: string; role?: string; active?: boolean; phone?: string | null;
+  name?: string; email?: string; role?: string; active?: boolean; phone?: string | null;
   divisions?: DivisionMembership[]; areas?: Area[];
 }): Promise<UserRecord> {
   return request('PUT', `/auth/users/${id}`, data);

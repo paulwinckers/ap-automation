@@ -153,8 +153,11 @@ class DariosOAuthProvider:
             return HTMLResponse(_page(form=True, req=req, client=login["client_name"], email=email,
                                       error="Invalid email or password."), status_code=401)
 
+        # Prefer the numeric user id as the identity: it survives an admin changing the person's
+        # email. (Older tokens carry the email; the backend's act-as accepts either.)
+        who = r.json()
         code = self._sign({
-            "typ": "code", "jti": secrets.token_urlsafe(24), "sub": r.json()["email"],
+            "typ": "code", "jti": secrets.token_urlsafe(24), "sub": str(who.get("id") or who["email"]),
             **{k: login[k] for k in ("client_id", "redirect_uri", "explicit", "scopes",
                                      "challenge", "resource")},
         }, CODE_TTL)
