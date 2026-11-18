@@ -4,8 +4,9 @@
  */
 
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
-  listUsers, createUser, updateUser, resetUserPassword, changeMyPassword,
+  listUsers, createUser, updateUser, resetUserPassword,
   UserRecord, DivisionMembership, DIVISIONS, AREAS, Area,
 } from '../lib/api';
 
@@ -166,6 +167,7 @@ export default function UserAdmin() {
   // Edit inline
   const [editId,    setEditId]    = useState<number | null>(null);
   const [editName,  setEditName]  = useState('');
+  const [editEmail, setEditEmail] = useState('');
   const [editRole,  setEditRole]  = useState<'staff' | 'admin'>('staff');
   const [editPhone, setEditPhone] = useState('');
   const [editDivisions, setEditDivisions] = useState<DivisionMembership[]>([]);
@@ -209,7 +211,7 @@ export default function UserAdmin() {
   async function handleSaveEdit(userId: number) {
     setSaving(true);
     try {
-      await updateUser(userId, { name: editName, role: editRole, phone: editPhone.trim() || null, divisions: editDivisions, areas: editAreas });
+      await updateUser(userId, { name: editName, email: editEmail.trim(), role: editRole, phone: editPhone.trim() || null, divisions: editDivisions, areas: editAreas });
       setEditId(null);
       await load();
     } catch (e) {
@@ -247,38 +249,12 @@ export default function UserAdmin() {
   function startEdit(user: UserRecord) {
     setEditId(user.id);
     setEditName(user.name);
+    setEditEmail(user.email);
     setEditRole(user.role);
     setEditPhone(user.phone || '');
     setEditDivisions(user.divisions || []);
     setEditAreas(user.areas || DEFAULT_AREAS);
     setResetId(null);
-  }
-
-  // Change my own password
-  const [showChangePw,  setShowChangePw]  = useState(false);
-  const [curPw,         setCurPw]         = useState('');
-  const [newPw,         setNewPw]         = useState('');
-  const [confirmPw,     setConfirmPw]     = useState('');
-  const [changingPw,    setChangingPw]    = useState(false);
-  const [changePwMsg,   setChangePwMsg]   = useState('');
-  const [changePwErr,   setChangePwErr]   = useState('');
-
-  async function handleChangePw(e: React.FormEvent) {
-    e.preventDefault();
-    setChangePwErr(''); setChangePwMsg('');
-    if (newPw !== confirmPw) { setChangePwErr('New passwords do not match.'); return; }
-    if (newPw.length < 8)   { setChangePwErr('Password must be at least 8 characters.'); return; }
-    setChangingPw(true);
-    try {
-      await changeMyPassword(curPw, newPw);
-      setChangePwMsg('Password changed successfully.');
-      setCurPw(''); setNewPw(''); setConfirmPw('');
-      setTimeout(() => { setShowChangePw(false); setChangePwMsg(''); }, 2000);
-    } catch (e) {
-      setChangePwErr((e as Error).message || 'Failed to change password.');
-    } finally {
-      setChangingPw(false);
-    }
   }
 
   const activeUsers   = users.filter(u => Boolean(u.active));
@@ -377,6 +353,8 @@ export default function UserAdmin() {
             title={`Active users (${activeUsers.length})`}
             editId={editId}
             editName={editName}
+            editEmail={editEmail}
+            onEditEmail={setEditEmail}
             editRole={editRole}
             editPhone={editPhone}
             editDivisions={editDivisions}
@@ -408,6 +386,8 @@ export default function UserAdmin() {
               dimmed
               editId={editId}
               editName={editName}
+              editEmail={editEmail}
+              onEditEmail={setEditEmail}
               editRole={editRole}
               editPhone={editPhone}
               editDivisions={editDivisions}
@@ -435,45 +415,9 @@ export default function UserAdmin() {
         </>
       )}
 
-      {/* ── Change my password ─────────────────────────────────────────────── */}
-      <div style={CARD}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: showChangePw ? 16 : 0 }}>
-          <div>
-            <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 15 }}>🔑 Change My Password</div>
-            {!showChangePw && <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>Update your own login password</div>}
-          </div>
-          <button onClick={() => { setShowChangePw(v => !v); setChangePwErr(''); setChangePwMsg(''); }}
-            style={{ ...BTN('#334155'), fontSize: 12 }}>
-            {showChangePw ? 'Cancel' : 'Change Password'}
-          </button>
-        </div>
-
-        {showChangePw && (
-          <form onSubmit={handleChangePw} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {[
-              { label: 'Current password', value: curPw,     set: setCurPw,     placeholder: 'Your current password' },
-              { label: 'New password',     value: newPw,     set: setNewPw,     placeholder: 'Min 8 characters' },
-              { label: 'Confirm new',      value: confirmPw, set: setConfirmPw, placeholder: 'Repeat new password' },
-            ].map(f => (
-              <div key={f.label}>
-                <label style={{ display: 'block', color: '#94a3b8', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>{f.label}</label>
-                <input
-                  type="password" value={f.value} required
-                  onChange={e => f.set(e.target.value)}
-                  placeholder={f.placeholder}
-                  style={INPUT}
-                />
-              </div>
-            ))}
-            {changePwErr && <div style={{ color: '#f87171', fontSize: 13 }}>{changePwErr}</div>}
-            {changePwMsg && <div style={{ color: '#4ade80', fontSize: 13 }}>{changePwMsg}</div>}
-            <button type="submit" disabled={changingPw} style={{ ...BTN('#1d4ed8', changingPw), alignSelf: 'flex-start', padding: '8px 20px' }}>
-              {changingPw ? 'Saving…' : 'Save New Password'}
-            </button>
-          </form>
-        )}
+      <div style={{ color: '#64748b', fontSize: 12, marginTop: -8 }}>
+        To change your own password, use <Link to="/account" style={{ color: '#93c5fd' }}>My account</Link>.
       </div>
-
     </div>
   );
 }
@@ -486,6 +430,8 @@ interface UserTableProps {
   dimmed?: boolean;
   editId: number | null;
   editName: string;
+  editEmail: string;
+  onEditEmail: (v: string) => void;
   editRole: 'staff' | 'admin';
   editPhone: string;
   editDivisions: DivisionMembership[];
@@ -512,7 +458,7 @@ interface UserTableProps {
 
 function UserTable({
   users, title, dimmed = false,
-  editId, editName, editRole, editPhone, editDivisions, onEditDivisions, editAreas, onEditAreas, saving,
+  editId, editName, editEmail, onEditEmail, editRole, editPhone, editDivisions, onEditDivisions, editAreas, onEditAreas, saving,
   resetId, resetPass, resetting, resetErr,
   onStartEdit, onEditName, onEditRole, onEditPhone, onSaveEdit, onCancelEdit,
   onToggleActive, onStartReset, onResetPass, onResetPassChange, onCancelReset,
@@ -581,6 +527,10 @@ function UserTable({
                   <label>
                     <div style={{ color: '#64748b', fontSize: 11, marginBottom: 4 }}>Name</div>
                     <input style={INPUT} value={editName} onChange={e => onEditName(e.target.value)} />
+                  </label>
+                  <label style={{ gridColumn: 'span 2' }}>
+                    <div style={{ color: '#64748b', fontSize: 11, marginBottom: 4 }}>Email (their login)</div>
+                    <input style={INPUT} type="email" value={editEmail} onChange={e => onEditEmail(e.target.value)} />
                   </label>
                   <label>
                     <div style={{ color: '#64748b', fontSize: 11, marginBottom: 4 }}>Phone / WhatsApp</div>

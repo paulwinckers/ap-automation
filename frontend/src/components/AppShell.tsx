@@ -183,10 +183,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {!collapsed && (() => {
             const user = currentUser();
             return user ? (
-              <div style={{ marginBottom: 8 }}>
+              <Link to="/account" title="My account — change password"
+                style={{ display: 'block', marginBottom: 8, textDecoration: 'none' }}>
                 <div style={{ color: '#64748b', fontSize: 11, marginBottom: 2 }}>{user.name}</div>
                 <div style={{ color: '#334155', fontSize: 10 }}>{user.email}</div>
-              </div>
+                <div style={{ color: '#3b82f6', fontSize: 10, marginTop: 3 }}>My account · password</div>
+              </Link>
             ) : null;
           })()}
           <button

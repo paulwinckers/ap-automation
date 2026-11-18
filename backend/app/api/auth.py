@@ -6,12 +6,14 @@ GET  /auth/me           — validate token, return current user
 POST /auth/setup        — create first admin (only if no users exist)
 GET  /auth/users        — list all users (admin only)
 POST /auth/users        — create a user (admin only)
-PUT  /auth/users/{id}   — update user name/role/active (admin only)
+PUT  /auth/users/{id}   — update user name/email/role/active (admin only)
+POST /auth/change-password            — change your own password (any logged-in user)
 POST /auth/users/{id}/reset-password  — set new password (admin only)
 """
 import hmac
 import logging
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -212,6 +214,7 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     name:      Optional[str] = None
+    email:     Optional[str] = None
     role:      Optional[str] = None
     active:    Optional[bool] = None
     phone:     Optional[str] = None
@@ -230,6 +233,16 @@ class EmergencyReset(BaseModel):
 class ChangePassword(BaseModel):
     current_password: str
     new_password:     str
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _clean_email(raw: str) -> str:
+    email = (raw or "").strip().lower()
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+    return email
 
 
 # ── Brute-force guard ─────────────────────────────────────────────────────────
@@ -288,6 +301,7 @@ async def login(
     return {
         "access_token": token,
         "token_type":   "bearer",
+        "id":           user["id"],
         "name":         user["name"],
         "email":        user["email"],
         "role":         user["role"],
@@ -402,6 +416,7 @@ async def create_user(
     db: Database = Depends(get_db),
 ):
     """Create a new user (admin only)."""
+    body.email = _clean_email(body.email)
     existing = await db._q("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", [body.email])
     if existing:
         raise HTTPException(status_code=409, detail="Email already exists")
@@ -428,7 +443,7 @@ async def update_user(
     _: dict = Depends(_require_admin),
     db: Database = Depends(get_db),
 ):
-    """Update name, role, or active status (admin only)."""
+    """Update name, email, role, phone, or active status (admin only)."""
     rows = await db._q("SELECT * FROM users WHERE id = ?", [user_id])
     if not rows:
         raise HTTPException(status_code=404, detail="User not found")
@@ -438,18 +453,27 @@ async def update_user(
     new_role   = body.role   if body.role   is not None else u["role"]
     new_active = int(body.active) if body.active is not None else u["active"]
     new_phone  = body.phone  if body.phone  is not None else u.get("phone")
+    new_email  = u["email"]
+    if body.email is not None and body.email.strip().lower() != (u["email"] or "").lower():
+        new_email = _clean_email(body.email)
+        taken = await db._q("SELECT id FROM users WHERE LOWER(email) = LOWER(?) AND id != ?",
+                            [new_email, user_id])
+        if taken:
+            raise HTTPException(status_code=409, detail="Another user already has that email")
 
     if new_role not in ("admin", "staff"):
         raise HTTPException(status_code=400, detail="Role must be admin or staff")
 
     await db._x(
-        "UPDATE users SET name = ?, role = ?, active = ?, phone = ? WHERE id = ?",
-        [new_name, new_role, new_active, new_phone or None, user_id],
+        "UPDATE users SET name = ?, email = ?, role = ?, active = ?, phone = ? WHERE id = ?",
+        [new_name, new_email, new_role, new_active, new_phone or None, user_id],
     )
+    if new_email != u["email"]:
+        logger.info(f"User {user_id} email changed: {u['email']} -> {new_email}")
     if body.divisions is not None:
         await _set_user_divisions(db, user_id, body.divisions)
     await _set_user_areas(db, user_id, body.areas)
-    return {"id": user_id, "name": new_name, "role": new_role, "active": bool(new_active), "phone": new_phone}
+    return {"id": user_id, "name": new_name, "email": new_email, "role": new_role, "active": bool(new_active), "phone": new_phone}
 
 
 @router.post("/emergency-reset")
@@ -494,8 +518,11 @@ async def change_password(
     db:   Database = Depends(get_db),
 ):
     """Let any logged-in user change their own password."""
+    limits = [(f"chpw:user:{user['id']}", 10, 900)]
+    _check_rate(limits)
     rows = await db._q("SELECT * FROM users WHERE id = ?", [user["id"]])
     if not rows or not _verify_pw(body.current_password, rows[0]["password_hash"]):
+        _record_fail(limits)
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     if len(body.new_password) < 8:
         raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
