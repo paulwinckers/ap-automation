@@ -58,20 +58,54 @@ def _parse(iso: str) -> date:
     return datetime.strptime(iso[:10], "%Y-%m-%d").date()
 
 
-def _working_dates(start: date, count: int, include_friday: bool) -> list[str]:
+def _working_dates(start: date, count: int, include_friday: bool, skip: Optional[set] = None) -> list[str]:
     """Return `count` working dates from `start`. Working = Mon–Thu, plus Fri when
-    include_friday. Sat/Sun excluded. If start lands on a non-working day, the
-    span begins on the next working day."""
+    include_friday. Sat/Sun excluded, and any date in `skip` (a hold/pause) is
+    skipped too — so the same number of work-days resumes after the hold and the
+    end date moves out. If start lands on a non-working day, the span begins on
+    the next working day."""
+    skip = skip or set()
     out: list[str] = []
     d = start
     guard = 0
     while len(out) < count and guard < 400:
         wd = d.weekday()  # Mon=0 … Sun=6
         working = wd <= 3 or (wd == 4 and include_friday)
-        if working:
-            out.append(d.isoformat())
+        iso = d.isoformat()
+        if working and iso not in skip:
+            out.append(iso)
         d += timedelta(days=1)
         guard += 1
+    return out
+
+
+def _expand_pauses(pauses) -> set:
+    """Expand hold ranges into the set of ISO dates a job skips. Each entry is a
+    [start, end] inclusive pair (also tolerates {"start","end"} or a bare date).
+    Bad or reversed ranges are repaired rather than raising."""
+    out: set = set()
+    for p in pauses or []:
+        try:
+            if isinstance(p, dict):
+                a = _parse(p.get("start")); b = _parse(p.get("end") or p.get("start"))
+            elif isinstance(p, (list, tuple)) and len(p) >= 2:
+                a = _parse(p[0]); b = _parse(p[1])
+            elif isinstance(p, (list, tuple)) and len(p) == 1:
+                a = b = _parse(p[0])
+            elif isinstance(p, str):
+                a = b = _parse(p)
+            else:
+                continue
+        except Exception:
+            continue
+        if b < a:
+            a, b = b, a
+        d = a
+        guard = 0
+        while d <= b and guard < 400:
+            out.add(d.isoformat())
+            d += timedelta(days=1)
+            guard += 1
     return out
 
 
@@ -90,19 +124,22 @@ def _budget_days(hours, emp_count: int, hours_per_day) -> int:
 
 def _active_cells(b: dict) -> int:
     """Person-day cells a shaped block actually schedules: every (employee, date)
-    pair minus the per-day exceptions that match one. Stale exceptions (dates no
-    longer in the span, removed employees) don't count."""
+    pair minus the per-day exceptions that match one, plus one-day additions
+    (extra bodies booked on a single day). Stale exceptions (dates no longer in
+    the span, removed employees) don't count."""
     emps = b.get("employees") or []
     dates = b.get("dates") or []
     cells = {f"{e}|{d}" for e in emps for d in dates}
-    return len(cells - set(b.get("exceptions") or []))
+    cells -= set(b.get("exceptions") or [])
+    cells |= set(b.get("additions") or [])
+    return len(cells)
 
 
 def _is_effective(b: dict) -> bool:
     """A block is effective when it schedules at least one person-day. An empty
     block — no employees, or every day removed via exceptions — schedules no work,
     so it must not keep its job out of the Unscheduled backlog."""
-    return bool(b.get("employees")) and _active_cells(b) > 0
+    return _active_cells(b) > 0
 
 
 def _shape_block(r: dict) -> dict:
@@ -114,14 +151,26 @@ def _shape_block(r: dict) -> dict:
         exceptions = json.loads(r.get("exceptions") or "[]")
     except Exception:
         exceptions = []
+    try:
+        additions = json.loads(r.get("additions") or "[]")
+    except Exception:
+        additions = []
+    try:
+        pauses = json.loads(r.get("pauses") or "[]")
+    except Exception:
+        pauses = []
     inc_fri = bool(r.get("include_friday"))
     extra = int(r.get("extra_days") or 0)
+    # The span is driven ONLY by the core crew (employees); one-day additions add
+    # capacity but never shorten or lengthen the job (per ops decision).
     budget = _budget_days(r.get("hours"), len(employees), r.get("hours_per_day"))
     total_days = max(1, budget + max(0, extra))
-    dates = _working_dates(_parse(r.get("start_date")), total_days, inc_fri)
-    # Scheduled capacity = person-day cells (minus per-day exceptions) × hours/day.
+    skip = _expand_pauses(pauses)
+    dates = _working_dates(_parse(r.get("start_date")), total_days, inc_fri, skip)
+    # Scheduled capacity = core person-day cells (minus exceptions) + one-day
+    # additions, × hours/day.
     hpd = float(r.get("hours_per_day") or DEFAULT_HOURS_PER_DAY) or DEFAULT_HOURS_PER_DAY
-    cells = max(0, len(employees) * len(dates) - len(exceptions))
+    cells = max(0, len(employees) * len(dates) - len(exceptions)) + len(additions)
     scheduled_hours = cells * hpd
     try:
         budget_hours = float(r.get("hours") or 0)
@@ -144,6 +193,8 @@ def _shape_block(r: dict) -> dict:
         "employees": employees,
         "lead_name": r.get("lead_name") or "",
         "exceptions": exceptions,
+        "additions": additions,
+        "pauses": pauses,
         "extra_days": extra,
         "note": r.get("note"),
         "status": r.get("status") or "tentative",
@@ -422,6 +473,8 @@ class BlockBody(BaseModel):
     status:         str = "tentative"
     extra_days:     int = 0
     exceptions:     list[str] = []
+    additions:      list[str] = []
+    pauses:         list = []
 
 
 @router.post("/block")
@@ -433,15 +486,16 @@ async def create_block(body: BlockBody):
     try:
         rows = await db._q(
             """INSERT INTO schedule_blocks
-               (opportunity_id, job_label, start_date, hours, hours_per_day, include_friday, employees, lead_name, note, status, extra_days, exceptions, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+               (opportunity_id, job_label, start_date, hours, hours_per_day, include_friday, employees, lead_name, note, status, extra_days, exceptions, additions, pauses, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
                RETURNING *""",
             [body.opportunity_id, body.job_label.strip(), body.start_date[:10],
              body.hours, body.hours_per_day or DEFAULT_HOURS_PER_DAY,
              1 if body.include_friday else 0, json.dumps(body.employees or []),
              (body.lead_name or "").strip() or None,
              (body.note or "").strip() or None, status,
-             max(0, int(body.extra_days or 0)), json.dumps(body.exceptions or [])],
+             max(0, int(body.extra_days or 0)), json.dumps(body.exceptions or []),
+             json.dumps(body.additions or []), json.dumps(body.pauses or [])],
         )
         return _shape_block(_row(rows[0]))
     finally:
@@ -460,6 +514,8 @@ class BlockPatch(BaseModel):
     status:         Optional[str] = None
     extra_days:     Optional[int] = None
     exceptions:     Optional[list[str]] = None
+    additions:      Optional[list[str]] = None
+    pauses:         Optional[list] = None
 
 
 @router.put("/block/{block_id}")
@@ -477,6 +533,8 @@ async def update_block(block_id: int, body: BlockPatch):
         sets.append("status = ?"); params.append(body.status)
     if body.extra_days is not None:    sets.append("extra_days = ?");    params.append(max(0, int(body.extra_days)))
     if body.exceptions is not None:    sets.append("exceptions = ?");    params.append(json.dumps(body.exceptions))
+    if body.additions is not None:     sets.append("additions = ?");     params.append(json.dumps(body.additions))
+    if body.pauses is not None:        sets.append("pauses = ?");        params.append(json.dumps(body.pauses))
     params.append(block_id)
     db = await _db()
     try:

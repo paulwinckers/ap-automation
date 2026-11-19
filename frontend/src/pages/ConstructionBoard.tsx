@@ -26,19 +26,32 @@ function addDays(iso: string, n: number): string {
 function fmtDay(iso: string): string {
   try { return new Date(iso + 'T00:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }); } catch { return iso; }
 }
-function workingDates(startIso: string, count: number, includeFriday: boolean): string[] {
+// Expand hold ranges ([start,end] inclusive) into the set of ISO dates a job skips.
+function expandPauses(pauses: [string, string][] | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const p of pauses || []) {
+    if (!p || p.length < 2 || !p[0] || !p[1]) continue;
+    let a = p[0], b = p[1];
+    if (b < a) { const t = a; a = b; b = t; }
+    const d = new Date(a + 'T00:00:00'); const end = new Date(b + 'T00:00:00'); let g = 0;
+    while (d <= end && g < 400) { out.add(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); g++; }
+  }
+  return out;
+}
+function workingDates(startIso: string, count: number, includeFriday: boolean, skip?: Set<string>): string[] {
   const out: string[] = []; const d = new Date(startIso + 'T00:00:00'); let g = 0;
   while (out.length < count && g < 400) {
     const wd = (d.getDay() + 6) % 7;
-    if (wd <= 3 || (wd === 4 && includeFriday)) out.push(d.toISOString().slice(0, 10));
+    const iso = d.toISOString().slice(0, 10);
+    if ((wd <= 3 || (wd === 4 && includeFriday)) && !(skip && skip.has(iso))) out.push(iso);
     d.setDate(d.getDate() + 1); g++;
   }
   return out;
 }
-function blockDates(startIso: string, hours: number | null | undefined, empCount: number, hpd: number, includeFriday: boolean): string[] {
+function blockDates(startIso: string, hours: number | null | undefined, empCount: number, hpd: number, includeFriday: boolean, skip?: Set<string>): string[] {
   const h = Number(hours) || 0; const per = (Number(hpd) || 10) || 10; const emp = Math.max(1, empCount);
   const need = h > 0 ? Math.max(1, Math.ceil(h / (emp * per))) : 1;
-  return workingDates(startIso, need, includeFriday);
+  return workingDates(startIso, need, includeFriday, skip);
 }
 function nextWorkingDay(iso: string, includeFriday: boolean): string {
   return workingDates(iso, 1, includeFriday)[0] || iso;
@@ -62,7 +75,7 @@ type Draft = {
   mode: 'create' | 'edit'; id?: number;
   opportunity_id: number | null; job_label: string; start_date: string;
   hours: string; hours_per_day: string; include_friday: boolean; employees: Set<string>; note: string;
-  status: ScheduleStatus; extra_days: number; exceptions: string[]; lead: string;
+  status: ScheduleStatus; extra_days: number; exceptions: string[]; pauses: [string, string][]; lead: string;
   actual_hours?: number | null; pct_complete?: number | null;
 };
 
@@ -103,11 +116,26 @@ export default function ConstructionBoard() {
   async function doArchive(job: ScheduleBacklogJob) { setBctx(null); setBusy(true); try { await archiveJob(job.opportunity_id); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
   async function doUnarchive(job: ScheduleBacklogJob) { setBctx(null); setBusy(true); try { await unarchiveJob(job.opportunity_id); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
 
-  // Two blocks collide when they share an employee AND a calendar day.
+  // The (person|day) cells a block actually occupies: core crew on its span days
+  // (minus per-day exceptions) plus one-day additions.
+  function occupiedCells(b: ScheduleBlock): Set<string> {
+    const s = new Set<string>();
+    const ex = new Set(b.exceptions || []);
+    for (const e of b.employees) for (const d of b.dates) { const k = `${e}|${d}`; if (!ex.has(k)) s.add(k); }
+    for (const k of (b.additions || [])) s.add(k);
+    return s;
+  }
+  // Does a block put `row` on `day`? (core crew day, or a one-day addition)
+  function cellHas(b: ScheduleBlock, row: string, day: string): boolean {
+    const key = `${row}|${day}`;
+    const core = b.employees.includes(row) && b.dates.includes(day) && !(b.exceptions || []).includes(key);
+    return core || (b.additions || []).includes(key);
+  }
+  // Two blocks collide when they book the same person on the same day.
   function overlaps(a: ScheduleBlock, b: ScheduleBlock): boolean {
-    if (!a.employees.some(e => b.employees.includes(e))) return false;
-    const bd = new Set(b.dates);
-    return a.dates.some(d => bd.has(d));
+    const bc = occupiedCells(b);
+    for (const k of occupiedCells(a)) if (bc.has(k)) return true;
+    return false;
   }
   function conflictsFor(target: ScheduleBlock): ScheduleBlock[] {
     return blocks.filter(b => b.id !== target.id && overlaps(b, target));
@@ -130,6 +158,8 @@ export default function ConstructionBoard() {
   const rowNames: string[] = [];
   for (const c of crew) if (!rowNames.includes(c.name)) rowNames.push(c.name);
   for (const b of blocks) for (const e of b.employees) if (!rowNames.includes(e)) rowNames.push(e);
+  // One-day helpers (additions) who aren't on the core crew still need a row.
+  for (const b of blocks) for (const k of (b.additions || [])) { const n = k.split('|')[0]; if (n && !rowNames.includes(n)) rowNames.push(n); }
   for (const l of labels) if (l.lead_name && !rowNames.includes(l.lead_name)) rowNames.push(l.lead_name);
   const crewOptions = rowNames.length ? rowNames : activeCrewNames;
 
@@ -143,14 +173,14 @@ export default function ConstructionBoard() {
   function openCreate(job: ScheduleBacklogJob, startDate: string, row?: string) {
     setDraft({ mode: 'create', opportunity_id: job.opportunity_id, job_label: job.label, start_date: startDate,
       hours: job.hours_est != null ? String(job.hours_est) : '', hours_per_day: '10', include_friday: false,
-      employees: new Set(row ? [row] : []), note: '', status: 'tentative', extra_days: 0, exceptions: [], lead: row || '' });
+      employees: new Set(row ? [row] : []), note: '', status: 'tentative', extra_days: 0, exceptions: [], pauses: [], lead: row || '' });
   }
   function openEdit(b: ScheduleBlock) {
     setCtx(null);
     setDraft({ mode: 'edit', id: b.id, opportunity_id: b.opportunity_id, job_label: b.job_label, start_date: b.start_date,
       hours: b.hours != null ? String(b.hours) : '', hours_per_day: String(b.hours_per_day || 10),
       include_friday: b.include_friday, employees: new Set(b.employees), note: b.note || '', status: b.status,
-      extra_days: b.extra_days || 0, exceptions: b.exceptions || [], lead: b.lead_name || '',
+      extra_days: b.extra_days || 0, exceptions: b.exceptions || [], pauses: b.pauses || [], lead: b.lead_name || '',
       actual_hours: b.actual_hours ?? null, pct_complete: b.pct_complete ?? null });
   }
 
@@ -162,7 +192,7 @@ export default function ConstructionBoard() {
       opportunity_id: draft.opportunity_id, job_label: draft.job_label, start_date: draft.start_date,
       hours: draft.hours ? Number(draft.hours) : null, hours_per_day: Number(draft.hours_per_day) || 10,
       include_friday: draft.include_friday, employees: Array.from(draft.employees), note: draft.note, status: draft.status,
-      extra_days: draft.extra_days, exceptions: draft.exceptions,
+      extra_days: draft.extra_days, exceptions: draft.exceptions, pauses: draft.pauses,
       lead_name: draft.employees.has(draft.lead) ? draft.lead : (Array.from(draft.employees)[0] || '') };
     try {
       const saved = draft.mode === 'create' ? await createBlock(payload) : await updateBlock(draft.id!, payload);
@@ -241,33 +271,42 @@ export default function ConstructionBoard() {
     } catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); await reloadKeepBacklog(); }
   }
-  // Add a crew member to this block for a single day. If they're already on the
-  // job, just clear their exception for that day; if they're new to the job, add
-  // them but except every other day in the span so they only work this one day.
+  // Add a crew member to this block for a SINGLE day.
+  //  • Core crew member marked off that day → just clear their exception (bring back).
+  //  • Anyone else → add a one-day *addition* (extra body, extra capacity) for that
+  //    day only. They do NOT join the job's crew, so the job's length is unchanged.
   async function addToDay(b: ScheduleBlock, day: string, name: string) {
     setCtx(null); setAddDayPick(false); setBusy(true);
     try {
-      let employees = b.employees;
-      let ex = [...(b.exceptions || [])];
+      const cell = `${name}|${day}`;
       if (b.employees.includes(name)) {
-        ex = ex.filter(k => k !== `${name}|${day}`);
+        const ex = (b.exceptions || []).filter(k => k !== cell);
+        await updateBlock(b.id, { exceptions: ex });
       } else {
-        employees = [...b.employees, name];
-        for (const d of b.dates) if (d !== day) ex.push(`${name}|${d}`);
+        const additions = Array.from(new Set([...(b.additions || []), cell]));
+        await updateBlock(b.id, { additions });
       }
-      ex = Array.from(new Set(ex));
-      await updateBlock(b.id, { employees, exceptions: ex });
       await reloadKeepBacklog();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }
   async function removeFromDay(b: ScheduleBlock, row: string, day: string) {
     setCtx(null);
-    const ex = Array.from(new Set([...(b.exceptions || []), `${row}|${day}`]));
-    // How many person-days remain after removing this one? If none, the block
-    // schedules no work — unschedule the job rather than leave an invisible shell.
+    const cell = `${row}|${day}`;
+    // A one-day helper on that day → just drop the addition.
+    if ((b.additions || []).includes(cell)) {
+      setBusy(true);
+      try { await updateBlock(b.id, { additions: (b.additions || []).filter(k => k !== cell) }); await reloadKeepBacklog(); }
+      catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+      return;
+    }
+    const ex = Array.from(new Set([...(b.exceptions || []), cell]));
+    // How many person-days remain after removing this one (core minus exceptions,
+    // plus one-day additions)? If none, the block schedules no work — unschedule
+    // the job rather than leave an invisible shell.
     const cells = new Set<string>();
     for (const e of (b.employees || [])) for (const d of (b.dates || [])) cells.add(`${e}|${d}`);
-    const remaining = [...cells].filter(c => !ex.includes(c)).length;
+    const coreRemaining = [...cells].filter(c => !ex.includes(c)).length;
+    const remaining = coreRemaining + (b.additions || []).length;
     if (remaining <= 0) {
       if (!window.confirm('That removes the last scheduled day for this job. Remove it from the schedule and return it to Unscheduled?')) return;
       setBusy(true);
@@ -279,11 +318,19 @@ export default function ConstructionBoard() {
   }
   async function removeFromJob(b: ScheduleBlock, row: string) {
     setCtx(null);
+    // Pure one-day helper (not on the core crew) → just strip their addition days.
+    if (!b.employees.includes(row)) {
+      setBusy(true);
+      const additions = (b.additions || []).filter(k => !k.startsWith(`${row}|`));
+      try { await updateBlock(b.id, { additions }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+      return;
+    }
     if (b.employees.length <= 1) { setErr('A job needs at least one employee — delete it instead.'); return; }
     setBusy(true);
     const employees = b.employees.filter(e => e !== row);
     const ex = (b.exceptions || []).filter(k => !k.startsWith(`${row}|`));
-    try { await updateBlock(b.id, { employees, exceptions: ex }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+    const additions = (b.additions || []).filter(k => !k.startsWith(`${row}|`));
+    try { await updateBlock(b.id, { employees, exceptions: ex, additions }); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }
   async function addLabel(row: string, day: string) {
     const label = window.prompt('Label for this cell (e.g. Away, Shop, Vacation):'); if (!label || !label.trim()) return;
@@ -311,7 +358,7 @@ export default function ConstructionBoard() {
               <div style={lcell}>{row}</div>
               {slice.map(day => {
                 const key = `${row}|${day}`;
-                const here = blocks.filter(b => b.employees.includes(row) && b.dates.includes(day) && !(b.exceptions || []).includes(`${row}|${day}`));
+                const here = blocks.filter(b => cellHas(b, row, day));
                 const labelsHere = labels.filter(l => l.lead_name === row && l.work_date === day);
                 return (
                   <div key={key}
@@ -331,6 +378,7 @@ export default function ConstructionBoard() {
                             + ` · scheduled ${b.scheduled_hours}h${b.budget_hours ? ` of ${b.budget_hours}h budget` : ''}`
                             + (b.actual_hours != null ? ` · actual ${b.actual_hours}h${b.pct_complete != null ? ` (${Math.round(b.pct_complete * 100)}%)` : ''}` : '')
                             + (b.over_budget ? ' · ⚠ OVER BUDGET' : b.catch_up ? ' · ⏱ catch-up (within budget)' : '')
+                            + (b.pauses && b.pauses.length ? ` · ⏸ ${b.pauses.length} hold(s)` : '')
                             + ` · ${confirmed ? 'CONFIRMED (locked)' : 'tentative'} · right-click for options`}
                           style={{ background: c.bg, color: c.fg, border: confirmed ? `1.5px solid ${c.border}` : `1px dashed ${c.border}`, borderLeft: `3px solid ${c.border}`, borderRadius: 5, padding: '3px 6px', marginBottom: 4, fontSize: 12, fontWeight: 700, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {confirmed && '🔒 '}{b.over_budget ? '⚠ ' : b.catch_up ? '⏱ ' : ''}{b.lead_name === row && <span title="Job lead" style={{ color: '#f59e0b' }}>★ </span>}{isStart ? b.job_label : <span style={{ opacity: 0.75 }}>↳ {b.job_label}</span>}
@@ -465,6 +513,7 @@ export default function ConstructionBoard() {
             { label: '✚ Extend 1 day (past budget)', fn: () => extendDays(ctx.block, 1) },
             ...(ctx.block.extra_days > 0 ? [{ label: '✂️ Shorten 1 day', fn: () => extendDays(ctx.block, -1) }] : []),
             { label: ctx.block.include_friday ? '📅 Fridays: on → turn off' : '📅 Add Fridays', fn: () => toggleFridays(ctx.block) },
+            { label: (ctx.block.pauses && ctx.block.pauses.length) ? `⏸ Holds (${ctx.block.pauses.length}) — edit…` : '⏸ Put on hold (waiting)…', fn: () => openEdit(ctx.block) },
             { label: '◀ Move start earlier (1 day)', fn: () => moveStart(ctx.block, -1) },
             { label: '▶ Move start later (1 day)', fn: () => moveStart(ctx.block, 1) },
             { label: '🗑 Delete', fn: () => removeBlock(ctx.block), danger: true },
@@ -552,11 +601,20 @@ function BlockModal({ draft, setDraft, crew, onSave, busy }: {
 }) {
   const empCount = draft.employees.size;
   const hpd = Number(draft.hours_per_day) || 10;
-  const budgetDates = blockDates(draft.start_date, draft.hours ? Number(draft.hours) : 0, empCount, hpd, draft.include_friday);
-  const dates = workingDates(draft.start_date, budgetDates.length + Math.max(0, draft.extra_days), draft.include_friday);
+  const skip = expandPauses(draft.pauses);
+  const budgetDates = blockDates(draft.start_date, draft.hours ? Number(draft.hours) : 0, empCount, hpd, draft.include_friday, skip);
+  const dates = workingDates(draft.start_date, budgetDates.length + Math.max(0, draft.extra_days), draft.include_friday, skip);
   const cells = Math.max(0, empCount * dates.length - draft.exceptions.length);
   const scheduledHours = cells * hpd;
   const budgetHours = Number(draft.hours) || 0;
+  const [holdFrom, setHoldFrom] = useState('');
+  const [holdTo, setHoldTo] = useState('');
+  const addHold = () => {
+    if (!holdFrom || !holdTo) return;
+    let a = holdFrom, b = holdTo; if (b < a) { const t = a; a = b; b = t; }
+    setDraft({ ...draft, pauses: [...draft.pauses, [a, b]] });
+    setHoldFrom(''); setHoldTo('');
+  };
   const toggleEmp = (name: string) => { const s = new Set(draft.employees); s.has(name) ? s.delete(name) : s.add(name); setDraft({ ...draft, employees: s }); };
   const inp: React.CSSProperties = { padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 14, fontFamily: 'inherit' };
   return (
@@ -626,6 +684,28 @@ function BlockModal({ draft, setDraft, crew, onSave, busy }: {
               </div>
             </div>
           )}
+          {/* Holds — job paused (e.g. waiting on concrete); crew comes off, resumes after */}
+          <div>
+            <label style={mlbl}>Holds (job paused — crew comes off, resumes after)</label>
+            {draft.pauses.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                {draft.pauses.map((p, i) => (
+                  <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#e0e7ff', color: '#3730a3', borderRadius: 8, padding: '3px 8px', fontSize: 12, fontWeight: 700 }}>
+                    ⏸ {fmtDay(p[0])} → {fmtDay(p[1])}
+                    <button type="button" onClick={() => setDraft({ ...draft, pauses: draft.pauses.filter((_, j) => j !== i) })} style={{ background: 'none', border: 'none', color: '#3730a3', cursor: 'pointer', fontSize: 12, padding: 0 }}>×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input type="date" value={holdFrom} onChange={e => setHoldFrom(e.target.value)} style={{ ...inp, padding: '6px 8px' }} />
+              <span style={{ color: '#9ca3af', fontSize: 13 }}>→</span>
+              <input type="date" value={holdTo} onChange={e => setHoldTo(e.target.value)} style={{ ...inp, padding: '6px 8px' }} />
+              <button type="button" onClick={addHold} disabled={!holdFrom || !holdTo}
+                style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #d1d5db', background: (!holdFrom || !holdTo) ? '#f1f5f9' : '#fff', color: '#374151', fontWeight: 700, fontSize: 13, cursor: (!holdFrom || !holdTo) ? 'default' : 'pointer' }}>Add hold</button>
+            </div>
+            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>The crew is free for other work on hold days; the job resumes after and its end date moves out.</div>
+          </div>
           <div style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#374151' }}>
             {empCount === 0 ? 'Pick at least one employee to see the span.'
               : <>
@@ -634,6 +714,7 @@ function BlockModal({ draft, setDraft, crew, onSave, busy }: {
                     Scheduled {scheduledHours}h vs budget {budgetHours || '0'}h
                     {draft.actual_hours != null ? ` · actual ${draft.actual_hours}h${draft.pct_complete != null ? ` (${Math.round(draft.pct_complete * 100)}%)` : ''}` : ''}
                     {draft.exceptions.length ? ` · ${draft.exceptions.length} day exception(s)` : ''}
+                    {draft.pauses.length ? ` · ${draft.pauses.length} hold(s)` : ''}
                   </div>
                   {budgetHours > 0 && draft.actual_hours != null && draft.actual_hours > budgetHours + 0.5
                     ? <div style={{ color: '#b45309', fontWeight: 700, marginTop: 4 }}>⚠ Over budget — actual {draft.actual_hours}h exceeds the {budgetHours}h estimate.</div>

@@ -1641,6 +1641,101 @@ export async function listSafetyDocVersions(id: number): Promise<{ id: number; v
   return r.versions;
 }
 
+// ── JHSC Safety Meetings ──────────────────────────────────────────────────────
+export type MeetingType = 'monthly' | 'quarterly' | 'special';
+export type MeetingStatus = 'draft' | 'posted';
+export type MeetingItemType = 'topic' | 'incident' | 'action';
+export type MeetingItemStatus = 'open' | 'in_progress' | 'done';
+
+export interface SafetyMeetingSummary {
+  id: number; meeting_date: string; meeting_time: string | null; location: string | null;
+  meeting_type: MeetingType; chair: string | null; attendees: string | null;
+  quorum_met: number; agenda: string | null; minutes: string | null;
+  next_meeting: string | null; status: MeetingStatus;
+  posted_at: string | null; posted_by: string | null;
+  updated_by: string | null; updated_at: string | null; created_at: string;
+  item_count?: number; open_actions?: number;
+}
+export interface SafetyMeetingItem {
+  id: number; meeting_id: number; item_type: MeetingItemType; incident_id: number | null;
+  title: string | null; discussion: string | null; corrective_action: string | null;
+  recommendation: string | null;
+  assignee: string | null; due_date: string | null; status: MeetingItemStatus; sort_order: number;
+  // joined incident fields (admin detail)
+  inc_date?: string | null; inc_severity?: string | null; inc_type?: string | null;
+  inc_location?: string | null; inc_description?: string | null; inc_status?: string | null;
+  inc_reporter?: string | null;
+}
+export interface SafetyMeetingDetail extends SafetyMeetingSummary { items: SafetyMeetingItem[]; }
+export interface OpenIncidentRow {
+  id: number; incident_date: string; reporter_name: string; location: string | null;
+  incident_type: string; severity: string; description: string; status: string;
+}
+export type MeetingInput = {
+  meeting_date: string; meeting_time?: string; location?: string; meeting_type?: MeetingType;
+  chair?: string; attendees?: string; quorum_met?: boolean; agenda?: string;
+  minutes?: string; next_meeting?: string; updated_by?: string;
+};
+export type MeetingItemInput = {
+  item_type?: MeetingItemType; incident_id?: number | null; title?: string; discussion?: string;
+  corrective_action?: string; recommendation?: string; assignee?: string; due_date?: string;
+  status?: MeetingItemStatus; sort_order?: number;
+};
+
+export async function listSafetyMeetings(status?: MeetingStatus): Promise<SafetyMeetingSummary[]> {
+  const r = await request<{ meetings: SafetyMeetingSummary[] }>('GET', `/safety/meetings${status ? `?status=${status}` : ''}`);
+  return r.meetings;
+}
+export async function getSafetyMeeting(id: number): Promise<SafetyMeetingDetail> {
+  return request('GET', `/safety/meetings/${id}`);
+}
+export async function listOpenIncidentsForReview(): Promise<OpenIncidentRow[]> {
+  const r = await request<{ incidents: OpenIncidentRow[] }>('GET', '/safety/meetings/open-incidents');
+  return r.incidents;
+}
+export async function createSafetyMeeting(body: MeetingInput): Promise<{ id: number; status: string }> {
+  return request('POST', '/safety/meetings', body);
+}
+export async function updateSafetyMeeting(id: number, body: MeetingInput): Promise<SafetyMeetingDetail> {
+  return request('PUT', `/safety/meetings/${id}`, body);
+}
+export async function deleteSafetyMeeting(id: number): Promise<{ id: number; deleted: boolean }> {
+  return request('DELETE', `/safety/meetings/${id}`);
+}
+export async function addSafetyMeetingItem(meetingId: number, body: MeetingItemInput): Promise<{ id: number }> {
+  return request('POST', `/safety/meetings/${meetingId}/items`, body);
+}
+export async function updateSafetyMeetingItem(itemId: number, body: MeetingItemInput): Promise<{ id: number; status: string }> {
+  return request('PUT', `/safety/meetings/items/${itemId}`, body);
+}
+export async function deleteSafetyMeetingItem(itemId: number): Promise<{ id: number; deleted: boolean }> {
+  return request('DELETE', `/safety/meetings/items/${itemId}`);
+}
+export async function postSafetyMeeting(id: number, posted_by?: string): Promise<{ id: number; status: string }> {
+  return request('POST', `/safety/meetings/${id}/post`, { posted_by });
+}
+export async function unpostSafetyMeeting(id: number): Promise<{ id: number; status: string }> {
+  return request('POST', `/safety/meetings/${id}/unpost`, {});
+}
+/** Bulk-pull all unresolved incidents into a meeting; recommend=true also AI-recommends policy actions. */
+export async function loadAllOpenIncidents(meetingId: number, recommend = true): Promise<{ added: number; recommendations: number; recommendation_errors: number }> {
+  return request('POST', `/safety/meetings/${meetingId}/load-incidents?recommend=${recommend}`, {});
+}
+export async function recommendAllMeetingItems(meetingId: number, overwrite = false): Promise<{ recommendations: number; recommendation_errors: number }> {
+  return request('POST', `/safety/meetings/${meetingId}/recommend-all?overwrite=${overwrite}`, {});
+}
+export async function recommendMeetingItem(itemId: number): Promise<{ id: number; recommendation: string }> {
+  return request('POST', `/safety/meetings/items/${itemId}/recommend`, {});
+}
+/** Posted meetings for the field app (no auth). */
+export async function listFieldSafetyMeetings(): Promise<SafetyMeetingSummary[]> {
+  const r = await request<{ meetings: SafetyMeetingSummary[] }>('GET', '/safety/meetings/field');
+  return r.meetings;
+}
+export async function getFieldSafetyMeeting(id: number): Promise<SafetyMeetingDetail> {
+  return request('GET', `/safety/meetings/field/${id}`);
+}
+
 // ── Site Inspections ──────────────────────────────────────────────────────────
 
 export interface ChecklistItem {
@@ -1976,6 +2071,12 @@ export interface ScheduleBlock {
   id: number; opportunity_id: number | null; job_label: string; start_date: string;
   hours: number | null; hours_per_day: number; include_friday: boolean;
   employees: string[]; lead_name: string; exceptions: string[]; extra_days: number;
+  // additions: one-day crew add-ons ("name|date") — extra bodies on a single day
+  // that add capacity without joining the job's crew (so the span is unchanged).
+  additions: string[];
+  // pauses: holds — [start, end] inclusive ranges the job skips (e.g. waiting on
+  // concrete). Same work-day count resumes after; the end date moves out.
+  pauses: [string, string][];
   note: string | null; status: ScheduleStatus;
   dates: string[]; days_needed: number; budget_days: number; end_date: string;
   scheduled_hours: number; budget_hours: number; over_budget: boolean;
@@ -2020,7 +2121,7 @@ export type BlockInput = {
   opportunity_id?: number | null; job_label: string; start_date: string;
   hours?: number | null; hours_per_day?: number; include_friday?: boolean;
   employees?: string[]; lead_name?: string; note?: string; status?: ScheduleStatus;
-  extra_days?: number; exceptions?: string[];
+  extra_days?: number; exceptions?: string[]; additions?: string[]; pauses?: [string, string][];
 };
 export async function createBlock(body: BlockInput): Promise<ScheduleBlock> {
   return request('POST', '/construction/schedule/block', body);

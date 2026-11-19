@@ -690,6 +690,12 @@ async def lifespan(app: FastAPI):
         ("job_planning", "queued", "ALTER TABLE job_planning ADD COLUMN queued INTEGER DEFAULT 0"),
         # job_planning.paid_at — when the job's stage was set to Paid (drives Paid drop-off in later months)
         ("job_planning", "paid_at", "ALTER TABLE job_planning ADD COLUMN paid_at TEXT"),
+        # schedule_blocks.additions — one-day crew add-ons ("name|date"): extra bodies on a
+        # single day that add capacity WITHOUT joining the job's crew, so the span is unchanged.
+        ("schedule_blocks", "additions", "ALTER TABLE schedule_blocks ADD COLUMN additions TEXT"),
+        # schedule_blocks.pauses — holds: list of [start,end] date ranges the job skips (e.g.
+        # waiting on concrete). Same work-day count resumes after the hold; end date moves out.
+        ("schedule_blocks", "pauses", "ALTER TABLE schedule_blocks ADD COLUMN pauses TEXT"),
         # safety_incidents — extended fields (WorkSafeBC, damage, medical, factors, sign-off)
         ("safety_incidents", "reported_worksafe",    "ALTER TABLE safety_incidents ADD COLUMN reported_worksafe INTEGER"),
         ("safety_incidents", "property_damage",      "ALTER TABLE safety_incidents ADD COLUMN property_damage INTEGER"),
