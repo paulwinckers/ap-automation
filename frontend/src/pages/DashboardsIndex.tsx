@@ -20,8 +20,8 @@ const DASHBOARDS = [
   {
     to:    '/dashboards/schedule',
     icon:  '🗺️',
-    label: 'Daily Schedule',
-    sub:   'Sites visited today by division & lead',
+    label: 'Schedule',
+    sub:   'Sites by division & lead — day or week view',
   },
   {
     to:    '/dashboards/customer',
@@ -40,12 +40,6 @@ const DASHBOARDS = [
     icon:  '📍',
     label: 'Log Sales Visit',
     sub:   'Field capture — notes, photos, followups, coworker tasks',
-  },
-  {
-    to:    '/dashboards/schedule/week',
-    icon:  '📆',
-    label: 'Weekly Schedule',
-    sub:   'Mon–Fri sites by division & lead',
   },
   {
     to:    '/dashboards/construction',

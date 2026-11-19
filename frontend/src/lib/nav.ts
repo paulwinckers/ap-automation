@@ -43,8 +43,7 @@ export const OFFICE_SECTIONS: OfficeSection[] = [
   {
     section: 'Operations', area: 'operations',
     items: [
-      { path: '/dashboards/schedule',            icon: '🗺️', label: 'Daily Schedule',        sub: 'Sites visited today by division & lead' },
-      { path: '/dashboards/schedule/week',       icon: '📆', label: 'Weekly Schedule',       sub: 'Mon–Fri sites by division & lead' },
+      { path: '/dashboards/schedule',            icon: '🗺️', label: 'Schedule',              sub: 'Sites by division & lead — day or week view' },
       { path: '/dashboards/construction/board',  icon: '📅', label: 'Construction Board',    sub: 'Crew × day board — drag jobs onto the week' },
       { path: '/dashboards/construction/plan',   icon: '🏗️', label: 'Construction Planning', sub: 'Monthly plan, prep, client emails & PHAs' },
       { path: '/dashboards/construction',        icon: '📊', label: 'Construction Dashboard', sub: 'Job progress, hours & site updates' },
