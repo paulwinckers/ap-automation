@@ -1,84 +1,130 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 
-import AppShell              from './components/AppShell';
-import RequireAuth            from './components/RequireAuth';
-import Landing                from './pages/Landing';
-import Login                  from './pages/Login';
-import Setup                  from './pages/Setup';
-import APDashboard            from './pages/APDashboard';
-import VendorAdmin            from './pages/VendorAdmin';
-import Reconcile              from './pages/Reconcile';
-import UserAdmin              from './pages/UserAdmin';
-import SalesDashboard         from './pages/SalesDashboard';
-import ConstructionDashboard  from './pages/ConstructionDashboard';
-import ConstructionPlan       from './pages/ConstructionPlan';
-import ConstructionBoard      from './pages/ConstructionBoard';
-import DailySchedule          from './pages/DailySchedule';
-import CustomerDashboard      from './pages/CustomerDashboard';
-import Customer360            from './pages/Customer360';
-import SalesVisit             from './pages/SalesVisit';
-import WeeklySchedule         from './pages/WeeklySchedule';
-import EstimatingDashboard    from './pages/EstimatingDashboard';
-import ActivitiesDashboard    from './pages/ActivitiesDashboard';
-import DashboardsIndex        from './pages/DashboardsIndex';
-import FieldSubmit        from './pages/FieldSubmit';
-import FieldWorkTicket    from './pages/FieldWorkTicket';
-import FieldOpportunity   from './pages/FieldOpportunity';
-import FieldIssue         from './pages/FieldIssue';
-import FieldPurchaseOrder from './pages/FieldPurchaseOrder';
-import FieldAmendPO       from './pages/FieldAmendPO';
-import FieldKeys          from './pages/FieldKeys';
-import FieldSafetyTalk    from './pages/FieldSafetyTalk';
-import FieldDocuments     from './pages/FieldDocuments';
-import FieldSafetyProgram from './pages/FieldSafetyProgram';
-import SafetyProgramAdmin from './pages/SafetyProgramAdmin';
-import FieldSafetyMeetings from './pages/FieldSafetyMeetings';
-import SafetyMeetingsAdmin from './pages/SafetyMeetingsAdmin';
-import DocumentsAdmin     from './pages/DocumentsAdmin';
-import KeyScan            from './pages/KeyScan';
-import TimeTracking       from './pages/TimeTracking';
-import PropertyLookup     from './pages/PropertyLookup';
-import KeysAdmin          from './pages/KeysAdmin';
-import SafetyTalksAdmin       from './pages/SafetyTalksAdmin';
-import FieldInspection        from './pages/FieldInspection';
-import SafetyInspectionsAdmin from './pages/SafetyInspectionsAdmin';
-import FieldIncident          from './pages/FieldIncident';
-import SafetyIncidentsAdmin   from './pages/SafetyIncidentsAdmin';
-import FieldVehicleInspection from './pages/FieldVehicleInspection';
-import VehicleInspectionsAdmin from './pages/VehicleInspectionsAdmin';
-import SafetyPHAAdmin          from './pages/SafetyPHAAdmin';
-import BackupsAdmin            from './pages/BackupsAdmin';
-import EmailSettings          from './pages/EmailSettings';
-import FieldCheckin           from './pages/FieldCheckin';
-import FieldProject          from './pages/FieldProject';
-import FieldProjectLookup   from './pages/FieldProjectLookup';
-import FieldMaintenance      from './pages/FieldMaintenance';
-import FieldMaintenanceLookup from './pages/FieldMaintenanceLookup';
-import IssuesDashboard        from './pages/IssuesDashboard';
-import EmergencyReset         from './pages/EmergencyReset';
-import InvoiceSummaryReport   from './pages/InvoiceSummaryReport';
-import MyWork                 from './pages/MyWork';
-import FieldHome              from './pages/FieldHome';
-import FieldShell             from './components/FieldShell';
-import OfficeHome             from './pages/OfficeHome';
-import Account                from './pages/Account';
-import FieldFeed              from './pages/FieldFeed';
-import UsageAdmin             from './pages/UsageAdmin';
-import Training               from './pages/Training';
-import TrainingReport         from './pages/TrainingReport';
-import PageViewTracker        from './components/PageViewTracker';
+// Eager: the shell wrappers used on every route, plus the public Landing (the first
+// paint for new users — no spinner flash on "/"). Everything else is route-split.
+import AppShell       from './components/AppShell';
+import RequireAuth    from './components/RequireAuth';
+import FieldShell     from './components/FieldShell';
+import PageViewTracker from './components/PageViewTracker';
+import Landing        from './pages/Landing';
+
+// Lazy: every page gets its own chunk, loaded on first navigation to it. Heavy
+// shared libs (Chart.js, XLSX, PapaParse) are hoisted into shared chunks and so
+// leave the initial bundle entirely — they load only when a dashboard is opened.
+const Login                  = lazy(() => import('./pages/Login'));
+const Setup                  = lazy(() => import('./pages/Setup'));
+const APDashboard            = lazy(() => import('./pages/APDashboard'));
+const VendorAdmin            = lazy(() => import('./pages/VendorAdmin'));
+const Reconcile              = lazy(() => import('./pages/Reconcile'));
+const UserAdmin              = lazy(() => import('./pages/UserAdmin'));
+const SalesDashboard         = lazy(() => import('./pages/SalesDashboard'));
+const ConstructionDashboard  = lazy(() => import('./pages/ConstructionDashboard'));
+const ConstructionPlan       = lazy(() => import('./pages/ConstructionPlan'));
+const ConstructionBoard      = lazy(() => import('./pages/ConstructionBoard'));
+const DailySchedule          = lazy(() => import('./pages/DailySchedule'));
+const CustomerDashboard      = lazy(() => import('./pages/CustomerDashboard'));
+const Customer360            = lazy(() => import('./pages/Customer360'));
+const SalesVisit             = lazy(() => import('./pages/SalesVisit'));
+const WeeklySchedule         = lazy(() => import('./pages/WeeklySchedule'));
+const EstimatingDashboard    = lazy(() => import('./pages/EstimatingDashboard'));
+const ActivitiesDashboard    = lazy(() => import('./pages/ActivitiesDashboard'));
+const DashboardsIndex        = lazy(() => import('./pages/DashboardsIndex'));
+const FieldSubmit            = lazy(() => import('./pages/FieldSubmit'));
+const FieldWorkTicket        = lazy(() => import('./pages/FieldWorkTicket'));
+const FieldIssue             = lazy(() => import('./pages/FieldIssue'));
+const FieldPurchaseOrder     = lazy(() => import('./pages/FieldPurchaseOrder'));
+const FieldAmendPO           = lazy(() => import('./pages/FieldAmendPO'));
+const FieldKeys              = lazy(() => import('./pages/FieldKeys'));
+const FieldSafetyTalk        = lazy(() => import('./pages/FieldSafetyTalk'));
+const FieldDocuments         = lazy(() => import('./pages/FieldDocuments'));
+const FieldSafetyProgram     = lazy(() => import('./pages/FieldSafetyProgram'));
+const SafetyProgramAdmin     = lazy(() => import('./pages/SafetyProgramAdmin'));
+const FieldSafetyMeetings    = lazy(() => import('./pages/FieldSafetyMeetings'));
+const SafetyMeetingsAdmin    = lazy(() => import('./pages/SafetyMeetingsAdmin'));
+const DocumentsAdmin         = lazy(() => import('./pages/DocumentsAdmin'));
+const KeyScan                = lazy(() => import('./pages/KeyScan'));
+const TimeTracking           = lazy(() => import('./pages/TimeTracking'));
+const PropertyLookup         = lazy(() => import('./pages/PropertyLookup'));
+const KeysAdmin              = lazy(() => import('./pages/KeysAdmin'));
+const SafetyTalksAdmin       = lazy(() => import('./pages/SafetyTalksAdmin'));
+const FieldInspection        = lazy(() => import('./pages/FieldInspection'));
+const SafetyInspectionsAdmin = lazy(() => import('./pages/SafetyInspectionsAdmin'));
+const FieldIncident          = lazy(() => import('./pages/FieldIncident'));
+const SafetyIncidentsAdmin   = lazy(() => import('./pages/SafetyIncidentsAdmin'));
+const FieldVehicleInspection = lazy(() => import('./pages/FieldVehicleInspection'));
+const VehicleInspectionsAdmin = lazy(() => import('./pages/VehicleInspectionsAdmin'));
+const SafetyPHAAdmin         = lazy(() => import('./pages/SafetyPHAAdmin'));
+const BackupsAdmin           = lazy(() => import('./pages/BackupsAdmin'));
+const EmailSettings          = lazy(() => import('./pages/EmailSettings'));
+const FieldCheckin           = lazy(() => import('./pages/FieldCheckin'));
+const FieldProject           = lazy(() => import('./pages/FieldProject'));
+const FieldProjectLookup     = lazy(() => import('./pages/FieldProjectLookup'));
+const FieldMaintenance       = lazy(() => import('./pages/FieldMaintenance'));
+const FieldMaintenanceLookup = lazy(() => import('./pages/FieldMaintenanceLookup'));
+const IssuesDashboard        = lazy(() => import('./pages/IssuesDashboard'));
+const EmergencyReset         = lazy(() => import('./pages/EmergencyReset'));
+const InvoiceSummaryReport   = lazy(() => import('./pages/InvoiceSummaryReport'));
+const MyWork                 = lazy(() => import('./pages/MyWork'));
+const FieldHome              = lazy(() => import('./pages/FieldHome'));
+const OfficeHome             = lazy(() => import('./pages/OfficeHome'));
+const Account                = lazy(() => import('./pages/Account'));
+const FieldFeed              = lazy(() => import('./pages/FieldFeed'));
+const UsageAdmin             = lazy(() => import('./pages/UsageAdmin'));
+const Training               = lazy(() => import('./pages/Training'));
+const TrainingReport         = lazy(() => import('./pages/TrainingReport'));
 
 /** Wrap a page in the office sidebar shell */
 function Office({ children }: { children: React.ReactNode }) {
   return <AppShell>{children}</AppShell>;
 }
 
+/** Lightweight fallback shown while a route's chunk downloads. */
+function PageLoading() {
+  return (
+    <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ width: 22, height: 22, border: '3px solid #e5e7eb', borderTopColor: '#1A5376', borderRadius: '50%', animation: 'ap-spin 0.7s linear infinite' }} />
+      <style>{'@keyframes ap-spin{to{transform:rotate(360deg)}}'}</style>
+    </div>
+  );
+}
+
+/** A stale, cached index.html can point at a chunk hash a newer deploy replaced, so a
+ *  lazy import() 404s. Reload once (rate-limited to avoid a loop) to fetch the fresh
+ *  index + chunks; a genuine, repeated failure shows a manual Reload instead. */
+class ChunkErrorBoundary extends React.Component<{ children: React.ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: unknown) {
+    const msg = String((error as { message?: string })?.message || error || '');
+    const isChunk = /dynamically imported module|module script failed|ChunkLoadError|Failed to fetch/i.test(msg);
+    let last = 0;
+    try { last = Number(sessionStorage.getItem('ap_chunk_reload_at') || 0); } catch { /* ignore */ }
+    if (isChunk && Date.now() - last > 10000) {
+      try { sessionStorage.setItem('ap_chunk_reload_at', String(Date.now())); } catch { /* ignore */ }
+      window.location.reload();
+    }
+  }
+  render() {
+    if (this.state.failed) {
+      return (
+        <div style={{ minHeight: '60vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', color: '#374151' }}>
+          <div>This page didn’t finish loading.</div>
+          <button onClick={() => window.location.reload()} style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: '#1A5376', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
       <PageViewTracker />
+      <ChunkErrorBoundary>
+      <Suspense fallback={<PageLoading />}>
       <Routes>
 
         {/* Landing */}
@@ -169,6 +215,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="*" element={<Navigate to="/" replace />} />
 
       </Routes>
+      </Suspense>
+      </ChunkErrorBoundary>
     </BrowserRouter>
   </React.StrictMode>
 );
