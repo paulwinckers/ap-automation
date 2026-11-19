@@ -16,6 +16,7 @@ logging.basicConfig(
 )
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import invoices, vendors, health
@@ -64,7 +65,7 @@ from app.api.mail_drafts import router as mail_drafts_router
 from app.api.visit_recaps import router as visit_recaps_router, start_visit_recap_scheduler, stop_visit_recap_scheduler
 from app.api.training import router as training_router
 from app.core.config import settings
-from app.core.database import Database
+from app.core.database import Database, close_shared_backend
 from app.services.qbo import qbo_auth_router
 from app.services.email_intake import email_intake
 
@@ -825,6 +826,11 @@ async def lifespan(app: FastAPI):
     stop_backup_scheduler()
     stop_visit_recap_scheduler()
     stop_spine_scheduler()
+    # Close the process-wide shared DB backend (httpx client) once, at the end.
+    try:
+        await close_shared_backend()
+    except Exception:
+        pass
 
 
 app = FastAPI(
@@ -841,6 +847,10 @@ app = FastAPI(
 # The frontend does not send cookies, so credentials=False is correct here.
 # Only our own sites may call the API from a browser. Server-to-server callers (the
 # Claude connector, schedulers) don't send an Origin and are unaffected.
+# Compress responses (JSON lists, the safety-program HTML payload, etc.). The
+# field safety program is ~185KB uncompressed → ~40KB gzipped.
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=settings.CORS_ORIGIN_REGEX,

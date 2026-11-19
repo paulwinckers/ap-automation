@@ -14,6 +14,7 @@ Usage:
     await db.close()
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -196,6 +197,42 @@ class _SQLiteBackend:
         return cursor.lastrowid or 0
 
 
+# ── Shared connection (one backend per process) ───────────────────────────────
+# connect() runs _ensure_schema(), which fires every CREATE TABLE + migration in
+# schema.sql as its own D1 HTTP round-trip (~8s). Doing that per request made every
+# DB-backed page pay an 8s setup tax. Instead we connect ONE backend for the whole
+# process, ensure the schema ONCE, and share it across all requests. Database().
+# connect() now just hands back this warm backend; Database().close() is a no-op so
+# a single request can't tear down the shared httpx client out from under every
+# other in-flight request. Shutdown uses close_shared_backend().
+
+_shared_backend: "Optional[_D1Backend | _SQLiteBackend]" = None
+_shared_lock = asyncio.Lock()
+
+
+async def _get_shared_backend() -> "_D1Backend | _SQLiteBackend":
+    global _shared_backend
+    if _shared_backend is None:
+        async with _shared_lock:
+            if _shared_backend is None:  # re-check under the lock
+                be = _D1Backend() if _d1_configured() else _SQLiteBackend()
+                await be.connect()  # schema ensured exactly once, here
+                _shared_backend = be
+                logger.info("Shared DB backend connected (schema ensured once)")
+    return _shared_backend
+
+
+async def close_shared_backend() -> None:
+    """Close the shared backend. Call once at app shutdown — never per request."""
+    global _shared_backend
+    be, _shared_backend = _shared_backend, None
+    if be is not None:
+        try:
+            await be.close()
+        except Exception:
+            pass
+
+
 # ── Public Database class ─────────────────────────────────────────────────────
 
 class Database:
@@ -209,18 +246,16 @@ class Database:
         self._db = None  # legacy compat — set to True when connected
 
     async def connect(self):
-        if _d1_configured():
-            logger.warning("DATABASE: Using Cloudflare D1")
-            self._backend = _D1Backend()
-        else:
-            logger.warning("DATABASE: D1 not configured — using local SQLite (data will not persist)")
-            self._backend = _SQLiteBackend()
-        await self._backend.connect()
+        # Reuse the one shared, already-connected backend (schema ensured once at
+        # first use). Cheap after warm-up — no per-request schema re-run.
+        self._backend = await _get_shared_backend()
         self._db = True
 
     async def close(self):
-        if self._backend:
-            await self._backend.close()
+        # No-op: the backend is process-wide and shared, so closing it here would
+        # shut the httpx client for every other request. Detach this handle only.
+        # The process closes the real backend via close_shared_backend() at shutdown.
+        self._backend = None
         self._db = None
 
     async def _q(self, sql: str, params: list = None) -> list[dict]:
