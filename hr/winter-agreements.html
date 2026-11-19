@@ -1,0 +1,277 @@
+<title>Winter Snow Agreements 2026–27</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column clipboard — season header with three step counters, then one row per person
+   with the three steps as tappable stamps (Sent → Signed back → Rate in QBO), add-person form last. */
+:root {
+  --bg: #f3f5f1;
+  --surface: #ffffff;
+  --ink: #1b2a1f;
+  --muted: #5d6b60;
+  --line: #d9e0d6;
+  --accent: #2f6b3a;
+  --accent-soft: #e3efe4;
+  --warn: #9a5b00;
+  --danger: #a3261d;
+  --font-display: "Barlow Semi Condensed", "Arial Narrow", sans-serif;
+  --font-body: "Public Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121a14; --surface: #1a241c; --ink: #e4ece4; --muted: #9aab9d; --line: #2e3c31;
+    --accent: #7cc489; --accent-soft: #23382a; --warn: #e0a54a; --danger: #ef8277;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121a14; --surface: #1a241c; --ink: #e4ece4; --muted: #9aab9d; --line: #2e3c31;
+  --accent: #7cc489; --accent-soft: #23382a; --warn: #e0a54a; --danger: #ef8277;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.45; }
+.wrap { max-width: 860px; margin: 0 auto; padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 24px; }
+header { display: grid; gap: 6px; }
+.eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-family: var(--font-display); font-size: 34px; line-height: 1.05; margin: 0; text-wrap: balance; }
+.lede { color: var(--muted); margin: 0; max-width: 62ch; }
+.counters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.counter { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 2px; }
+.counter b { font-family: var(--font-display); font-size: 28px; font-variant-numeric: tabular-nums; }
+.counter span { font-size: 13px; color: var(--muted); }
+.counter.done b { color: var(--accent); }
+.status { font-size: 13px; color: var(--warn); min-height: 1em; }
+.list { display: grid; border-top: 1px solid var(--line); }
+.row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 2fr) auto; gap: 12px; align-items: center;
+  padding-block: 14px; border-bottom: 1px solid var(--line); }
+.who { min-width: 0; display: grid; gap: 2px; }
+.who strong { font-weight: 600; overflow-wrap: anywhere; }
+.who small { color: var(--muted); overflow-wrap: anywhere; }
+.rate { font-family: var(--font-mono); font-size: 13px; color: var(--muted); }
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.step { font: inherit; font-size: 13px; text-align: left; border: 1px dashed var(--line); background: transparent; color: var(--muted);
+  border-radius: 8px; padding: 7px 9px; cursor: pointer; display: grid; gap: 1px; min-width: 0; }
+.step:hover { border-color: var(--accent); color: var(--ink); }
+.step:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.step .lbl { font-weight: 600; }
+.step .when { font-family: var(--font-mono); font-size: 11px; overflow-wrap: anywhere; }
+.step.on { border-style: solid; border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+.step.on .lbl::before { content: "✓ "; color: var(--accent); }
+.step:disabled { cursor: default; opacity: .7; }
+.more { font: inherit; font-size: 13px; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 6px; }
+.more:hover { color: var(--danger); }
+.confirm { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
+.empty { padding: 28px 0; color: var(--muted); border-bottom: 1px solid var(--line); }
+form { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 12px; }
+form h2 { font-family: var(--font-display); font-size: 20px; margin: 0; }
+.fields { display: grid; grid-template-columns: 1.2fr 1.4fr .8fr; gap: 10px; }
+label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; }
+input { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; min-width: 0; }
+.btn { font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 9px 16px; background: var(--accent); color: var(--surface); cursor: pointer; justify-self: start; }
+.btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.btn.danger { background: var(--danger); }
+footer { font-size: 13px; color: var(--muted); }
+@media (max-width: 640px) {
+  .row { grid-template-columns: minmax(0, 1fr) auto; }
+  .steps { grid-column: 1 / -1; grid-row: 2; }
+  .fields { grid-template-columns: 1fr; }
+  h1 { font-size: 28px; }
+}
+@media (prefers-reduced-motion: no-preference) { .step { transition: background .15s, border-color .15s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Darios Landscaping · HR</div>
+    <h1>Winter snow agreements, 2026/2027</h1>
+    <p class="lede">Snow season runs to February 28, 2027; the $500 completion bonus goes in the March 2027 pay. One row per person. Tap a step when it happens; it records the date and who ticked it. Tap again to undo.</p>
+  </header>
+
+  <section class="counters" aria-label="Progress">
+    <div class="counter" id="c-sent"><b>0/0</b><span>Sent for signature</span></div>
+    <div class="counter" id="c-ret"><b>0/0</b><span>Signed and returned</span></div>
+    <div class="counter" id="c-qbo"><b>0/0</b><span>Pay rate entered in QBO</span></div>
+  </section>
+
+  <div class="status" id="status" role="status"></div>
+
+  <section class="list" id="list" aria-label="Staff">
+    <div class="empty">Loading the list…</div>
+  </section>
+
+  <form id="add" autocomplete="off">
+    <h2>Add a person</h2>
+    <div class="fields">
+      <label for="f-name">Name<input id="f-name" required placeholder="e.g. Jordan Smith"></label>
+      <label for="f-email">Email<input id="f-email" type="email" placeholder="jordan@example.com"></label>
+      <label for="f-rate">Snow rate<input id="f-rate" inputmode="decimal" placeholder="$45.00/hr"></label>
+    </div>
+    <label for="f-agreement">Agreement
+      <input id="f-agreement" list="agreement-types" placeholder="Pick or type">
+      <datalist id="agreement-types">
+        <option value="Snow Assignment – Construction Crew"></option>
+        <option value="Seasonal Operator Agreement"></option>
+        <option value="Winter Offer – Operator"></option>
+        <option value="Winter Offer – Hand Crew"></option>
+      </datalist>
+    </label>
+    <button class="btn" type="submit" id="f-submit">Add to list</button>
+  </form>
+
+  <footer>Claude can update this list too: ask it to check your inbox for returned agreements.</footer>
+</div>
+
+<script>
+const STEPS = [
+  { key: "sent", label: "Sent" },
+  { key: "returned", label: "Signed back" },
+  { key: "qbo", label: "Rate in QBO" },
+];
+const $ = (id) => document.getElementById(id);
+let db = null, user = null, myId = null, canWrite = true;
+let people = [];          // [{id, ...data}]
+let confirming = null;    // id of the row asking "remove?"
+const busy = new Set();   // doc ids with a write in flight
+
+function fmt(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function setStatus(msg) { $("status").textContent = msg || ""; }
+
+async function names(ids) {
+  if (!user || !ids.length) return {};
+  try { return await user.profiles(ids); } catch { return {}; }
+}
+
+async function render() {
+  const n = people.length;
+  for (const [id, key] of [["c-sent", "sent"], ["c-ret", "returned"], ["c-qbo", "qbo"]]) {
+    const done = people.filter((p) => p[key + "_at"]).length;
+    $(id).querySelector("b").textContent = `${done}/${n}`;
+    $(id).classList.toggle("done", n > 0 && done === n);
+  }
+  const list = $("list");
+  if (!n) {
+    list.innerHTML = '<div class="empty">No one on the list yet. Add each person below, or ask Claude to add them.</div>';
+    return;
+  }
+  const byIds = [...new Set(people.flatMap((p) => STEPS.map((s) => p[s.key + "_by"]).filter(Boolean)))];
+  const who = await names(byIds);
+  list.textContent = "";
+  for (const p of people) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const info = document.createElement("div");
+    info.className = "who";
+    const nm = document.createElement("strong"); nm.textContent = p.name || "Unnamed";
+    info.append(nm);
+    if (p.email) { const e = document.createElement("small"); e.textContent = p.email; info.append(e); }
+    const meta = [p.agreement, p.rate].filter(Boolean).join(" · ");
+    if (meta) { const r = document.createElement("span"); r.className = "rate"; r.textContent = meta; info.append(r); }
+    const steps = document.createElement("div");
+    steps.className = "steps";
+    for (const s of STEPS) {
+      const at = p[s.key + "_at"], by = p[s.key + "_by"];
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "step" + (at ? " on" : "");
+      b.disabled = !canWrite || busy.has(p.id);
+      b.setAttribute("aria-pressed", at ? "true" : "false");
+      const l = document.createElement("span"); l.className = "lbl"; l.textContent = s.label;
+      const w = document.createElement("span"); w.className = "when";
+      const byName = by ? ((who[by] && who[by].name) || "") : (p[s.key + "_note"] || "");
+      w.textContent = at ? fmt(at) + (byName ? " · " + byName : "") : "not yet";
+      b.append(l, w);
+      b.addEventListener("click", () => toggle(p, s.key));
+      steps.append(b);
+    }
+    const more = document.createElement("button");
+    more.type = "button"; more.className = "more"; more.textContent = "Remove";
+    more.hidden = !canWrite;
+    more.addEventListener("click", () => { confirming = p.id; render(); });
+    row.append(info, steps, more);
+    if (confirming === p.id) {
+      const c = document.createElement("div");
+      c.className = "confirm";
+      c.append(`Remove ${p.name || "this person"} from the list?`);
+      const yes = document.createElement("button"); yes.type = "button"; yes.className = "btn danger"; yes.textContent = "Remove";
+      const no = document.createElement("button"); no.type = "button"; no.className = "btn ghost"; no.textContent = "Keep";
+      yes.addEventListener("click", () => remove(p));
+      no.addEventListener("click", () => { confirming = null; render(); });
+      c.append(yes, no);
+      row.append(c);
+    }
+    list.append(row);
+  }
+}
+
+async function toggle(p, key) {
+  if (!db || busy.has(p.id)) return;
+  busy.add(p.id); render();
+  const on = !p[key + "_at"];
+  try {
+    await db.doc("agreements/" + p.id).update({
+      [key + "_at"]: on ? new Date().toISOString() : null,
+      [key + "_by"]: on ? myId : null,
+      [key + "_note"]: null,
+    });
+    setStatus("");
+  } catch (e) { onWriteError(e); }
+  busy.delete(p.id); render();
+}
+
+async function remove(p) {
+  confirming = null;
+  try { await db.doc("agreements/" + p.id).delete(); setStatus(""); } catch (e) { onWriteError(e); }
+}
+
+function onWriteError(e) {
+  if (e && e.code === "invalid_argument") { canWrite = false; setStatus("You can view this list but not change it. Ask Paul for Contributor access."); }
+  else setStatus("That change didn't save. Check your connection and try again.");
+}
+
+$("add").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if (!db) return;
+  const name = $("f-name").value.trim();
+  if (!name) return;
+  $("f-submit").disabled = true;
+  try {
+    await db.collection("agreements").add({
+      name, email: $("f-email").value.trim(), rate: $("f-rate").value.trim(),
+      agreement: $("f-agreement").value.trim(),
+      created_at: new Date().toISOString(),
+    });
+    $("add").reset(); $("f-name").focus(); setStatus("");
+  } catch (e) { onWriteError(e); }
+  $("f-submit").disabled = false;
+});
+
+(async () => {
+  db = await claude.use("db");
+  if (!db) {
+    $("list").innerHTML = '<div class="empty">Sign in to claude.ai to see and update this list.</div>';
+    $("add").hidden = true;
+    return;
+  }
+  user = await claude.use("user");
+  if (user) {
+    myId = await user.id();
+    const w = await user.can("data.write");
+    if (w === false) { canWrite = false; $("add").hidden = true; }
+  }
+  const timer = setTimeout(() => setStatus("Can't reach the list yet. It will fill in when the connection comes back."), 10000);
+  db.collection("agreements").orderBy("name").onSnapshot((snap) => {
+    if (!snap.metadata.fromCache) { clearTimeout(timer); setStatus(""); }
+    people = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    render();
+  }, () => { clearTimeout(timer); setStatus("The list stopped updating. Reload the page to reconnect."); });
+})();
+</script>

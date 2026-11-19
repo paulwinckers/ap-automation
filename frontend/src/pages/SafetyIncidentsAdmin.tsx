@@ -3,6 +3,7 @@
  * Route: /ops/safety-incidents
  */
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   listIncidents, getIncident, setIncidentStatus, signOffIncident,
   type IncidentSummary, type IncidentDetail,
@@ -160,6 +161,13 @@ export default function SafetyIncidentsAdmin() {
   const [status, setStatus] = useState('');
   const [severity, setSeverity] = useState('');
   const [openId, setOpenId] = useState<number | null>(null);
+  const [params] = useSearchParams();
+
+  // Deep link from the Safety Meetings page (?incident=<id>) opens that report.
+  useEffect(() => {
+    const id = Number(params.get('incident'));
+    if (id) setOpenId(id);
+  }, [params]);
 
   const load = useCallback(() => {
     setLoading(true);

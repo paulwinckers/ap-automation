@@ -34,6 +34,8 @@ import FieldSafetyTalk    from './pages/FieldSafetyTalk';
 import FieldDocuments     from './pages/FieldDocuments';
 import FieldSafetyProgram from './pages/FieldSafetyProgram';
 import SafetyProgramAdmin from './pages/SafetyProgramAdmin';
+import FieldSafetyMeetings from './pages/FieldSafetyMeetings';
+import SafetyMeetingsAdmin from './pages/SafetyMeetingsAdmin';
 import DocumentsAdmin     from './pages/DocumentsAdmin';
 import KeyScan            from './pages/KeyScan';
 import TimeTracking       from './pages/TimeTracking';
@@ -106,6 +108,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/field/safety"           element={<FieldShell><FieldSafetyTalk /></FieldShell>} />
         <Route path="/field/documents"          element={<FieldShell><FieldDocuments /></FieldShell>} />
         <Route path="/field/safety-program"      element={<FieldShell><FieldSafetyProgram /></FieldShell>} />
+        <Route path="/field/safety-meetings"     element={<FieldShell><FieldSafetyMeetings /></FieldShell>} />
         <Route path="/field/inspection"         element={<FieldShell><FieldInspection /></FieldShell>} />
         <Route path="/field/incident"           element={<FieldShell><FieldIncident /></FieldShell>} />
         <Route path="/field/vehicle-inspection"  element={<FieldShell><FieldVehicleInspection /></FieldShell>} />
@@ -127,6 +130,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/ops/safety-incidents"   element={<RequireAuth area="hr"><Office><SafetyIncidentsAdmin /></Office></RequireAuth>} />
         <Route path="/ops/vehicle-inspections" element={<RequireAuth area="operations"><Office><VehicleInspectionsAdmin /></Office></RequireAuth>} />
         <Route path="/ops/safety-pha"          element={<RequireAuth area="operations"><Office><SafetyPHAAdmin /></Office></RequireAuth>} />
+        <Route path="/ops/safety-meetings"     element={<RequireAuth area="operations"><Office><SafetyMeetingsAdmin /></Office></RequireAuth>} />
 
         {/* AP & Finance */}
         <Route path="/ap/invoice-summary" element={<RequireAuth area="finance"><Office><InvoiceSummaryReport /></Office></RequireAuth>} />

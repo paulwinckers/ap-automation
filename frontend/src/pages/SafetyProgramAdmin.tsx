@@ -23,6 +23,7 @@ export default function SafetyProgramAdmin() {
   const [editing, setEditing] = useState<null | (SafetyDocInput & { id?: number; status?: string; version_count?: number })>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [preview, setPreview] = useState<null | { id: number; code?: string | null; title: string; status?: string; version?: string | null; html: string; field_visible?: boolean }>(null);
 
   async function refresh() {
     setLoading(true);
@@ -41,6 +42,19 @@ export default function SafetyProgramAdmin() {
     setEditing({ id: d.id, title: d.title, category: d.category, layer: d.layer ?? undefined,
       code: d.code ?? '', summary: d.summary ?? '', html: d.html ?? '', version: d.version ?? '',
       field_visible: d.field_visible, status: d.status, version_count: d.version_count });
+  }
+
+  async function openPreview(id: number) {
+    const d = await adminGetSafetyDoc(id);
+    setPreview({ id: d.id, code: d.code, title: d.title, status: d.status, version: d.version, html: d.html ?? '', field_visible: d.field_visible });
+  }
+
+  async function togglePublishPreview() {
+    if (!preview) return;
+    const willPublish = preview.status !== 'published';
+    await publishSafetyDoc(preview.id, willPublish);
+    await refresh();
+    setPreview({ ...preview, status: willPublish ? 'published' : 'draft' });
   }
 
   async function save() {
@@ -85,7 +99,7 @@ export default function SafetyProgramAdmin() {
         <button onClick={() => setEditing({ ...blank })} style={{ ...btn, marginLeft: 'auto', background: '#0f172a', color: '#fff', border: 'none' }}>+ New document</button>
       </div>
 
-      {!editing && (
+      {!editing && !preview && (
         <>
           {loading && <div style={{ color: '#9ca3af', padding: 30 }}>Loading…</div>}
           {!loading && grouped.map(([layer, group]) => (
@@ -104,6 +118,7 @@ export default function SafetyProgramAdmin() {
                       {d.status === 'published' ? 'Published' : 'Draft'}
                     </span>
                     {!d.field_visible && <span title="Hidden from field app" style={{ fontSize: 11, color: '#b45309' }}>🚫 field</span>}
+                    <button onClick={() => openPreview(d.id)} style={{ ...btn, padding: '5px 10px', fontSize: 12 }}>👁 Preview</button>
                     <button onClick={() => togglePublish(d)} style={{ ...btn, padding: '5px 10px', fontSize: 12 }}>{d.status === 'published' ? 'Unpublish' : 'Publish'}</button>
                     <button onClick={() => openEdit(d.id)} style={{ ...btn, padding: '5px 10px', fontSize: 12, color: '#1d4ed8' }}>Edit</button>
                     <button onClick={() => remove(d)} style={{ ...btn, padding: '5px 10px', fontSize: 12, color: '#b91c1c' }}>✕</button>
@@ -112,6 +127,34 @@ export default function SafetyProgramAdmin() {
               </div>
             </div>
           ))}
+        </>
+      )}
+
+      {preview && !editing && (
+        <>
+          <style>{FIELD_PREVIEW_CSS}</style>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+            <button onClick={() => setPreview(null)} style={{ ...btn }}>← Back to list</button>
+            {preview.code && <span style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 11, fontWeight: 800, padding: '2px 7px', borderRadius: 5 }}>{preview.code}</span>}
+            <span style={{ fontWeight: 800, color: '#0f172a', fontSize: 15 }}>{preview.title}</span>
+            <span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999,
+              background: preview.status === 'published' ? '#dcfce7' : '#fef9c3', color: preview.status === 'published' ? '#166534' : '#854d0e' }}>
+              {preview.status === 'published' ? 'Published' : 'Draft'}
+            </span>
+            {preview.field_visible === false && <span title="Hidden from field app" style={{ fontSize: 11, color: '#b45309' }}>🚫 field</span>}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              <button onClick={() => { const id = preview.id; setPreview(null); openEdit(id); }} style={{ ...btn, color: '#1d4ed8' }}>Edit</button>
+              <button onClick={togglePublishPreview}
+                style={{ ...btn, background: preview.status === 'published' ? '#fff' : '#0f172a', color: preview.status === 'published' ? '#0f172a' : '#fff', border: preview.status === 'published' ? '1px solid #d1d5db' : 'none' }}>
+                {preview.status === 'published' ? 'Unpublish' : 'Publish'}
+              </button>
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>Shown as it appears to crews on the field app.</div>
+          <div style={{ background: '#0f172a', borderRadius: 12, overflow: 'hidden', border: '1px solid #1e293b' }}>
+            <div className="sp-fieldview" style={{ maxWidth: 820, margin: '0 auto', padding: '24px 22px 54px' }}
+              dangerouslySetInnerHTML={{ __html: preview.html || '<p style="color:#64748b">This document has no content yet.</p>' }} />
+          </div>
         </>
       )}
 
@@ -183,4 +226,22 @@ const PREVIEW_CSS = `
 .sp-preview th, .sp-preview td { border: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; vertical-align: top; }
 .sp-preview th { background: #f8fafc; font-weight: 700; }
 .sp-preview .footer-note { color: #94a3b8; font-size: 12.5px; border-top: 1px solid #e5e7eb; padding-top: 12px; margin-top: 20px; }
+`;
+
+// Dark, field-accurate reading view (matches the crew's field app).
+const FIELD_PREVIEW_CSS = `
+.sp-fieldview { color: #cbd5e1; font-size: 15.5px; line-height: 1.65; }
+.sp-fieldview .lead { font-size: 16.5px; color: #e2e8f0; }
+.sp-fieldview h2 { color: #fff; font-size: 18px; font-weight: 800; margin: 26px 0 8px; border-top: 1px solid #334155; padding-top: 18px; }
+.sp-fieldview h2:first-child, .sp-fieldview .lead:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+.sp-fieldview h3 { color: #e2e8f0; font-size: 15.5px; font-weight: 800; margin: 18px 0 6px; }
+.sp-fieldview p { margin: 0 0 12px; }
+.sp-fieldview ul, .sp-fieldview ol { margin: 0 0 14px; padding-left: 20px; }
+.sp-fieldview li { margin: 0 0 7px; }
+.sp-fieldview strong { color: #f1f5f9; }
+.sp-fieldview a { color: #60a5fa; }
+.sp-fieldview table { width: 100%; border-collapse: collapse; margin: 6px 0 16px; font-size: 13.5px; }
+.sp-fieldview th, .sp-fieldview td { border: 1px solid #334155; padding: 7px 9px; text-align: left; vertical-align: top; }
+.sp-fieldview th { background: #1e293b; color: #e2e8f0; font-weight: 700; }
+.sp-fieldview .footer-note { color: #64748b; font-size: 12.5px; border-top: 1px solid #334155; padding-top: 14px; margin-top: 22px; }
 `;

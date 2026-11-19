@@ -1,0 +1,12 @@
+name = "darios-keepwarm"
+main = "src/worker.js"
+compatibility_date = "2024-11-01"
+
+# Ping the backend health endpoint every 5 minutes so Railway never sleeps the
+# container. Keeps first-load fast for the whole portal (meetings, dashboards,
+# field app). Cron triggers are free on the Workers free plan.
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+HEALTH_URL = "https://ap-automation-production.up.railway.app/health"
