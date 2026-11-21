@@ -760,6 +760,38 @@ class Database:
                 ],
             )
 
+    async def update_statement_from_extraction(
+        self,
+        statement_id: int,
+        statement_date: Optional[str],
+        closing_balance: Optional[float],
+        currency: str,
+        aging: dict,
+        pdf_filename: Optional[str],
+    ) -> None:
+        """Overwrite a statement's extracted fields after a replacement PDF is uploaded.
+        Replaces the line items (caller then re-inserts them) and clears any reconciled
+        flag + frozen QBO snapshot, since the underlying numbers have changed and the
+        row must be compared fresh against QBO again. vendor_name is intentionally
+        preserved — a replacement is a corrected statement for the same vendor."""
+        await self._x(
+            """UPDATE vendor_statements SET
+                 statement_date = ?, closing_balance = ?, currency = ?,
+                 aging_current = ?, aging_1_30 = ?, aging_31_60 = ?,
+                 aging_61_90 = ?, aging_over_90 = ?, pdf_filename = ?,
+                 reconciled = 0, reconciled_at = NULL, reconciled_note = NULL,
+                 qbo_snapshot = NULL
+               WHERE id = ?""",
+            [
+                statement_date, closing_balance, currency,
+                aging.get("current", 0), aging.get("days_1_30", 0),
+                aging.get("days_31_60", 0), aging.get("days_61_90", 0),
+                aging.get("over_90", 0), pdf_filename,
+                statement_id,
+            ],
+        )
+        await self._x("DELETE FROM statement_lines WHERE statement_id = ?", [statement_id])
+
     async def get_statements_for_period(self, period_id: int) -> list[dict]:
         return await self._q(
             "SELECT * FROM vendor_statements WHERE period_id = ? ORDER BY vendor_name",

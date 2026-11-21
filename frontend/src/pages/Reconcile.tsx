@@ -363,13 +363,20 @@ export default function Reconcile() {
       const res = await authFetch(`${API}/reconcile/statements/${statementId}/pdf`, { method: 'POST', body: form });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert(`PDF upload failed: ${err.detail || res.statusText}`);
+        alert(`Replace failed: ${err.detail || res.statusText}`);
         return;
       }
-      // Just refresh this one statement's pdf_r2_key — no full reload
+      const data = await res.json().catch(() => ({} as any));
+      if (data.pdf_warning) {
+        alert(`Statement re-extracted successfully, but:\n\n⚠️ ${data.pdf_warning}`);
+      }
+      // The replacement PDF is re-extracted on the backend: balance/date/aging/lines
+      // are overwritten and any reconciled lock is cleared. Refresh the row to pick up
+      // the new numbers + reconciled state, then force-reload its QBO diff.
       await refreshStatement(statementId);
+      await loadDiff(statementId, true);
     } catch {
-      alert('PDF upload failed — check Railway logs');
+      alert('Replace failed — check Railway logs');
     } finally {
       setAttachingPdf(null);
     }
@@ -702,7 +709,7 @@ export default function Reconcile() {
                         border: stmt.pdf_r2_key ? '1px solid #86efac' : '1.5px solid #f59e0b',
                         background: stmt.pdf_r2_key ? '#f0fdf4' : '#fffbeb',
                         color: stmt.pdf_r2_key ? '#15803d' : '#b45309',
-                      }} title={stmt.pdf_r2_key ? 'Replace PDF' : 'Attach PDF'}>
+                      }} title={stmt.pdf_r2_key ? 'Replace statement — re-extracts the numbers from the new PDF' : 'Attach PDF — extracts the numbers from the file'}>
                         {attachingPdf === stmt.id ? '⏳' : '📎'}
                         <input type="file" accept=".pdf,.png,.jpg,.jpeg" style={{ display: 'none' }}
                           ref={el => { pdfRefs.current[stmt.id] = el; }}

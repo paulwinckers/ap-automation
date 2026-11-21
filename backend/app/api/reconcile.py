@@ -551,11 +551,19 @@ async def attach_statement_pdf(
     db: Database = Depends(get_db),
 ):
     """
-    Attach or replace the PDF file for an existing statement.
-    Useful for backfilling PDFs that failed to save when R2 wasn't configured,
-    or replacing a file after a re-upload.
+    Replace an existing statement's PDF **and re-extract its data**.
+
+    Re-runs Claude extraction on the new file and overwrites the statement's
+    statement_date / closing_balance / aging / line items, then stores the new
+    PDF in R2. Because the numbers change, any reconciled flag and frozen QBO
+    snapshot are cleared so the row is compared fresh against QBO again.
+
+    vendor_name and the statement's period are intentionally preserved — a
+    replacement is treated as a corrected statement for the same vendor in the
+    same month, not a re-filing.
     """
     await db.connect()
+    svc = ReconciliationService()
     try:
         stmt = await db.get_statement(statement_id)
         if not stmt:
@@ -564,28 +572,53 @@ async def attach_statement_pdf(
         file_bytes = await file.read()
         filename = file.filename or stmt.get("pdf_filename") or "statement.pdf"
 
+        # ── Re-extract the replacement statement ──
+        logger.info(f"Re-extracting replacement statement {statement_id}: {filename}")
         try:
-            # Derive period from statement date or fall back to current month
-            stmt_date = stmt.get("statement_date") or date.today().isoformat()
-            period = stmt_date[:7]  # "YYYY-MM"
+            extraction = await svc.extract_statement(file_bytes, filename)
+        except ValueError as ve:
+            raise HTTPException(status_code=422, detail=str(ve))
+
+        # Overwrite extracted fields + clear reconciled/snapshot, then re-insert lines.
+        await db.update_statement_from_extraction(
+            statement_id,
+            statement_date=extraction.get("statement_date"),
+            closing_balance=extraction.get("closing_balance"),
+            currency=extraction.get("currency", "CAD"),
+            aging=extraction.get("aging") or {},
+            pdf_filename=filename,
+        )
+        await db.create_statement_lines(statement_id, extraction.get("lines", []))
+
+        # ── Store the new PDF in R2 (non-fatal — the re-extracted data is already saved) ──
+        pdf_warning = None
+        try:
+            stmt_date = extraction.get("statement_date") or stmt.get("statement_date") or date.today().isoformat()
+            period = stmt_date[:7]  # "YYYY-MM" — R2 key path only, not the DB period
             r2_key = await upload_statement_pdf(file_bytes, period, stmt["vendor_name"], filename)
             if r2_key:
                 await db.save_pdf_r2_key(statement_id, r2_key)
-                # Also update the stored filename
-                await db._q(
-                    "UPDATE vendor_statements SET pdf_filename = ? WHERE id = ?",
-                    [filename, statement_id],
-                )
-                return {"statement_id": statement_id, "pdf_filename": filename, "r2_key": r2_key}
             else:
-                raise HTTPException(status_code=503, detail="R2 storage not configured — set R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY in Railway")
-        except HTTPException:
-            raise
+                pdf_warning = "PDF file not stored — R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY not set in Railway. The re-extracted data was saved."
         except Exception as e:
-            logger.error(f"PDF attach failed for statement {statement_id}: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.warning(f"R2 PDF upload failed on replace (non-fatal): {e}")
+            pdf_warning = f"PDF file storage failed: {e}. The re-extracted data was saved."
+
+        updated = await db.get_statement(statement_id)
+        return {
+            "statement_id": statement_id,
+            "vendor_name": updated["vendor_name"],
+            "statement_date": updated["statement_date"],
+            "closing_balance": updated["closing_balance"],
+            "currency": updated["currency"],
+            "pdf_filename": updated["pdf_filename"],
+            "reconciled": updated["reconciled"],
+            "re_extracted": True,
+            "pdf_warning": pdf_warning,
+        }
     finally:
         await db.close()
+        await svc.close()
 
 
 # ── Vendor QBO link management ────────────────────────────────────────────────
