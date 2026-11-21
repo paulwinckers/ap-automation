@@ -2104,6 +2104,18 @@ export async function getScheduleWeek(start?: string, weeks = 1): Promise<Schedu
   if (weeks > 1) qs.set('weeks', String(weeks));
   return request('GET', `/construction/schedule/week${qs.toString() ? '?' + qs : ''}`);
 }
+export interface ScheduledRevenueJob {
+  opportunity_id: number | null; job_label: string | null;
+  total_value: number | null; total_days: number; days_in_month: number;
+  revenue: number; hours: number; start_date: string | null; end_date: string | null;
+}
+export interface ScheduledRevenue {
+  month: string; total_revenue: number; total_hours: number;
+  jobs: ScheduledRevenueJob[]; job_count: number; missing_value: number;
+}
+export async function getScheduledRevenue(month: string): Promise<ScheduledRevenue> {
+  return request('GET', `/construction/schedule/revenue?month=${encodeURIComponent(month)}`);
+}
 export async function listCrew(includeInactive = false): Promise<CrewMember[]> {
   const r = await request<{ crew: CrewMember[] }>('GET', `/construction/schedule/crew${includeInactive ? '?include_inactive=true' : ''}`);
   return r.crew;

@@ -407,6 +407,126 @@ async def get_week(start: Optional[str] = Query(None), weeks: int = Query(1)):
             "blocks": blocks, "labels": labels, "backlog": backlog, "archived": archived}
 
 
+# ── Scheduled revenue (monthly) ───────────────────────────────────────────────
+
+_opp_dollars_cache: Optional[tuple[dict, float]] = None
+_OPP_DOLLARS_TTL = 300  # 5 min — month-toggling the widget shouldn't re-hit Aspire
+
+
+async def _opp_dollars() -> dict:
+    """Map opportunity_id → job $ value (WonDollars, else EstimatedDollars),
+    cached briefly. Serves the stale map on an Aspire failure rather than zeros."""
+    global _opp_dollars_cache
+    import time as _t
+    if _opp_dollars_cache and (_t.time() - _opp_dollars_cache[1]) < _OPP_DOLLARS_TTL:
+        return _opp_dollars_cache[0]
+    dollars: dict = {}
+    try:
+        opps = await _aspire.get_construction_opportunities(year=date.today().year)
+        for o in opps:
+            oid = o.get("OpportunityID")
+            if oid is None:
+                continue
+            val = None
+            for cand in (o.get("WonDollars"), o.get("EstimatedDollars")):
+                try:
+                    if cand is not None and float(cand) > 0:
+                        val = float(cand)
+                        break
+                except (TypeError, ValueError):
+                    pass
+            dollars[oid] = val
+    except Exception as e:
+        logger.warning(f"revenue: opp $ fetch failed: {e}")
+        if _opp_dollars_cache:
+            return _opp_dollars_cache[0]  # serve stale on failure
+    _opp_dollars_cache = (dollars, _t.time())
+    return dollars
+
+
+@router.get("/revenue")
+async def scheduled_revenue(month: Optional[str] = Query(None)):
+    """Revenue scheduled in a calendar month, pro-rated by each job's share of its
+    scheduled days that land in the month:
+
+        job revenue = job $ × (job days in month ÷ job total scheduled days)
+
+    Job $ = Aspire WonDollars (the won contract value), falling back to
+    EstimatedDollars. A block's "scheduled days" are its full working-day span
+    (holds/pauses already removed). Blocks with no linked opportunity, or an
+    opportunity with no $ on file, contribute 0 and are counted in `missing_value`
+    so the number is never silently understated without a flag.
+    """
+    try:
+        ym = datetime.strptime(month[:7], "%Y-%m") if month else datetime.today()
+    except (ValueError, TypeError):
+        ym = datetime.today()
+    month_key = f"{ym.year:04d}-{ym.month:02d}"
+
+    db = await _db()
+    all_rows = await db._q("SELECT * FROM schedule_blocks ORDER BY start_date, id", [])
+    dollars = await _opp_dollars()
+
+    jobs = []
+    total_rev = 0.0
+    total_hours = 0.0
+    missing = 0
+    for r in all_rows:
+        b = _shape_block(_row(r))
+        if not _is_effective(b):
+            continue
+        dates = b.get("dates") or []
+        total = len(dates)
+        if total == 0:
+            continue
+        month_dates = [d for d in dates if (d or "")[:7] == month_key]
+        in_month = len(month_dates)
+        if in_month == 0:
+            continue
+
+        # Scheduled labour hours that land in the month = person-day cells on the
+        # month's span days (minus per-day exceptions) + one-day additions dated in
+        # the month, × hours/day. Same cell math the board uses for capacity.
+        emps = b.get("employees") or []
+        ex = set(b.get("exceptions") or [])
+        hpd = float(b.get("hours_per_day") or DEFAULT_HOURS_PER_DAY) or DEFAULT_HOURS_PER_DAY
+        month_set = set(month_dates)
+        cells = sum(1 for e in emps for d in month_dates if f"{e}|{d}" not in ex)
+        for a in (b.get("additions") or []):
+            parts = (a or "").rsplit("|", 1)
+            if len(parts) == 2 and parts[1] in month_set:
+                cells += 1
+        month_hours = cells * hpd
+        total_hours += month_hours
+
+        oid = b.get("opportunity_id")
+        val = dollars.get(oid) if oid is not None else None
+        if not val:
+            missing += 1
+        rev = (val or 0.0) * (in_month / total)
+        total_rev += rev
+        jobs.append({
+            "opportunity_id": oid,
+            "job_label": b.get("job_label"),
+            "total_value": val,
+            "total_days": total,
+            "days_in_month": in_month,
+            "revenue": round(rev, 2),
+            "hours": round(month_hours, 1),
+            "start_date": b.get("start_date"),
+            "end_date": b.get("end_date"),
+        })
+    jobs.sort(key=lambda j: j["revenue"], reverse=True)
+    return {
+        "month": month_key,
+        "total_revenue": round(total_rev, 2),
+        "total_hours": round(total_hours, 1),
+        "jobs": jobs,
+        "job_count": len(jobs),
+        "missing_value": missing,
+    }
+
+
 _scope_cache: dict[int, tuple[str, float]] = {}
 _SCOPE_TTL = 24 * 3600  # 1 day
 

@@ -13,7 +13,9 @@ import { Link } from 'react-router-dom';
 import {
   getScheduleWeek, createBlock, updateBlock, deleteBlock, createLabel, deleteLabel,
   listCrew, addCrew, updateCrew, deleteCrew, getJobScope, archiveJob, unarchiveJob,
+  getScheduledRevenue,
   type ScheduleWeek, type ScheduleBlock, type ScheduleBacklogJob, type BlockInput, type CrewMember, type ScheduleStatus,
+  type ScheduledRevenue,
 } from '../lib/api';
 
 const NAVY = '#1A5376';
@@ -427,6 +429,10 @@ export default function ConstructionBoard() {
         </div>
       </div>
 
+      <div style={{ display: 'flex', marginBottom: 16 }}>
+        <MonthRevenueWidget />
+      </div>
+
       {err && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '10px 14px', color: '#991b1b', marginBottom: 14 }}>{err}</div>}
 
       {week && (
@@ -808,6 +814,107 @@ function CrewModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Monthly scheduled-revenue widget (top-left of the board) ──────────────────
+// Its own month state, independent of the board's week navigation. Revenue is
+// each job's $ × (its scheduled days in the month ÷ its total scheduled days);
+// hours are the crew labour-hours booked on the month's days. Both come from the
+// backend /revenue endpoint so the Aspire $ stay server-side.
+function monthKeyToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function shiftMonthKey(key: string, delta: number): string {
+  const [y, m] = key.split('-').map(Number);
+  const d = new Date(y, (m - 1) + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function monthLabel(key: string): string {
+  const [y, m] = key.split('-').map(Number);
+  try { return new Date(y, m - 1, 1).toLocaleDateString('en-CA', { month: 'long', year: 'numeric' }); }
+  catch { return key; }
+}
+function money0(n: number): string {
+  try { return n.toLocaleString('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }); }
+  catch { return `$${Math.round(n)}`; }
+}
+
+function MonthRevenueWidget() {
+  const [month, setMonth] = useState<string>(monthKeyToday());
+  const [data, setData] = useState<ScheduledRevenue | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setErr('');
+    getScheduledRevenue(month)
+      .then(d => { if (!cancelled) setData(d); })
+      .catch(e => { if (!cancelled) setErr((e as Error).message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [month]);
+
+  const isThisMonth = month === monthKeyToday();
+  const jobs = data?.jobs || [];
+  const arrow: React.CSSProperties = { width: 26, height: 26, borderRadius: 7, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer', fontSize: 15, color: '#374151', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
+  const capLbl: React.CSSProperties = { fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.04em' };
+
+  return (
+    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '12px 16px', minWidth: 268, boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+      {/* Month toggle */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+        <button onClick={() => setMonth(m => shiftMonthKey(m, -1))} style={arrow} title="Previous month">‹</button>
+        <div style={{ flex: 1, textAlign: 'center', fontWeight: 800, fontSize: 13, color: '#0f172a' }}>{monthLabel(month)}</div>
+        <button onClick={() => setMonth(m => shiftMonthKey(m, 1))} style={arrow} title="Next month">›</button>
+        {!isThisMonth && <button onClick={() => setMonth(monthKeyToday())} style={{ ...arrow, width: 'auto', padding: '0 8px', fontSize: 11, fontWeight: 700 }} title="Jump to current month">Today</button>}
+      </div>
+
+      {/* Totals */}
+      <div style={{ display: 'flex', gap: 20, alignItems: 'baseline' }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: NAVY, lineHeight: 1.1 }}>{loading ? '…' : money0(data?.total_revenue || 0)}</div>
+          <div style={capLbl}>Scheduled revenue</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: '#0f172a', lineHeight: 1.1 }}>{loading ? '…' : `${Math.round(data?.total_hours || 0).toLocaleString('en-CA')}h`}</div>
+          <div style={capLbl}>Crew hours</div>
+        </div>
+      </div>
+
+      {/* Meta + expand */}
+      <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#6b7280' }}>
+        <span>{data?.job_count || 0} job{(data?.job_count || 0) === 1 ? '' : 's'}</span>
+        {data && data.missing_value > 0 && (
+          <span title="These jobs have no $ on their Aspire opportunity, so they add hours but $0 revenue" style={{ color: '#b45309', fontWeight: 600 }}>· {data.missing_value} without a value</span>
+        )}
+        {jobs.length > 0 && (
+          <button onClick={() => setOpen(o => !o)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: NAVY, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
+            {open ? 'Hide breakdown ▲' : 'Breakdown ▾'}
+          </button>
+        )}
+      </div>
+
+      {err && <div style={{ marginTop: 6, fontSize: 11, color: '#b91c1c' }}>{err}</div>}
+
+      {/* Per-job breakdown */}
+      {open && jobs.length > 0 && (
+        <div style={{ marginTop: 10, borderTop: '1px solid #f1f5f9', paddingTop: 8, maxHeight: 220, overflowY: 'auto' }}>
+          {jobs.map((j, i) => (
+            <div key={(j.opportunity_id ?? 'x') + '-' + i} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '3px 0', fontSize: 12 }}>
+              <span style={{ flex: 1, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.job_label || ''}>{j.job_label || '(unnamed)'}</span>
+              <span style={{ color: '#9ca3af', fontSize: 10, flexShrink: 0 }}>{j.days_in_month}/{j.total_days}d · {Math.round(j.hours)}h</span>
+              <span style={{ fontWeight: 700, color: j.total_value == null ? '#b45309' : NAVY, flexShrink: 0, minWidth: 58, textAlign: 'right' }}>
+                {j.total_value == null ? 'no $' : money0(j.revenue)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
