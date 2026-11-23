@@ -15,16 +15,20 @@ Course content lives in the frontend (src/lib/training/). The server only knows 
 ids, so it can tell when a course is finished and refuse ids that don't exist. Add a course here and
 in the frontend together.
 """
+import html
+import logging
 import re
+from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.api.auth import current_actor, get_db, require_access
 from app.core.database import Database
 
 router = APIRouter(prefix="/training", tags=["training"])
+logger = logging.getLogger(__name__)
 
 # course id → its module ids, in order. Keep in step with frontend src/lib/training/.
 COURSES: dict[str, dict] = {
@@ -163,6 +167,91 @@ class AssignIn(BaseModel):
     course_ids: list[str]
     user_ids: list[int]
     due_date: Optional[str] = None   # YYYY-MM-DD, or empty for no due date
+    notify: bool = True              # push + email each person about their NEWLY assigned courses
+
+
+def _portal_base() -> str:
+    from app.core.config import settings
+    return (getattr(settings, "PORTAL_BASE_URL", "") or "https://darios-ap.pages.dev").rstrip("/")
+
+
+def _nice_due(due: Optional[str]) -> str:
+    if not due:
+        return ""
+    try:
+        d = date.fromisoformat(due)
+        return f"{d.strftime('%B')} {d.day}"
+    except ValueError:
+        return due
+
+
+def _assign_email(name: str, courses: list[str], due: Optional[str], by: str, link: str) -> str:
+    e = html.escape
+    items = "".join(f'<li style="margin:0 0 6px">{e(t)}</li>' for t in courses)
+    due_line = f'<p style="margin:0 0 12px"><b>Please finish by {e(_nice_due(due))}.</b></p>' if due else ""
+    first = e((name or "there").split()[0])
+    which = "this course" if len(courses) == 1 else "these courses"
+    return f"""<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px">
+  <div style="background:#1f4d2b;color:#fff;padding:14px 18px;border-radius:10px 10px 0 0">
+    <div style="font-size:17px;font-weight:800">New training assigned to you</div>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-top:none;border-radius:0 0 10px 10px;padding:16px 18px;color:#111827;font-size:15px;line-height:1.5">
+    <p style="margin:0 0 12px">Hi {first},</p>
+    <p style="margin:0 0 8px">{e(by)} assigned you {which}:</p>
+    <ul style="margin:0 0 12px;padding-left:20px">{items}</ul>
+    {due_line}
+    <p style="margin:0 0 16px">Each one is short, with videos and quick checks, and works on your phone. Your progress saves as you go.</p>
+    <p style="margin:0 0 4px"><a href="{e(link)}" style="display:inline-block;background:#1f4d2b;color:#fff;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:8px">Open my courses</a></p>
+    <p style="margin:12px 0 0;font-size:13px;color:#6b7280">Sign in with your usual Darios portal login.</p>
+  </div>
+</div>"""
+
+
+async def _notify_assigned(new_by_user: dict, due: Optional[str], by: str) -> None:
+    """Push + email each person once, listing the courses NEWLY assigned to them. Runs after the
+    response (BackgroundTasks) and never raises: a failed push or email is logged, not surfaced."""
+    if not new_by_user:
+        return
+    from app.core.config import settings
+    from app.core.database import Database
+    from app.api.push import push_to_user
+    link = f"{_portal_base()}/training"
+    db = Database()
+    await db.connect()
+    try:
+        ids = list(new_by_user)
+        rows = await db._q(
+            f"SELECT id, name, email FROM users WHERE active = 1 AND id IN ({','.join('?' * len(ids))})", ids)
+    except Exception as ex:
+        logger.warning(f"training notify: user lookup failed: {ex}")
+        rows = []
+    finally:
+        await db.close()
+    graph = None
+    sender = getattr(settings, "ms_send_from", "") or ""
+    for u in rows:
+        titles = [COURSES[c]["title"] for c in new_by_user.get(u["id"], []) if c in COURSES]
+        if not titles:
+            continue
+        n = len(titles)
+        due_txt = f" · due {_nice_due(due)}" if due else ""
+        push_body = (titles[0] if n == 1 else f"{n} courses, starting with {titles[0]}") + due_txt
+        try:
+            await push_to_user(u["id"], "New training assigned", push_body, "/training")
+        except Exception as ex:
+            logger.warning(f"training notify: push to user {u['id']} failed: {ex}")
+        email = (u.get("email") or "").strip()
+        if "@" in email and sender:
+            try:
+                if graph is None:
+                    from app.services.email_intake import GraphClient
+                    graph = GraphClient()
+                await graph.send_email(
+                    mailbox=sender, to_addresses=[email],
+                    subject=("New training: " + titles[0]) if n == 1 else f"New training: {n} courses assigned to you",
+                    body_html=_assign_email(u.get("name") or "", titles, due, by, link))
+            except Exception as ex:
+                logger.warning(f"training notify: email to user {u['id']} failed: {ex}")
 
 
 @router.get("/assign/people")
@@ -177,8 +266,11 @@ async def assignable_people(_actor: dict = Depends(require_access), db: Database
 
 
 @router.post("/assign")
-async def assign_courses(body: AssignIn, actor: dict = Depends(require_access), db: Database = Depends(get_db)):
-    """Assign each course to each person. Re-assigning updates the due date; progress is untouched."""
+async def assign_courses(body: AssignIn, background: BackgroundTasks = None,
+                         actor: dict = Depends(require_access), db: Database = Depends(get_db)):
+    """Assign each course to each person. Re-assigning updates the due date; progress is untouched.
+    With notify (default), each person gets ONE push + email about the courses that are NEW to them
+    (re-assigning an existing course, e.g. to change its due date, doesn't notify again)."""
     if not body.course_ids or not body.user_ids:
         raise HTTPException(status_code=400, detail="Pick at least one course and one person")
     for cid in body.course_ids:
@@ -193,16 +285,31 @@ async def assign_courses(body: AssignIn, actor: dict = Depends(require_access), 
     if missing:
         raise HTTPException(status_code=400, detail=f"Unknown or inactive people: {sorted(missing)}")
     by = actor.get("name") or actor.get("email") or "HR"
+    course_ids = list(dict.fromkeys(body.course_ids))
+    cmarks = ",".join("?" * len(course_ids))
+    existing = await db._q(
+        f"SELECT user_id, course_id FROM training_assignments WHERE user_id IN ({marks}) AND course_id IN ({cmarks})",
+        ids + course_ids)
+    had = {(r["user_id"], r["course_id"]) for r in existing}
+    new_by_user: dict = {}
     n = 0
     for uid in ids:
-        for cid in dict.fromkeys(body.course_ids):
+        for cid in course_ids:
+            if (uid, cid) not in had:
+                new_by_user.setdefault(uid, []).append(cid)
             await db._x(
                 "INSERT INTO training_assignments (user_id, course_id, due_date, assigned_by) VALUES (?,?,?,?) "
                 "ON CONFLICT(user_id, course_id) DO UPDATE SET due_date = excluded.due_date, "
                 "assigned_by = excluded.assigned_by",
                 [uid, cid, due, by])
             n += 1
-    return {"assigned": n}
+    to_notify = new_by_user if body.notify else {}
+    if to_notify:
+        if background is not None:
+            background.add_task(_notify_assigned, to_notify, due, by)
+        else:
+            await _notify_assigned(to_notify, due, by)
+    return {"assigned": n, "new": sum(len(v) for v in new_by_user.values()), "notified": len(to_notify)}
 
 
 @router.delete("/assign/{course_id}/{user_id}")

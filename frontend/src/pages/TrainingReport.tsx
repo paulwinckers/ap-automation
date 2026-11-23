@@ -49,6 +49,7 @@ function AssignPanel({ courses, onDone, onClose }: {
   const [pickedPeople, setPickedPeople] = useState<Set<number>>(new Set());
   const [q, setQ] = useState('');
   const [due, setDue] = useState('');
+  const [notify, setNotify] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
@@ -65,8 +66,12 @@ function AssignPanel({ courses, onDone, onClose }: {
   async function save() {
     setSaving(true); setErr('');
     try {
-      const r = await assignTrainingCourses([...pickedCourses], [...pickedPeople], due);
-      onDone(`Assigned ${pickedCourses.size} course${pickedCourses.size === 1 ? '' : 's'} to ${pickedPeople.size} ${pickedPeople.size === 1 ? 'person' : 'people'} (${r.assigned} assignments).`);
+      const r = await assignTrainingCourses([...pickedCourses], [...pickedPeople], due, notify);
+      const plural = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+      const told = !notify ? ' No one was notified.'
+        : r.notified ? ` Notifying ${plural(r.notified, 'person', 'people')} by push and email about their new courses.`
+        : ' Everyone already had these courses, so no one was notified again.';
+      onDone(`Assigned ${plural(pickedCourses.size, 'course', 'courses')} to ${plural(pickedPeople.size, 'person', 'people')}.${told}`);
     } catch (e: any) {
       setErr(String(e.message || e));
     } finally { setSaving(false); }
@@ -97,6 +102,12 @@ function AssignPanel({ courses, onDone, onClose }: {
           <p style={{ ...label, marginTop: 16 }}>3. Due date <span style={{ textTransform: 'none', fontWeight: 400, color: '#6b7280' }}>(optional)</span></p>
           <input type="date" value={due} onChange={e => setDue(e.target.value)}
             style={{ fontSize: 14, padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 6 }} />
+          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 14, marginTop: 16, cursor: 'pointer' }}>
+            <input type="checkbox" checked={notify} onChange={e => setNotify(e.target.checked)} style={{ marginTop: 3 }} />
+            <span>Notify them by push and email
+              <span style={{ display: 'block', fontSize: 12, color: '#6b7280' }}>Only about courses that are new to them. Changing a due date doesn't re-send.</span>
+            </span>
+          </label>
         </div>
         <div style={{ minWidth: 0 }}>
           <p style={label}>2. People <span style={{ textTransform: 'none', fontWeight: 400, color: '#6b7280' }}>({pickedPeople.size} picked)</span></p>

@@ -2558,9 +2558,11 @@ export async function getAssignablePeople(): Promise<{ people: AssignablePerson[
   return request('GET', '/training/assign/people');
 }
 
-/** Assign every listed course to every listed person. dueDate = YYYY-MM-DD or '' for none. */
-export async function assignTrainingCourses(courseIds: string[], userIds: number[], dueDate: string): Promise<{ assigned: number }> {
-  return request('POST', '/training/assign', { course_ids: courseIds, user_ids: userIds, due_date: dueDate || null });
+/** Assign every listed course to every listed person. dueDate = YYYY-MM-DD or '' for none.
+ *  notify = push + email each person about the courses that are NEW to them. */
+export async function assignTrainingCourses(courseIds: string[], userIds: number[], dueDate: string, notify = true):
+  Promise<{ assigned: number; new: number; notified: number }> {
+  return request('POST', '/training/assign', { course_ids: courseIds, user_ids: userIds, due_date: dueDate || null, notify });
 }
 
 export async function unassignTrainingCourse(courseId: string, userId: number): Promise<{ ok: boolean }> {
