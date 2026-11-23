@@ -643,6 +643,17 @@ async def lifespan(app: FastAPI):
                 PRIMARY KEY (user_id, course_id)
             )
         """,
+        # Course assignments — HR picks who must take which course (optional due date).
+        "training_assignments": """
+            CREATE TABLE IF NOT EXISTS training_assignments (
+                user_id      INTEGER NOT NULL,
+                course_id    TEXT    NOT NULL,
+                due_date     TEXT,
+                assigned_by  TEXT,
+                assigned_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (user_id, course_id)
+            )
+        """,
     }
     for tbl, ddl in _ENSURE_TABLES.items():
         try:

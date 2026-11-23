@@ -188,6 +188,16 @@ function fmtDate(ts: string | null | undefined) {
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+/** Due dates are plain YYYY-MM-DD: show and compare them as local calendar days. */
+function dueLabel(due: string) {
+  const [y, m, d] = due.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
+}
+function todayISO() {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
 export default function Training() {
   const { courseId, moduleId } = useParams();
   const [progress, setProgress] = useState<Record<string, CourseProgress> | null>(null);
@@ -221,6 +231,36 @@ export default function Training() {
   // ── Course list ──
   if (!course) {
     if (courseId) return <Navigate to="/training" replace />;
+    const courseCard = (c: Course) => {
+      const p = progress?.[c.id]; const n = p?.done.length || 0; const total = c.modules.length;
+      const late = !!p?.assigned && !p.finished_at && !!p.due_date && p.due_date < todayISO();
+      return (
+        <Link key={c.id} to={`/training/${c.id}`} style={{ ...card, textDecoration: 'none', color: C.fg, display: 'flex', flexDirection: 'column', gap: 8,
+          ...(p?.assigned && !p.finished_at ? { borderColor: late ? C.bad : C.hivis, borderWidth: 1.5 } : {}) }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: display, fontWeight: 800, fontSize: 21 }}>{c.title}</span>
+            <span style={{ fontSize: 14, color: p?.finished_at ? C.good : C.muted, fontWeight: 600 }}>
+              {loading ? '…' : p?.finished_at ? '✓ Complete' : n ? `${n} of ${total} modules` : 'Not started'}
+            </span>
+          </div>
+          {p?.assigned && !p.finished_at && p.due_date && (
+            <span style={{ fontSize: 14, fontWeight: 700, color: late ? C.bad : C.hivis }}>
+              {late ? 'Overdue: was due' : 'Due'} {dueLabel(p.due_date)}
+            </span>
+          )}
+          <span style={{ fontSize: 15, color: C.muted }}>{c.summary} About {c.modules.reduce((s, m) => s + m.mins, 0)} minutes.</span>
+          <Bar value={n} total={total} />
+        </Link>
+      );
+    };
+    // Assigned first: unfinished before finished, then soonest due date (no date last).
+    const mine = COURSES.filter(c => progress?.[c.id]?.assigned).sort((a, b) => {
+      const pa = progress![a.id], pb = progress![b.id];
+      return (pa.finished_at ? 1 : 0) - (pb.finished_at ? 1 : 0)
+        || (pa.due_date || '9999').localeCompare(pb.due_date || '9999');
+    });
+    const others = COURSES.filter(c => !progress?.[c.id]?.assigned);
+    const todo = mine.filter(c => !progress?.[c.id]?.finished_at).length;
     return (
       <div style={page}><Header />
         <main style={wrap}>
@@ -229,21 +269,21 @@ export default function Training() {
           <p style={lede}>Short courses with videos and quick checks. Your progress saves as you go.</p>
           <div style={stack}>
             {errorBox}
-            {COURSES.map(c => {
-              const p = progress?.[c.id]; const n = p?.done.length || 0; const total = c.modules.length;
-              return (
-                <Link key={c.id} to={`/training/${c.id}`} style={{ ...card, textDecoration: 'none', color: C.fg, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                    <span style={{ fontFamily: display, fontWeight: 800, fontSize: 21 }}>{c.title}</span>
-                    <span style={{ fontSize: 14, color: p?.finished_at ? C.good : C.muted, fontWeight: 600 }}>
-                      {loading ? '…' : p?.finished_at ? '✓ Complete' : n ? `${n} of ${total} modules` : 'Not started'}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: 15, color: C.muted }}>{c.summary} About {c.modules.reduce((s, m) => s + m.mins, 0)} minutes.</span>
-                  <Bar value={n} total={total} />
-                </Link>
-              );
-            })}
+            {mine.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <h2 style={{ ...h3, fontSize: 21, margin: 0 }}>Assigned to you</h2>
+                <span style={{ fontSize: 15, color: C.muted, marginTop: -6 }}>
+                  {todo ? `${todo} still to finish. Start with the one due soonest.` : 'All done. Nice work.'}
+                </span>
+                {mine.map(courseCard)}
+              </div>
+            )}
+            {others.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {mine.length > 0 && <h2 style={{ ...h3, fontSize: 21, margin: 0 }}>Other courses</h2>}
+                {others.map(courseCard)}
+              </div>
+            )}
           </div>
         </main>
       </div>
@@ -304,7 +344,12 @@ export default function Training() {
     <div style={page}><Header />
       <main style={wrap}>
         <Link to="/training" style={{ fontSize: 14, color: C.forest }}>← All courses</Link>
-        <div style={{ ...eyebrow, marginTop: 14 }}>{finishedAt ? 'Course complete' : `For ${course.audience.toLowerCase()}`}</div>
+        <div style={{ ...eyebrow, marginTop: 14 }}>
+          {finishedAt ? 'Course complete'
+            : progress?.[course.id]?.assigned
+              ? `Assigned to you${progress[course.id].due_date ? ` · due ${dueLabel(progress[course.id].due_date!)}` : ''}`
+              : `For ${course.audience.toLowerCase()}`}
+        </div>
         <h1 style={h1}>{course.title}</h1>
         <p style={lede}>{finishedAt ? `You finished this course on ${fmtDate(finishedAt)}. Keep the pocket card in mind on every job.` : course.summary}</p>
         <div style={stack}>

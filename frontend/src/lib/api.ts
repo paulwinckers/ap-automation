@@ -2530,7 +2530,7 @@ export async function getUsageReport(days = 7): Promise<UsageReport> {
 
 // ── Training courses ─────────────────────────────────────────────────────────
 
-export interface CourseProgress { done: string[]; finished_at: string | null }
+export interface CourseProgress { done: string[]; finished_at: string | null; assigned?: boolean; due_date?: string | null }
 
 export async function getTrainingProgress(): Promise<{ courses: Record<string, CourseProgress> }> {
   return request('GET', '/training/progress');
@@ -2544,10 +2544,25 @@ export interface TrainingReport {
   courses: { id: string; title: string; modules: number }[];
   people: {
     user_id: number; name: string; email: string; training_only: boolean;
-    courses: Record<string, { done: number; total: number; last_at: string | null; finished_at: string | null }>;
+    courses: Record<string, { done: number; total: number; last_at: string | null; finished_at: string | null; assigned: boolean; due_date: string | null }>;
   }[];
 }
 
 export async function getTrainingReport(): Promise<TrainingReport> {
   return request('GET', '/training/report');
+}
+
+export interface AssignablePerson { user_id: number; name: string; email: string; training_only: boolean }
+
+export async function getAssignablePeople(): Promise<{ people: AssignablePerson[] }> {
+  return request('GET', '/training/assign/people');
+}
+
+/** Assign every listed course to every listed person. dueDate = YYYY-MM-DD or '' for none. */
+export async function assignTrainingCourses(courseIds: string[], userIds: number[], dueDate: string): Promise<{ assigned: number }> {
+  return request('POST', '/training/assign', { course_ids: courseIds, user_ids: userIds, due_date: dueDate || null });
+}
+
+export async function unassignTrainingCourse(courseId: string, userId: number): Promise<{ ok: boolean }> {
+  return request('DELETE', `/training/assign/${encodeURIComponent(courseId)}/${userId}`);
 }

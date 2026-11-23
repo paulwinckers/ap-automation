@@ -48,6 +48,8 @@ _RULES: list[tuple[str, str, Optional[object]]] = [
     ("*", "/sales/{parent_type}/{parent_id}/attachment", None),
     # Training — the report is HR; taking a course is open to every signed-in person
     ("*", "/training/report", "hr"),
+    ("*", "/training/assign", "hr"),       # assigning courses to people
+
     ("*", "/training/", None),
     # Admin
     ("*", "/admin/", "admin"),
