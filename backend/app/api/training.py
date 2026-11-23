@@ -302,31 +302,37 @@ class _Mailer:
         except Exception as ex:
             logger.warning(f"training notify: push to user {u['id']} failed: {ex}")
         email = (u.get("email") or "").strip()
-        await self._resolve_sender()
-        if "@" in email and self.sender:
-            if self.graph is None:
-                from app.services import email_intake
-                self.graph = email_intake.GraphClient()
-            try:
-                await self.graph.send_email(mailbox=self.sender, to_addresses=[email],
-                                            subject=subject, body_html=body_html)
-                out["email"] = True
-                out["from"] = self.sender
-            except Exception as ex:
-                fallback = self.default_sender
-                if fallback and fallback.lower() != self.sender.lower():
-                    logger.warning(f"training notify: sending as {self.sender} failed ({ex}); "
-                                   f"retrying from {fallback}")
-                    try:
-                        await self.graph.send_email(mailbox=fallback, to_addresses=[email],
-                                                    subject=subject, body_html=body_html)
-                        out["email"] = True
-                        out["from"] = fallback
-                    except Exception as ex2:
-                        logger.warning(f"training notify: email to user {u['id']} failed: {ex2}")
-                else:
-                    logger.warning(f"training notify: email to user {u['id']} failed: {ex}")
+        if "@" in email:
+            sent_from = await self.email([email], subject, body_html, who=f"user {u['id']}")
+            out["email"] = bool(sent_from)
+            if sent_from:
+                out["from"] = sent_from
         return out
+
+    async def email(self, to: list[str], subject: str, body_html: str, who: str = "") -> Optional[str]:
+        """Email `to` from the training sender, retrying from the default sender if Graph refuses it.
+        Returns the mailbox it was actually sent from, or None if it couldn't be sent. Never raises."""
+        await self._resolve_sender()
+        if not to or not self.sender:
+            return None
+        if self.graph is None:
+            from app.services import email_intake
+            self.graph = email_intake.GraphClient()
+        try:
+            await self.graph.send_email(mailbox=self.sender, to_addresses=to, subject=subject, body_html=body_html)
+            return self.sender
+        except Exception as ex:
+            fallback = self.default_sender
+            if not fallback or fallback.lower() == self.sender.lower():
+                logger.warning(f"training notify: email to {who or to} failed: {ex}")
+                return None
+            logger.warning(f"training notify: sending as {self.sender} failed ({ex}); retrying from {fallback}")
+            try:
+                await self.graph.send_email(mailbox=fallback, to_addresses=to, subject=subject, body_html=body_html)
+                return fallback
+            except Exception as ex2:
+                logger.warning(f"training notify: email to {who or to} failed: {ex2}")
+                return None
 
 
 # ── Overdue reminders ─────────────────────────────────────────────────────────────────────────
@@ -394,6 +400,131 @@ async def send_overdue_reminders(db, today: str, min_gap_days: int = REMINDER_EV
     return {"people": len(claimed), "courses": courses}
 
 
+# ── Weekly overdue digest to HR ─────────────────────────────────────────────────────────────────
+
+DIGEST_DUE_SOON_DAYS = 7
+
+
+async def build_overdue_digest(db, today: str) -> dict:
+    """Who is overdue (assigned, unfinished, due before today) and who is due within the next
+    DIGEST_DUE_SOON_DAYS days, with progress and last reminder. Active, non-service people only."""
+    await _ensure_reminder_col(db)
+    soon = (date.fromisoformat(today) + timedelta(days=DIGEST_DUE_SOON_DAYS)).isoformat()
+    rows = await db._q(
+        "SELECT a.user_id, a.course_id, a.due_date, a.last_reminded_at, u.name, u.email "
+        "FROM training_assignments a JOIN users u ON u.id = a.user_id "
+        "LEFT JOIN training_completions c ON c.user_id = a.user_id AND c.course_id = a.course_id "
+        "WHERE u.active = 1 AND u.role != 'service' AND a.due_date IS NOT NULL AND a.due_date <= ? "
+        "AND c.user_id IS NULL", [soon])
+    prog = await db._q("SELECT user_id, course_id, COUNT(*) n FROM training_progress GROUP BY user_id, course_id")
+    done = {(r["user_id"], r["course_id"]): r["n"] for r in prog}
+    t0 = date.fromisoformat(today)
+    overdue, due_soon = [], []
+    for r in rows:
+        c = COURSES.get(r["course_id"])
+        if not c:
+            continue
+        item = {"name": r["name"], "email": r["email"], "course": c["title"], "due_date": r["due_date"],
+                "done": done.get((r["user_id"], r["course_id"]), 0), "total": len(c["modules"]),
+                "last_reminded_at": r.get("last_reminded_at")}
+        days = (t0 - date.fromisoformat(r["due_date"])).days
+        if days > 0:
+            item["days_overdue"] = days
+            overdue.append(item)
+        else:
+            item["days_left"] = -days
+            due_soon.append(item)
+    overdue.sort(key=lambda x: (-x["days_overdue"], (x["name"] or "").lower()))
+    due_soon.sort(key=lambda x: (x["days_left"], (x["name"] or "").lower()))
+    return {"today": today, "overdue": overdue, "due_soon": due_soon,
+            "people_overdue": len({x["email"] or x["name"] for x in overdue})}
+
+
+def _digest_email(d: dict, link: str) -> str:
+    e = html.escape
+    th = 'style="text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid #e5e7eb"'
+    td = 'style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:14px;vertical-align:top"'
+
+    def table(items, overdue: bool) -> str:
+        head = (f'<tr><th {th}>Person</th><th {th}>Course</th><th {th}>{"Was due" if overdue else "Due"}</th>'
+                f'<th {th}>Progress</th>{f"<th {th}>Last reminded</th>" if overdue else ""}</tr>')
+        body = ""
+        for x in items:
+            due_txt = e(_nice_due(x["due_date"]))
+            if overdue:
+                k = x["days_overdue"]
+                when = f'{due_txt} <span style="color:#b23a2a;font-weight:700">({k} day{"s" if k != 1 else ""} late)</span>'
+            else:
+                k = x["days_left"]
+                rel = "today" if k == 0 else ("in %d day%s" % (k, "s" if k != 1 else ""))
+                when = f'{due_txt} <span style="color:#6b7280">({rel})</span>'
+            rem = f'<td {td}>{e(_nice_due(x["last_reminded_at"])) if x.get("last_reminded_at") else "—"}</td>' if overdue else ""
+            body += (f'<tr><td {td}><b>{e(x["name"] or "")}</b></td><td {td}>{e(x["course"])}</td>'
+                     f'<td {td}>{when}</td><td {td}>{x["done"]} of {x["total"]}</td>{rem}</tr>')
+        return f'<table style="border-collapse:collapse;width:100%">{head}{body}</table>'
+
+    n_o, n_s, n_p = len(d["overdue"]), len(d["due_soon"]), d["people_overdue"]
+    summary = (f'<b>{n_o}</b> overdue course{"s" if n_o != 1 else ""} across <b>{n_p}</b> '
+               f'{"person" if n_p == 1 else "people"}' if n_o else "Nothing is overdue")
+    summary += f', and <b>{n_s}</b> due in the next {DIGEST_DUE_SOON_DAYS} days.' if n_s else "."
+    over = (f'<h3 style="margin:18px 0 6px;font-size:16px;color:#b23a2a">Overdue</h3>{table(d["overdue"], True)}'
+            '<p style="margin:6px 0 0;font-size:12px;color:#6b7280">Each person is reminded automatically on weekday '
+            'mornings: the first weekday after the due date, then weekly.</p>') if n_o else ""
+    soon = (f'<h3 style="margin:18px 0 6px;font-size:16px;color:#1f4d2b">Due in the next {DIGEST_DUE_SOON_DAYS} days</h3>'
+            f'{table(d["due_soon"], False)}') if n_s else ""
+    return f"""<div style="font-family:Arial,Helvetica,sans-serif;max-width:720px">
+  <div style="background:#1f4d2b;color:#fff;padding:14px 18px;border-radius:10px 10px 0 0">
+    <div style="font-size:17px;font-weight:800">Weekly training digest</div>
+    <div style="font-size:13px;opacity:.85">Week of {e(_nice_due(d["today"]))}</div>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-top:none;border-radius:0 0 10px 10px;padding:16px 18px;color:#111827;font-size:15px;line-height:1.5">
+    <p style="margin:0">{summary}</p>
+    {over}{soon}
+    <p style="margin:18px 0 0"><a href="{e(link)}" style="display:inline-block;background:#1f4d2b;color:#fff;text-decoration:none;font-weight:700;padding:10px 16px;border-radius:8px">Open the training report</a></p>
+  </div>
+</div>"""
+
+
+async def _digest_claim(db, today: str) -> bool:
+    """True if this run may send today's digest (first claimer wins; restarts/replicas lose)."""
+    try:
+        await db._x("CREATE TABLE IF NOT EXISTS training_digest_log ("
+                    "sent_on TEXT PRIMARY KEY, sent_at TEXT NOT NULL DEFAULT (datetime('now')))", [])
+    except Exception:
+        pass
+    got = await db._q("INSERT INTO training_digest_log (sent_on) VALUES (?) ON CONFLICT(sent_on) DO NOTHING "
+                      "RETURNING sent_on", [today])
+    return bool(got)
+
+
+async def send_overdue_digest(db, today: str, recipients: list[str], scheduled: bool = True) -> dict:
+    """Email HR the digest. Scheduled runs skip quiet weeks (nothing overdue or due soon) and claim
+    the day first so they send at most once; a manual run always sends (even an all-clear)."""
+    if not recipients:
+        return {"sent": False, "reason": "no recipients", "overdue": 0, "due_soon": 0}
+    d = await build_overdue_digest(db, today)
+    counts = {"overdue": len(d["overdue"]), "due_soon": len(d["due_soon"]), "people_overdue": d["people_overdue"]}
+    if scheduled:
+        if not d["overdue"] and not d["due_soon"]:
+            return {"sent": False, "reason": "nothing to report", **counts}
+        if not await _digest_claim(db, today):
+            return {"sent": False, "reason": "already sent today", **counts}
+    n = len(d["overdue"])
+    subject = (f"Training digest: {n} overdue course{'s' if n != 1 else ''} ({d['people_overdue']} "
+               f"{'person' if d['people_overdue'] == 1 else 'people'})" if n else "Training digest: nothing overdue")
+    sent_from = await _Mailer().email(recipients, subject, _digest_email(d, f"{_portal_base()}/ops/training"),
+                                      who="HR digest")
+    logger.info(f"training digest: sent={bool(sent_from)} to={recipients} overdue={n} due_soon={len(d['due_soon'])}")
+    return {"sent": bool(sent_from), "from": sent_from, "to": recipients, **counts}
+
+
+async def _digest_settings() -> dict:
+    from app.services.email_settings import get_email_settings, recipients as _split
+    t = (await get_email_settings()).get("training") or {}
+    return {"enabled": bool(t.get("digest_enabled", True)), "day": int(t.get("digest_day", 0)),
+            "hour": int(t.get("digest_hour", 8)), "to": _split(t.get("digest_to") or "")}
+
+
 def _company_today() -> tuple:
     import zoneinfo
     from datetime import datetime
@@ -402,29 +533,42 @@ def _company_today() -> tuple:
     return datetime.now(tz)
 
 
+async def _run_with_db(fn, *args):
+    from app.core.database import Database
+    db = Database()
+    try:
+        await db.connect()
+        await fn(db, *args)
+    except Exception as ex:
+        logger.error(f"training scheduled job {getattr(fn, '__name__', fn)} failed: {ex}")
+    finally:
+        try:
+            await db.close()
+        except Exception:
+            pass
+
+
 async def _reminder_loop():
-    """Every 5 minutes; fires once on weekdays in the REMINDER_HOUR window. The DB claim makes a
+    """Every 5 minutes. (1) Overdue reminders: once on weekdays in the REMINDER_HOUR window.
+    (2) HR digest: once on the configured day/hour (Email Settings → training). DB claims make a
     second firing (restart inside the window, extra replica) a harmless no-op."""
-    last = ""
+    last_rem, last_dig = "", ""
     while True:
         await asyncio.sleep(5 * 60)
         now = _company_today()
         today = now.strftime("%Y-%m-%d")
-        if now.weekday() >= 5 or now.hour != REMINDER_HOUR or now.minute >= 30 or last == today:
-            continue
-        last = today
-        from app.core.database import Database
-        db = Database()
+        if now.weekday() < 5 and now.hour == REMINDER_HOUR and now.minute < 30 and last_rem != today:
+            last_rem = today
+            await _run_with_db(send_overdue_reminders, today)
         try:
-            await db.connect()
-            await send_overdue_reminders(db, today)
+            ds = await _digest_settings()
         except Exception as ex:
-            logger.error(f"training reminders failed: {ex}")
-        finally:
-            try:
-                await db.close()
-            except Exception:
-                pass
+            logger.warning(f"training digest: settings unavailable: {ex}")
+            continue
+        if (ds["enabled"] and ds["to"] and now.weekday() == ds["day"] and now.hour == ds["hour"]
+                and now.minute < 30 and last_dig != today):
+            last_dig = today
+            await _run_with_db(send_overdue_digest, today, ds["to"])
 
 
 _reminder_task = None
@@ -506,6 +650,15 @@ async def remind_overdue_now(_actor: dict = Depends(require_access), db: Databas
     """HR: send overdue reminders now. Skips anyone already reminded about that course today,
     so pressing it twice doesn't double-send. Resets their weekly cycle from today."""
     return await send_overdue_reminders(db, _company_today().strftime("%Y-%m-%d"), min_gap_days=1)
+
+
+@router.post("/assign/digest")
+async def email_digest_now(_actor: dict = Depends(require_access), db: Database = Depends(get_db)):
+    """HR: email the overdue digest now to the configured recipients (Email Settings → training)."""
+    ds = await _digest_settings()
+    if not ds["to"]:
+        raise HTTPException(status_code=400, detail="No digest recipients set. Add them in Email Settings → Training emails.")
+    return await send_overdue_digest(db, _company_today().strftime("%Y-%m-%d"), ds["to"], scheduled=False)
 
 
 @router.delete("/assign/{course_id}/{user_id}")

@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  assignTrainingCourses, getAssignablePeople, getTrainingReport, remindOverdueTraining, unassignTrainingCourse,
+  assignTrainingCourses, emailTrainingDigest, getAssignablePeople, getTrainingReport, remindOverdueTraining, unassignTrainingCourse,
   type AssignablePerson, type TrainingReport as Report,
 } from '../lib/api';
 
@@ -187,6 +187,17 @@ export default function TrainingReport() {
     finally { setBusy(''); }
   }
 
+  async function digestNow() {
+    setBusy('digest');
+    try {
+      const res = await emailTrainingDigest();
+      setNote(res.sent
+        ? `Digest emailed to ${(res.to || []).join(', ')}: ${res.overdue} overdue, ${res.due_soon} due in the next 7 days.`
+        : `Couldn't email the digest${res.reason ? ` (${res.reason})` : ''}.`);
+    } catch (e: any) { setNote(`Couldn't email the digest: ${e.message || e}`); }
+    finally { setBusy(''); }
+  }
+
   return (
     <div style={{ padding: '24px 28px', maxWidth: 1100 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap', marginBottom: 18 }}>
@@ -201,6 +212,13 @@ export default function TrainingReport() {
             <input type="checkbox" checked={assignedOnly} onChange={e => setAssignedOnly(e.target.checked)} /> Assigned only
           </label>
           <Link to="/training" style={{ fontSize: 14, fontWeight: 600, color: '#1f4d2b' }}>Open the courses →</Link>
+          {r && (
+            <button type="button" disabled={busy === 'digest'} onClick={digestNow}
+              title="Emails the weekly digest now to the recipients set in Email Settings → Training emails"
+              style={{ ...btn, background: '#fff', color: '#1f4d2b' }}>
+              {busy === 'digest' ? 'Sending…' : '📧 Email digest now'}
+            </button>
+          )}
           {overdueTotal > 0 && (
             <button type="button" disabled={busy === 'remind'} onClick={remindNow}
               title="Overdue reminders also go out automatically on weekday mornings (first weekday after the due date, then weekly)"

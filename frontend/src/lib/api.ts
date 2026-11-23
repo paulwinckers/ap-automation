@@ -2248,7 +2248,7 @@ export interface EmailSettings {
   issues_digest:       { recipients: string; enabled: boolean; hour: number; skip_weekend: boolean };
   project_checkin:     { cc: string; enabled: boolean; hour: number; skip_weekend: boolean };
   daily_reports:       { cc: string; divisions: Record<string, string> };
-  training:            { send_from: string };
+  training:            { send_from: string; digest_to: string; digest_enabled: boolean; digest_day: number; digest_hour: number };
 }
 export async function getEmailSettings(): Promise<EmailSettings> {
   return request('GET', '/settings/email');
@@ -2569,6 +2569,11 @@ export async function assignTrainingCourses(courseIds: string[], userIds: number
 /** HR: send overdue reminders now (skips anyone already reminded today about that course). */
 export async function remindOverdueTraining(): Promise<{ people: number; courses: number }> {
   return request('POST', '/training/assign/remind');
+}
+
+/** HR: email the weekly overdue digest now to the Email Settings recipients. */
+export async function emailTrainingDigest(): Promise<{ sent: boolean; to?: string[]; overdue: number; due_soon: number; reason?: string }> {
+  return request('POST', '/training/assign/digest');
 }
 
 export async function unassignTrainingCourse(courseId: string, userId: number): Promise<{ ok: boolean }> {

@@ -43,7 +43,11 @@ def _defaults() -> dict:
                                 "divisions": dict(_DAILY_REPORT_DIVISION_DEFAULTS)},
         # Mailbox the training emails (course assigned / overdue reminders) are sent FROM.
         # Blank → the app-wide sender (settings.ms_send_from). See api/training.py _Mailer.
-        "training":            {"send_from": "paul@darios.ca"},
+        # digest_*: weekly overdue-training digest to HR (api/training.py send_overdue_digest).
+        # digest_day: 0=Mon … 6=Sun; digest_hour: Pacific, 0-23.
+        "training":            {"send_from": "paul@darios.ca",
+                                "digest_to": "paul@darios.ca", "digest_enabled": True,
+                                "digest_day": 0, "digest_hour": 8},
     }
 
 
@@ -94,6 +98,18 @@ async def save_email_settings(data: dict) -> dict:
     if sf and ("@" not in sf or " " in sf or "," in sf):
         raise ValueError("Training 'send from' must be a single email address (or blank for the default mailbox)")
     merged["training"]["send_from"] = sf
+    t = merged["training"]
+    to = [a.strip().lower() for a in str(t.get("digest_to") or "").split(",") if a.strip()]
+    bad = [a for a in to if "@" not in a or " " in a]
+    if bad:
+        raise ValueError(f"Training digest recipients must be email addresses: {', '.join(bad)}")
+    t["digest_to"] = ", ".join(to)
+    t["digest_enabled"] = bool(t.get("digest_enabled", True))
+    for k, lo, hi, dflt in (("digest_day", 0, 6, 0), ("digest_hour", 0, 23, 8)):
+        try:
+            t[k] = max(lo, min(hi, int(t.get(k, dflt))))
+        except (TypeError, ValueError):
+            t[k] = dflt
     await set_setting(_KEY, json.dumps(merged))
     _cache["data"] = merged
     _cache["ts"] = time.time()

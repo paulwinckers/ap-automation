@@ -61,7 +61,7 @@ export default function EmailSettings() {
     if (!s) return;
     setSaving(true); setMsg('');
     try { const saved = await saveEmailSettings(s); setS(saved); setMsg('✅ Saved. Changes take effect within a minute.'); }
-    catch { setMsg('❌ Could not save — please try again.'); }
+    catch (e: any) { setMsg(`❌ Could not save: ${e?.message || 'please try again.'}`); }
     finally { setSaving(false); setTimeout(() => setMsg(''), 4000); }
   }
 
@@ -124,6 +124,26 @@ export default function EmailSettings() {
           </div>
           <label style={label}>Send from</label>
           <input style={input} value={s.training?.send_from ?? ''} onChange={e => upd('training', { send_from: e.target.value })} placeholder="Blank = default sender (accounting@)" />
+          <div style={{ fontWeight: 700, fontSize: 14, color: '#111827', margin: '18px 0 2px' }}>Weekly overdue digest (HR)</div>
+          <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 10 }}>
+            Who is overdue and what's due in the next 7 days. Skipped on quiet weeks when nothing is overdue or due.
+          </div>
+          <label style={label}>Digest recipients</label>
+          <input style={input} value={s.training?.digest_to ?? ''} onChange={e => upd('training', { digest_to: e.target.value })} placeholder="name@darios.ca, name2@darios.ca" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap', marginTop: 12 }}>
+            <Toggle on={s.training?.digest_enabled ?? true} onChange={v => upd('training', { digest_enabled: v })} label="Enabled" />
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#374151' }}>
+              Every
+              <select style={sel} value={s.training?.digest_day ?? 0} onChange={e => upd('training', { digest_day: Number(e.target.value) })}>
+                {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((d, i) => <option key={d} value={i}>{d}</option>)}
+              </select>
+              at
+              <select style={sel} value={s.training?.digest_hour ?? 8} onChange={e => upd('training', { digest_hour: Number(e.target.value) })}>
+                {HOURS.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
+              </select>
+              <span style={{ color: '#9ca3af', fontSize: 12 }}>Pacific</span>
+            </label>
+          </div>
         </div>
 
         {/* Issues Digest */}
