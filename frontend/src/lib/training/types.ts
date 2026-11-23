@@ -5,7 +5,7 @@
 export interface Video { id: string; url: string; title: string; meta: string; why: string }
 
 export type Block =
-  | { kind: 'videos'; videos: Video[] }
+  | { kind: 'videos'; title?: string; videos: Video[] }
   | { kind: 'text'; title?: string; paragraphs: string[] }
   | { kind: 'list'; title?: string; items: string[] }
   | { kind: 'cards'; title?: string; cards: { title: string; text: string; big?: string }[] }

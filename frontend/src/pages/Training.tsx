@@ -58,6 +58,8 @@ function BlockView({ b }: { b: Block }) {
   switch (b.kind) {
     case 'videos':
       return (
+        <div>
+        {b.title && <h3 style={h3}>{b.title}</h3>}
         <div style={grid}>
           {b.videos.map(v => (
             <a key={v.id} href={v.url} target="_blank" rel="noopener noreferrer" style={{ ...card, padding: 0, overflow: 'hidden', textDecoration: 'none', color: C.fg, display: 'flex', flexDirection: 'column' }}>
@@ -72,6 +74,7 @@ function BlockView({ b }: { b: Block }) {
               </div>
             </a>
           ))}
+        </div>
         </div>
       );
     case 'text':

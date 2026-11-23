@@ -24,6 +24,27 @@ COURSES: dict[str, dict] = {
         "title": "Handling Difficult Customers",
         "modules": ["why", "brain", "last", "empathy", "neighbours", "deescalate", "escalate", "walkaway", "practice"],
     },
+    # Winter safety — one course per winter SWP (frontend src/lib/training/winterSafety.ts)
+    "winter-swp20-driving": {
+        "title": "Winter: Driving & Storm Call-Out (SWP-20)",
+        "modules": ["ready", "conditions", "stranded"],
+    },
+    "winter-swp16-sidewalks": {
+        "title": "Winter: Sidewalk Snow & Ice (SWP-16)",
+        "modules": ["plan", "blower", "shovel", "cold"],
+    },
+    "winter-swp18-plow-trucks": {
+        "title": "Winter: Snow Plowing with Trucks (SWP-18)",
+        "modules": ["pretrip", "plowing", "backing", "fatigue"],
+    },
+    "winter-swp19-skid-steer": {
+        "title": "Winter: Skid-Steer / Bobcat Snow Clearing (SWP-19)",
+        "modules": ["pretrip", "zone", "stability", "attach"],
+    },
+    "winter-swp17-brine": {
+        "title": "Winter: Liquid Brine Application (SWP-17)",
+        "modules": ["when", "mix", "drive", "pressure"],
+    },
 }
 
 
