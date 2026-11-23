@@ -651,6 +651,7 @@ async def lifespan(app: FastAPI):
                 due_date     TEXT,
                 assigned_by  TEXT,
                 assigned_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                last_reminded_at TEXT,
                 PRIMARY KEY (user_id, course_id)
             )
         """,
@@ -829,6 +830,12 @@ async def lifespan(app: FastAPI):
         start_spine_scheduler()
     except Exception as e:
         logger.error(f"Spine scheduler start failed — startup continues: {e}")
+    # Overdue training reminders (weekdays, morning Pacific). See api/training.py
+    try:
+        from app.api.training import start_training_reminders
+        start_training_reminders()
+    except Exception as e:
+        logger.error(f"Training reminder scheduler start failed — startup continues: {e}")
     yield
     # Stop on shutdown
     await email_intake.stop()
@@ -837,6 +844,11 @@ async def lifespan(app: FastAPI):
     stop_backup_scheduler()
     stop_visit_recap_scheduler()
     stop_spine_scheduler()
+    try:
+        from app.api.training import stop_training_reminders
+        stop_training_reminders()
+    except Exception:
+        pass
     # Close the process-wide shared DB backend (httpx client) once, at the end.
     try:
         await close_shared_backend()

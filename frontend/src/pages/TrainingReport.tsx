@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  assignTrainingCourses, getAssignablePeople, getTrainingReport, unassignTrainingCourse,
+  assignTrainingCourses, getAssignablePeople, getTrainingReport, remindOverdueTraining, unassignTrainingCourse,
   type AssignablePerson, type TrainingReport as Report,
 } from '../lib/api';
 
@@ -171,6 +171,21 @@ export default function TrainingReport() {
   }
 
   const today = todayISO();
+  const overdueTotal = r ? r.people.reduce((n, p) => n + Object.values(p.courses)
+    .filter(s => s.assigned && !s.finished_at && !!s.due_date && s.due_date < today).length, 0) : 0;
+
+  async function remindNow() {
+    if (!window.confirm(`Send a reminder now to everyone with an overdue course (${overdueTotal} overdue)? Anyone already reminded today is skipped.`)) return;
+    setBusy('remind');
+    try {
+      const res = await remindOverdueTraining();
+      setNote(res.people
+        ? `Reminded ${res.people} ${res.people === 1 ? 'person' : 'people'} about ${res.courses} overdue course${res.courses === 1 ? '' : 's'} by push and email.`
+        : 'No one to remind: everyone overdue was already reminded today.');
+      await load();
+    } catch (e: any) { setNote(`Couldn't send reminders: ${e.message || e}`); }
+    finally { setBusy(''); }
+  }
 
   return (
     <div style={{ padding: '24px 28px', maxWidth: 1100 }}>
@@ -178,7 +193,7 @@ export default function TrainingReport() {
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, color: '#111827' }}>Training</h1>
           <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: 14 }}>
-            Who each course is assigned to, and who has finished it.
+            Who each course is assigned to, and who has finished it. Overdue courses get an automatic reminder on weekday mornings, then weekly.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -186,6 +201,13 @@ export default function TrainingReport() {
             <input type="checkbox" checked={assignedOnly} onChange={e => setAssignedOnly(e.target.checked)} /> Assigned only
           </label>
           <Link to="/training" style={{ fontSize: 14, fontWeight: 600, color: '#1f4d2b' }}>Open the courses →</Link>
+          {overdueTotal > 0 && (
+            <button type="button" disabled={busy === 'remind'} onClick={remindNow}
+              title="Overdue reminders also go out automatically on weekday mornings (first weekday after the due date, then weekly)"
+              style={{ ...btn, background: '#fff', color: '#991b1b', borderColor: '#fca5a5' }}>
+              {busy === 'remind' ? 'Sending…' : `🔔 Remind overdue now (${overdueTotal})`}
+            </button>
+          )}
           {r && !open && <button type="button" style={btn} onClick={() => { setOpen(true); setNote(''); }}>+ Assign courses</button>}
         </div>
       </div>
@@ -247,6 +269,9 @@ export default function TrainingReport() {
                                 <button type="button" title="Remove assignment" disabled={busy === `${c.id}:${p.user_id}`}
                                   onClick={() => remove(c.id, p.user_id, p.name, c.title)}
                                   style={{ ...small, padding: '0 6px', color: '#6b7280' }}>✕</button>
+                                {late && s.last_reminded_at && (
+                                  <span style={{ fontSize: 12, color: '#6b7280' }}>reminded {dueLabel(s.last_reminded_at)}</span>
+                                )}
                               </span>
                             ) : <span style={{ color: '#9ca3af' }}>—</span>}
                           </td>

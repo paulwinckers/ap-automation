@@ -2544,7 +2544,7 @@ export interface TrainingReport {
   courses: { id: string; title: string; modules: number }[];
   people: {
     user_id: number; name: string; email: string; training_only: boolean;
-    courses: Record<string, { done: number; total: number; last_at: string | null; finished_at: string | null; assigned: boolean; due_date: string | null }>;
+    courses: Record<string, { done: number; total: number; last_at: string | null; finished_at: string | null; assigned: boolean; due_date: string | null; last_reminded_at?: string | null }>;
   }[];
 }
 
@@ -2563,6 +2563,11 @@ export async function getAssignablePeople(): Promise<{ people: AssignablePerson[
 export async function assignTrainingCourses(courseIds: string[], userIds: number[], dueDate: string, notify = true):
   Promise<{ assigned: number; new: number; notified: number }> {
   return request('POST', '/training/assign', { course_ids: courseIds, user_ids: userIds, due_date: dueDate || null, notify });
+}
+
+/** HR: send overdue reminders now (skips anyone already reminded today about that course). */
+export async function remindOverdueTraining(): Promise<{ people: number; courses: number }> {
+  return request('POST', '/training/assign/remind');
 }
 
 export async function unassignTrainingCourse(courseId: string, userId: number): Promise<{ ok: boolean }> {
