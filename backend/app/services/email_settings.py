@@ -41,6 +41,9 @@ def _defaults() -> dict:
                                 "enabled": True, "hour": 6, "skip_weekend": True},
         "daily_reports":       {"cc": "paul@darios.ca",
                                 "divisions": dict(_DAILY_REPORT_DIVISION_DEFAULTS)},
+        # Mailbox the training emails (course assigned / overdue reminders) are sent FROM.
+        # Blank → the app-wide sender (settings.ms_send_from). See api/training.py _Mailer.
+        "training":            {"send_from": "paul@darios.ca"},
     }
 
 
@@ -87,6 +90,10 @@ async def save_email_settings(data: dict) -> dict:
             merged[key]["hour"] = _defaults()[key]["hour"]
         merged[key]["enabled"] = bool(merged[key].get("enabled", True))
         merged[key]["skip_weekend"] = bool(merged[key].get("skip_weekend", True))
+    sf = str(merged["training"].get("send_from") or "").strip().lower()
+    if sf and ("@" not in sf or " " in sf or "," in sf):
+        raise ValueError("Training 'send from' must be a single email address (or blank for the default mailbox)")
+    merged["training"]["send_from"] = sf
     await set_setting(_KEY, json.dumps(merged))
     _cache["data"] = merged
     _cache["ts"] = time.time()

@@ -115,6 +115,17 @@ export default function EmailSettings() {
           <input style={input} value={s.vehicle_inspection.recipients} onChange={e => upd('vehicle_inspection', { recipients: e.target.value })} placeholder="name@darios.ca" />
         </div>
 
+        {/* Training */}
+        <div style={card}>
+          <div style={{ fontWeight: 800, fontSize: 15, color: '#111827', marginBottom: 2 }}>🎓 Training emails</div>
+          <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12 }}>
+            "New training assigned" and overdue reminders go to each person. Replies come back to this mailbox.
+            If it can't send from this address, it falls back to the default sender so the email still arrives.
+          </div>
+          <label style={label}>Send from</label>
+          <input style={input} value={s.training?.send_from ?? ''} onChange={e => upd('training', { send_from: e.target.value })} placeholder="Blank = default sender (accounting@)" />
+        </div>
+
         {/* Issues Digest */}
         <div style={card}>
           <div style={{ fontWeight: 800, fontSize: 15, color: '#111827', marginBottom: 2 }}>💬 Issues Digest</div>

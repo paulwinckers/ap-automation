@@ -268,12 +268,30 @@ async def _notify_assigned(new_by_user: dict, due: Optional[str], by: str) -> No
 
 class _Mailer:
     """Sends one person a push (to their subscribed devices) and an email (if they have an address).
-    Never raises — failures are logged. One Graph client is reused across a batch."""
+    Never raises — failures are logged. One Graph client is reused across a batch.
+
+    Email goes FROM the training sender in Email Settings (training.send_from, default
+    paul@darios.ca). If Graph refuses that mailbox (e.g. the app's Mail.Send is scoped to the AP
+    mailbox only), the same email is retried from the app-wide sender so it still arrives."""
 
     def __init__(self):
         from app.core.config import settings
-        self.sender = getattr(settings, "ms_send_from", "") or ""
+        self.default_sender = getattr(settings, "ms_send_from", "") or ""
+        self.sender = self.default_sender
+        self._resolved = False
         self.graph = None
+
+    async def _resolve_sender(self):
+        if self._resolved:
+            return
+        self._resolved = True
+        try:
+            from app.services.email_settings import get_email_settings
+            sf = ((await get_email_settings()).get("training") or {}).get("send_from") or ""
+            if sf.strip():
+                self.sender = sf.strip()
+        except Exception as ex:
+            logger.warning(f"training notify: couldn't read training sender, using default: {ex}")
 
     async def deliver(self, u: dict, push_title: str, push_body: str, subject: str, body_html: str) -> dict:
         from app.api import push as push_mod
@@ -284,16 +302,30 @@ class _Mailer:
         except Exception as ex:
             logger.warning(f"training notify: push to user {u['id']} failed: {ex}")
         email = (u.get("email") or "").strip()
+        await self._resolve_sender()
         if "@" in email and self.sender:
+            if self.graph is None:
+                from app.services import email_intake
+                self.graph = email_intake.GraphClient()
             try:
-                if self.graph is None:
-                    from app.services import email_intake
-                    self.graph = email_intake.GraphClient()
                 await self.graph.send_email(mailbox=self.sender, to_addresses=[email],
                                             subject=subject, body_html=body_html)
                 out["email"] = True
+                out["from"] = self.sender
             except Exception as ex:
-                logger.warning(f"training notify: email to user {u['id']} failed: {ex}")
+                fallback = self.default_sender
+                if fallback and fallback.lower() != self.sender.lower():
+                    logger.warning(f"training notify: sending as {self.sender} failed ({ex}); "
+                                   f"retrying from {fallback}")
+                    try:
+                        await self.graph.send_email(mailbox=fallback, to_addresses=[email],
+                                                    subject=subject, body_html=body_html)
+                        out["email"] = True
+                        out["from"] = fallback
+                    except Exception as ex2:
+                        logger.warning(f"training notify: email to user {u['id']} failed: {ex2}")
+                else:
+                    logger.warning(f"training notify: email to user {u['id']} failed: {ex}")
         return out
 
 

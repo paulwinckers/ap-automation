@@ -2248,6 +2248,7 @@ export interface EmailSettings {
   issues_digest:       { recipients: string; enabled: boolean; hour: number; skip_weekend: boolean };
   project_checkin:     { cc: string; enabled: boolean; hour: number; skip_weekend: boolean };
   daily_reports:       { cc: string; divisions: Record<string, string> };
+  training:            { send_from: string };
 }
 export async function getEmailSettings(): Promise<EmailSettings> {
   return request('GET', '/settings/email');
