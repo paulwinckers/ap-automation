@@ -405,7 +405,9 @@ export default function ConstructionBoard() {
   );
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', padding: 20 }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f8fafc', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', overflow: 'hidden' }}>
+      {/* Pinned top pane — header controls + revenue strip stay in view while the schedule scrolls below */}
+      <div style={{ flexShrink: 0, padding: '20px 20px 12px', borderBottom: '1px solid #e5e7eb', boxShadow: '0 2px 6px rgba(15,23,42,0.04)', zIndex: 5 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <div style={{ flex: 1, minWidth: 200 }}>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#0f172a' }}>📅 Construction Weekly Schedule</h1>
@@ -431,8 +433,11 @@ export default function ConstructionBoard() {
 
       <RevenueStrip />
 
-      {err && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '10px 14px', color: '#991b1b', marginBottom: 14 }}>{err}</div>}
+      {err && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '10px 14px', color: '#991b1b', marginBottom: 0 }}>{err}</div>}
+      </div>{/* end pinned top pane */}
 
+      {/* Scrolling schedule pane */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '14px 20px 20px' }}>
       {week && (
         <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
           {backlogOpen && (
@@ -487,6 +492,7 @@ export default function ConstructionBoard() {
           </div>
         </div>
       )}
+      </div>{/* end scrolling schedule pane */}
 
       {ctx && (
         <div style={{ position: 'fixed', top: ctx.y, left: ctx.x, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 1200, minWidth: 210, maxHeight: '70vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
