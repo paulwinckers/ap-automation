@@ -101,6 +101,9 @@ export default function ConstructionBoard() {
   const [backlogOpen, setBacklogOpen] = useState(() => { try { return window.innerWidth >= 768; } catch { return true; } });
   const [cascade, setCascade] = useState<{ extended: ScheduleBlock; delta: number; affected: ScheduleBlock[] } | null>(null);
   const [conflict, setConflict] = useState<{ block: ScheduleBlock; conflicts: ScheduleBlock[] } | null>(null);
+  // Multi-select: pick many (crew|day) cells, then bulk add-label or clear.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   async function load(s?: string, w?: number) {
     setLoading(true); setErr('');
@@ -340,6 +343,64 @@ export default function ConstructionBoard() {
   }
   async function removeLabel(id: number) { setBusy(true); try { await deleteLabel(id); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
 
+  // ── Multi-select (bulk) ─────────────────────────────────────────────────────
+  const splitKey = (k: string): [string, string] => { const i = k.indexOf('|'); return [k.slice(0, i), k.slice(i + 1)]; };
+  function toggleCells(keys: string[]) {
+    setSelected(prev => {
+      const n = new Set(prev);
+      const allOn = keys.length > 0 && keys.every(k => n.has(k));
+      for (const k of keys) { if (allOn) n.delete(k); else n.add(k); }
+      return n;
+    });
+  }
+  function exitSelect() { setSelectMode(false); setSelected(new Set()); }
+
+  async function bulkAddLabel() {
+    if (!selected.size) return;
+    const text = window.prompt(`Label for ${selected.size} selected cell(s) (e.g. Away, Shop, Vacation):`);
+    if (!text || !text.trim()) return;
+    const lab = text.trim();
+    setBusy(true);
+    try {
+      for (const key of selected) {
+        const [row, day] = splitKey(key);
+        // Skip a cell that already has this exact label, so re-applying doesn't duplicate.
+        if (labels.some(l => l.lead_name === row && l.work_date === day && (l.job_label || '') === lab)) continue;
+        await createLabel({ work_date: day, lead_name: row, job_label: lab });
+      }
+      await reloadKeepBacklog();
+      setSelected(new Set());
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+
+  async function bulkRemove() {
+    if (!selected.size) return;
+    if (!window.confirm(`Clear ${selected.size} selected cell(s)? This removes crew from jobs on those days and deletes any labels there. A job left with no scheduled days returns to Unscheduled.`)) return;
+    setBusy(true);
+    try {
+      // Labels in the selected cells.
+      const labelIds: number[] = [];
+      for (const key of selected) { const [row, day] = splitKey(key); for (const l of labels) if (l.lead_name === row && l.work_date === day) labelIds.push(l.id); }
+      // Job occupancy: batch per block (one update per affected block; delete if emptied).
+      for (const b of blocks) {
+        const sel = [...occupiedCells(b)].filter(k => selected.has(k));
+        if (!sel.length) continue;
+        const addSet = new Set(b.additions || []);
+        const newAdditions = (b.additions || []).filter(k => !selected.has(k));
+        const coreSelected = sel.filter(k => !addSet.has(k));
+        const ex = Array.from(new Set([...(b.exceptions || []), ...coreSelected]));
+        const cells = new Set<string>();
+        for (const e of (b.employees || [])) for (const d of (b.dates || [])) cells.add(`${e}|${d}`);
+        const coreRemaining = [...cells].filter(c => !ex.includes(c)).length;
+        if (coreRemaining + newAdditions.length <= 0) await deleteBlock(b.id);
+        else await updateBlock(b.id, { exceptions: ex, additions: newAdditions });
+      }
+      for (const id of labelIds) await deleteLabel(id);
+      await reloadKeepBacklog();
+      exitSelect();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+
   const renderGrid = (slice: string[], widx: number) => (
     <div key={widx} style={{ marginBottom: 10, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden' }}>
       <div style={{ padding: '4px 12px', background: '#f1f5f9', fontSize: 11.5, fontWeight: 800, color: NAVY }}>
@@ -349,7 +410,10 @@ export default function ConstructionBoard() {
         <div style={{ display: 'grid', gridTemplateColumns: `130px repeat(6, minmax(120px, 1fr))`, minWidth: 900 }}>
           <div style={{ ...hcell, borderLeft: 'none' }} />
           {slice.map((d, i) => (
-            <div key={d} style={{ ...hcell, background: i === 4 ? '#f1f5f9' : '#f8fafc' }}>
+            <div key={d}
+              onClick={selectMode ? () => toggleCells(crewOptions.map(r => `${r}|${d}`)) : undefined}
+              title={selectMode ? 'Select / clear this whole day (all crew)' : undefined}
+              style={{ ...hcell, background: i === 4 ? '#f1f5f9' : '#f8fafc', cursor: selectMode ? 'pointer' : undefined }}>
               <div style={{ fontWeight: 800 }}>{DOW[i]}{i === 4 ? ' *' : ''}</div>
               <div style={{ fontSize: 11, color: '#6b7280' }}>{fmtDay(d)}</div>
             </div>
@@ -357,17 +421,25 @@ export default function ConstructionBoard() {
           {crewOptions.length === 0 && <div style={{ gridColumn: '1 / -1', padding: 16, color: '#9ca3af', fontSize: 13 }}>No crew — add some with 👷 Crew.</div>}
           {crewOptions.map(row => (
             <div key={row} style={{ display: 'contents' }}>
-              <div style={lcell}>{row}</div>
+              <div
+                onClick={selectMode ? () => toggleCells(slice.map(d => `${row}|${d}`)) : undefined}
+                title={selectMode ? `Select / clear ${row} for this week` : undefined}
+                style={{ ...lcell, cursor: selectMode ? 'pointer' : undefined }}>{row}</div>
               {slice.map(day => {
                 const key = `${row}|${day}`;
                 const here = blocks.filter(b => cellHas(b, row, day));
                 const labelsHere = labels.filter(l => l.lead_name === row && l.work_date === day);
                 return (
                   <div key={key}
-                    onDragOver={e => { e.preventDefault(); if (dragOver !== key) setDragOver(key); }}
-                    onDragLeave={() => setDragOver(o => o === key ? '' : o)}
-                    onDrop={() => { const j = drag.current; drag.current = null; setDragOver(''); if (j) openCreate(j, day, row); }}
-                    style={{ ...dcell, background: dragOver === key ? '#eff6ff' : '#fff', outline: dragOver === key ? `2px dashed ${NAVY}` : 'none' }}>
+                    onDragOver={e => { if (selectMode) return; e.preventDefault(); if (dragOver !== key) setDragOver(key); }}
+                    onDragLeave={() => { if (selectMode) return; setDragOver(o => o === key ? '' : o); }}
+                    onDrop={() => { if (selectMode) return; const j = drag.current; drag.current = null; setDragOver(''); if (j) openCreate(j, day, row); }}
+                    onClick={selectMode ? () => toggleCells([key]) : undefined}
+                    style={{ ...dcell, cursor: selectMode ? 'pointer' : undefined,
+                             background: selected.has(key) ? '#dbeafe' : dragOver === key ? '#eff6ff' : '#fff',
+                             outline: selected.has(key) ? `2px solid ${NAVY}` : dragOver === key ? `2px dashed ${NAVY}` : 'none',
+                             outlineOffset: -2 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, pointerEvents: selectMode ? 'none' : undefined }}>
                     {here.map(b => {
                       const c = blockColor(b.id);
                       const isStart = b.dates[0] === day;
@@ -394,6 +466,7 @@ export default function ConstructionBoard() {
                       </div>
                     ))}
                     <button onClick={() => addLabel(row, day)} title="Add a label" style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: 0, alignSelf: 'flex-start' }}>+</button>
+                    </div>
                   </div>
                 );
               })}
@@ -417,6 +490,11 @@ export default function ConstructionBoard() {
           📥 Unscheduled ({backlog.length})
         </button>
         <button onClick={() => setShowCrew(true)} style={navBtn}>👷 Crew</button>
+        <button onClick={() => selectMode ? exitSelect() : setSelectMode(true)}
+          title="Multi-select cells to bulk-label or clear"
+          style={{ ...navBtn, background: selectMode ? '#dbeafe' : '#fff', borderColor: selectMode ? NAVY : '#e5e7eb', color: selectMode ? NAVY : '#374151' }}>
+          {selectMode ? '✓ Selecting' : '☑ Select cells'}
+        </button>
         <Link to="/dashboards/construction/plan" style={{ textDecoration: 'none', padding: '8px 16px', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', color: '#374151', fontWeight: 700, fontSize: 13 }}>📋 Monthly Plan</Link>
         <select value={weeks} onChange={e => { const w = Number(e.target.value); setWeeks(w); load(start, w); }}
           style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, fontWeight: 700, background: '#fff' }}>
@@ -430,6 +508,18 @@ export default function ConstructionBoard() {
           <button onClick={() => load(undefined)} style={{ ...navBtn, fontSize: 11, padding: '6px 12px' }}>Today</button>
         </div>
       </div>
+
+      {selectMode && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14, padding: '10px 14px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10 }}>
+          <span style={{ fontWeight: 800, color: NAVY, fontSize: 13 }}>{selected.size} cell{selected.size === 1 ? '' : 's'} selected</span>
+          <span style={{ fontSize: 12, color: '#6b7280' }}>Click cells, a crew name (whole week), or a day header (whole column).</span>
+          <div style={{ flex: 1 }} />
+          <button onClick={bulkAddLabel} disabled={!selected.size || busy} style={{ ...navBtn, opacity: (!selected.size || busy) ? 0.5 : 1 }}>🏷 Add label to {selected.size}…</button>
+          <button onClick={bulkRemove} disabled={!selected.size || busy} style={{ ...navBtn, color: '#b91c1c', borderColor: '#fecaca', opacity: (!selected.size || busy) ? 0.5 : 1 }}>🗑 Remove {selected.size} from schedule</button>
+          <button onClick={() => setSelected(new Set())} disabled={!selected.size} style={{ ...navBtn, opacity: !selected.size ? 0.5 : 1 }}>Clear</button>
+          <button onClick={exitSelect} style={navBtn}>Done</button>
+        </div>
+      )}
 
       <RevenueStrip />
 
