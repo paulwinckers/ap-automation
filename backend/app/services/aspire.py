@@ -571,6 +571,7 @@ class AspireClient:
             "StartDate", "EndDate", "CompleteDate", "WonDate",
             "SalesRepContactName", "OperationsManagerContactName",
             "PropertyName", "BranchName",
+            "BillingCompanyName",
         ])
         # Filter to the Construction division SERVER-SIDE. Previously this pulled
         # the newest 1000 opps across ALL divisions and filtered in Python — but

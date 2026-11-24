@@ -768,6 +768,7 @@ async def pipeline(months: int = Query(6), include_backlog: bool = Query(True),
             "pct_complete": round(float(o.get("PercentComplete") or 0) * 100, 1) if o else None,
             "job_status": o.get("JobStatusName") if o else None,
             "sales_rep": o.get("SalesRepContactName") if o else None,
+            "customer": (o.get("BillingCompanyName") or None) if o else None,
             "note": " | ".join(g["notes"]) or None,
         })
 
@@ -797,6 +798,7 @@ async def pipeline(months: int = Query(6), include_backlog: bool = Query(True),
                 "pct_complete": round(float(o.get("PercentComplete") or 0) * 100, 1) if o else None,
                 "job_status": o.get("JobStatusName") if o else None,
                 "sales_rep": o.get("SalesRepContactName") if o else None,
+            "customer": (o.get("BillingCompanyName") or None) if o else None,
                 "note": None,
             })
 
