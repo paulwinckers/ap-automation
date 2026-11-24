@@ -890,7 +890,7 @@ function MonthRevenueWidget() {
       <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#6b7280' }}>
         <span>{data?.job_count || 0} job{(data?.job_count || 0) === 1 ? '' : 's'}</span>
         {data && data.missing_value > 0 && (
-          <span title="These jobs have no $ on their Aspire opportunity, so they add hours but $0 revenue" style={{ color: '#b45309', fontWeight: 600 }}>· {data.missing_value} without a value</span>
+          <span title="These jobs have no contract $ or no estimate hours on their Aspire opportunity, so they add crew hours but $0 revenue" style={{ color: '#b45309', fontWeight: 600 }}>· {data.missing_value} without a value</span>
         )}
         {jobs.length > 0 && (
           <button onClick={() => setOpen(o => !o)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: NAVY, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
@@ -907,7 +907,7 @@ function MonthRevenueWidget() {
           {jobs.map((j, i) => (
             <div key={(j.opportunity_id ?? 'x') + '-' + i} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '3px 0', fontSize: 12 }}>
               <span style={{ flex: 1, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.job_label || ''}>{j.job_label || '(unnamed)'}</span>
-              <span style={{ color: '#9ca3af', fontSize: 10, flexShrink: 0 }}>{j.days_in_month}/{j.total_days}d · {Math.round(j.hours)}h</span>
+              <span style={{ color: '#9ca3af', fontSize: 10, flexShrink: 0 }}>{Math.round(j.hours)}h{j.estimate_hours ? ` of ${Math.round(j.estimate_hours)}h` : ''}</span>
               <span style={{ fontWeight: 700, color: j.total_value == null ? '#b45309' : NAVY, flexShrink: 0, minWidth: 58, textAlign: 'right' }}>
                 {j.total_value == null ? 'no $' : money0(j.revenue)}
               </span>

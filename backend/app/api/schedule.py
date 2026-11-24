@@ -409,53 +409,87 @@ async def get_week(start: Optional[str] = Query(None), weeks: int = Query(1)):
 
 # ── Scheduled revenue (monthly) ───────────────────────────────────────────────
 
-_opp_dollars_cache: Optional[tuple[dict, float]] = None
-_OPP_DOLLARS_TTL = 300  # 5 min — month-toggling the widget shouldn't re-hit Aspire
+_opp_values_cache: Optional[tuple[dict, float]] = None
+_OPP_VALUES_TTL = 300  # 5 min — month-toggling the widget shouldn't re-hit Aspire
 
 
-async def _opp_dollars() -> dict:
-    """Map opportunity_id → job $ value (WonDollars, else EstimatedDollars),
-    cached briefly. Serves the stale map on an Aspire failure rather than zeros."""
-    global _opp_dollars_cache
+def _pos(x) -> Optional[float]:
+    """Parse to a positive float, else None (treats 0 / blank / non-numeric as absent)."""
+    try:
+        v = float(x)
+        return v if v > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+async def _opp_values() -> dict:
+    """Map opportunity_id → {"dollars": contract $, "est_hours": estimated labour hours}.
+    Dollars = WonDollars (won contract), else EstimatedDollars. Hours = EstimatedLaborHours.
+    Cached briefly; serves the stale map on an Aspire failure rather than zeros."""
+    global _opp_values_cache
     import time as _t
-    if _opp_dollars_cache and (_t.time() - _opp_dollars_cache[1]) < _OPP_DOLLARS_TTL:
-        return _opp_dollars_cache[0]
-    dollars: dict = {}
+    if _opp_values_cache and (_t.time() - _opp_values_cache[1]) < _OPP_VALUES_TTL:
+        return _opp_values_cache[0]
+    out: dict = {}
     try:
         opps = await _aspire.get_construction_opportunities(year=date.today().year)
         for o in opps:
             oid = o.get("OpportunityID")
             if oid is None:
                 continue
-            val = None
-            for cand in (o.get("WonDollars"), o.get("EstimatedDollars")):
-                try:
-                    if cand is not None and float(cand) > 0:
-                        val = float(cand)
-                        break
-                except (TypeError, ValueError):
-                    pass
-            dollars[oid] = val
+            out[oid] = {
+                "dollars": _pos(o.get("WonDollars")) or _pos(o.get("EstimatedDollars")),
+                "est_hours": _pos(o.get("EstimatedLaborHours")),
+            }
     except Exception as e:
-        logger.warning(f"revenue: opp $ fetch failed: {e}")
-        if _opp_dollars_cache:
-            return _opp_dollars_cache[0]  # serve stale on failure
-    _opp_dollars_cache = (dollars, _t.time())
-    return dollars
+        logger.warning(f"revenue: opp values fetch failed: {e}")
+        if _opp_values_cache:
+            return _opp_values_cache[0]  # serve stale on failure
+    _opp_values_cache = (out, _t.time())
+    return out
+
+
+def _block_hours(b: dict, month_key: Optional[str] = None) -> float:
+    """Scheduled labour hours for a block. With `month_key`, only the hours booked on
+    that month's days; otherwise the block's whole-span scheduled hours. Hours =
+    person-day cells (core crew on span days minus per-day exceptions) + one-day
+    additions, × hours/day — the same cell math the board uses for capacity, so crew
+    size, holds, per-day removals and add-ons are all reflected."""
+    dates = b.get("dates") or []
+    if month_key is not None:
+        dates = [d for d in dates if (d or "")[:7] == month_key]
+    if not dates:
+        return 0.0
+    dset = set(dates)
+    emps = b.get("employees") or []
+    ex = set(b.get("exceptions") or [])
+    hpd = float(b.get("hours_per_day") or DEFAULT_HOURS_PER_DAY) or DEFAULT_HOURS_PER_DAY
+    cells = sum(1 for e in emps for d in dates if f"{e}|{d}" not in ex)
+    for a in (b.get("additions") or []):
+        parts = (a or "").rsplit("|", 1)
+        if len(parts) == 2 and parts[1] in dset:
+            cells += 1
+    return cells * hpd
 
 
 @router.get("/revenue")
 async def scheduled_revenue(month: Optional[str] = Query(None)):
-    """Revenue scheduled in a calendar month, pro-rated by each job's share of its
-    scheduled days that land in the month:
+    """Revenue + crew hours scheduled in a calendar month.
 
-        job revenue = job $ × (job days in month ÷ job total scheduled days)
+    Revenue is pro-rated by LABOUR HOURS (crew-size aware — a 3-crew day earns more
+    than a 1-crew day, unlike a day count), aggregated per job:
 
-    Job $ = Aspire WonDollars (the won contract value), falling back to
-    EstimatedDollars. A block's "scheduled days" are its full working-day span
-    (holds/pauses already removed). Blocks with no linked opportunity, or an
-    opportunity with no $ on file, contribute 0 and are counted in `missing_value`
-    so the number is never silently understated without a flag.
+        job revenue = job $ × (hours scheduled in the month ÷ job's total estimate hours)
+
+    Job $ = Aspire WonDollars (won contract), else EstimatedDollars. Estimate hours =
+    Aspire EstimatedLaborHours, falling back to the job's total scheduled hours when
+    Aspire has none. Jobs are aggregated by opportunity, so a job split across several
+    blocks counts its contract once. Blocks with no linked opportunity, or a job with
+    no $ / no estimate hours, contribute 0 revenue and are counted in `missing_value`
+    (they still count toward crew hours). NOTE: because the denominator is the ESTIMATE,
+    a job scheduled for fewer/more hours than estimated earns proportionally less/more
+    than its full contract across its months — this intentionally surfaces under/over-
+    scheduling rather than always summing to 100% of contract.
     """
     try:
         ym = datetime.strptime(month[:7], "%Y-%m") if month else datetime.today()
@@ -465,56 +499,54 @@ async def scheduled_revenue(month: Optional[str] = Query(None)):
 
     db = await _db()
     all_rows = await db._q("SELECT * FROM schedule_blocks ORDER BY start_date, id", [])
-    dollars = await _opp_dollars()
+    values = await _opp_values()
+
+    # Aggregate by job: an opportunity (all its blocks together) or a single manual
+    # block with no opportunity. sched_hours spans ALL the job's blocks (needed for
+    # the estimate-hours fallback); month_hours is just this month's.
+    agg: dict = {}
+    for r in all_rows:
+        b = _shape_block(_row(r))
+        if not _is_effective(b):
+            continue
+        oid = b.get("opportunity_id")
+        key = ("opp", oid) if oid is not None else ("blk", b["id"])
+        g = agg.get(key)
+        if g is None:
+            g = {"opportunity_id": oid, "job_label": b.get("job_label"),
+                 "month_hours": 0.0, "sched_hours": 0.0}
+            agg[key] = g
+        g["month_hours"] += _block_hours(b, month_key)
+        g["sched_hours"] += _block_hours(b, None)
+        if not g["job_label"] and b.get("job_label"):
+            g["job_label"] = b.get("job_label")
 
     jobs = []
     total_rev = 0.0
     total_hours = 0.0
     missing = 0
-    for r in all_rows:
-        b = _shape_block(_row(r))
-        if not _is_effective(b):
-            continue
-        dates = b.get("dates") or []
-        total = len(dates)
-        if total == 0:
-            continue
-        month_dates = [d for d in dates if (d or "")[:7] == month_key]
-        in_month = len(month_dates)
-        if in_month == 0:
-            continue
-
-        # Scheduled labour hours that land in the month = person-day cells on the
-        # month's span days (minus per-day exceptions) + one-day additions dated in
-        # the month, × hours/day. Same cell math the board uses for capacity.
-        emps = b.get("employees") or []
-        ex = set(b.get("exceptions") or [])
-        hpd = float(b.get("hours_per_day") or DEFAULT_HOURS_PER_DAY) or DEFAULT_HOURS_PER_DAY
-        month_set = set(month_dates)
-        cells = sum(1 for e in emps for d in month_dates if f"{e}|{d}" not in ex)
-        for a in (b.get("additions") or []):
-            parts = (a or "").rsplit("|", 1)
-            if len(parts) == 2 and parts[1] in month_set:
-                cells += 1
-        month_hours = cells * hpd
+    for g in agg.values():
+        month_hours = g["month_hours"]
+        if month_hours <= 0:
+            continue  # job has no work booked in this month
         total_hours += month_hours
-
-        oid = b.get("opportunity_id")
-        val = dollars.get(oid) if oid is not None else None
-        if not val:
+        oid = g["opportunity_id"]
+        v = values.get(oid) if oid is not None else None
+        val = v.get("dollars") if v else None
+        est_hours = (v.get("est_hours") if v else None) or g["sched_hours"] or None
+        if not val or not est_hours:
             missing += 1
-        rev = (val or 0.0) * (in_month / total)
-        total_rev += rev
+            revenue = 0.0
+        else:
+            revenue = val * (month_hours / est_hours)
+        total_rev += revenue
         jobs.append({
             "opportunity_id": oid,
-            "job_label": b.get("job_label"),
+            "job_label": g["job_label"],
             "total_value": val,
-            "total_days": total,
-            "days_in_month": in_month,
-            "revenue": round(rev, 2),
+            "estimate_hours": round(est_hours, 1) if est_hours else None,
             "hours": round(month_hours, 1),
-            "start_date": b.get("start_date"),
-            "end_date": b.get("end_date"),
+            "revenue": round(revenue, 2),
         })
     jobs.sort(key=lambda j: j["revenue"], reverse=True)
     return {

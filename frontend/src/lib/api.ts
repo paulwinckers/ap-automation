@@ -2106,8 +2106,8 @@ export async function getScheduleWeek(start?: string, weeks = 1): Promise<Schedu
 }
 export interface ScheduledRevenueJob {
   opportunity_id: number | null; job_label: string | null;
-  total_value: number | null; total_days: number; days_in_month: number;
-  revenue: number; hours: number; start_date: string | null; end_date: string | null;
+  total_value: number | null; estimate_hours: number | null;
+  hours: number; revenue: number;
 }
 export interface ScheduledRevenue {
   month: string; total_revenue: number; total_hours: number;
