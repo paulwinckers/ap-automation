@@ -2111,6 +2111,8 @@ export interface ScheduledRevenueJob {
 }
 export interface ScheduledRevenue {
   month: string; total_revenue: number; total_hours: number;
+  available_hours: number; capacity_crew: number; working_days: number;
+  off_crew_days: number; hours_per_day: number; utilization_pct: number | null;
   jobs: ScheduledRevenueJob[]; job_count: number; missing_value: number;
 }
 export async function getScheduledRevenue(month: string): Promise<ScheduledRevenue> {

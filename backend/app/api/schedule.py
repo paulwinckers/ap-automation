@@ -549,10 +549,51 @@ async def scheduled_revenue(month: Optional[str] = Query(None)):
             "revenue": round(revenue, 2),
         })
     jobs.sort(key=lambda j: j["revenue"], reverse=True)
+
+    # ── Capacity: crew-hours available to schedule this month ────────────────────
+    # Baseline = active crew (excluding Dustin) × the month's Mon–Thu working days ×
+    # the standard 10 h/day, minus any day a crew member is marked OFF with a label
+    # (Away/Shop/Vacation…). Mon–Thu matches the scheduler's default work week and the
+    # same 10 h/day that total_hours is built from, so total_hours ÷ available reads as
+    # utilisation. Fridays are overflow (not part of the baseline), so Friday work can
+    # push utilisation past 100% — intentional, it surfaces dipping into Fridays.
+    import calendar as _cal
+    ndays = _cal.monthrange(ym.year, ym.month)[1]
+    work_day_iso = {date(ym.year, ym.month, d).isoformat()
+                    for d in range(1, ndays + 1)
+                    if date(ym.year, ym.month, d).weekday() <= 3}  # Mon–Thu
+    try:
+        crew_rows = await _active_crew(db)
+    except Exception:
+        crew_rows = []
+    cap_names = {c["name"] for c in crew_rows
+                 if (c["name"] or "").strip().lower().split(" ")[0] != "dustin"}
+
+    off_days = 0
+    if cap_names and work_day_iso:
+        lab_rows = await db._q(
+            "SELECT DISTINCT lead_name, work_date FROM schedule_assignments "
+            "WHERE work_date >= ? AND work_date <= ?",
+            [f"{month_key}-01", f"{month_key}-{ndays:02d}"])
+        for r in lab_rows:
+            rr = _row(r)
+            if rr.get("lead_name") in cap_names and (rr.get("work_date") or "")[:10] in work_day_iso:
+                off_days += 1
+
+    cap_crew = len(cap_names)
+    avail_crew_days = max(0, cap_crew * len(work_day_iso) - off_days)
+    available_hours = avail_crew_days * DEFAULT_HOURS_PER_DAY
+
     return {
         "month": month_key,
         "total_revenue": round(total_rev, 2),
         "total_hours": round(total_hours, 1),
+        "available_hours": round(available_hours, 1),
+        "capacity_crew": cap_crew,
+        "working_days": len(work_day_iso),
+        "off_crew_days": off_days,
+        "hours_per_day": DEFAULT_HOURS_PER_DAY,
+        "utilization_pct": round(100 * total_hours / available_hours, 1) if available_hours else None,
         "jobs": jobs,
         "job_count": len(jobs),
         "missing_value": missing,

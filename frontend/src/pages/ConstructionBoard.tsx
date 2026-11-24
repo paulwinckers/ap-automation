@@ -924,6 +924,10 @@ function MonthRevenueCard({ month, header, compact }: { month: string; header?: 
   }, [month]);
 
   const jobs = data?.jobs || [];
+  const fmtH = (x?: number) => Math.round(x || 0).toLocaleString('en-CA');
+  // Utilisation = scheduled ÷ available crew-hours. >100% = over the Mon–Thu baseline
+  // (dipping into Fridays); high = well-booked; low = open capacity.
+  const utilColor = (p: number) => p > 100 ? '#dc2626' : p >= 75 ? '#16a34a' : p >= 40 ? '#d97706' : '#6b7280';
 
   if (compact) {
     return (
@@ -932,9 +936,14 @@ function MonthRevenueCard({ month, header, compact }: { month: string; header?: 
         <div style={{ fontSize: 19, fontWeight: 800, color: NAVY, lineHeight: 1.1 }}>{loading ? '…' : money0(data?.total_revenue || 0)}</div>
         <div style={revCapLbl}>Scheduled revenue</div>
         <div style={{ marginTop: 6, fontSize: 13, fontWeight: 800, color: '#0f172a' }}>
-          {loading ? '' : `${Math.round(data?.total_hours || 0).toLocaleString('en-CA')}h`}
-          <span style={{ fontWeight: 500, color: '#9ca3af', fontSize: 11 }}> · {data?.job_count || 0} job{(data?.job_count || 0) === 1 ? '' : 's'}</span>
+          {loading ? '' : `${fmtH(data?.total_hours)}h`}
+          {!loading && data && data.available_hours > 0 && (
+            <span style={{ fontWeight: 500, color: '#9ca3af', fontSize: 11 }}> of {fmtH(data.available_hours)}h</span>
+          )}
         </div>
+        {!loading && data?.utilization_pct != null && (
+          <div style={{ fontSize: 11, fontWeight: 800, color: utilColor(data.utilization_pct) }}>{data.utilization_pct}% booked</div>
+        )}
         {err && <div style={{ marginTop: 4, fontSize: 10, color: '#b91c1c' }}>load error</div>}
       </div>
     );
@@ -951,8 +960,19 @@ function MonthRevenueCard({ month, header, compact }: { month: string; header?: 
           <div style={revCapLbl}>Scheduled revenue</div>
         </div>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: '#0f172a', lineHeight: 1.1 }}>{loading ? '…' : `${Math.round(data?.total_hours || 0).toLocaleString('en-CA')}h`}</div>
-          <div style={revCapLbl}>Crew hours</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: '#0f172a', lineHeight: 1.1 }}>
+            {loading ? '…' : `${fmtH(data?.total_hours)}h`}
+            {!loading && data && data.available_hours > 0 && (
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#6b7280' }}> / {fmtH(data.available_hours)}h</span>
+            )}
+          </div>
+          <div style={revCapLbl}
+            title={data ? `Available = ${data.capacity_crew} crew (excl. Dustin) × ${data.working_days} Mon–Thu days × ${data.hours_per_day}h − ${data.off_crew_days} day(s) off (labels). Utilisation = scheduled ÷ available; >100% = into Fridays.` : undefined}>
+            Crew hrs sched / avail
+            {!loading && data?.utilization_pct != null && (
+              <span style={{ marginLeft: 5, fontWeight: 800, color: utilColor(data.utilization_pct) }}>· {data.utilization_pct}%</span>
+            )}
+          </div>
         </div>
       </div>
 
