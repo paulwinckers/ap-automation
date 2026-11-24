@@ -8,7 +8,7 @@
  * Crew roster is portal-owned (no Aspire); left staff can be deactivated.
  * Horizon selector shows 1–12 weeks forward.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   getScheduleWeek, createBlock, updateBlock, deleteBlock, createLabel, deleteLabel,
@@ -495,7 +495,7 @@ export default function ConstructionBoard() {
       </div>{/* end scrolling schedule pane */}
 
       {ctx && (
-        <div style={{ position: 'fixed', top: ctx.y, left: ctx.x, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 1200, minWidth: 210, maxHeight: '70vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+        <FloatingMenu x={ctx.x} y={ctx.y} minWidth={210} contentKey={addDayPick ? 'add' : 'main'}>
           {addDayPick ? (() => {
             const b = ctx.block;
             const working = (n: string) => b.employees.includes(n) && !(b.exceptions || []).includes(`${n}|${ctx.day}`);
@@ -530,16 +530,16 @@ export default function ConstructionBoard() {
           ].map((it, i) => (
             <button key={i} onClick={it.fn} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: it.danger ? '#dc2626' : '#111827', borderTop: i ? '1px solid #f1f5f9' : 'none' }}>{it.label}</button>
           ))}
-        </div>
+        </FloatingMenu>
       )}
 
       {bctx && (
-        <div style={{ position: 'fixed', top: bctx.y, left: bctx.x, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 1200, minWidth: 170, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+        <FloatingMenu x={bctx.x} y={bctx.y} minWidth={170}>
           <button onClick={() => bctx.archived ? doUnarchive(bctx.job) : doArchive(bctx.job)}
             style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: '#111827' }}>
             {bctx.archived ? '↩ Unarchive' : '🗄 Archive (hide from queue)'}
           </button>
-        </div>
+        </FloatingMenu>
       )}
 
       {cascade && (
@@ -844,6 +844,41 @@ function monthLabel(key: string): string {
 function money0(n: number): string {
   try { return n.toLocaleString('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }); }
   catch { return `$${Math.round(n)}`; }
+}
+
+// A right-click menu that always stays fully on-screen: it clamps/flips its position
+// so it never runs off the bottom or right edge of the viewport (the old fixed-at-
+// click menu got cut off near the bottom and the extra options were unreachable).
+// `contentKey` changes when the menu's contents change height (e.g. a submenu opens),
+// which re-runs the clamp. Measured before paint (useLayoutEffect) so there's no flash.
+function FloatingMenu({ x, y, minWidth = 210, contentKey, children }: {
+  x: number; y: number; minWidth?: number; contentKey?: string | number; children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; maxHeight: number }>(
+    () => ({ top: y, left: x, maxHeight: Math.round((typeof window !== 'undefined' ? window.innerHeight : 800) * 0.9) })
+  );
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const m = 8;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const r = el.getBoundingClientRect();
+    let left = x, top = y;
+    if (left + r.width + m > vw) left = vw - r.width - m;   // keep off the right edge
+    if (top + r.height + m > vh) top = vh - r.height - m;    // flip up off the bottom edge
+    left = Math.max(m, left);
+    top = Math.max(m, top);
+    const maxHeight = vh - top - m;                          // never taller than the screen
+    setPos(prev => (prev.top === top && prev.left === left && prev.maxHeight === maxHeight)
+      ? prev : { top, left, maxHeight });
+  }, [x, y, contentKey]);
+  return (
+    <div ref={ref} onClick={e => e.stopPropagation()}
+      style={{ position: 'fixed', top: pos.top, left: pos.left, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 1200, minWidth, maxHeight: pos.maxHeight, overflowY: 'auto' }}>
+      {children}
+    </div>
+  );
 }
 
 const revArrow: React.CSSProperties = { width: 26, height: 26, borderRadius: 7, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer', fontSize: 15, color: '#374151', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
