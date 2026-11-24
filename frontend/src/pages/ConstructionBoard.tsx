@@ -341,8 +341,8 @@ export default function ConstructionBoard() {
   async function removeLabel(id: number) { setBusy(true); try { await deleteLabel(id); await reloadKeepBacklog(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } }
 
   const renderGrid = (slice: string[], widx: number) => (
-    <div key={widx} style={{ marginBottom: 14, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden' }}>
-      <div style={{ padding: '6px 12px', background: '#f1f5f9', fontSize: 12, fontWeight: 800, color: NAVY }}>
+    <div key={widx} style={{ marginBottom: 10, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ padding: '4px 12px', background: '#f1f5f9', fontSize: 11.5, fontWeight: 800, color: NAVY }}>
         Week of {fmtDay(slice[0])}
       </div>
       <div style={{ overflowX: 'auto' }}>
@@ -382,18 +382,18 @@ export default function ConstructionBoard() {
                             + (b.over_budget ? ' · ⚠ OVER BUDGET' : b.catch_up ? ' · ⏱ catch-up (within budget)' : '')
                             + (b.pauses && b.pauses.length ? ` · ⏸ ${b.pauses.length} hold(s)` : '')
                             + ` · ${confirmed ? 'CONFIRMED (locked)' : 'tentative'} · right-click for options`}
-                          style={{ background: c.bg, color: c.fg, border: confirmed ? `1.5px solid ${c.border}` : `1px dashed ${c.border}`, borderLeft: `3px solid ${c.border}`, borderRadius: 5, padding: '3px 6px', marginBottom: 4, fontSize: 12, fontWeight: 700, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          style={{ background: c.bg, color: c.fg, border: confirmed ? `1.5px solid ${c.border}` : `1px dashed ${c.border}`, borderLeft: `3px solid ${c.border}`, borderRadius: 4, padding: '1px 5px', marginBottom: 2, fontSize: 11.5, lineHeight: 1.35, fontWeight: 700, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {confirmed && '🔒 '}{b.over_budget ? '⚠ ' : b.catch_up ? '⏱ ' : ''}{b.lead_name === row && <span title="Job lead" style={{ color: '#f59e0b' }}>★ </span>}{isStart ? b.job_label : <span style={{ opacity: 0.75 }}>↳ {b.job_label}</span>}
                         </div>
                       );
                     })}
                     {labelsHere.map(l => (
-                      <div key={'L' + l.id} style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#f1f5f9', color: '#475569', borderRadius: 5, padding: '3px 6px', marginBottom: 4, fontSize: 12, fontWeight: 600 }}>
+                      <div key={'L' + l.id} style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#f1f5f9', color: '#475569', borderRadius: 4, padding: '1px 5px', marginBottom: 2, fontSize: 11.5, fontWeight: 600 }}>
                         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.job_label}</span>
                         <button onClick={() => removeLabel(l.id)} style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 12, padding: 0, lineHeight: 1 }}>×</button>
                       </div>
                     ))}
-                    <button onClick={() => addLabel(row, day)} title="Add a label" style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', fontSize: 14, padding: 0, alignSelf: 'flex-start' }}>+</button>
+                    <button onClick={() => addLabel(row, day)} title="Add a label" style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: 0, alignSelf: 'flex-start' }}>+</button>
                   </div>
                 );
               })}
@@ -429,9 +429,7 @@ export default function ConstructionBoard() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', marginBottom: 16 }}>
-        <MonthRevenueWidget />
-      </div>
+      <RevenueStrip />
 
       {err && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '10px 14px', color: '#991b1b', marginBottom: 14 }}>{err}</div>}
 
@@ -842,8 +840,33 @@ function money0(n: number): string {
   catch { return `$${Math.round(n)}`; }
 }
 
-function MonthRevenueWidget() {
-  const [month, setMonth] = useState<string>(monthKeyToday());
+const revArrow: React.CSSProperties = { width: 26, height: 26, borderRadius: 7, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer', fontSize: 15, color: '#374151', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
+const revCapLbl: React.CSSProperties = { fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.04em' };
+
+// Top-of-board revenue strip: a primary card for the selected month (toggleable,
+// with a per-job breakdown) plus two compact look-ahead cards for the following
+// two months. Toggling the primary month shifts all three together.
+function RevenueStrip() {
+  const [base, setBase] = useState<string>(monthKeyToday());
+  const isThisMonth = base === monthKeyToday();
+  const controls = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+      <button onClick={() => setBase(m => shiftMonthKey(m, -1))} style={revArrow} title="Previous month">‹</button>
+      <div style={{ flex: 1, textAlign: 'center', fontWeight: 800, fontSize: 13, color: '#0f172a' }}>{monthLabel(base)}</div>
+      <button onClick={() => setBase(m => shiftMonthKey(m, 1))} style={revArrow} title="Next month">›</button>
+      {!isThisMonth && <button onClick={() => setBase(monthKeyToday())} style={{ ...revArrow, width: 'auto', padding: '0 8px', fontSize: 11, fontWeight: 700 }} title="Jump to current month">Today</button>}
+    </div>
+  );
+  return (
+    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch', marginBottom: 16 }}>
+      <MonthRevenueCard month={base} header={controls} />
+      <MonthRevenueCard month={shiftMonthKey(base, 1)} compact />
+      <MonthRevenueCard month={shiftMonthKey(base, 2)} compact />
+    </div>
+  );
+}
+
+function MonthRevenueCard({ month, header, compact }: { month: string; header?: React.ReactNode; compact?: boolean }) {
   const [data, setData] = useState<ScheduledRevenue | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -859,30 +882,36 @@ function MonthRevenueWidget() {
     return () => { cancelled = true; };
   }, [month]);
 
-  const isThisMonth = month === monthKeyToday();
   const jobs = data?.jobs || [];
-  const arrow: React.CSSProperties = { width: 26, height: 26, borderRadius: 7, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer', fontSize: 15, color: '#374151', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
-  const capLbl: React.CSSProperties = { fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.04em' };
+
+  if (compact) {
+    return (
+      <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '12px 16px', minWidth: 158, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+        <div style={{ fontWeight: 800, fontSize: 12, color: '#64748b', marginBottom: 6 }}>{monthLabel(month)}</div>
+        <div style={{ fontSize: 19, fontWeight: 800, color: NAVY, lineHeight: 1.1 }}>{loading ? '…' : money0(data?.total_revenue || 0)}</div>
+        <div style={revCapLbl}>Scheduled revenue</div>
+        <div style={{ marginTop: 6, fontSize: 13, fontWeight: 800, color: '#0f172a' }}>
+          {loading ? '' : `${Math.round(data?.total_hours || 0).toLocaleString('en-CA')}h`}
+          <span style={{ fontWeight: 500, color: '#9ca3af', fontSize: 11 }}> · {data?.job_count || 0} job{(data?.job_count || 0) === 1 ? '' : 's'}</span>
+        </div>
+        {err && <div style={{ marginTop: 4, fontSize: 10, color: '#b91c1c' }}>load error</div>}
+      </div>
+    );
+  }
 
   return (
     <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '12px 16px', minWidth: 268, boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
-      {/* Month toggle */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-        <button onClick={() => setMonth(m => shiftMonthKey(m, -1))} style={arrow} title="Previous month">‹</button>
-        <div style={{ flex: 1, textAlign: 'center', fontWeight: 800, fontSize: 13, color: '#0f172a' }}>{monthLabel(month)}</div>
-        <button onClick={() => setMonth(m => shiftMonthKey(m, 1))} style={arrow} title="Next month">›</button>
-        {!isThisMonth && <button onClick={() => setMonth(monthKeyToday())} style={{ ...arrow, width: 'auto', padding: '0 8px', fontSize: 11, fontWeight: 700 }} title="Jump to current month">Today</button>}
-      </div>
+      {header}
 
       {/* Totals */}
       <div style={{ display: 'flex', gap: 20, alignItems: 'baseline' }}>
         <div>
           <div style={{ fontSize: 22, fontWeight: 800, color: NAVY, lineHeight: 1.1 }}>{loading ? '…' : money0(data?.total_revenue || 0)}</div>
-          <div style={capLbl}>Scheduled revenue</div>
+          <div style={revCapLbl}>Scheduled revenue</div>
         </div>
         <div>
           <div style={{ fontSize: 18, fontWeight: 800, color: '#0f172a', lineHeight: 1.1 }}>{loading ? '…' : `${Math.round(data?.total_hours || 0).toLocaleString('en-CA')}h`}</div>
-          <div style={capLbl}>Crew hours</div>
+          <div style={revCapLbl}>Crew hours</div>
         </div>
       </div>
 
@@ -920,9 +949,9 @@ function MonthRevenueWidget() {
 }
 
 const navBtn: React.CSSProperties = { padding: '7px 14px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer', fontSize: 14, color: '#374151', fontWeight: 700 };
-const hcell: React.CSSProperties = { padding: '8px', textAlign: 'center', borderBottom: '2px solid #e5e7eb', borderLeft: '1px solid #f1f5f9', fontSize: 12, color: '#111827' };
-const lcell: React.CSSProperties = { padding: '8px', fontWeight: 700, fontSize: 13, color: '#0f172a', borderBottom: '1px solid #f1f5f9', background: '#fafafa', display: 'flex', alignItems: 'center' };
-const dcell: React.CSSProperties = { padding: 6, borderBottom: '1px solid #f1f5f9', borderLeft: '1px solid #f1f5f9', minHeight: 54, display: 'flex', flexDirection: 'column' };
+const hcell: React.CSSProperties = { padding: '5px 6px', textAlign: 'center', borderBottom: '2px solid #e5e7eb', borderLeft: '1px solid #f1f5f9', fontSize: 12, color: '#111827' };
+const lcell: React.CSSProperties = { padding: '4px 8px', fontWeight: 700, fontSize: 12.5, color: '#0f172a', borderBottom: '1px solid #f1f5f9', background: '#fafafa', display: 'flex', alignItems: 'center' };
+const dcell: React.CSSProperties = { padding: 3, borderBottom: '1px solid #f1f5f9', borderLeft: '1px solid #f1f5f9', minHeight: 32, display: 'flex', flexDirection: 'column' };
 const mlbl: React.CSSProperties = { display: 'block', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 5 };
 const cascSub: React.CSSProperties = { fontSize: 11, fontWeight: 500, color: '#9ca3af', marginTop: 3 };
 function cascBtn(color: string, primary: boolean): React.CSSProperties {
