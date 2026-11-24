@@ -417,6 +417,27 @@ async def attach_photos_to_email(attachment_ids: Optional[list[int]] = None,
 
 
 @mcp.tool()
+async def get_construction_pipeline(months: int = 6, include_backlog: bool = True,
+                                    include_invoices: bool = True) -> dict:
+    """The WHOLE construction queue for planning — 'what's in the pipeline?', 'when does X start?',
+    'who's on what next month?', 'how full are the crews?', 'what will we bill in January?'.
+    Read-only. Returns flat tables:
+      jobs        one row per job (by opportunity): scheduled true/false, status
+                  confirmed/tentative/mixed/unscheduled, lead, crew, crew_size, start/end date,
+                  working_days, hold_days, scheduled vs estimate hours, contract_value, earned_to_date,
+                  actual_hours, pct_complete, job_status, invoiced/collected/outstanding to date,
+                  last_invoice_date. Won-but-unscheduled jobs included when include_backlog.
+      job_months  per job per month: scheduled hours + revenue (job $ × month hours ÷ estimate hours).
+      crew_weeks  per crew member per week (Monday): hours booked on each job.
+      capacity    per month (`months` from the current one): available crew hours, scheduled,
+                  open hours, utilisation % — same basis as the Construction Board ribbon
+                  (Mon–Thu × 10h, Dustin excluded, labelled days off removed)."""
+    return await _get("/construction/schedule/pipeline", {
+        "months": months, "include_backlog": str(include_backlog).lower(),
+        "include_invoices": str(include_invoices).lower()})
+
+
+@mcp.tool()
 async def get_schedule(date: Optional[str] = None, days: int = 1) -> dict:
     """What's SCHEDULED on a day — 'what's on tomorrow?', 'who's working Thursday?', 'what does
     next week look like?'. `date` = YYYY-MM-DD (default today, Vancouver time; the response's

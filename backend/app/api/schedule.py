@@ -600,6 +600,274 @@ async def scheduled_revenue(month: Optional[str] = Query(None)):
     }
 
 
+# ── Pipeline (whole queue: schedule + crew + $ + billing) ─────────────────────
+
+_pipeline_inv_cache: dict[int, tuple[dict, float]] = {}
+_PIPELINE_INV_TTL = 600  # 10 min — invoice totals per job
+
+
+async def _opp_invoice_totals(opp_id: int) -> dict:
+    """Invoiced / collected / outstanding + last invoice date for one job (Aspire,
+    non-void, this opportunity's line share). Cached 10 min."""
+    import time as _t
+    hit = _pipeline_inv_cache.get(opp_id)
+    if hit and (_t.time() - hit[1]) < _PIPELINE_INV_TTL:
+        return hit[0]
+    from app.api.customer_dashboard import _fetch_opp_invoices
+
+    def _num(v):
+        try:
+            return float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+    inv = out = 0.0
+    last = None
+    count = 0
+    for i in await _fetch_opp_invoices(opp_id):
+        if str(i.get("InvoiceVoid")).upper() == "Y":
+            continue
+        line = next((o for o in (i.get("InvoiceOpportunities") or []) if o.get("OpportunityID") == opp_id), {})
+        inv += _num(line.get("TotalAmount") or line.get("Amount"))
+        out += _num(i.get("AmountRemaining"))
+        count += 1
+        d = (i.get("InvoiceDate") or "")[:10] or None
+        if d and (last is None or d > last):
+            last = d
+    res = {"invoiced": round(inv, 2), "collected": round(inv - out, 2),
+           "outstanding": round(out, 2), "invoice_count": count, "last_invoice_date": last}
+    _pipeline_inv_cache[opp_id] = (res, _t.time())
+    return res
+
+
+async def _month_capacity(db: Database, y: int, m: int, cap_names: set) -> dict:
+    """Same capacity basis as /revenue: active crew (excl. Dustin) × Mon–Thu days ×
+    10 h, minus labelled-off Mon–Thu crew-days."""
+    import calendar as _cal
+    ndays = _cal.monthrange(y, m)[1]
+    work_days = {date(y, m, d).isoformat() for d in range(1, ndays + 1) if date(y, m, d).weekday() <= 3}
+    off = 0
+    if cap_names and work_days:
+        rows = await db._q(
+            "SELECT DISTINCT lead_name, work_date FROM schedule_assignments WHERE work_date >= ? AND work_date <= ?",
+            [f"{y:04d}-{m:02d}-01", f"{y:04d}-{m:02d}-{ndays:02d}"])
+        for r in rows:
+            rr = _row(r)
+            if rr.get("lead_name") in cap_names and (rr.get("work_date") or "")[:10] in work_days:
+                off += 1
+    avail = max(0, len(cap_names) * len(work_days) - off) * DEFAULT_HOURS_PER_DAY
+    return {"working_days": len(work_days), "off_crew_days": off, "available_hours": avail}
+
+
+@router.get("/pipeline")
+async def pipeline(months: int = Query(6), include_backlog: bool = Query(True),
+                   include_invoices: bool = Query(True)):
+    """The whole construction queue in one flat payload, for planning views:
+
+    jobs        one row per job (aggregated by opportunity): schedule status, lead, crew,
+                start/end, working days, scheduled vs estimate hours, contract $, earned,
+                actual hours, % complete and — with include_invoices — invoiced /
+                collected / outstanding to date. Won-but-unscheduled jobs are included
+                (scheduled=false) when include_backlog.
+    job_months  per job per month: scheduled hours + revenue (same rule as /revenue:
+                job $ × month hours ÷ estimate hours, fallback = scheduled hours).
+    crew_weeks  per crew member per week (Monday): hours booked and on which job — the
+                resource-loading view. Uses the board's cell math (exceptions removed,
+                one-day additions added).
+    capacity    per month for `months` months from the current one: available crew
+                hours (same basis as the board's ribbon), scheduled hours, utilisation.
+    """
+    months = max(1, min(12, months))
+    today = date.today()
+    db = await _db()
+    rows = await db._q("SELECT * FROM schedule_blocks ORDER BY start_date, id", [])
+    try:
+        crew_rows = await _active_crew(db)
+    except Exception:
+        crew_rows = []
+    try:
+        opps = await _aspire.get_construction_opportunities(year=today.year)
+    except Exception as e:
+        logger.warning(f"pipeline: opps fetch failed: {e}")
+        opps = []
+    opp_by_id = {o.get("OpportunityID"): o for o in opps if o.get("OpportunityID") is not None}
+
+    agg: dict = {}
+    job_month_hours: dict = {}
+    crew_weeks: dict = {}
+    for r in rows:
+        b = _shape_block(_row(r))
+        if not _is_effective(b):
+            continue
+        oid = b.get("opportunity_id")
+        key = f"opp-{oid}" if oid is not None else f"blk-{b['id']}"
+        g = agg.setdefault(key, {
+            "key": key, "opportunity_id": oid, "job": b.get("job_label") or "",
+            "statuses": set(), "leads": [], "crew": [], "start_date": None, "end_date": None,
+            "dates": set(), "scheduled_hours": 0.0, "hold_days": 0, "blocks": 0,
+            "block_hours_budget": 0.0, "notes": [],
+        })
+        g["blocks"] += 1
+        g["statuses"].add(b.get("status") or "tentative")
+        if b.get("lead_name") and b["lead_name"] not in g["leads"]:
+            g["leads"].append(b["lead_name"])
+        for e in b.get("employees") or []:
+            if e not in g["crew"]:
+                g["crew"].append(e)
+        ds = b.get("dates") or []
+        if ds:
+            g["start_date"] = min(filter(None, [g["start_date"], ds[0]]))
+            g["end_date"] = max(filter(None, [g["end_date"], ds[-1]]))
+        g["dates"].update(ds)
+        g["scheduled_hours"] += _block_hours(b, None)
+        g["block_hours_budget"] += float(b.get("budget_hours") or 0)
+        g["hold_days"] += len([d for d in _expand_pauses(b.get("pauses")) if _parse(d).weekday() <= 4])
+        if b.get("note"):
+            g["notes"].append(b["note"])
+        for mk in {d[:7] for d in ds}:
+            job_month_hours[(key, mk)] = job_month_hours.get((key, mk), 0.0) + _block_hours(b, mk)
+        # per-crew, per-day cells → weekly hours
+        hpd = float(b.get("hours_per_day") or DEFAULT_HOURS_PER_DAY) or DEFAULT_HOURS_PER_DAY
+        ex = set(b.get("exceptions") or [])
+        cells = {f"{e}|{d}" for e in (b.get("employees") or []) for d in ds} - ex
+        cells |= set(b.get("additions") or [])
+        for c in cells:
+            name, _, d = c.rpartition("|")
+            try:
+                wk = _monday(_parse(d)).isoformat()
+            except Exception:
+                continue
+            ck = (name, wk, key)
+            crew_weeks[ck] = crew_weeks.get(ck, 0.0) + hpd
+
+    def _money(o, *ks):
+        for k in ks:
+            v = _pos(o.get(k)) if o else None
+            if v:
+                return v
+        return None
+
+    jobs = []
+    for g in agg.values():
+        o = opp_by_id.get(g["opportunity_id"])
+        st = g["statuses"]
+        status = "confirmed" if st == {"confirmed"} else ("tentative" if st == {"tentative"} else "mixed")
+        est = _pos(o.get("EstimatedLaborHours")) if o else None
+        jobs.append({
+            "key": g["key"], "opportunity_id": g["opportunity_id"],
+            "job": (o.get("PropertyName") if o else None) or g["job"],
+            "opportunity_name": o.get("OpportunityName") if o else None,
+            "scheduled": True, "status": status,
+            "lead": ", ".join(g["leads"]), "crew": ", ".join(g["crew"]), "crew_size": len(g["crew"]),
+            "start_date": g["start_date"], "end_date": g["end_date"],
+            "working_days": len(g["dates"]), "hold_days": g["hold_days"],
+            "scheduled_hours": round(g["scheduled_hours"], 1),
+            "estimate_hours": round(est, 1) if est else (round(g["block_hours_budget"], 1) or None),
+            "contract_value": _money(o, "WonDollars", "EstimatedDollars"),
+            "earned_to_date": _pos(o.get("ActualEarnedRevenue")) if o else None,
+            "actual_hours": _pos(o.get("ActualLaborHours")) if o else None,
+            "pct_complete": round(float(o.get("PercentComplete") or 0) * 100, 1) if o else None,
+            "job_status": o.get("JobStatusName") if o else None,
+            "sales_rep": o.get("SalesRepContactName") if o else None,
+            "note": " | ".join(g["notes"]) or None,
+        })
+
+    if include_backlog:
+        try:
+            arch = await db._q("SELECT opportunity_id FROM schedule_archived_jobs", [])
+            archived = {r["opportunity_id"] for r in arch}
+        except Exception:
+            archived = set()
+        sched_ids = {j["opportunity_id"] for j in jobs if j["opportunity_id"] is not None}
+        for bl in await _backlog(opps):
+            oid = bl.get("opportunity_id")
+            if oid in sched_ids or oid in archived:
+                continue
+            o = opp_by_id.get(oid)
+            est = _pos(o.get("EstimatedLaborHours")) if o else None
+            jobs.append({
+                "key": f"opp-{oid}", "opportunity_id": oid, "job": bl.get("label"),
+                "opportunity_name": bl.get("opportunity_name"),
+                "scheduled": False, "status": "unscheduled", "lead": "", "crew": "", "crew_size": 0,
+                "start_date": bl.get("start_date"), "end_date": (o.get("EndDate") or "")[:10] or None if o else None,
+                "working_days": 0, "hold_days": 0, "scheduled_hours": 0.0,
+                "estimate_hours": round(est, 1) if est else None,
+                "contract_value": _money(o, "WonDollars", "EstimatedDollars"),
+                "earned_to_date": _pos(o.get("ActualEarnedRevenue")) if o else None,
+                "actual_hours": _pos(o.get("ActualLaborHours")) if o else None,
+                "pct_complete": round(float(o.get("PercentComplete") or 0) * 100, 1) if o else None,
+                "job_status": o.get("JobStatusName") if o else None,
+                "sales_rep": o.get("SalesRepContactName") if o else None,
+                "note": None,
+            })
+
+    if include_invoices:
+        import asyncio
+        ids = [j["opportunity_id"] for j in jobs if j["opportunity_id"] is not None]
+        sem = asyncio.Semaphore(6)
+
+        async def _one(i):
+            async with sem:
+                try:
+                    return i, await _opp_invoice_totals(i)
+                except Exception as e:
+                    logger.warning(f"pipeline invoices failed for {i}: {e}")
+                    return i, None
+        inv = dict(await asyncio.gather(*[_one(i) for i in ids]))
+    else:
+        inv = {}
+    for j in jobs:
+        t = inv.get(j["opportunity_id"]) or {}
+        j["invoiced_to_date"] = t.get("invoiced")
+        j["collected_to_date"] = t.get("collected")
+        j["outstanding"] = t.get("outstanding")
+        j["last_invoice_date"] = t.get("last_invoice_date")
+
+    job_by_key = {j["key"]: j for j in jobs}
+    job_months = []
+    for (key, mk), hrs in sorted(job_month_hours.items(), key=lambda x: (x[0][1], x[0][0])):
+        if hrs <= 0:
+            continue
+        j = job_by_key.get(key) or {}
+        val = j.get("contract_value")
+        est = j.get("estimate_hours") or j.get("scheduled_hours") or None
+        job_months.append({
+            "key": key, "job": j.get("job"), "month": mk, "hours": round(hrs, 1),
+            "revenue": round(val * hrs / est, 2) if val and est else 0.0,
+        })
+
+    crew_out = [{"crew": n, "week": wk, "key": k, "job": (job_by_key.get(k) or {}).get("job"),
+                 "hours": round(h, 1)}
+                for (n, wk, k), h in sorted(crew_weeks.items(), key=lambda x: (x[0][1], x[0][0]))]
+
+    cap_names = {c["name"] for c in crew_rows if (c["name"] or "").strip().lower().split(" ")[0] != "dustin"}
+    capacity = []
+    y, m = today.year, today.month
+    for _ in range(months):
+        mk = f"{y:04d}-{m:02d}"
+        c = await _month_capacity(db, y, m, cap_names)
+        sched = sum(r["hours"] for r in job_months if r["month"] == mk)
+        capacity.append({
+            "month": mk, "available_hours": c["available_hours"], "scheduled_hours": round(sched, 1),
+            "open_hours": round(max(0.0, c["available_hours"] - sched), 1),
+            "utilization_pct": round(100 * sched / c["available_hours"], 1) if c["available_hours"] else None,
+            "capacity_crew": len(cap_names), "working_days": c["working_days"], "off_crew_days": c["off_crew_days"],
+        })
+        m += 1
+        if m > 12:
+            y, m = y + 1, 1
+
+    jobs.sort(key=lambda j: (not j["scheduled"], j["start_date"] or "9999", j["job"] or ""))
+    return {
+        "today": today.isoformat(),
+        "hours_per_day": DEFAULT_HOURS_PER_DAY,
+        "crew": [c["name"] for c in crew_rows],
+        "jobs": jobs,
+        "job_months": job_months,
+        "crew_weeks": crew_out,
+        "capacity": capacity,
+    }
+
+
 _scope_cache: dict[int, tuple[str, float]] = {}
 _SCOPE_TTL = 24 * 3600  # 1 day
 
