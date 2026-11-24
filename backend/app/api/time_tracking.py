@@ -707,6 +707,168 @@ async def _wt_revenue_map(wt_ids: set[int]) -> dict[int, dict]:
     return out
 
 
+# ── Carry-over revenue: tickets scheduled in a month but finished later ───────
+def _month_bounds(month: str) -> tuple[str, str]:
+    """'YYYY-MM' → ('YYYY-MM-01', last-day-of-month ISO). Raises on bad input."""
+    y, m = (int(x) for x in month.split("-", 1))
+    if not (1 <= m <= 12):
+        raise ValueError("month out of range")
+    start = f"{y:04d}-{m:02d}-01"
+    nxt = f"{y + 1:04d}-01-01" if m == 12 else f"{y:04d}-{m + 1:02d}-01"
+    end = (datetime.fromisoformat(nxt) - timedelta(days=1)).date().isoformat()
+    return start, end
+
+
+def _next_month_key(month: str) -> str:
+    y, m = (int(x) for x in month.split("-", 1))
+    return f"{y + 1:04d}-01" if m == 12 else f"{y:04d}-{m + 1:02d}"
+
+
+@router.get("/carryover-tickets", dependencies=[Depends(require_access)])
+async def carryover_tickets(
+    month: str = Query(..., description="YYYY-MM — the month the tickets were SCHEDULED in"),
+    db: Database = Depends(get_db),
+):
+    """Work tickets SCHEDULED in `month` but NOT completed that month — the revenue that spills into
+    later months. For each ticket: number, property, division, service, status, scheduled/completed
+    dates, total revenue, Aspire earned-revenue-to-date, estimated hours, actual hours split by the
+    calendar month each entry was logged, and earned_after_scheduled_month = revenue recognised AFTER
+    the scheduled month.
+
+    Earned-split rule (anchored to Aspire's own earned figure, confirmed with the team):
+      earned_through_scheduled_month = revenue × min(1, hours logged through month-end ÷ estimated hours)
+      earned_after_scheduled_month   = max(0, Aspire EarnedRevenue-to-date − earned_through_scheduled_month)
+    The per-month carve-out uses logged hours, but the TOTAL always reconciles to Aspire's EarnedRevenue."""
+    try:
+        start, end = _month_bounds(month)
+    except Exception:
+        raise HTTPException(status_code=422, detail="month must be YYYY-MM")
+
+    try:
+        # 1) Tickets scheduled in the month (keyset-paginated past the 1000-row cap)
+        tickets: list[dict] = []
+        last_id = 0
+        for _ in range(25):
+            r = await _aspire._get("WorkTickets", {
+                "$filter": (f"ScheduledStartDate ge {start}T00:00:00Z and "
+                            f"ScheduledStartDate le {end}T23:59:59Z and WorkTicketID gt {last_id}"),
+                "$orderby": "WorkTicketID asc", "$top": "1000",
+                "$select": ("WorkTicketID,WorkTicketNumber,OpportunityID,OpportunityServiceID,"
+                            "WorkTicketStatusName,ScheduledStartDate,CompleteDate,"
+                            "HoursEst,HoursAct,Revenue,EarnedRevenue"),
+            })
+            rows = _aspire._extract_list(r)
+            if not rows:
+                break
+            tickets.extend(rows)
+            last_id = rows[-1].get("WorkTicketID") or (last_id + 1)
+            if len(rows) < 1000:
+                break
+
+        # 2) Keep only those NOT completed within the scheduled month, with real revenue
+        carry = []
+        for t in tickets:
+            comp = (t.get("CompleteDate") or "")[:7]
+            if comp and comp <= month:          # completed in/before the scheduled month → no carry-over
+                continue
+            if (t.get("Revenue") or 0.0) <= 0 and (t.get("EarnedRevenue") or 0.0) <= 0:
+                continue                         # overhead / zero-value tickets — skip noise
+            carry.append(t)
+
+        wt_ids = {t.get("WorkTicketID") for t in carry}
+
+        # 3) Division + property (opportunity) and service type for those tickets
+        opp_ids = list({t.get("OpportunityID") for t in carry if t.get("OpportunityID")})
+        opp_meta: dict = {}
+        for i in range(0, len(opp_ids), 20):
+            chunk = opp_ids[i:i + 20]
+            flt = "(" + " or ".join(f"OpportunityID eq {o}" for o in chunk) + ")"
+            rr = await _aspire._get("Opportunities", {"$filter": flt,
+                "$select": "OpportunityID,OpportunityName,PropertyName,DivisionName", "$top": "1000"})
+            for o in _aspire._extract_list(rr):
+                opp_meta[o.get("OpportunityID")] = o
+        svc_type = await _wt_servicetype_map(wt_ids)
+
+        # 4) Actual hours per ticket, split by the calendar month each entry was logged (all dates)
+        hours_by_ticket: dict = defaultdict(lambda: defaultdict(float))
+        wl = [w for w in wt_ids if w]
+        for i in range(0, len(wl), 15):
+            chunk = wl[i:i + 15]
+            flt = "(" + " or ".join(f"WorkTicketID eq {w}" for w in chunk) + ")"
+            rr = await _aspire._get("WorkTicketTimes", {"$filter": flt,
+                "$select": "WorkTicketID,Hours,WorkTicketTimeDate", "$top": "1000"})
+            for e in _aspire._extract_list(rr):
+                mk = (e.get("WorkTicketTimeDate") or "")[:7]
+                if mk:
+                    hours_by_ticket[e.get("WorkTicketID")][mk] += e.get("Hours") or 0.0
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Aspire fetch failed: {e}")
+
+    nxt = _next_month_key(month)
+    r2 = lambda x: round(x, 2)
+    out_tickets = []
+    tot_earned_after = tot_revenue = tot_earned_td = 0.0
+    by_div: dict = defaultdict(lambda: {"tickets": 0, "earned_after_scheduled_month": 0.0})
+
+    for t in carry:
+        wid = t.get("WorkTicketID")
+        rev = t.get("Revenue") or 0.0
+        earned_td = t.get("EarnedRevenue") or 0.0
+        est = t.get("HoursEst") or 0.0
+        hbm = {k: r2(v) for k, v in sorted(hours_by_ticket.get(wid, {}).items())}
+        hrs_through = sum(v for k, v in hbm.items() if k <= month)
+        share_through = min(1.0, hrs_through / est) if est > 0 else 0.0
+        earned_through = rev * share_through
+        earned_after = max(0.0, earned_td - earned_through)
+        opp = opp_meta.get(t.get("OpportunityID"), {})
+        div = opp.get("DivisionName") or "—"
+
+        tot_earned_after += earned_after
+        tot_revenue += rev
+        tot_earned_td += earned_td
+        by_div[div]["tickets"] += 1
+        by_div[div]["earned_after_scheduled_month"] += earned_after
+
+        out_tickets.append({
+            "work_ticket":     t.get("WorkTicketNumber"),
+            "property":        opp.get("PropertyName"),
+            "division":        opp.get("DivisionName"),
+            "service":         svc_type.get(wid),
+            "status":          t.get("WorkTicketStatusName"),
+            "scheduled":       (t.get("ScheduledStartDate") or "")[:10],
+            "completed":       (t.get("CompleteDate") or "")[:10] or None,
+            "revenue":         r2(rev),
+            "earned_to_date":  r2(earned_td),
+            "estimated_hours": r2(est),
+            "hours_by_month":  hbm,
+            "hours_through_scheduled_month":  r2(hrs_through),
+            "earned_through_scheduled_month": r2(earned_through),
+            "earned_after_scheduled_month":   r2(earned_after),
+        })
+
+    out_tickets.sort(key=lambda x: -x["earned_after_scheduled_month"])
+    return {
+        "scheduled_month": month,
+        "next_month": nxt,
+        "ticket_count": len(out_tickets),
+        "total_revenue": r2(tot_revenue),
+        "total_earned_to_date": r2(tot_earned_td),
+        "total_earned_after_scheduled_month": r2(tot_earned_after),
+        "by_division": sorted(
+            [{"division": d, "tickets": v["tickets"],
+              "earned_after_scheduled_month": r2(v["earned_after_scheduled_month"])}
+             for d, v in by_div.items()],
+            key=lambda x: -x["earned_after_scheduled_month"]),
+        "tickets": out_tickets,
+        "note": ("Tickets scheduled in scheduled_month but not completed that month. "
+                 "earned_after_scheduled_month = Aspire EarnedRevenue-to-date minus "
+                 "revenue×min(1, hours-logged-through-month-end ÷ estimated_hours) — the revenue "
+                 "recognised AFTER the scheduled month (to date), reconciling to Aspire's own earned "
+                 "figure. Hours split by the month each WorkTicketTimes entry was logged. "
+                 "Overhead/zero-revenue tickets excluded."),
+    }
+
+
 @router.get("/efficiency", dependencies=[Depends(require_access)])
 async def time_efficiency(
     start:    Optional[str] = Query(None, description="YYYY-MM-DD inclusive; default = last week (Sun–Sat)"),

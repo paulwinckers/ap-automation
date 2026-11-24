@@ -181,6 +181,24 @@ async def get_time_efficiency(start: Optional[str] = None, end: Optional[str] = 
 
 
 @mcp.tool()
+async def get_carryover_tickets(month: str) -> dict:
+    """Carry-over revenue: work tickets SCHEDULED in `month` (YYYY-MM) but NOT completed that month —
+    the revenue that spills into later months. Use it to answer 'how much of this month's revenue came
+    from last month's jobs' (pass last month) or to see what scheduled work slipped past its month.
+
+    Each ticket returns: work_ticket #, property, division, service, status, scheduled/completed dates,
+    revenue (total), earned_to_date (Aspire's own earned figure), estimated_hours, hours_by_month (actual
+    crew hours split by the calendar month each entry was logged), and earned_after_scheduled_month — the
+    revenue recognised AFTER the scheduled month. Also totals + a by_division breakdown.
+
+    Earned-split rule: earned_after_scheduled_month = Aspire EarnedRevenue-to-date −
+    revenue×min(1, hours-logged-through-month-end ÷ estimated_hours). The month carve-out uses logged
+    hours, but the total always reconciles to Aspire's own earned number. Overhead/zero-revenue tickets
+    are excluded."""
+    return await _get(f"/time/carryover-tickets?month={month}")
+
+
+@mcp.tool()
 async def get_service_hours(property: Optional[str] = None, property_id: Optional[int] = None,
                             year: Optional[int] = None, start: Optional[str] = None,
                             end: Optional[str] = None, service_contains: str = "") -> dict:
