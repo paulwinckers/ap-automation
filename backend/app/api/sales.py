@@ -28,7 +28,7 @@ from app.core.config import settings
 from app.core.database import Database
 from app.services import r2
 from app.services.aspire import AspireClient
-from app.api.auth import require_access, _get_current_user, current_actor
+from app.api.auth import require_access, _get_current_user, current_actor, _require_admin
 from app.api.construction_plan import get_db
 
 router = APIRouter(prefix="/sales", tags=["sales"])
@@ -1245,3 +1245,56 @@ async def create_opportunity(body: OppIn, user: dict = Depends(require_access), 
         await db._x("UPDATE sales_activities SET opportunity_id = ?, updated_at = datetime('now') WHERE id = ?",
                     [opp_id, body.activity_id])
     return {"ok": True, "opportunity_id": opp_id, "aspire_response": res}
+
+
+# ── Email auto-capture (admin-gated) ─────────────────────────────────────────────
+# Turns reps' real email into sales_activities. See app/services/sales_email_capture.py.
+# OFF by default; sync the contact index, then dry-run, then enable.
+
+class CaptureSettingsBody(BaseModel):
+    enabled: Optional[bool] = None
+    mailboxes: Optional[list[str]] = None
+    poll_minutes: Optional[int] = None
+    backfill_days: Optional[int] = None
+    store_full_body: Optional[bool] = None
+
+
+@router.get("/email-capture/settings")
+async def email_capture_settings(_: dict = Depends(_require_admin), db: Database = Depends(get_db)):
+    """Current capture config + last poll status + matcher index size."""
+    from app.services.sales_email_capture import get_capture_config, sales_email_capture
+    cfg = await get_capture_config(db)
+    idx = await db._q("SELECT COUNT(*) AS n FROM sales_contact_emails", [])
+    cur = await db._q("SELECT mailbox, last_seen, updated_at FROM sales_email_cursor", [])
+    return {"config": cfg, "index_emails": (idx[0]["n"] if idx else 0), "cursors": cur,
+            "last_run": sales_email_capture._last_run, "last_report": sales_email_capture._last_report}
+
+
+@router.put("/email-capture/settings")
+async def update_email_capture_settings(body: CaptureSettingsBody,
+                                        _: dict = Depends(_require_admin), db: Database = Depends(get_db)):
+    from app.services.sales_email_capture import set_capture_config
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    cfg = await set_capture_config(db, patch)
+    return {"ok": True, "config": cfg}
+
+
+@router.post("/email-capture/sync-contacts")
+async def email_capture_sync_contacts(_: dict = Depends(_require_admin), db: Database = Depends(get_db)):
+    """Rebuild the email→contact matcher index from Aspire's active contacts."""
+    from app.services.sales_email_capture import refresh_contact_index
+    try:
+        res = await refresh_contact_index(db, _aspire)
+    except Exception as e:
+        logger.warning(f"email-capture sync-contacts failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not reach Aspire to load contacts")
+    return {"ok": True, **res}
+
+
+@router.post("/email-capture/run")
+async def email_capture_run(dry_run: bool = True, backfill_days: Optional[int] = None,
+                            _: dict = Depends(_require_admin), db: Database = Depends(get_db)):
+    """Run one capture pass. dry_run=true (default) reports matches WITHOUT writing or advancing
+    cursors — review it before enabling. dry_run=false writes activities and advances the cursor."""
+    from app.services.sales_email_capture import capture_once
+    return await capture_once(db, _aspire, dry_run=dry_run, backfill_days=backfill_days)

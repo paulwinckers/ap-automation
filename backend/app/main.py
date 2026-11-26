@@ -518,6 +518,24 @@ async def lifespan(app: FastAPI):
                 synced_at          TEXT
             )
         """,
+        # Sales email-capture: email → customer contact matcher index, refreshed from Aspire.
+        "sales_contact_emails": """
+            CREATE TABLE IF NOT EXISTS sales_contact_emails (
+                email        TEXT PRIMARY KEY,       -- lowercased
+                contact_id   INTEGER,
+                customer_key TEXT,                   -- 'contact:{id}' (the spine anchor)
+                name         TEXT,
+                synced_at    TEXT
+            )
+        """,
+        # Per-mailbox high-water mark for the sales email poll (can't use isRead — reps read their own mail).
+        "sales_email_cursor": """
+            CREATE TABLE IF NOT EXISTS sales_email_cursor (
+                mailbox    TEXT PRIMARY KEY,
+                last_seen  TEXT,                      -- ISO8601 of the newest message captured
+                updated_at TEXT
+            )
+        """,
         "spine_sync_meta": """
             CREATE TABLE IF NOT EXISTS spine_sync_meta (
                 id           INTEGER PRIMARY KEY CHECK (id = 1),
@@ -698,6 +716,8 @@ async def lifespan(app: FastAPI):
         ("sales_tasks", "waiting_on",     "ALTER TABLE sales_tasks ADD COLUMN waiting_on TEXT"),
         ("sales_tasks", "waiting_until",  "ALTER TABLE sales_tasks ADD COLUMN waiting_until TEXT"),
         ("sales_activities", "created_by_user_id", "ALTER TABLE sales_activities ADD COLUMN created_by_user_id INTEGER"),
+        # sales_activities.external_id — Graph message id for email auto-capture dedupe (unique index below).
+        ("sales_activities", "external_id", "ALTER TABLE sales_activities ADD COLUMN external_id TEXT"),
         # job_prep_checklist — N/A/Complete/Upload-Doc status + linked attachment
         ("job_prep_checklist", "status",        "ALTER TABLE job_prep_checklist ADD COLUMN status TEXT"),
         ("job_prep_checklist", "attachment_id", "ALTER TABLE job_prep_checklist ADD COLUMN attachment_id INTEGER"),
@@ -752,6 +772,13 @@ async def lifespan(app: FastAPI):
                 logger.info(f"DB migration: added {tbl}.{col}")
             except Exception as me:
                 logger.warning(f"DB migration: could not add {tbl}.{col}: {me}")
+
+    # Indexes that depend on migrated columns (must run AFTER _COLUMN_MIGRATIONS).
+    try:   # dedupe key for sales email auto-capture (one activity per Graph message)
+        await _db._x("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_activities_external "
+                     "ON sales_activities(external_id) WHERE external_id IS NOT NULL")
+    except Exception as e:
+        logger.warning(f"DB startup: sales_activities external_id index: {e}")
 
     # Backfill: turn any legacy document.folder text into real root folders + folder_id.
     try:
@@ -818,6 +845,13 @@ async def lifespan(app: FastAPI):
         await email_intake.start()
     except Exception as e:
         logger.error(f"Email intake start failed — startup continues: {e}")
+    # Sales email auto-capture poller — the loop self-gates on the DB 'enabled' setting
+    # (OFF by default), so this is safe to start unconditionally.
+    try:
+        from app.services.sales_email_capture import sales_email_capture
+        await sales_email_capture.start()
+    except Exception as e:
+        logger.error(f"Sales email capture start failed — startup continues: {e}")
     # Construction nightly Work Ticket Report is paused (a weekly report may
     # replace it later). The router/manual-send endpoint stays available.
     # start_construction_scheduler()
@@ -843,6 +877,11 @@ async def lifespan(app: FastAPI):
     yield
     # Stop on shutdown
     await email_intake.stop()
+    try:
+        from app.services.sales_email_capture import sales_email_capture
+        await sales_email_capture.stop()
+    except Exception:
+        pass
     stop_construction_scheduler()
     stop_digest_scheduler()
     stop_backup_scheduler()

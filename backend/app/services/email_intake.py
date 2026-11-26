@@ -129,6 +129,24 @@ class GraphClient:
         result = await self._get(f"users/{mailbox}/messages/{message_id}/attachments")
         return result.get("value", [])
 
+    async def list_messages(self, mailbox: str, folder: str, since: Optional[str] = None,
+                            top: int = 50) -> list[dict]:
+        """READ-ONLY listing for sales email-capture. folder ∈ 'inbox' | 'sentitems'.
+        Returns messages received/sent at or after `since` (ISO8601), newest first. Does NOT
+        mark read, move, or alter the mailbox — unlike the AP intake path. `since` is compared
+        against receivedDateTime (inbox) or sentDateTime (sent)."""
+        date_field = "sentDateTime" if folder == "sentitems" else "receivedDateTime"
+        params = {
+            "$orderby": f"{date_field} desc",
+            "$top": str(top),
+            "$select": ("id,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,"
+                        "sentDateTime,receivedDateTime,isDraft"),
+        }
+        if since:
+            params["$filter"] = f"{date_field} ge {since}"
+        result = await self._get(f"users/{mailbox}/mailFolders/{folder}/messages", params=params)
+        return result.get("value", [])
+
     async def mark_as_read(self, mailbox: str, message_id: str) -> None:
         await self._patch(f"users/{mailbox}/messages/{message_id}", {"isRead": True})
 

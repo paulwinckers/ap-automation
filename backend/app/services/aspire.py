@@ -898,6 +898,31 @@ class AspireClient:
         logger.info(f"Employee list final: {len(out)} with ContactIDs")
         return out
 
+    async def get_contacts_with_email(self) -> list[dict]:
+        """All active Aspire contacts that have an email address, as
+        [{ContactID, FullName, Email}]. Used to build the sales email-capture matcher
+        (email → customer contact). Pages through everything via _get_all."""
+        out: list[dict] = []
+        try:
+            contacts = await self._get_all("Contacts", {
+                "$select": "ContactID,FirstName,LastName,Email,Active",
+                "$filter": "Active eq true",
+                "$top": "500",
+                "$orderby": "ContactID asc",
+            })
+        except Exception as e:
+            logger.warning(f"get_contacts_with_email: Contacts fetch failed: {e}")
+            return out
+        for c in contacts:
+            cid = c.get("ContactID")
+            email = (c.get("Email") or "").strip()
+            if not cid or not email:
+                continue
+            name = f"{(c.get('FirstName') or '').strip()} {(c.get('LastName') or '').strip()}".strip()
+            out.append({"ContactID": cid, "FullName": name, "Email": email})
+        logger.info(f"get_contacts_with_email: {len(out)} active contacts with email")
+        return out
+
     async def _get_aspire_employees_contacts(self) -> list[dict]:
         """Original Contacts-based fetch — kept for reference (403 on this account)."""
         try:

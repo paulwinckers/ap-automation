@@ -94,6 +94,7 @@ export const OFFICE_SECTIONS: OfficeSection[] = [
     section: 'Admin', area: 'admin',
     items: [
       { path: '/users',          icon: '👤', label: 'Users',          sub: 'Logins & access' },
+      { path: '/sales/email-capture', icon: '📥', label: 'Sales Email Capture', sub: 'Auto-log customer emails as sales activity' },
       { path: '/settings/email', icon: '✉️', label: 'Email Settings', sub: 'Timing & recipients of automated emails' },
       { path: '/ops/backups',    icon: '💾', label: 'Backups',        sub: 'Database snapshots' },
       { path: '/ops/usage',      icon: '📈', label: 'Usage',          sub: 'Which pages people open, how often' },

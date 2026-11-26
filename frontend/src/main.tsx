@@ -19,6 +19,7 @@ const APDashboard            = lazy(() => import('./pages/APDashboard'));
 const VendorAdmin            = lazy(() => import('./pages/VendorAdmin'));
 const Reconcile              = lazy(() => import('./pages/Reconcile'));
 const UserAdmin              = lazy(() => import('./pages/UserAdmin'));
+const EmailCapture           = lazy(() => import('./pages/EmailCapture'));
 const SalesDashboard         = lazy(() => import('./pages/SalesDashboard'));
 const ConstructionDashboard  = lazy(() => import('./pages/ConstructionDashboard'));
 const ConstructionPlan       = lazy(() => import('./pages/ConstructionPlan'));
@@ -184,6 +185,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/vendors"   element={<RequireAuth area="finance"><Office><VendorAdmin /></Office></RequireAuth>} />
         <Route path="/reconcile" element={<RequireAuth area="finance"><Office><Reconcile /></Office></RequireAuth>} />
         <Route path="/users"     element={<RequireAuth area="admin"><Office><UserAdmin /></Office></RequireAuth>} />
+        <Route path="/sales/email-capture" element={<RequireAuth area="admin"><Office><EmailCapture /></Office></RequireAuth>} />
         <Route path="/settings/email" element={<RequireAuth area="admin"><Office><EmailSettings /></Office></RequireAuth>} />
         <Route path="/ops/backups"     element={<RequireAuth area="admin"><Office><BackupsAdmin /></Office></RequireAuth>} />
         <Route path="/ops/usage"       element={<RequireAuth area="admin"><Office><UsageAdmin /></Office></RequireAuth>} />

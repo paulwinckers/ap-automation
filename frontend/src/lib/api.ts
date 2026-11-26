@@ -1334,6 +1334,39 @@ export async function linkAspireContacts(dryRun = false): Promise<AspireLinkResu
   return request('POST', `/auth/users/link-aspire?dry_run=${dryRun}`);
 }
 
+// ── Sales email auto-capture (admin) ─────────────────────────────────────────
+export interface EmailCaptureConfig {
+  enabled: boolean; mailboxes: string[]; poll_minutes: number; backfill_days: number; store_full_body: boolean;
+}
+export interface EmailCaptureMailboxReport {
+  mailbox: string; since: string; scanned: number; matched: number; written: number;
+  skipped_dup: number; out_of_scope: number; error?: string | null;
+  samples: { direction: string; with: string; subject: string; at: string }[];
+}
+export interface EmailCaptureReport {
+  ok: boolean; dry_run?: boolean; error?: string;
+  totals: { scanned: number; matched: number; written: number; skipped_dup: number; out_of_scope: number };
+  mailboxes: EmailCaptureMailboxReport[];
+}
+export interface EmailCaptureSettings {
+  config: EmailCaptureConfig; index_emails: number;
+  cursors: { mailbox: string; last_seen: string; updated_at: string }[];
+  last_run: string | null; last_report: EmailCaptureReport | null;
+}
+export async function getEmailCaptureSettings(): Promise<EmailCaptureSettings> {
+  return request('GET', '/sales/email-capture/settings');
+}
+export async function updateEmailCaptureSettings(patch: Partial<EmailCaptureConfig>): Promise<{ ok: boolean; config: EmailCaptureConfig }> {
+  return request('PUT', '/sales/email-capture/settings', patch as unknown as Record<string, unknown>);
+}
+export async function syncEmailCaptureContacts(): Promise<{ ok: boolean; contacts: number; emails: number }> {
+  return request('POST', '/sales/email-capture/sync-contacts');
+}
+export async function runEmailCapture(dryRun = true, backfillDays?: number): Promise<EmailCaptureReport> {
+  const q = backfillDays != null ? `&backfill_days=${backfillDays}` : '';
+  return request('POST', `/sales/email-capture/run?dry_run=${dryRun}${q}`);
+}
+
 export async function createUser(data: {
   email: string; name: string; password: string; role: string; phone?: string;
   divisions?: DivisionMembership[]; areas?: Area[];
