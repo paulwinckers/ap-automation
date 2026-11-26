@@ -676,6 +676,10 @@ async def lifespan(app: FastAPI):
     _COLUMN_MIGRATIONS = [
         # users.areas — access areas (comma list; empty = default staff areas). See api/permissions.py
         ("users", "areas", "ALTER TABLE users ADD COLUMN areas TEXT"),
+        # users.aspire_contact_id — Aspire employee ContactID, email-matched via POST /auth/users/link-aspire.
+        # The identity bridge: one link resolves a person across app login, task assignee, CX role owner,
+        # and Aspire crew/clock-in/job-lead. See api/auth.py link_aspire_contacts.
+        ("users", "aspire_contact_id", "ALTER TABLE users ADD COLUMN aspire_contact_id INTEGER"),
         # vendor_statements.pdf_r2_key — added after initial reconciliation deploy
         ("vendor_statements", "pdf_r2_key", "ALTER TABLE vendor_statements ADD COLUMN pdf_r2_key TEXT"),
         # vendor_statements diff cache — added for bulk-diff speed improvement

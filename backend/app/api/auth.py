@@ -396,7 +396,10 @@ async def list_users(
     db: Database = Depends(get_db),
 ):
     """List all users (admin only)."""
-    rows = await db._q("SELECT id, email, name, phone, role, active, created_at, last_login FROM users ORDER BY name")
+    try:   # aspire_contact_id may not be migrated yet on an old DB
+        rows = await db._q("SELECT id, email, name, phone, role, active, created_at, last_login, aspire_contact_id FROM users ORDER BY name")
+    except Exception:
+        rows = await db._q("SELECT id, email, name, phone, role, active, created_at, last_login FROM users ORDER BY name")
     div_map = await _divisions_by_user(db)
     try:   # separate query: the areas column may not be migrated yet
         area_rows = await db._q("SELECT id, areas FROM users")
@@ -407,6 +410,79 @@ async def list_users(
         r["divisions"] = div_map.get(r["id"], [])
         r["areas"] = _areas_list({**r, "areas": stored.get(r["id"])})
     return {"users": rows}
+
+
+@router.post("/users/link-aspire")
+async def link_aspire_contacts(
+    dry_run: bool = False,
+    _: dict = Depends(_require_admin),
+    db: Database = Depends(get_db),
+):
+    """Email-match app users to Aspire employees and store each match's ContactID on
+    users.aspire_contact_id — the identity bridge so one person resolves across app login,
+    task assignee, CX role owner, and Aspire crew/clock-in/job-lead. Admin-only, idempotent;
+    run after adding staff. Pass ?dry_run=true to preview without writing. Returns the matches
+    made, app users with no Aspire email match, and Aspire employees with no app user."""
+    try:
+        from app.services.aspire import AspireClient
+        aspire = AspireClient(sandbox=settings.ASPIRE_DASHBOARD_SANDBOX)
+        employees = await aspire.get_aspire_employees()
+    except Exception as e:
+        logger.warning(f"link-aspire: could not load Aspire employees: {e}")
+        raise HTTPException(status_code=502, detail="Could not reach Aspire to load employees")
+
+    # Aspire email → {ContactID, FullName}. Skip employees with no email or no ContactID.
+    emp_by_email: dict[str, dict] = {}
+    for e in employees:
+        em = (e.get("Email") or "").strip().lower()
+        cid = e.get("ContactID")
+        if em and cid:
+            emp_by_email[em] = {"contact_id": cid, "name": e.get("FullName") or ""}
+
+    users = await db._q("SELECT id, email, name, aspire_contact_id FROM users WHERE active = 1")
+    linked: list[dict] = []
+    unchanged: list[dict] = []
+    unmatched_users: list[dict] = []
+    matched_emails: set[str] = set()
+
+    for u in users or []:
+        em = (u.get("email") or "").strip().lower()
+        match = emp_by_email.get(em) if em else None
+        if not match:
+            unmatched_users.append({"id": u["id"], "name": u.get("name"), "email": u.get("email")})
+            continue
+        matched_emails.add(em)
+        cid = match["contact_id"]
+        entry = {"id": u["id"], "name": u.get("name"), "email": u.get("email"),
+                 "aspire_contact_id": cid, "aspire_name": match["name"]}
+        if u.get("aspire_contact_id") == cid:
+            unchanged.append(entry)
+            continue
+        if not dry_run:
+            await db._x("UPDATE users SET aspire_contact_id = ? WHERE id = ?", [cid, u["id"]])
+        linked.append(entry)
+
+    unmatched_employees = [
+        {"contact_id": v["contact_id"], "name": v["name"], "email": k}
+        for k, v in emp_by_email.items() if k not in matched_emails
+    ]
+    logger.info(f"link-aspire: {'preview' if dry_run else 'linked'} {len(linked)} "
+                f"({len(unchanged)} already linked, {len(unmatched_users)} app users unmatched)")
+    return {
+        "dry_run": dry_run,
+        "counts": {
+            "app_users": len(users or []),
+            "aspire_employees_with_email": len(emp_by_email),
+            "linked": len(linked),
+            "already_linked": len(unchanged),
+            "unmatched_users": len(unmatched_users),
+            "unmatched_employees": len(unmatched_employees),
+        },
+        "linked": linked,
+        "already_linked": unchanged,
+        "unmatched_users": unmatched_users,
+        "unmatched_employees": sorted(unmatched_employees, key=lambda x: x["name"]),
+    }
 
 
 @router.post("/users")

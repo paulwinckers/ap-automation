@@ -6,8 +6,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  listUsers, createUser, updateUser, resetUserPassword,
-  UserRecord, DivisionMembership, DIVISIONS, AREAS, Area,
+  listUsers, createUser, updateUser, resetUserPassword, linkAspireContacts,
+  UserRecord, DivisionMembership, DIVISIONS, AREAS, Area, AspireLinkResult,
 } from '../lib/api';
 
 // New staff start with the same areas existing staff got by default (backend DEFAULT_STAFF_AREAS).
@@ -147,6 +147,93 @@ function DivisionChips({ divisions }: { divisions?: DivisionMembership[] }) {
   );
 }
 
+// Email-match app users to Aspire employees so one identity resolves across app login,
+// task assignee, CX role owner, and Aspire crew/clock-in. Preview (dry run) then link.
+function AspireLinkCard({ onLinked }: { onLinked: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<AspireLinkResult | null>(null);
+  const [done, setDone] = useState<AspireLinkResult | null>(null);
+  const [err, setErr] = useState('');
+
+  async function runPreview() {
+    setBusy(true); setErr(''); setDone(null);
+    try { setPreview(await linkAspireContacts(true)); setOpen(true); }
+    catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  }
+  async function runLink() {
+    setBusy(true); setErr('');
+    try { const r = await linkAspireContacts(false); setDone(r); setPreview(null); onLinked(); }
+    catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  const c = (preview || done)?.counts;
+  const list = (title: string, rows: { name: string; email: string }[], color: string) =>
+    rows.length > 0 && (
+      <div style={{ marginTop: 10 }}>
+        <div style={{ color, fontSize: 11, fontWeight: 700, marginBottom: 4 }}>{title} ({rows.length})</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {rows.map((r, i) => (
+            <span key={i} title={r.email} style={{ background: '#0f172a', border: '1px solid #334155',
+              color: '#cbd5e1', fontSize: 11, padding: '2px 8px', borderRadius: 99 }}>{r.name || r.email}</span>
+          ))}
+        </div>
+      </div>
+    );
+
+  return (
+    <div style={CARD}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <div style={{ color: '#fff', fontWeight: 600, fontSize: 15 }}>Aspire identity links</div>
+          <div style={{ color: '#64748b', fontSize: 12, marginTop: 3 }}>
+            Match users to Aspire employees by email, so one person resolves across the app, tasks &amp; Aspire.
+          </div>
+        </div>
+        <button onClick={runPreview} disabled={busy} style={BTN('#2563eb', busy)}>
+          {busy ? 'Checking…' : 'Check matches'}
+        </button>
+      </div>
+
+      {err && <div style={{ color: '#fca5a5', fontSize: 13, marginTop: 12 }}>{err}</div>}
+
+      {done && (
+        <div style={{ marginTop: 14, background: '#052e16', border: '1px solid #166534', borderRadius: 8, padding: '10px 14px' }}>
+          <div style={{ color: '#86efac', fontSize: 13, fontWeight: 600 }}>
+            ✓ Linked {done.counts.linked} user{done.counts.linked === 1 ? '' : 's'}
+            {done.counts.already_linked > 0 ? ` · ${done.counts.already_linked} already linked` : ''}.
+          </div>
+          {list('App users with no Aspire email match', done.unmatched_users, '#fbbf24')}
+        </div>
+      )}
+
+      {open && preview && (
+        <div style={{ marginTop: 14, background: '#0f172a', border: '1px solid #334155', borderRadius: 10, padding: 16 }}>
+          <div style={{ color: '#e2e8f0', fontSize: 13, marginBottom: 6 }}>
+            {c!.linked > 0
+              ? <>Ready to link <b>{c!.linked}</b> new match{c!.linked === 1 ? '' : 'es'}
+                  {c!.already_linked > 0 ? ` (${c!.already_linked} already linked)` : ''}.</>
+              : <>Everything already linked — {c!.already_linked} match{c!.already_linked === 1 ? '' : 'es'}, nothing new to do.</>}
+          </div>
+          {list('Will link now', preview.linked, '#86efac')}
+          {list('App users with no Aspire email match', preview.unmatched_users, '#fbbf24')}
+          {list('Aspire employees with no app user', preview.unmatched_employees, '#64748b')}
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+            {c!.linked > 0 && (
+              <button onClick={runLink} disabled={busy} style={BTN('#16a34a', busy)}>
+                {busy ? 'Linking…' : `Link ${c!.linked} now`}
+              </button>
+            )}
+            <button onClick={() => { setOpen(false); setPreview(null); }} style={BTN('#334155')}>Close</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function UserAdmin() {
   const [users,   setUsers]   = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -279,6 +366,9 @@ export default function UserAdmin() {
           color: '#fca5a5', fontSize: 13, marginBottom: 20,
         }}>{error}</div>
       )}
+
+      {/* ── Aspire identity links ─────────────────────────────────────────────── */}
+      <AspireLinkCard onLinked={load} />
 
       {/* ── Add user ──────────────────────────────────────────────────────────── */}
       <div style={CARD}>
@@ -484,7 +574,15 @@ function UserTable({
             }}>
               {/* Name + email + phone */}
               <div>
-                <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 14 }}>{user.name}</div>
+                <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {user.name}
+                  {user.aspire_contact_id
+                    ? <span title={`Linked to Aspire ContactID ${user.aspire_contact_id}`}
+                        style={{ background: '#1e3a8a', color: '#bfdbfe', fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 99 }}>
+                        Aspire #{user.aspire_contact_id}</span>
+                    : <span title="Not matched to an Aspire employee — use “Check matches” above"
+                        style={{ color: '#64748b', fontSize: 10, fontWeight: 600 }}>⚠ no Aspire link</span>}
+                </div>
                 <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>{user.email}</div>
                 {user.phone && (
                   <div style={{ color: '#475569', fontSize: 12, marginTop: 1 }}>📱 {user.phone}</div>

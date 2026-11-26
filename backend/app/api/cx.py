@@ -439,11 +439,23 @@ async def list_skips():
     return {"skips": [_row(r) for r in rows]}
 
 
+# Default role owner for NON-COMMS next-actions (those whose target isn't a client email).
+# Each is overridable per-target in CX settings via "{target}_owner_email"/"{target}_owner_name";
+# this fallback keeps PHAs and start-date confirmations off the admin "unassigned" pile when no
+# explicit owner is configured. Roles resolve to a person through the same {role}_email/_name map.
+_TARGET_DEFAULT_ROLE = {
+    "pha":   "supervisor",   # on-site pre-mobilization hazard assessment
+    "board": "scheduler",    # confirm the start date on the construction board
+}
+
+
 async def enriched_due_actions(db: Database) -> list[dict]:
     """Every next-action due across active construction jobs, each enriched with its OWNER —
     the template's from_role resolved to a real person via CX settings (scheduler→Keeland,
-    supervisor→Dustin, designer→Jenna, …). Shared by the action-review endpoint and the
-    unified personal worklist (so a person sees only the comms they're responsible for)."""
+    supervisor→Dustin, designer→Jenna, …). Non-comms actions (PHA, board confirm) route to a
+    default role (see _TARGET_DEFAULT_ROLE) unless CX setup names an explicit {target}_owner.
+    Shared by the action-review endpoint and the unified personal worklist (so a person sees
+    only the comms they're responsible for)."""
     from datetime import date
     from app.api.construction_plan import get_plan  # local import avoids any cycle
 
@@ -469,11 +481,23 @@ async def enriched_due_actions(db: Database) -> list[dict]:
             tmpl = target.split("comms:", 1)[1] if target.startswith("comms:") else None
             role = role_by_key.get(tmpl) if tmpl else None
             owner_email, owner_name = owner_for(role)
-            # Task owners set in CX setup win: every client email → one person, every PHA → another.
-            fixed = "email_tasks_owner" if tmpl else ("pha_owner" if target == "pha" else None)
-            if fixed and ((cfg.get(f"{fixed}_email") or "").strip() or (cfg.get(f"{fixed}_name") or "").strip()):
-                owner_email = (cfg.get(f"{fixed}_email") or "").strip()
-                owner_name = (cfg.get(f"{fixed}_name") or "").strip()
+            if tmpl:
+                # Client emails: a single "email tasks owner" in CX setup wins over the per-template role.
+                if (cfg.get("email_tasks_owner_email") or "").strip() or (cfg.get("email_tasks_owner_name") or "").strip():
+                    owner_email = (cfg.get("email_tasks_owner_email") or "").strip()
+                    owner_name  = (cfg.get("email_tasks_owner_name")  or "").strip()
+            elif target:
+                # Non-comms next-action (PHA, confirm-start-date on the board, …). An explicit
+                # "{target}_owner" in CX setup wins; otherwise fall back to the default role for
+                # this target so it reaches the right person instead of the admin "unassigned" pile.
+                oe = (cfg.get(f"{target}_owner_email") or "").strip()
+                on = (cfg.get(f"{target}_owner_name")  or "").strip()
+                if oe or on:
+                    owner_email, owner_name = oe, on
+                else:
+                    drole = _TARGET_DEFAULT_ROLE.get(target)
+                    if drole:
+                        owner_email, owner_name = owner_for(drole)
             items.append({
                 "opportunity_id":   j.get("opportunity_id"),
                 "opportunity_name": j.get("opportunity_name"),

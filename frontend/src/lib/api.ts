@@ -1310,11 +1310,28 @@ export interface UserRecord {
   last_login: string | null;
   divisions?: DivisionMembership[];
   areas?: Area[];
+  aspire_contact_id?: number | null;
 }
 
 export async function listUsers(): Promise<UserRecord[]> {
   const res = await request<{ users: UserRecord[] }>('GET', '/auth/users');
   return res.users;
+}
+
+// ── Aspire identity bridge ──────────────────────────────────────────────────
+// Email-match app users to Aspire employees, storing each match's ContactID on the user.
+export interface AspireLinkEntry { id: number; name: string; email: string; aspire_contact_id?: number; aspire_name?: string; contact_id?: number; }
+export interface AspireLinkResult {
+  dry_run: boolean;
+  counts: { app_users: number; aspire_employees_with_email: number; linked: number;
+            already_linked: number; unmatched_users: number; unmatched_employees: number; };
+  linked: AspireLinkEntry[];
+  already_linked: AspireLinkEntry[];
+  unmatched_users: AspireLinkEntry[];
+  unmatched_employees: AspireLinkEntry[];
+}
+export async function linkAspireContacts(dryRun = false): Promise<AspireLinkResult> {
+  return request('POST', `/auth/users/link-aspire?dry_run=${dryRun}`);
 }
 
 export async function createUser(data: {
