@@ -5,7 +5,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { authFetch } from '../lib/api';
+import { authFetch, currentUser, startQboReconnect } from '../lib/api';
 
 const API = import.meta.env.VITE_API_URL ?? 'https://ap-automation-production.up.railway.app';
 
@@ -750,6 +750,28 @@ export default function APDashboard() {
         >
           ↻ Sync QBO amounts
         </button>
+
+        {/* Reconnect QuickBooks — admin only; opens the signed OAuth link in a new tab */}
+        {currentUser()?.role === 'admin' && (
+          <button
+            onClick={async () => {
+              try {
+                const url = await startQboReconnect();
+                window.open(url, '_blank', 'noopener');
+              } catch (e: any) {
+                alert(`Could not start QuickBooks reconnect: ${e?.message || e}`);
+              }
+            }}
+            title="Start the QuickBooks OAuth reconnect (admin only)"
+            style={{
+              padding: '6px 12px', fontSize: 12, cursor: 'pointer',
+              border: '1px solid #c7d2fe', borderRadius: 8,
+              background: '#eef2ff', color: '#4338ca', fontWeight: 600,
+            }}
+          >
+            🔗 Reconnect QuickBooks
+          </button>
+        )}
 
         {/* Bulk archive unknowns — only in active view */}
         {view === 'active' && (

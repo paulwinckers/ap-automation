@@ -698,6 +698,12 @@ export function customerEmailPreviewUrl(companyId: number, weekStart?: string): 
 export function reportPreviewUrl(report: CustomerReport): string {
   return report.email_preview_url ? `${BASE}${report.email_preview_url}` : customerEmailPreviewUrl(report.company_id, report.week_start);
 }
+// Admin-only: fetch a fresh signed link to start the QuickBooks OAuth reconnect, returned
+// absolute so the caller can open it in a new tab. The /connect redirect is signed-token-gated.
+export async function startQboReconnect(): Promise<string> {
+  const r = await request<{ url: string }>('GET', '/auth/qbo/connect-url');
+  return `${BASE}${r.url}`;
+}
 export async function emailCustomerReport(companyId: number, to: string[], weekStart?: string, subject?: string): Promise<{ ok: boolean; recipients: string[]; subject: string }> {
   return request('POST', `/customer/${companyId}/email${weekStart ? `?week_start=${weekStart}` : ''}`, { to, subject });
 }
