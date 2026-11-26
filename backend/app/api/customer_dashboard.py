@@ -33,7 +33,8 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.core.database import Database
 from app.api.construction_plan import _aspire, get_db
-from app.api.auth import require_access
+from app.api.auth import require_access, optional_actor
+from app.core.signing import valid_signature, signed_query
 from app.api.aspire_attachments import signed_attachment_url
 from app.api.daily_schedule import _DIV_ORDER
 from app.services import r2
@@ -905,9 +906,16 @@ async def opportunity_invoices(opp_id: int):
     }
 
 
-@router.get("/{company_id}/report")
+@router.get("/{company_id}/report", dependencies=[Depends(require_access)])
 async def customer_report(company_id: int, week_start: str | None = None, db: Database = Depends(get_db)):
-    return await get_customer_report(company_id, week_start, db)
+    # Office-only (CustomerDashboard, customers area). Fetched with the bearer token, so a
+    # login gate is safe here — unlike /email-preview below, which is opened as a plain link.
+    data = await get_customer_report(company_id, week_start, db)
+    # Hand back a signed link for the "preview email" new-tab (that endpoint has no bearer).
+    wk = week_start or ""
+    qs = signed_query(f"cust-email:{company_id}:{wk}")
+    data["email_preview_url"] = f"/customer/{company_id}/email-preview?" + (f"week_start={wk}&" if wk else "") + qs
+    return data
 
 
 class EmailBody(BaseModel):
@@ -916,7 +924,14 @@ class EmailBody(BaseModel):
 
 
 @router.get("/{company_id}/email-preview", response_class=None)
-async def email_preview(company_id: int, week_start: str | None = None, db: Database = Depends(get_db)):
+async def email_preview(company_id: int, week_start: str | None = None,
+                        exp: int | None = None, sig: str | None = None,
+                        actor: dict | None = Depends(optional_actor),
+                        db: Database = Depends(get_db)):
+    # Opened as a plain new-tab link (no bearer), so allow a logged-in actor OR a valid signed
+    # token bound to this exact customer+week. Without either it's no longer world-readable.
+    if actor is None and not valid_signature(f"cust-email:{company_id}:{week_start or ''}", exp, sig):
+        raise HTTPException(status_code=401, detail="Not authorized — open this from the Customer dashboard.")
     from fastapi.responses import HTMLResponse
     report = await get_customer_report(company_id, week_start, db)
     return HTMLResponse(_render_report_html(report))

@@ -14,9 +14,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from urllib.parse import quote
 
-from app.api.auth import require_access
+from app.api.auth import require_access, optional_actor
+from app.core.signing import valid_signature, signed_query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.core.config import settings
@@ -574,14 +576,20 @@ async def get_nightly_report(
         None,
         description="Filter to a specific Aspire branch name. Defaults to ASPIRE_CONSTRUCTION_BRANCH setting.",
     ),
+    exp: Optional[int] = Query(None),
+    sig: Optional[str] = Query(None),
+    actor: Optional[dict] = Depends(optional_actor),
 ):
     """
-    Returns the HTML construction nightly report.
-    Open in a browser to preview exactly what the email will look like.
+    Returns the HTML construction nightly report (financials — not world-readable).
+    Open from the gated send-test page's signed link, or while logged in.
     Pass ?branch=Construction (or whatever your Aspire branch is named).
     """
     # Use query param → env var → default "Construction"
     branch_name = branch or settings.ASPIRE_CONSTRUCTION_BRANCH or "Construction"
+    # Plain browser/email link (no bearer): allow a logged-in actor OR a valid signed token.
+    if actor is None and not valid_signature(f"nightly:{branch_name}", exp, sig):
+        raise HTTPException(status_code=401, detail="Not authorized — open this report from the office tools.")
     generated_at = datetime.now(timezone.utc).strftime("%-d %b %Y, %-I:%M %p UTC")
 
     if preview:
@@ -650,7 +658,7 @@ async def send_nightly_report_test(
           <h2 style="color:#15803d;">Report Sent</h2>
           <p style="color:#475569;">{result['ticket_count']} tickets · {result['branch']} division</p>
           <ul style="text-align:left;color:#334155;line-height:1.8;">{recipients_html}</ul>
-          <a href="/construction/nightly-report" style="color:#2563eb;">View Report →</a>
+          <a href="/construction/nightly-report?branch={quote(result['branch'])}&{signed_query(f"nightly:{result['branch']}")}" style="color:#2563eb;">View Report →</a>
         </body></html>
         """)
     except Exception as e:

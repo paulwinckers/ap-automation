@@ -27,8 +27,11 @@ from typing import Optional
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+
+from app.api.auth import _require_admin
+from app.core.signing import valid_signature, signed_query
 
 from app.core.config import settings
 from app.models.invoice import Invoice
@@ -1161,12 +1164,23 @@ def _valid_oauth_state(state: str) -> bool:
         return False
 
 
+@qbo_auth_router.get("/connect-url", dependencies=[Depends(_require_admin)])
+async def qbo_connect_url():
+    """Admin-only: mint a short-lived signed link to start the QBO OAuth flow. The /connect
+    redirect itself carries no bearer (it's a browser navigation), so it's gated by this token
+    instead. Open the returned URL in a browser to authorise QuickBooks."""
+    return {"url": f"/auth/qbo/connect?{signed_query('qbo-connect', ttl=600)}"}
+
+
 @qbo_auth_router.get("/connect")
-async def qbo_connect():
+async def qbo_connect(exp: Optional[int] = Query(None), sig: Optional[str] = Query(None)):
     """
     Step 1: Redirect the user to QBO's OAuth2 authorisation page.
-    Visit http://localhost:8000/auth/qbo/connect in your browser.
+    Requires a signed token from /auth/qbo/connect-url (admin-only) — this kicks off a QBO
+    reconnect, so it shouldn't be startable by anyone with the URL.
     """
+    if not valid_signature("qbo-connect", exp, sig):
+        raise HTTPException(status_code=403, detail="Invalid or expired connect link. Get a fresh one from /auth/qbo/connect-url (admin).")
     params = {
         "client_id":     settings.QBO_CLIENT_ID,
         "response_type": "code",

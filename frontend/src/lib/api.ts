@@ -680,6 +680,7 @@ export interface CustomerReport {
   next_week: CustomerDivisionGroup[];
   construction: { projects: CustomerConstructionProject[]; completed: CustomerTicket[]; scheduled: CustomerTicket[] };
   summary: { this_week_visits: number; next_week_visits: number; construction_projects: number; photos: number };
+  email_preview_url?: string;   // signed path for the preview-in-new-tab link (no bearer sent)
 }
 
 export async function searchCustomers(q: string): Promise<CustomerSearchResult[]> {
@@ -691,6 +692,11 @@ export async function getCustomerReport(companyId: number, weekStart?: string): 
 }
 export function customerEmailPreviewUrl(companyId: number, weekStart?: string): string {
   return `${BASE}/customer/${companyId}/email-preview${weekStart ? `?week_start=${weekStart}` : ''}`;
+}
+// Preview link for the dashboard: prefer the signed path the report hands back (the preview
+// endpoint now needs a signed token since the <a target=_blank> sends no bearer).
+export function reportPreviewUrl(report: CustomerReport): string {
+  return report.email_preview_url ? `${BASE}${report.email_preview_url}` : customerEmailPreviewUrl(report.company_id, report.week_start);
 }
 export async function emailCustomerReport(companyId: number, to: string[], weekStart?: string, subject?: string): Promise<{ ok: boolean; recipients: string[]; subject: string }> {
   return request('POST', `/customer/${companyId}/email${weekStart ? `?week_start=${weekStart}` : ''}`, { to, subject });

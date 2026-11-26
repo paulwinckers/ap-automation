@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
-  searchCustomers, getCustomerReport, emailCustomerReport, customerEmailPreviewUrl,
+  searchCustomers, getCustomerReport, emailCustomerReport, reportPreviewUrl,
   type CustomerSearchResult, type CustomerReport, type CustomerTicket, type CustomerDivisionGroup,
 } from '../lib/api';
 
@@ -237,7 +237,7 @@ export default function CustomerDashboard() {
               <div className="no-print" style={{ background: '#eff6ff', borderBottom: '1px solid #bfdbfe', padding: '12px 22px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <input value={emailTo} onChange={e => setEmailTo(e.target.value)} placeholder="recipient@example.com, second@…"
                        style={{ flex: 1, minWidth: 220, padding: '8px 10px', borderRadius: 6, border: '1px solid #93c5fd', fontSize: 13 }} />
-                <a href={customerEmailPreviewUrl(report.company_id, weekStart)} target="_blank" rel="noreferrer"
+                <a href={reportPreviewUrl(report)} target="_blank" rel="noreferrer"
                    style={{ ...btn, textDecoration: 'none', display: 'inline-block' }}>👁 Preview</a>
                 <button onClick={sendEmail} disabled={emailState === 'sending'}
                         style={{ ...btn, background: '#2563eb', borderColor: '#2563eb', color: '#fff', cursor: emailState === 'sending' ? 'wait' : 'pointer' }}>
