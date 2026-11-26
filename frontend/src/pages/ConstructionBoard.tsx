@@ -104,10 +104,13 @@ export default function ConstructionBoard() {
   // Multi-select: pick many (crew|day) cells, then bulk add-label or clear.
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Bumped on every schedule reload so the revenue/capacity ribbon refetches when
+  // blocks or labels change (labels reduce available hours), not just on month change.
+  const [revKey, setRevKey] = useState(0);
 
   async function load(s?: string, w?: number) {
     setLoading(true); setErr('');
-    try { const data = await getScheduleWeek(s, w ?? weeks); setWeek(data); setStart(data.week_start); }
+    try { const data = await getScheduleWeek(s, w ?? weeks); setWeek(data); setStart(data.week_start); setRevKey(k => k + 1); }
     catch (e) { setErr((e as Error).message); }
     finally { setLoading(false); }
   }
@@ -149,7 +152,7 @@ export default function ConstructionBoard() {
   async function reloadKeepBacklog() {
     // Endpoint is fast (~0.25s) — just refresh everything so backlog/archived
     // reflect scheduling and archive changes immediately.
-    try { setWeek(await getScheduleWeek(start, weeks)); } catch { /* ignore */ }
+    try { setWeek(await getScheduleWeek(start, weeks)); setRevKey(k => k + 1); } catch { /* ignore */ }
   }
 
   if (loading && !week) return <div style={{ padding: 40, color: '#9ca3af' }}>Loading the schedule…</div>;
@@ -521,7 +524,7 @@ export default function ConstructionBoard() {
         </div>
       )}
 
-      <RevenueStrip />
+      <RevenueStrip refreshKey={revKey} />
 
       {err && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '10px 14px', color: '#991b1b', marginBottom: 0 }}>{err}</div>}
       </div>{/* end pinned top pane */}
@@ -977,7 +980,7 @@ const revCapLbl: React.CSSProperties = { fontSize: 10, fontWeight: 700, color: '
 // Top-of-board revenue strip: a primary card for the selected month (toggleable,
 // with a per-job breakdown) plus two compact look-ahead cards for the following
 // two months. Toggling the primary month shifts all three together.
-function RevenueStrip() {
+function RevenueStrip({ refreshKey }: { refreshKey: number }) {
   const [base, setBase] = useState<string>(monthKeyToday());
   const isThisMonth = base === monthKeyToday();
   const controls = (
@@ -990,14 +993,14 @@ function RevenueStrip() {
   );
   return (
     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch', marginBottom: 16 }}>
-      <MonthRevenueCard month={base} header={controls} />
-      <MonthRevenueCard month={shiftMonthKey(base, 1)} compact />
-      <MonthRevenueCard month={shiftMonthKey(base, 2)} compact />
+      <MonthRevenueCard month={base} header={controls} refreshKey={refreshKey} />
+      <MonthRevenueCard month={shiftMonthKey(base, 1)} compact refreshKey={refreshKey} />
+      <MonthRevenueCard month={shiftMonthKey(base, 2)} compact refreshKey={refreshKey} />
     </div>
   );
 }
 
-function MonthRevenueCard({ month, header, compact }: { month: string; header?: React.ReactNode; compact?: boolean }) {
+function MonthRevenueCard({ month, header, compact, refreshKey }: { month: string; header?: React.ReactNode; compact?: boolean; refreshKey?: number }) {
   const [data, setData] = useState<ScheduledRevenue | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -1011,7 +1014,7 @@ function MonthRevenueCard({ month, header, compact }: { month: string; header?: 
       .catch(e => { if (!cancelled) setErr((e as Error).message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [month]);
+  }, [month, refreshKey]);
 
   const jobs = data?.jobs || [];
   const fmtH = (x?: number) => Math.round(x || 0).toLocaleString('en-CA');
